@@ -133,8 +133,13 @@ from fmha_dualwave_gfx950 import (
     ParityKernelContext,
     ParityKvGmemToLdsLoader,
     ParitySoftmaxHelper,
+    _bias_slab_num_records_bytes,
+    _ds_read_tr_v4f16_imm,
     _score_column_runs,
+    _slab_span_elems,
     _v_imm_lo,
+    exp2_wait_state,
+    mfma_operand_wait_state,
     wire_ptr,
     wire_view,
 )
@@ -350,10 +355,14 @@ class BwdDkDvKernelContext(ParityKernelContext):
 
     Six things move, and they are all descriptors, bounds or indices:
 
-    - `strides` carries **18** slots, not 12: Q, K, V, dO, dK, dV. The first
-      twelve go to the base class, which means its `stride_o_*` names hold
-      **dO's** strides. Nothing below reads those names; `stride_do_*` is
-      spelled out instead.
+    - `strides` carries **18** slots: Q, K, V, dO, dK, dV. Only the first nine
+      go to the base class, which is all it addresses; dO, dK and dV are held
+      here under their own names, with `stride_do_*`, `stride_dk_*` and
+      `stride_dv_*`. **There is no `O` here.** dK used to be handed to the
+      base's `O` slot so `o_div` would describe it, which made `stride_o_*`
+      the strides of whichever tensor happened to be in the slot; this kernel
+      writes dK and dV, both KV-row-shaped, and builds `dk_div` and `dv_div`
+      for them directly.
     - The staging machinery's K slot carries Q and its V slot carries dO.
     - Both staged tiles are V-shaped, so the LDS bases and the row-major read
       base are recomputed against `STREAM_LINE_STRIDE`.
@@ -364,7 +373,9 @@ class BwdDkDvKernelContext(ParityKernelContext):
     """
 
     def __init__(self, traits, *, strides, DO, DK, DV, Delta, **kwargs):
-        super().__init__(traits, strides=strides[:12], **kwargs)
+        # Q, K, V only. The base's `O` slot stays empty -- this kernel has no
+        # O -- so it builds no O view and `stride_o_*` stays zero and unread.
+        super().__init__(traits, strides=strides[:9], **kwargs)
         self.DO = DO
         self.DK = DK
         self.DV = DV
@@ -449,9 +460,7 @@ class BwdDkDvKernelContext(ParityKernelContext):
 
     def init_runtime_indices(self, **kwargs):
         super().init_runtime_indices(**kwargs)
-        # The base class names dO's seq stride `stride_o_seq_v`, since dO
-        # occupies its O slot. The two outputs have no slot there at all.
-        self.stride_do_seq_v = self.stride_o_seq_v
+        self.stride_do_seq_v = fx.Index(self.stride_do_seq)
         self.stride_dk_seq_v = fx.Index(self.stride_dk_seq)
         self.stride_dv_seq_v = fx.Index(self.stride_dv_seq)
 
@@ -598,7 +607,9 @@ class BwdDkDvKernelContext(ParityKernelContext):
         self.bind_q_head()
 
         # Resident, and the two outputs: all four are (batch, kv head) slabs
-        # bounded at `seqlen_kv` rows.
+        # bounded at the last real element of their `seqlen_kv`th row. K and dK
+        # are `hdim_qk` wide, V and dV `hdim_vo` -- the extents are what bounds
+        # the slab, not the row stride; see `_slab_span_elems`.
         self.k_res_div = self._slab_view(
             self.K,
             self.stride_k_batch,
@@ -607,6 +618,7 @@ class BwdDkDvKernelContext(ParityKernelContext):
             self.kv_row_off,
             self.kv_head_idx,
             self.seqlen_kv_v,
+            self.hdim_qk,
             batch_idx=self.kv_batch_idx,
         )
         self.v_res_div = self._slab_view(
@@ -617,6 +629,7 @@ class BwdDkDvKernelContext(ParityKernelContext):
             self.kv_row_off,
             self.kv_head_idx,
             self.seqlen_kv_v,
+            self.hdim_vo,
             batch_idx=self.kv_batch_idx,
         )
         self.dk_div = self._slab_view(
@@ -627,6 +640,7 @@ class BwdDkDvKernelContext(ParityKernelContext):
             self.kv_row_off,
             self.kv_head_idx,
             self.seqlen_kv_v,
+            self.hdim_qk,
             batch_idx=self.kv_batch_idx,
         )
         self.dv_div = self._slab_view(
@@ -637,26 +651,36 @@ class BwdDkDvKernelContext(ParityKernelContext):
             self.kv_row_off,
             self.kv_head_idx,
             self.seqlen_kv_v,
+            self.hdim_vo,
             batch_idx=self.kv_batch_idx,
         )
-        self.o_div = self.dk_div
 
         # Raw bounded resources over the same four slabs, for the 16-row
         # family's 64-bit loads and stores. A `_slab_view` carries a copy atom
         # whose width is fixed at 128 bits; these take an element offset and a
-        # width per access, and they bound identically -- `rows * stride_seq`
-        # elements, so a row past the sequence reads zero and a store to one is
-        # dropped.
-        self.k_res_rsrc = self._slab_rsrc(self.K, self.stride_k_batch, self.stride_k_head, self.stride_k_seq)
-        self.v_res_rsrc = self._slab_rsrc(self.V, self.stride_v_batch, self.stride_v_head, self.stride_v_seq)
-        self.dk_rsrc = self._slab_rsrc(self.DK, self.stride_dk_batch, self.stride_dk_head, self.stride_dk_seq)
-        self.dv_rsrc = self._slab_rsrc(self.DV, self.stride_dv_batch, self.stride_dv_head, self.stride_dv_seq)
+        # width per access, and they bound identically, so a row past the
+        # sequence reads zero and a store to one is dropped.
+        self.k_res_rsrc = self._slab_rsrc(
+            self.K, self.stride_k_batch, self.stride_k_head, self.stride_k_seq, self.hdim_qk
+        )
+        self.v_res_rsrc = self._slab_rsrc(
+            self.V, self.stride_v_batch, self.stride_v_head, self.stride_v_seq, self.hdim_vo
+        )
+        self.dk_rsrc = self._slab_rsrc(
+            self.DK, self.stride_dk_batch, self.stride_dk_head, self.stride_dk_seq, self.hdim_qk
+        )
+        self.dv_rsrc = self._slab_rsrc(
+            self.DV, self.stride_dv_batch, self.stride_dv_head, self.stride_dv_seq, self.hdim_vo
+        )
 
         self.k_res_elem_base = self.kv_start * self.stride_k_seq_v
         self.v_res_elem_base = self.kv_start * self.stride_v_seq_v
-        # First element past each output's descriptor. A store redirected here
-        # is dropped by the hardware bound, which is how the padded-head D tail
-        # is suppressed without a branch.
+        # At or past the end of each output's descriptor, so a store redirected
+        # here is dropped by the hardware bound -- which is how the padded-head
+        # D tail is suppressed without a branch. `_slab_span_elems` can only
+        # shrink those descriptors below this, never grow one past it, so the
+        # order the suppression needs holds for both the `_slab_view` and the
+        # `_slab_rsrc` over the same slab.
         self.dk_oob_off = self.seqlen_kv_v * self.stride_dk_seq_v
         self.dv_oob_off = self.seqlen_kv_v * self.stride_dv_seq_v
 
@@ -685,6 +709,7 @@ class BwdDkDvKernelContext(ParityKernelContext):
             self.q_row_off,
             self.q_head_idx,
             self.seqlen_q_v,
+            self.hdim_qk,
         )
         self.v_div = self._slab_view(
             self.DO,
@@ -694,6 +719,7 @@ class BwdDkDvKernelContext(ParityKernelContext):
             self.q_row_off,
             self.q_head_idx,
             self.seqlen_q_v,
+            self.hdim_vo,
         )
         self.q_div = self.k_div
 
@@ -733,11 +759,12 @@ class BwdDkDvKernelContext(ParityKernelContext):
         # the prologue's head already; this is the binding that survives, and
         # it is the same expression because `_slab_byte_base` is shared.
         if const_expr(self.traits.BIAS_TYPE):
-            _bias_span = self.seqlen_q_v * fx.Index(self.stride_b_seq_q)
             self.bias_rsrc = buffer_ops.create_buffer_resource(
                 self.Bias,
                 max_size=False,
-                num_records_bytes=as_mlir_value(_bias_span * fx.Index(self.traits.BF16_BYTES)),
+                num_records_bytes=_bias_slab_num_records_bytes(
+                    self.seqlen_q_v, self.seqlen_kv_v, self.stride_b_seq_q, self.traits.BF16_BYTES
+                ),
                 base_byte_offset=as_mlir_value(
                     self._slab_byte_base(
                         self.stride_b_batch,
@@ -775,14 +802,18 @@ class BwdDkDvKernelContext(ParityKernelContext):
         self.q_head_idx = self.gqa_q_head_base + g
         self.bind_q_head()
 
-    def _slab_rsrc(self, tensor, s0, s1, s2):
+    def _slab_rsrc(self, tensor, s0, s1, s2, hdim):
         """A raw buffer resource over this workgroup's KV slab, bounded at its rows.
 
         Only the four KV-side tensors need one, so the head, the row origin and
         the batch index are the KV ones rather than parameters -- which is also
         what stops Q's batch index reaching them under `0x040B`.
+
+        Bounded through `_slab_span_elems`, the same as the `_slab_view` over
+        the same slab: these are two access shapes over one region, and a
+        region cannot have two ends.
         """
-        span_bytes = self.seqlen_kv_v * fx.Index(s2) * fx.Index(self.traits.BF16_BYTES)
+        span_bytes = _slab_span_elems(self.seqlen_kv_v, s2, hdim) * fx.Index(self.traits.BF16_BYTES)
         return dualwave._make_ws_rsrc(
             fx.Int64(fx.ptrtoint(fx.get_iter(tensor))),
             self._slab_byte_base(s0, s1, s2, self.kv_row_off, self.kv_head_idx, batch_idx=self.kv_batch_idx),
@@ -1005,7 +1036,7 @@ class BwdDkDvStreamReader(dualwave.DualwaveKernelContext):
         packs = []
         for k_substep in range_constexpr(4):
             imm_lo = _v_imm_lo(traits, dc, k_substep)
-            a = dualwave._ds_read_tr_v4f16_imm(
+            a = _ds_read_tr_v4f16_imm(
                 lds_base,
                 imm_lo,
                 lds_kv_base_idx=self.lds_kv_base_idx,
@@ -1013,7 +1044,7 @@ class BwdDkDvStreamReader(dualwave.DualwaveKernelContext):
                 scope_name=scope_name,
                 scope_names=traits.LDS_SCOPE_NAMES,
             )
-            b = dualwave._ds_read_tr_v4f16_imm(
+            b = _ds_read_tr_v4f16_imm(
                 lds_base,
                 imm_lo + pair,
                 lds_kv_base_idx=self.lds_kv_base_idx,
@@ -1140,10 +1171,12 @@ class BwdDkDvSoftmaxHelper(ParitySoftmaxHelper):
         scaled = [dualwave._fmul(values[r], scale, fm) for r in range_constexpr(16)]
         if const_expr(bias2 is not None):
             scaled = [dualwave._fadd(scaled[r], bias2[r], fm) for r in range_constexpr(16)]
-        return [
-            dualwave.rocdl.exp2(T.f32, as_mlir_value(dualwave._fadd(scaled[r], neg_lse2[r], fm)))
-            for r in range_constexpr(16)
-        ]
+        return exp2_wait_state(
+            [
+                dualwave.rocdl.exp2(T.f32, as_mlir_value(dualwave._fadd(scaled[r], neg_lse2[r], fm)))
+                for r in range_constexpr(16)
+            ]
+        )
 
     # -- the forward's bias path, shadowed ---------------------------------
     #
@@ -1293,10 +1326,18 @@ class BwdDkDvSoftmaxHelper(ParitySoftmaxHelper):
         packs both halves together because its two accumulators are live
         together anyway; here they deliberately are not (see
         `BwdDkDvTileBody.run`), and a whole-tile packer would force them to be.
+
+        Each pack leaves through `mfma_operand_wait_state`, which is where the
+        `v_cvt_pk_bf16_f32`-into-`v_mfma` wait state comes from; that docstring
+        has the measurement. The barrier is on the pack rather than inside
+        `contract_q` so that it sits at the producer, which is the end the
+        hazard is counted from.
         """
         return [
-            dualwave._bf16_trunc_pack_v8(
-                self.traits, [values[p * 8 + s] for s in range_constexpr(8)], elem_dtype=self.elem_dtype
+            mfma_operand_wait_state(
+                dualwave._bf16_trunc_pack_v8(
+                    self.traits, [values[p * 8 + s] for s in range_constexpr(8)], elem_dtype=self.elem_dtype
+                )
             )
             for p in range_constexpr(self.traits.PV_K_STEPS)
         ]
@@ -1639,16 +1680,11 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
             Q=Q,
             K=K,
             V=V,
-            O=DK,
             DO=DO,
             DK=DK,
             DV=DV,
             Delta=Delta,
             LSE=LSE,
-            DebugCounts=DK,
-            CuSeqQ=Q,
-            CuSeqKv=Q,
-            BlockTable=Q,
             seq_len=max_seqlen_q,
             seq_len_kv=max_seqlen_k,
             stride_q_n=stride_q_seq,
@@ -1755,19 +1791,39 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
                 init_args.append(zero_acc)
             group_results = init_args
 
-            # **The trip count is the build's, not the argument's.** The group
-            # size is a trait, `_args` checks the runtime head counts against
-            # it, and taking it from there is what keeps MHA free: a bound of
-            # `[0, 1)` is a single-iteration `scf.for` that the canonicaliser
-            # promotes away, so an MHA build emits the pre-B7 body with no
-            # outer loop at all. Built from the runtime `num_head_q //
-            # num_head_k` instead, every MHA caller would pay a loop that
-            # cannot be proven to run once.
+            # **The trip count is the argument's, not the build's** -- the one
+            # place this vendored copy departs from upstream.
+            #
+            # Upstream reads `traits.GQA_GROUP_SIZE`, because it compiles a
+            # kernel per head-count pair: a bound of `[0, 1)` is a
+            # single-iteration `scf.for` the canonicaliser promotes away, so an
+            # MHA build emits the pre-B7 body with no outer loop at all, and
+            # `_args` rejects a launch whose runtime counts disagree with the
+            # build.
+            #
+            # AOTriton has neither half of that. `num_head_q` and `num_head_k`
+            # are kernel arguments, not functional axes, so `flyc_bwd_dkdv.py`
+            # passes `num_heads=1` with no `num_kv_heads` and every compiled
+            # kernel carries `GQA_GROUP_SIZE == 1`; and `_args` is a host-side
+            # launch wrapper the C++ launcher never calls, so nothing catches
+            # the disagreement. The build-time bound therefore folds the loop
+            # away and each workgroup sums only the *first* query head of its
+            # group -- dK and dV short by the rest of the group, dQ untouched
+            # (it is one program per query head and never folds).
+            #
+            # Runtime is what the rest of the parity path already assumes:
+            # `ParityKernelContext.init_thread_mapping` re-derives `gqa_group`
+            # as `num_head_q // num_head_k` for exactly this reason, and
+            # `gqa_q_head_base` -- the head this loop walks from -- is its
+            # answer. Taking the bound from anywhere else is what let the two
+            # drift.
             #
             # Not `range_constexpr`: that would unroll the whole tile loop
             # `group` times, which is 8 copies of the largest region in the
             # kernel at MQA and would put the wide rungs through the build cap.
-            for g, group_args in range(fx.Index(0), fx.Index(traits.GQA_GROUP_SIZE), fx.Index(1), init=init_args):
+            # It is also no longer available -- the bound is not a constant.
+            gqa_group = fx.Index(ctx.num_head_q) // fx.Index(ctx.num_head_k)
+            for g, group_args in range(fx.Index(0), gqa_group, fx.Index(1), init=init_args):
                 # Point the query side at this head. K, V, dK and dV do not
                 # move, and neither do the accumulators.
                 ctx.retarget_q_head(g)
@@ -1793,13 +1849,29 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
                 # it: 0.2-0.4% at group 8, once per head against a whole q
                 # walk. A wrong guess here costs a silently zeroed q tile.
                 #
-                # `const_expr`, because at group size 1 there is no previous
-                # head at all -- and that guard is not cosmetic: left
-                # unconditional it measured **1.5% at head_dim 64**, where the
-                # kernel is shortest and a fixed prologue cost shows most.
-                # Every wider rung was within noise, which is exactly the shape
-                # of a constant added to the prologue.
-                if const_expr(traits.GQA_GROUP_SIZE > 1):
+                # Upstream guards this on `const_expr(traits.GQA_GROUP_SIZE >
+                # 1)`, because at group size 1 there is no previous head at all
+                # -- and that guard is not cosmetic: left unconditional it
+                # measured **1.5% at head_dim 64**, where the kernel is
+                # shortest and a fixed prologue cost shows most. Every wider
+                # rung was within noise, which is exactly the shape of a
+                # constant added to the prologue.
+                #
+                # The guard has to follow the trip count it was reading: with
+                # the bound now runtime (see above) there is no build-time
+                # group size to fold against. So it becomes the *exact*
+                # condition rather than a conservative approximation of it --
+                # "is there a previous head", `g != 0`, which is true one
+                # iteration less often than the trait test was and skips the
+                # drain on MHA the same way. `_stagger_extra_barrier_if_one`
+                # in `flash_attn_utils.py` is the same shape, an `scf.if` on a
+                # runtime scalar around `sched_barrier` + `s_barrier`.
+                #
+                # `g` is the `scf.for` induction variable, so the branch is
+                # workgroup-uniform and every wave reaches the same
+                # `s_barrier` -- which is the property a barrier under a branch
+                # needs and the reason this one is safe.
+                if fx.Int32(g) != fx.Int32(0):
                     dualwave._waitcnt_vm_n(0)
                     dualwave._sched_barrier(0)
                     dualwave._s_barrier()

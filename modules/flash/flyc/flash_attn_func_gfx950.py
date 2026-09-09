@@ -118,8 +118,13 @@ from gfx950_standalone import dualwave
 
 import flydsl.compiler as flyc
 import flydsl.expr as fx
+from flydsl._mlir import ir
+from flydsl._mlir.dialects import llvm
 from flydsl.compiler.kernel_function import CompilationContext
 from flydsl.expr import const_expr, range_constexpr
+from flydsl.expr.typing import T
+from flydsl.expr.typing import Vector as Vec
+from flydsl.expr.utils.arith import _to_raw as as_mlir_value
 
 KERNEL_NAME = "flash_attn_func_gfx950_kernel"
 
@@ -128,6 +133,7 @@ KERNEL_NAME = "flash_attn_func_gfx950_kernel"
 # primitives the hand-built pipeline is made of, and a second copy of any of
 # them would be a second thing to keep in step.
 from fmha_dualwave_gfx950 import _anchor_v_o  # noqa: E402  (one-accumulator safe)
+from fmha_dualwave_gfx950 import exp2_wait_state  # noqa: E402  (issue 10)
 
 _anchor_v_p = dualwave._anchor_v_p
 _dualwave_sync_barrier = dualwave._dualwave_sync_barrier
@@ -139,10 +145,139 @@ _sched_barrier = dualwave._sched_barrier
 _sched_barrier_exp_pairs = dualwave._sched_barrier_exp_pairs
 _sched_barrier_pairs = dualwave._sched_barrier_pairs
 _stagger_extra_barrier_if_one = dualwave._stagger_extra_barrier_if_one
-_stagger_extra_barrier_if_zero = dualwave._stagger_extra_barrier_if_zero
 _v_pair_to_vec32 = dualwave._v_pair_to_vec32
 _v_vec32_to_pair = dualwave._v_vec32_to_pair
 _waitcnt_vm_n = dualwave._waitcnt_vm_n
+
+
+def _stagger_extra_barrier_if_zero(stagger_i32):
+    """Emit `s_barrier;` only when stagger == 0.
+
+    Local copy of `dualwave._stagger_extra_barrier_if_zero`, differing from it
+    in one character class: the constraint string is `"s,~{scc}"`, not `"s"`.
+
+    The asm body runs `s_cmp_eq_u32` and `s_cbranch_scc0`, so it destroys SCC.
+    Without the clobber LLVM believes SCC survives the asm and will happily
+    keep a compare live across it. It does exactly that here: the epilogue's
+    `s_cmp_eq_u64 s[2:3], 0` -- the runtime "is the LSE pointer null?" test in
+    `ParityStoreHelper._store_lse_row` -- got scheduled *above* this asm, and
+    the `s_cbranch_scc1` that reads it, ~200 instructions later, branched on
+    the asm's leftover `stagger == 0` instead. The LSE store was then skipped
+    for every row, which is why fp16 + PADDED_HEAD returned an untouched L
+    tensor at BLOCK_DMODEL 96/128/160/192 while bf16, whose schedule happened
+    to land the two compares in the other order, was fine.
+
+    Nothing about the defect is dtype- or head-dim-specific; those were just
+    the schedules that exposed it. Any SCC-carrying compare that LLVM chooses
+    to hoist over the asm hits the same wall.
+
+    Delete this and go back to the alias once upstream carries the clobber.
+    """
+    llvm.inline_asm(
+        ir.Type.parse("!llvm.void"),
+        [stagger_i32],
+        ("s_cmp_eq_u32 $0, 0\n\ts_cbranch_scc0 1f\n\ts_barrier\n\t1:"),
+        "s,~{scc}",
+        has_side_effects=True,
+    )
+
+
+class _KvTailCausalMaskMixin:
+    """Make a causal tile also mask the columns past `seqlen_kv`.
+
+    Upstream deletes the KV tail mask from every causal build. The reason is
+    written out on `DualwaveSoftmaxHelper.causal_mask_pair_if_needed`:
+
+        This replaces seq_pad_mask_if_needed: with delta = seqlen_kv -
+        seqlen_q the largest key any row may attend to is seqlen_kv - 1, so
+        every padding column is already strictly above the diagonal.
+
+    True -- for the `delta` that sentence names. But a window build re-points
+    `delta_i32` at the resolved `window_right` (`init_tile_bounds` in
+    `fmha_dualwave_gfx950.py`), and that is what makes the argument fail:
+    top-left causal is `window_right == 0`, so the bound is `col <= row`, and
+    for `row >= seqlen_kv` that admits columns the K buffer does not have.
+    Those columns come back as zero from the out-of-range buffer load, which is
+    a logit of 0 rather than -inf, so each one takes a real share of the
+    softmax weight and contributes nothing to the numerator. Every row at or
+    past `seqlen_kv` comes out too small, by a factor that grows with the
+    overhang -- exactly the `seqlen_q > seqlen_k` failures, and only those.
+
+    Both bounds have to move, not just the mask:
+
+    - the mask itself: `seq_pad_mask_if_needed` is the existing one and is
+      already a runtime-guarded no-op for a tile that ends at or before
+      `seqlen_kv`, so it costs one scalar compare on the tiles that do not
+      need it;
+    - the *decision* to mask: the inherited test is "does some row's right
+      bound land inside this tile", and a tile wholly past the diagonal end
+      answers no while still holding padding columns. Running the tail mask
+      before that test rather than inside it is what keeps the two
+      independent.
+
+    Composed as a mixin over both helpers because the two bodies reach the
+    causal mask by different routes -- the dual-wave body through
+    `causal_mask_split_prologue_if_needed` and three epilogue calls, the wide
+    body (`fmha_wide_gfx950.make_wide_body`, which this file does not vendor)
+    through one call per tile -- and `causal_mask_prologue_if_needed` is the
+    single point all of them pass through.
+
+    Delete this and go back to the plain helpers once upstream masks the tail
+    in window builds (issue 8).
+    """
+
+    def causal_mask_prologue_if_needed(self, v_s, tile_idx=None, kv_end_pos=None, **kwargs):
+        if tile_idx is None:
+            tile_idx = fx.Index(0)
+        v_s = self.seq_pad_mask_if_needed(v_s, tile_idx)
+        return super().causal_mask_prologue_if_needed(
+            v_s, tile_idx=tile_idx, kv_end_pos=kv_end_pos, **kwargs
+        )
+
+
+class _Exp2WaitStateMixin:
+    """`exp2` with the gfx950 `v_exp_f32` wait state; see `exp2_wait_state`.
+
+    The body is `dualwave._exp2_score_slice` verbatim apart from the one call,
+    which is why it is copied rather than wrapped: the results are consumed
+    inside it (`Vec.from_elements` on the `start == 0` path), so there is no
+    return value a wrapper could interpose on.
+
+    The forward is exposed to the hazard the same way dK/dV is, and by the same
+    consumer -- `cast_p` reaches `_bf16_trunc_pack_v8`. A scan of the 108
+    compiled bf16 forward kernels found a zero-gap `v_exp_f32` site in seven,
+    at `BLOCK_DMODEL` 96, 224 and 256, which is exactly the set of rungs whose
+    head dims were failing: 96 serves head_dim 72/80/88/96 and 224 serves 216.
+
+    This also supersedes the `_s_nop(1)` in `ParityGemmHelper.qk`, whose own
+    comment records that it fixes head_dim 96 "not for the reason it looks
+    like" and by perturbing register allocation. That reads as the same defect
+    seen from the other end: a barrier that does not bind, working by accident.
+    The `_s_nop` is left in place because it was measured to cost nothing and
+    removing it is a separate change with its own bisection.
+    """
+
+    def exp2(self, v_s, start, length):
+        if const_expr(start == 0):
+            s_lo = [Vec(v_s[0])[r] for r in range_constexpr(16)]
+            lo_partial = exp2_wait_state(
+                [dualwave.rocdl.exp2(T.f32, as_mlir_value(s_lo[r])) for r in range_constexpr(16)]
+            )
+            return Vec.from_elements(lo_partial, fx.Float32).ir_value(), v_s[1]
+        lo_partial = [Vec(v_s[0])[r] for r in range_constexpr(16)]
+        hi_full = exp2_wait_state(
+            [dualwave.rocdl.exp2(T.f32, as_mlir_value(Vec(v_s[1])[r])) for r in range_constexpr(16)]
+        )
+        return lo_partial, hi_full
+
+
+class _ParitySoftmaxHelper(_Exp2WaitStateMixin, _KvTailCausalMaskMixin, ParitySoftmaxHelper):
+    pass
+
+
+class _WideSoftmaxHelper(_Exp2WaitStateMixin, _KvTailCausalMaskMixin, WideSoftmaxHelper):
+    pass
+
 
 _COMPILED = {}
 
@@ -344,10 +479,8 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
                 stride_v_batch,
                 stride_v_head,
                 stride_v_seq,
-                stride_o_batch,
-                stride_o_head,
-                stride_o_seq,
             ),
+            o_strides=(stride_o_batch, stride_o_head, stride_o_seq),
             sm_scale=sm_scale,
             num_head_q=num_head_q,
             num_head_k=num_head_k,
@@ -365,8 +498,6 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
             V=V,
             O=O,
             DebugCounts=Workspace,
-            CuSeqQ=Q,
-            CuSeqKv=Q,
             BlockTable=BlockTable,
             Bias=B,
             bias_strides=(stride_b_batch, stride_b_head, stride_b_seq_q),
@@ -409,7 +540,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         page_ids = dualwave.DualwavePageIdLoader(ctx)
         q_loader = ParityQLoader(ctx)
         gemm_helper = (WideGemmHelper if WIDE else ParityGemmHelper)(ctx)
-        softmax_helper = (WideSoftmaxHelper if WIDE else ParitySoftmaxHelper)(ctx)
+        softmax_helper = (_WideSoftmaxHelper if WIDE else _ParitySoftmaxHelper)(ctx)
 
         def _main_body():
             # Paged: stage the block-table row into LDS before any page-id ds_read.

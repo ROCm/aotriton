@@ -82,6 +82,7 @@ It also leaves a lane's four accumulator rows **contiguous** (`8*(lane//16) +
 """
 
 from fmha_common_gfx1201 import MaskedAxis
+from fmha_dualwave_gfx950 import _ds_read_tr16_b64_imm, exp2_wait_state, mfma_operand_wait_state
 from fmha_mfma16_gfx950 import MFMA16_M, a16_chunk_offset, a16_read_base, lds_elem, tok_off, tok_off_dyn
 from gfx950_standalone import buffer_ops, dualwave
 
@@ -212,10 +213,10 @@ class M16StreamReader(dualwave.DualwaveKernelContext):
         packs = []
         for g in range_constexpr(q_groups(traits)):
             base = chunk_off + tok_off(traits, g * MFMA16_K) * traits.BF16_BYTES
-            a = dualwave._ds_read_tr16_b64_imm(
+            a = _ds_read_tr16_b64_imm(
                 self.v_lds_read_vec4_type, addr, base, scope_name=scope_name, scope_names=traits.LDS_SCOPE_NAMES
             )
-            b = dualwave._ds_read_tr16_b64_imm(
+            b = _ds_read_tr16_b64_imm(
                 self.v_lds_read_vec4_type,
                 addr,
                 base + pair,
@@ -351,10 +352,24 @@ class M16SoftmaxHelper(dualwave.DualwaveKernelContext):
         scaled = [dualwave._fmul(values[r], scale, fm) for r in range_constexpr(ACC16)]
         if const_expr(bias2 is not None):
             scaled = [dualwave._fadd(scaled[r], bias2[r], fm) for r in range_constexpr(ACC16)]
-        return [
-            dualwave.rocdl.exp2(T.f32, as_mlir_value(dualwave._fadd(scaled[r], neg_lse2[r], fm)))
-            for r in range_constexpr(ACC16)
-        ]
+        # The `v_exp_f32` wait state. `exp2_wait_state` says why it is needed
+        # and why the `dualwave._s_nop(1)` that used to stand here did not
+        # supply it -- the short version is that `s_nop` takes no operands, so
+        # nothing stopped the scheduler from hoisting a `v_cvt_pk_bf16_f32`
+        # above it and back into the slot right after an `exp2`.
+        #
+        # Found at `block_dmodel=128, mfma_rows=16`, bf16, `BIAS_TYPE=1`, where
+        # the schedule that hits it appears once per iteration: dV came out
+        # about five times the reference on the odd tile's second q group. The
+        # `_s_nop` fixed *that* build, by luck of the allocation it perturbed,
+        # and left `BLOCK_DMODEL=192, PADDED_HEAD=False` with two zero-gap
+        # sites still in it.
+        return exp2_wait_state(
+            [
+                dualwave.rocdl.exp2(T.f32, as_mlir_value(dualwave._fadd(scaled[r], neg_lse2[r], fm)))
+                for r in range_constexpr(ACC16)
+            ]
+        )
 
     def dscores(self, p_list, v_dp, delta, keep=None):
         """`dS = P * (dP - delta)`. `dP` is unscaled; `sm_scale` belongs to dK.
@@ -446,8 +461,15 @@ class M16SoftmaxHelper(dualwave.DualwaveKernelContext):
         and four of another quarter wave's. `_bf16_trunc_pack_v8` is the 32-row
         family's, unchanged -- which is the other reason `16x16x32` is the
         cheaper port.
+
+        The pack leaves through `mfma_operand_wait_state`, which supplies the
+        `v_cvt_pk_bf16_f32`-into-`v_mfma` wait state. This is the family the
+        hazard was found in -- `block_dmodel=128`, `mfma_rows=16`, bf16,
+        dropout, matrix bias -- and that docstring has the measurement.
         """
-        return dualwave._bf16_trunc_pack_v8(self.traits, list(lo) + list(hi), elem_dtype=self.elem_dtype)
+        return mfma_operand_wait_state(
+            dualwave._bf16_trunc_pack_v8(self.traits, list(lo) + list(hi), elem_dtype=self.elem_dtype)
+        )
 
 
 class M16StoreHelper(dualwave.DualwaveKernelContext):
