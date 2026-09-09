@@ -88,35 +88,46 @@
 
     <p style="font-size: 0.9em; color: gray; margin-top: 1rem; margin-bottom: 0.25rem;">Individual steps:</p>
 
+    <div id="bake-lut-step-arch-inputs" style="display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;">
+        <label for="bake-lut-step-arch" style="font-size: 0.9em; color: gray;">Architecture:</label>
+        <select id="bake-lut-step-arch" onchange="updateStepArchWarning()">
+            <option value="__all__">(all arches)</option>
+            {% for a in archs %}
+            <option value="{{ a }}">{{ a }}</option>
+            {% endfor %}
+        </select>
+        <span id="step-arch-warning" style="display: none; font-size: 0.85em; color: #b8860b;"></span>
+    </div>
+
     <div style="display: flex; flex-wrap: nowrap; align-items: center;">
         <button hx-post="/api/servers/recreate-materialized-view"
-                hx-vals='js:{mode: getTuningMode()}'
+                hx-vals='js:{mode: getTuningMode(), arch: getStepArch()}'
                 hx-swap="none"
                 hx-confirm="Rebuild accuracy table (DROP + CTAS)? Table will be unavailable briefly."
                 style="background-color: #dc3545; color: white;">Rebuild Accuracy Table</button>
 
         <button hx-post="/api/servers/update-materialized-view"
-                hx-vals='js:{mode: getTuningMode()}'
+                hx-vals='js:{mode: getTuningMode(), arch: getStepArch()}'
                 hx-swap="none"
                 hx-confirm="Update accuracy table incrementally for task_ids from scratch/retry_task_ids.txt?">Update Accuracy Table</button>
 
         <button hx-post="/api/servers/compute-best-results"
-                hx-vals='js:{mode: getTuningMode()}'
+                hx-vals='js:{mode: getTuningMode(), arch: getStepArch()}'
                 hx-swap="none"
                 hx-confirm="Compute best_tuning_results from raw tuning results? This may take several minutes.">Compute Best Results</button>
 
         <button hx-post="/api/servers/export-best-results"
-                hx-vals='js:{mode: getTuningMode()}'
+                hx-vals='js:{mode: getTuningMode(), arch: getStepArch()}'
                 hx-swap="none"
                 hx-confirm="Export best results to {% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}? Existing file will be deleted.">Export Best Results</button>
 
         <button hx-post="/api/servers/sancheck"
-                hx-vals='js:{mode: getTuningMode()}'
+                hx-vals='js:{mode: getTuningMode(), arch: getStepArch()}'
                 hx-swap="none"
                 hx-confirm="Run LUT sanity check against scratch/{% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}? Requires export to have been run first.">Sancheck</button>
 
         <button hx-post="/api/servers/decomposedb"
-                hx-vals='js:{mode: getTuningMode()}'
+                hx-vals='js:{mode: getTuningMode(), arch: getStepArch()}'
                 hx-swap="none"
                 hx-confirm="{% if tuning_mode == 'op' %}Decompose scratch/op_database.sqlite3 into installed/database/op_database.sqlite3.tar.xz?{% else %}Decompose scratch/centraldb.sqlite3 into installed/database/<arch>/<family>/<kernel>.sqlite3.tar.xz?{% endif %}">Decompose DB</button>
     </div>
@@ -127,6 +138,7 @@
         <strong>Compute Best Results:</strong> Aggregates raw tuning results into <code>best_tuning_results</code> table (tuning_level = {{ tuning_mode }}).<br>
         <strong>Export Best Results:</strong> Exports <code>best_tuning_results</code> (tuning_level = {{ tuning_mode }}) to <code>scratch/{% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}</code>.<br>
         <strong>Sancheck:</strong> Runs LUT sanity check against <code>scratch/{% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}</code> without triggering code generation.<br>
+        <strong>Architecture:</strong> restricts the six steps above to one arch. Each step narrows both what it reads and what it deletes, so other arches' rows and their <code>installed/database/amd/&lt;arch&gt;/</code> shards are left intact &mdash; baking gfx942 and later gfx950 accumulates. Note <code>scratch/centraldb.sqlite3</code> is rewritten, not merged, so it holds only the last arch exported. In <strong>op</strong> mode there are no per-arch shards: <code>op_database.sqlite3.tar.xz</code> is installed wholesale, so an arch-filtered op run installs an incomplete op database.<br>
         <strong>Decompose DB:</strong> {% if tuning_mode == 'op' %}Compresses <code>scratch/op_database.sqlite3</code> into <code>installed/database/op_database.sqlite3.tar.xz</code>.{% else %}Partitions <code>scratch/centraldb.sqlite3</code> into <code>installed/database/amd/&lt;arch&gt;/&lt;family&gt;/&lt;kernel&gt;.sqlite3.tar.xz</code>.{% endif %}
     </p>
 
@@ -175,4 +187,36 @@
         </tbody>
     </table>
 </section>
+<script>
+// One helper rather than six inline document.getElementById() reads, for the
+// reason partials/tuning_mode_section.html gives for getTuningMode(): read the
+// value at call time, and keep a single DOM query to maintain. (The fix-host
+// select above still inlines its read -- it has exactly one consumer.)
+function getStepArch() {
+    const el = document.getElementById('bake-lut-step-arch');
+    return el ? el.value : '__all__';
+}
+
+// Fires at the moment the dangerous combination is created, which a static
+// hx-confirm cannot: those are rendered once at page load and cannot see the
+// live radio state.
+function updateStepArchWarning() {
+    const warn = document.getElementById('step-arch-warning');
+    if (!warn) return;
+    const arch = getStepArch();
+    if (arch !== '__all__' && getTuningMode() === 'op') {
+        warn.textContent = '\u26A0 op mode has no per-arch shards \u2014 the installed op database will contain only ' + arch + '.';
+        warn.style.display = '';
+    } else {
+        warn.style.display = 'none';
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('#tuning-mode-inputs input[name="mode"]')
+            .forEach(function (r) { r.addEventListener('change', updateStepArchWarning); });
+    updateStepArchWarning();
+});
+</script>
+
 {% endblock %}

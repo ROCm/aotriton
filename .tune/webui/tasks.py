@@ -448,54 +448,78 @@ class ComputeBestResultsCommand(CommandBuilder):
     """Compute best_tuning_results table from raw tuning results"""
     RELATIVE = '.tune/bin/compute_best_results'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+             dry_run: bool = False):
         args = [workdir, '--tuning_mode', tuning_mode]
-        return self._run(self.RELATIVE, args, workdir, 'Compute best tuning results', dry_run=dry_run)
+        if arch:
+            args += ['--arch', arch]
+        label = 'Compute best tuning results' + (f' ({arch})' if arch else '')
+        return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
 
 class ExportBestResultsCommand(CommandBuilder):
     """Export best results to centralized SQLite database"""
     RELATIVE = '.tune/bin/export_best_results'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+             dry_run: bool = False):
         args = [workdir, '--tuning_mode', tuning_mode]
-        return self._run(self.RELATIVE, args, workdir, 'Export best results to centraldb', dry_run=dry_run)
+        if arch:
+            args += ['--arch', arch]
+        label = 'Export best results to centraldb' + (f' ({arch})' if arch else '')
+        return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
 
 class RecreateMaterializedViewCommand(CommandBuilder):
     """Recreate accuracy table via DROP + CREATE (faster than REFRESH CONCURRENTLY)"""
     RELATIVE = '.tune/bin/recreate_materialized_view'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+             dry_run: bool = False):
         args = [workdir, '--tuning_mode', tuning_mode]
-        return self._run(self.RELATIVE, args, workdir, 'Recreate materialized view', dry_run=dry_run)
+        if arch:
+            args += ['--arch', arch]
+        label = 'Recreate materialized view' + (f' ({arch})' if arch else '')
+        return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
 
 class UpdateMaterializedViewCommand(CommandBuilder):
     """Incremental upsert of accuracy table for cached task_ids"""
     RELATIVE = '.tune/bin/update_materialized_view'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+             dry_run: bool = False):
         args = [workdir, '--tuning_mode', tuning_mode]
-        return self._run(self.RELATIVE, args, workdir, 'Update materialized view (incremental)', dry_run=dry_run)
+        if arch:
+            args += ['--arch', arch]
+        label = 'Update materialized view (incremental)' + (f' ({arch})' if arch else '')
+        return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
 
 class SancheckCommand(CommandBuilder):
     """Run LUT sanity check against the exported centralized database"""
     RELATIVE = '.tune/bin/sancheck'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+             dry_run: bool = False):
         args = [workdir, '--tuning_mode', tuning_mode]
-        return self._run(self.RELATIVE, args, workdir, 'LUT sanity check', dry_run=dry_run)
+        if arch:
+            args += ['--arch', arch]
+        label = 'LUT sanity check' + (f' ({arch})' if arch else '')
+        return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
 
 class DecomposeDbCommand(CommandBuilder):
     """Decompose centraldb.sqlite3 into per-arch/kernel shards under <workdir>/installed/database/"""
     RELATIVE = '.tune/bin/decomposedb'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+             dry_run: bool = False):
         args = [workdir, '--tuning_mode', tuning_mode]
-        return self._run(self.RELATIVE, args, workdir, 'Decompose database', dry_run=dry_run)
+        if arch:
+            args += ['--arch', arch]
+        label = 'Decompose database' + (f' ({arch})' if arch else '')
+        return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
 
 class BakeLutCommand(CommandBuilder):
@@ -715,24 +739,24 @@ def recreate_schema(workdir, dry_run: bool = False):
     return _recreate_schema.exec(workdir, dry_run=dry_run)
 
 
-def compute_best_results(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+def compute_best_results(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):
     """Compute best_tuning_results table from raw tuning results"""
-    return _compute_best_results.exec(workdir, tuning_mode=tuning_mode, dry_run=dry_run)
+    return _compute_best_results.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
 
 
-def export_best_results(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+def export_best_results(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):
     """Export best results to centralized SQLite database"""
-    return _export_best_results.exec(workdir, tuning_mode=tuning_mode, dry_run=dry_run)
+    return _export_best_results.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
 
 
-def recreate_materialized_view(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+def recreate_materialized_view(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):
     """Recreate accuracy table via DROP + CREATE"""
-    return _recreate_materialized_view.exec(workdir, tuning_mode=tuning_mode, dry_run=dry_run)
+    return _recreate_materialized_view.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
 
 
-def sancheck(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+def sancheck(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):
     """Run LUT sanity check against the exported centralized database"""
-    return _sancheck.exec(workdir, tuning_mode=tuning_mode, dry_run=dry_run)
+    return _sancheck.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
 
 
 def bake_lut(workdir, extra_args: list | None = None, tuning_mode: str = 'kernel', dry_run: bool = False):
@@ -743,13 +767,13 @@ def bake_lut(workdir, extra_args: list | None = None, tuning_mode: str = 'kernel
     return _bake_lut.exec(workdir, extra_args, tuning_mode=tuning_mode, dry_run=dry_run)
 
 
-def update_materialized_view(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
-    return _update_materialized_view.exec(workdir, tuning_mode=tuning_mode, dry_run=dry_run)
+def update_materialized_view(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):
+    return _update_materialized_view.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
 
 
-def decomposedb(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+def decomposedb(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):
     """Decompose centraldb.sqlite3 into per-arch/kernel shards"""
-    return _decomposedb.exec(workdir, tuning_mode=tuning_mode, dry_run=dry_run)
+    return _decomposedb.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
 
 
 def get_git_status(workdir):
