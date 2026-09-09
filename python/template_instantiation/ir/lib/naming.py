@@ -7,27 +7,29 @@ ksignature.py must agree on, factored out of the Triton-only implementation
 so a second language does not have to reverse-engineer the format from
 ir/triton/ksignature.py.
 
-Both functions are pure (no Functional / KernelSignature dependency): callers
-assemble the `perf` / `copt` sections themselves, in whatever vocabulary their
-own language uses, and pass the finished strings in here.
+`entry_name` takes the functional directly (reading `.unified_signature` and
+`.arch` off it) rather than having each caller destructure it first; `perf` /
+`copt` stay caller-assembled strings, in whatever vocabulary their own
+language uses, since ir/lib/ has no notion of either.
 """
 
 import hashlib
 
 
-def entry_name(unified_signature: str, arch: str, perf: str = '', copt: str = '') -> str:
+def entry_name(functional: 'Functional', perf: str = '', copt: str = '') -> str:
     """The hsaco entry-name grammar:
 
         ;;#F;<unified_signature>;;#P;<perf>;;#CO;<copt>;;arch=<arch>
 
-    `perf` and `copt` default to '' for languages/callers with no perf or
+    `unified_signature` and `arch` are read off `functional`. `perf` and
+    `copt` default to '' for languages/callers with no perf or
     compiler-option section to report.
     """
     return (
-        f';;#F;{unified_signature}'
+        f';;#F;{functional.unified_signature}'
         f';;#P;{perf}'
         f';;#CO;{copt}'
-        f';;arch={arch}'
+        f';;arch={functional.arch}'
     )
 
 
