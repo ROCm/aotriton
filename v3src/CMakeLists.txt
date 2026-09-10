@@ -239,6 +239,63 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     file(APPEND "${AOTRITON_HSACO_RECORD}" "${HSACO}" "\n")
     message(CONFIGURE_LOG "hsaco progress ${I}/${NUM_HSACO_RULES}")
   endforeach(RULE)
+
+  # flyc: kernels compiled during the build from a FlyDSL description, via a separate
+  # driver (`aotriton.flyc_compile`) and a disjoint rule file (`Fly.compile`, not
+  # `Bare.compile`) with its own row shape -- see codegen/root.py:write_flyc_hsaco.
+  # Deliberately NOT gated by AOTRITON_DEBUG_SKIP_TRITON_KERNELS: that flag only
+  # silences the Triton image pipeline above, and flyc rows are how a skipping build
+  # exercises the rest of the packaging pipeline cheaply.
+  #
+  # No TRITON_* env vars here -- flyc_bootstrap.setup() (invoked by flyc_compile
+  # itself) resolves ROCM_PATH and sets ARCH/COMPILE_ONLY/FLYDSL_RUNTIME_ENABLE_CACHE.
+  # AOTRITON_FLYDSL_KERNEL_ROOT is passed explicitly because, unlike ROCM_PATH, it has
+  # NO fallback (flyc_bootstrap._find_flydsl_checkout_root raises if unset) and a ninja
+  # build subprocess is not guaranteed to inherit the configure-time environment.
+  #
+  # Each flyc HSACO is also appended to the SAME AOTRITON_HSACO_RECORD (Bare.targets)
+  # the Triton loop wrote above, so the existing aotriton_v2_compile target (DEPENDS
+  # ${ALL_HSACOS}, defined below) covers both backends' hsacos -- required because
+  # ADD_FROM_CLUSTER_RULES gives every per-functional .aks2 rule a blanket
+  # `DEPENDS aotriton_v2_compile`, including flyc's own .aks2 rows, which are folded
+  # into the EXISTING Bare.cluster/Bare.flatzip files rather than into rule files of
+  # their own.
+  set(ALL_FLYC_HSACOS "")
+  if(EXISTS "${AOTRITON_V2_BUILD_DIR}/Fly.compile")
+    file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Fly.compile" FLYC_RULES ENCODING UTF-8)
+    list(LENGTH FLYC_RULES NUM_FLYC_RULES)
+    message("Fly.compile ${NUM_FLYC_RULES} rules read")
+    foreach(RULE IN LISTS FLYC_RULES)
+      list(POP_FRONT RULE VENVPYTHON)
+      list(POP_FRONT RULE HSACO)
+      list(POP_FRONT RULE DESC)
+      list(POP_FRONT RULE KERNEL_NAME)
+      list(POP_FRONT RULE TGTGPU)
+      list(POP_FRONT RULE SIGNATURE)
+      list(POP_FRONT RULE HINTS)
+      add_custom_command(OUTPUT "${HSACO}"
+        COMMAND ${CMAKE_COMMAND} -E env
+        VIRTUAL_ENV=${VENV_DIR}
+        AOTRITON_FLYDSL_KERNEL_ROOT=${AOTRITON_FLYDSL_KERNEL_ROOT}
+        "${VENVPYTHON}" -m aotriton.flyc_compile
+        "${DESC}" --kernel_name "${KERNEL_NAME}" --target "${TGTGPU}"
+        --signature "${SIGNATURE}" --hints "${HINTS}"
+        --out_path "${HSACO}" --timeout "${AOTRITON_GPU_BUILD_TIMEOUT}"
+        # Same switch the Triton loop passes, and for the same reason: without
+        # it the driver answers a timeout or an exception by writing a
+        # zero-length .hsaco and exiting 0, aks2 packs the empty blob, and the
+        # failure surfaces only as hipModuleLoadData on hardware.
+        ${HSACO_COMPILE_OPTION}
+        DEPENDS aotriton_venv_flydsl
+        VERBATIM)
+      list(APPEND ALL_FLYC_HSACOS "${HSACO}")
+      # DO NOT USE list(APPEND) on the on-disk record. Same quadratic-growth
+      # caveat as the Triton loop above.
+      file(APPEND "${AOTRITON_HSACO_RECORD}" "${HSACO}" "\n")
+    endforeach()
+    add_custom_target(aotriton_v3_flyc_compile ALL DEPENDS ${ALL_FLYC_HSACOS})
+  endif()
+
   ## Add a virtual target
   ### FIXME: AOTRITON_HSACO_RECORD file is duplicated from Bare.compile
   file(STRINGS "${AOTRITON_HSACO_RECORD}" ALL_HSACOS ENCODING UTF-8)
