@@ -35,11 +35,28 @@ class FamilyArtifacts:
         self.flyc_kernels = flyc_kernels
 
 
+def _metro_shell(compiled, op_name, metro_name):
+    """The MetroShell a cite target's `<op_name>.<metro_name>` pair names, or None.
+
+    A cite writes the DECLARED backend name (`@ati.cite('op_attn_bwd.triton_split')`)
+    while `compiled.metros` is keyed by the metro def's own name, so the op_name
+    segment is load-bearing rather than informational: it selects which operator's
+    backend list to read the name off. It used to be documented as informational,
+    on the assumption that a backend name is unique within a family -- which stops
+    being true as soon as two operators each have a backend called 'flyc'."""
+    op_shell = compiled.operators.get(op_name)
+    if op_shell is None:
+        return None
+    for _index, kind, key, name in op_shell.backend_refs:
+        if kind == 'metro' and name == metro_name:
+            return compiled.metros.get(key)
+    return None
+
+
 def _metro_subkernel_names(compiled, op_name, metro_name):
     """The concrete sub-kernel def-names of a whole-metro cite target, or None if the
-    metro is not in this family. The op_name segment is informational (the metro name
-    is the backend enum name, unique within the family)."""
-    metro_shell = compiled.metros.get(metro_name)
+    metro is not in this family."""
+    metro_shell = _metro_shell(compiled, op_name, metro_name)
     if metro_shell is None:
         return None
     return list(metro_shell.subkernel_names)
@@ -91,14 +108,14 @@ def _build_kernels(compiled):
         kd = built.get(kernel_name)
         return kd
 
-    def metro_lookup(_family, _op_name, metro_name, _citer):
+    def metro_lookup(_family, op_name, metro_name, _citer):
         """A whole-metro cite donor set: the metro's sub-kernels EXCEPT the citer
         (header path — the citer inherits the others' argument surface, never its
         own), in @ati.hints.union_precedence priority order (key kernels first) so a
         colliding operand's binding comes from the canonical key kernel, not whichever
         sub-kernel happens to come first in call order. Each donor is its cite-resolved
         clone (already built, since build order puts donors before the citer)."""
-        metro_shell = compiled.metros.get(metro_name)
+        metro_shell = _metro_shell(compiled, op_name, metro_name)
         if metro_shell is None:
             return None
         donors = []
@@ -212,26 +229,29 @@ def _build_metros(compiled, built_kernels, flycs):
     same header/implementation split that lets a kernel cite a metro containing
     it."""
     from aotriton.template_instantiation.builder import build_metro
-    built_kernels = {**built_kernels, **flycs}
+    kernel_map = {**built_kernels, **flycs}
     out = {}
-    for name, shell in compiled.metros.items():
-        out[name] = build_metro(shell.plan, built_kernels, name,
-                                family=compiled.family)
+    for key, shell in compiled.metros.items():
+        # Keyed by the metro def name (what _backend_objs resolves against), but
+        # NAMED by the declared backend name -- that is what becomes kMetro_*, and
+        # it stays per-operator on purpose.
+        out[key] = build_metro(shell.plan, kernel_map, shell.name,
+                               family=compiled.family)
     return out
 
 
 def _backend_objs(op_shell, built_kernels, metros, affines, flycs):
     """Resolve an operator shell's index-sorted backend refs to built IR objects."""
     objs = []
-    for index, kind, name in op_shell.backend_refs:
+    for index, kind, key, _name in op_shell.backend_refs:
         if kind == 'metro':
-            objs.append(metros[name])
+            objs.append(metros[key])
         elif kind == 'kernel':
-            objs.append(built_kernels[name])
+            objs.append(built_kernels[key])
         elif kind == 'flyc':
-            objs.append(flycs[name])
+            objs.append(flycs[key])
         else:
-            objs.append(affines[name])
+            objs.append(affines[key])
     return objs
 
 
@@ -278,7 +298,7 @@ def _build_operators(compiled, built_kernels, metros, affines, flycs):
     for name in compiled.op_order:
         shell = compiled.operators[name]
         decl = shell.decl
-        indices = [i for i, _k, _n in shell.backend_refs]
+        indices = [i for i, _k, _key, _n in shell.backend_refs]
         assert indices == list(range(len(indices))), (
             f'operator {name!r} backend indices must be dense 0..n-1, got {indices}')
         backends = _backend_objs(shell, built_kernels, metros, affines, flycs)

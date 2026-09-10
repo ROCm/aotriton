@@ -128,6 +128,14 @@ class MetroShell:
     """A parsed @ati.metro_kernel backend: its MetroSpec + the backend enum-name. The
     sub-kernel NAMES (plan Call strings) are the relocation the linker binds.
 
+    `name` is the DECLARED backend name (`@ati.backend(i, metro_fwd, 'triton')` ->
+    'triton'), which becomes the MetroKernel's NAME and hence its `kMetro_*` enum
+    member. It is NOT this shell's registry key: the declared name is per-OPERATOR
+    and two operators may reasonably use the same one, while `compiled.metros` is
+    per-FAMILY. `visit_metro` keys on the metro def's own name instead; see
+    `_metro_shell` in linker.py for how a cite target's `<op>.<backend>` pair maps
+    back to it.
+
     `precedence` is the optional @ati.hints.union_precedence order (highest priority
     first) used when sub-kernel bindings collide — for a whole-metro @ati.cite gap
     donor and the operator params-struct union. When absent it is the call order."""
@@ -154,8 +162,19 @@ class MetroShell:
 
 class OperatorShell:
     """A parsed @ati.operator: the passive OperatorDecl + its backend refs as
-    (index, kind, name) where kind is 'metro' | 'kernel' | 'affine'. default_kdesc +
-    struct are DERIVED by the linker (A1/A3); the surface declares neither."""
+    (index, kind, key, name), where kind is 'metro' | 'kernel' | 'affine' | 'flyc'.
+
+    `key` is what the linker looks the built object up by -- the metro/kernel/
+    affine/flyc's own name. `name` is what @ati.backend DECLARED, and is the
+    user-facing vocabulary.
+
+    The two were one field until it emerged that only visit_metro used the
+    declared name at all; visit_kernel/affine/flyc silently substituted the
+    object's own, so `@ati.backend(1, aiter_fmha_v3_fwd, 'aiter')` produced
+    'aiter_fmha_v3_fwd' and a rename of a non-metro backend did nothing.
+
+    default_kdesc + struct are DERIVED by the linker (A1/A3); the surface
+    declares neither."""
 
     __slots__ = ('name', 'decl', 'backend_refs')
 
@@ -171,7 +190,7 @@ class CompiledFamily:
     def __init__(self, family):
         self.family = family
         self.kernels = {}      # def-name -> KernelShell
-        self.metros = {}       # backend enum-name -> MetroShell
+        self.metros = {}       # metro def-name -> MetroShell (see MetroShell.name)
         self.affines = {}      # affine NAME -> AffineDecl
         self.flycs = {}        # flyc NAME -> FlycDecl, reached as an @ati.backend
         self.operators = {}    # op-name -> OperatorShell
@@ -245,27 +264,67 @@ class FamilyCompiler:
             assert sub_def is not None, (
                 f'{self.family}: metro {b.name!r} calls sub-kernel '
                 f'{sub_name!r} not found in the aot module')
-            self._record_kernel(sub_def)
-        if b.name not in self.compiled.metros:
-            self.compiled.metros[b.name] = MetroShell(b.name, plan, sub_names,
-                                                      precedence=plan.precedence)
-        return (b.index, 'metro', b.name)
+            # Dispatched, not assumed: a metro step is whatever kind of
+            # kernel the def describes. Calling the triton recorder directly
+            # would assert on a KernelDecl, so a metro with a flyc step failed
+            # on that assert rather than anywhere informative.
+            self.record(sub_def, f'metro {b.name!r} sub-kernel')
+        # Keyed by the metro DEF's name, not the declared backend name: the
+        # registry is per-family while a declared name is per-operator, so two
+        # operators each declaring a backend called 'flyc' would otherwise
+        # collide -- and collide SILENTLY, because the `not in` guard below
+        # would keep the first registration and hand the second operator the
+        # first one's metro. Returned as the ref's `key` so _backend_objs
+        # resolves the right shell; `b.name` stays the ref's `name`, which is
+        # what becomes the MetroKernel's NAME and its kMetro_* enum member.
+        key = plan.name
+        if key not in self.compiled.metros:
+            self.compiled.metros[key] = MetroShell(b.name, plan, sub_names,
+                                                   precedence=plan.precedence)
+        return (b.index, 'metro', key, b.name)
 
     def visit_kernel(self, b):
-        kname = self._record_kernel(b.obj)
-        return (b.index, 'kernel', kname)
+        return (b.index, 'kernel', self.record_kernel(b.obj), b.name)
 
     def visit_affine(self, b):
-        adecl = b.obj.__ati_node__   # AffineDecl
-        if adecl.name not in self.compiled.affines:
-            self.compiled.affines[adecl.name] = adecl
-        return (b.index, 'affine', adecl.name)
+        return (b.index, 'affine', self.record_affine(b.obj), b.name)
 
     def visit_flyc(self, b):
-        node = b.obj.__ati_node__   # FlycDecl
+        return (b.index, 'flyc', self.record_flyc(b.obj), b.name)
+
+    # --- recording, dispatched by node kind ----------------------------------
+    #
+    # Two shapes reach a description: an operator BACKEND (a Backend record with
+    # an index, handled by visit_*) and a metro STEP (a bare def, handled here).
+    # Both need the same recording, so it lives in record_* and both dispatch on
+    # _node_kind. Keeping the two apart is what let visit_metro hard-code the
+    # triton recorder.
+
+    def record(self, def_obj, what):
+        """Record `def_obj` as whatever kind it is; return its NAME."""
+        kind = _node_kind(def_obj)
+        recorder = getattr(self, f'record_{kind}', None)
+        assert recorder is not None, (
+            f'{self.family}: {what} is a {kind!r} description, which cannot be '
+            f'recorded in this position')
+        return recorder(def_obj)
+
+    def record_metro(self, _def_obj):
+        raise AssertionError(
+            'a metro cannot be a step of another metro; @ati.metro_kernel '
+            'bodies call concrete kernels only')
+
+    def record_affine(self, def_obj):
+        adecl = def_obj.__ati_node__   # AffineDecl
+        if adecl.name not in self.compiled.affines:
+            self.compiled.affines[adecl.name] = adecl
+        return adecl.name
+
+    def record_flyc(self, def_obj):
+        node = def_obj.__ati_node__   # FlycDecl
         if node.name not in self.compiled.flycs:
             self.compiled.flycs[node.name] = node
-        return (b.index, 'flyc', node.name)
+        return node.name
 
     # --- metro sub-plan descent (Call | Cond tree) ---------------------------
 
@@ -282,7 +341,7 @@ class FamilyCompiler:
 
     # --- kernel recording (dedup by name) ------------------------------------
 
-    def _record_kernel(self, def_obj):
+    def record_kernel(self, def_obj):
         """Record a triton-kernel def as a KernelShell (no-op if already recorded).
         Returns the kernel def-name."""
         from aotriton.template_instantiation.specs.finalize import get_kernel_decl
