@@ -54,6 +54,33 @@ def fmt_nheads(val):
 def cdiv(x, div):
     return (x + div - 1) // div
 
+def narrow_to_prime(t, prime_d, poison=float('nan')):
+    """A `[..., :prime_d]` view whose slack is poisoned, or `t` unchanged.
+
+    **The 8xD input contract, handed to the kernel the way the contract says.**
+    Loads and stores are 8 columns wide, so the kernel touches `ceil8(hdim)`
+    columns of every row; `flash_attn_func_gfx950.py` states that and `_args`
+    enforces it, but the C++ launcher never calls `_args`, so nothing checks it
+    on the shipped path. A tightly-packed odd width -- which is what
+    `torch.rand(3, 5, 1033, 57)` gives you, and the reason `PRIME_HEADDIMS` was
+    disabled in `_core_test_backward.py` -- has no slack and is outside the
+    contract, so testing one proves nothing about the kernel.
+
+    The tensor is therefore ALLOCATED at the 8-multiple, by the ordinary
+    pipeline, and only narrowed here: extent `prime_d`, pitch `ceil8(prime_d)`
+    visible through the strides alone. That is exactly what an AOTriton caller
+    with a padded buffer passes, and `T4` reads both numbers off the tensor.
+
+    The slack is filled with NaN rather than a large finite value on purpose:
+    `0 * x` kills a finite leak and cannot kill a NaN, so a masking bug that
+    multiplies by zero instead of discarding still shows up.
+    """
+    if t is None or prime_d is None or t.shape[-1] == prime_d:
+        return t
+    assert t.shape[-1] >= prime_d, f'{tuple(t.shape)} is narrower than prime_hdim {prime_d}'
+    t[..., prime_d:] = poison
+    return t[..., :prime_d]
+
 def calc_checksums(tensors):
     def checksum(t):
         if t is None:
@@ -170,11 +197,15 @@ class SdpaContext(object):
                  bias_type=None, storage_flip=None, device='cuda', fillnan=False,
                  prng_seed=0x9be9_98d4_cf17_5339,
                  with_backward=True,
+                 prime_hdim=None,
                  ):
         real_device = 'cpu' if AOTRITON_TORCH_ONLY_USE_CPU else device
         self._real_device = real_device
         self._prng_seed = prng_seed
         self._target_device = device
+        # `int` or `(qk, vo)`; see `narrow_to_prime`. `D_HEAD` stays the
+        # ALLOCATED width and must be the 8-multiple that covers it.
+        self._prime_hdim = prime_hdim
         self._input_shapes = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype, bias_type, storage_flip, device, fillnan, prng_seed, with_backward)
         self._create_inputs()
         # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
@@ -249,6 +280,21 @@ class SdpaContext(object):
             if b is not None:
                 b = torch.transpose(b, x, y)
         dout = rng(odims) if with_backward else None
+
+        # **The narrowing step, after every allocation and before anything
+        # reads these.** The reference is built from `dev_tensors`, so it has to
+        # see the same columns the kernel does -- narrowing here rather than at
+        # the launch keeps the two from disagreeing about what the head dim is.
+        # Outputs are narrowed on the other side, at their own allocation; see
+        # `AttentionExtraArgs.prime_hdim`.
+        if self._prime_hdim is not None:
+            pq, pv = ((self._prime_hdim, self._prime_hdim)
+                      if isinstance(self._prime_hdim, int) else self._prime_hdim)
+            q = narrow_to_prime(q, pq)
+            k = narrow_to_prime(k, pq)
+            v = narrow_to_prime(v, pv)
+            dout = narrow_to_prime(dout, pv)
+
         self.dev_tensors = ( q, k, v, b )
         self.ddev_tensors = tuple([dout])
 

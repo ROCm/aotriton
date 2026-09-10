@@ -30,6 +30,8 @@ from _common_test import (
     AOTRITON_TORCH_ONLY_USE_CPU,
     fmt_hdim,
     fmt_nheads,
+    narrow_to_prime,
+    cdiv,
 )
 
 RECORD_ADIFFS_TO = os.getenv('RECORD_ADIFFS_TO', default=None)
@@ -109,13 +111,20 @@ elif BWD_IMPL == 3:
     M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216, 248, 408]
 else:
     assert False, f'Unsupported BWD_IMPL {BWD_IMPL}'
-# Prime head dimensions must be disabled
-# PyTorch allocate tensors compactly by default. For example:
-#   print(torch.rand((3,5,1033, 57), dtype=torch.float16, device='cuda').stride())
-#   (294405, 58881, 57, 1)
-# GPU kernels are unable to support unaligned memory access in any performant way
-# PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 83, 113, 149, 179, 211, 241] + ([401] if not BWD_IMPL else [])
-# Multiple of 8 head dimensions are tested instead
+# **Prime head dimensions, re-enabled with the allocation the contract wants.**
+# They were disabled because PyTorch allocates compactly by default --
+#   torch.rand((3, 5, 1033, 57)).stride() == (294405, 58881, 57, 1)
+# -- and the kernel's input contract is 8xD: loads and stores are 8 columns
+# wide, so it touches `ceil8(hdim)` columns of every row and needs the caller to
+# own them. A compact 57 has no slack, so such a tensor is outside the contract
+# and testing one measures the harness rather than the kernel.
+#
+# `_do_test_op_bwd` now allocates an off-grid D_HEAD at `ceil8(D_HEAD)` and
+# passes a `[..., :D_HEAD]` view: extent odd, pitch on the grid, exactly what an
+# AOTriton caller with a padded buffer hands over. The slack is filled with NaN,
+# so a mask that multiplies by zero instead of discarding is caught rather than
+# passing quietly. Multiples of 8 are unaffected.
+PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 83, 113, 149, 179, 211, 241] + ([401] if not BWD_IMPL else [])
 REGULAR_SEQLEN = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
 REGULAR_SEQLEN_2K = [8, 16, 32, 64, 128, 256, 512, 1024, 2048]  # OOM when test with bias
 PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919]
@@ -141,13 +150,17 @@ def round_list_to_8x(data_list):
 if SMALL_HEADDIM_ONLY:
     POT_HEADDIMS = remove_larger_than(POT_HEADDIMS, 192)
     NPOT_HEADDIMS = remove_larger_than(NPOT_HEADDIMS, 192)
-    # PRIME_HEADDIMS = remove_larger_than(PRIME_HEADDIMS, 192)
+    # Re-enabled with PRIME_HEADDIMS itself: while that list was dead the filter
+    # was pointless, but test_prime_hdim parametrises over it again. Unfiltered,
+    # the two shards BOTH run the whole prime matrix, and 401 (allocated at 408)
+    # lands on the shard that exists to avoid exactly that memory pressure.
+    PRIME_HEADDIMS = remove_larger_than(PRIME_HEADDIMS, 192)
     M8_HEADDIMS = remove_larger_than(M8_HEADDIMS, 192)
 
 if LARGE_HEADDIM_ONLY:
     POT_HEADDIMS = remove_not_larger_than(POT_HEADDIMS, 192)
     NPOT_HEADDIMS = remove_not_larger_than(NPOT_HEADDIMS, 192)
-    # PRIME_HEADDIMS = remove_not_larger_than(PRIME_HEADDIMS, 192)
+    PRIME_HEADDIMS = remove_not_larger_than(PRIME_HEADDIMS, 192)
     M8_HEADDIMS = remove_not_larger_than(M8_HEADDIMS, 192)
 
 ALL_INT_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS + M8_HEADDIMS
@@ -295,8 +308,26 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
         transpose = storage_flip
     else:
         transpose = (1, 2) if storage_flip else None
-    ctx = SdpaContext(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
-                      bias_type=bias_type, storage_flip=transpose, device=device_str, fillnan=True)
+    # **A head dim off the 8-multiple grid is allocated on it and narrowed.**
+    # The kernel's input contract is 8xD -- loads and stores are 8 columns wide,
+    # so it touches `ceil8(hdim)` columns of every row and the caller must own
+    # them. `torch.rand(3, 5, 1033, 57)` does not: PyTorch packs it compactly,
+    # there is no slack, and the kernel walks into the next row. That is why
+    # `PRIME_HEADDIMS` above was disabled, and it was the right call for a
+    # compact tensor.
+    #
+    # It is the wrong call for the kernel. Allocating at `ceil8(D_HEAD)` and
+    # handing over a `[..., :D_HEAD]` view gives the extent and the pitch the
+    # contract actually describes -- and `narrow_to_prime` poisons the slack
+    # with NaN, so a masking bug shows up rather than passing quietly. Nothing
+    # changes for a D_HEAD already on the grid.
+    _prime_hdim = D_HEAD if (HDIM_QK % 8 or HDIM_VO % 8) else None
+    _alloc_hdim = D_HEAD if _prime_hdim is None else (
+        8 * cdiv(HDIM_QK, 8) if isinstance(D_HEAD, int)
+        else (8 * cdiv(HDIM_QK, 8), 8 * cdiv(HDIM_VO, 8)))
+    ctx = SdpaContext(BATCH, N_HEADS, _alloc_hdim, seqlen_q, seqlen_k, dtype,
+                      bias_type=bias_type, storage_flip=transpose, device=device_str, fillnan=True,
+                      prime_hdim=_prime_hdim)
     ctx.create_ref_inputs()
     ctx.set_require_grads(skip_dq=SKIP_DQ, skip_dk_dv=SKIP_DK_DV, skip_db=SKIP_DB)
     q, k, v, b = ctx.dev_tensors
@@ -307,6 +338,10 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
                              return_autotune=False,
                              fillnan=True,
                              illaddr_handler=exit_pytest,
+                             # O and every gradient carry the same slack the
+                             # inputs do; `torch.empty_like` on a narrowed view
+                             # would compact it away.
+                             prime_hdim=_prime_hdim,
                              )
     tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
     dropout_mask = encoded_softmax >= 0 if encoded_softmax is not None else None
@@ -340,7 +375,12 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
         print(f'{adiff=} (SKIP_BWD=1, backward not run)')
         return seqlen_q * seqlen_k * HDIM_MAX
 
-    dout = torch.rand_like(tri_out)
+    # dO is read column-wise by the backward, so it needs the slack too --
+    # `rand_like` on the narrowed `tri_out` would hand over a compact row.
+    dout = narrow_to_prime(torch.rand(tuple(tri_out.shape[:-1]) + (8 * cdiv(HDIM_VO, 8),),
+                                      device=tri_out.device, dtype=tri_out.dtype),
+                           _prime_hdim if _prime_hdim is None else HDIM_VO) \
+        if _prime_hdim is not None else torch.rand_like(tri_out)
     if PROBE_UNSUPPORTED:
         try:
             ctx.compute_backward(tri_out, dout)

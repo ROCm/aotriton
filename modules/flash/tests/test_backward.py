@@ -26,6 +26,7 @@ from _core_test_backward import (
     BWDOP_ids,
     fmt_nheads,
     fmt_hdim,
+    PRIME_HEADDIMS,
     core_test_logsumexp_scaling,
     core_test_op_bwd,
     core_test_large_bf16_nan_values,
@@ -99,6 +100,25 @@ if FOR_RELEASE > 0 and BWD_IMPL != 2:  # AITER ASM does not expose GQA
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)
     def test_gqa(request, gpu_id, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
         bias_type = None
+        args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+        core_test_op_bwd(request, args, device=gpu_id)
+
+if FOR_RELEASE >= 0:
+    # The 8xD input contract, exercised. See PRIME_HEADDIMS in
+    # _core_test_backward.py for why these were disabled and what changed.
+    @pytest.mark.parametrize('BATCH', [3])
+    @pytest.mark.parametrize('N_HEADS', [5])
+    @pytest.mark.parametrize('D_HEAD', PRIME_HEADDIMS, ids=fmt_hdim)
+    @pytest.mark.parametrize('seqlen_q', [257])
+    @pytest.mark.parametrize('seqlen_k', [571])
+    @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
+    @pytest.mark.parametrize('dropout_p', [0.0])
+    @pytest.mark.parametrize('dtype', DTYPES)
+    @pytest.mark.parametrize('sm_scale', ['l1'])
+    @pytest.mark.parametrize('storage_flip', [False, True])
+    @pytest.mark.parametrize('bias_type', [None], ids=['BiasOff'])
+    @pytest.mark.parametrize('BWDOP', BWDOP_ids)
+    def test_prime_hdim(request, gpu_id, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
         core_test_op_bwd(request, args, device=gpu_id)
 

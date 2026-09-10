@@ -22,6 +22,7 @@ if not IGNORE_BACKWARD_IMPORT:
     )
 from collections import namedtuple
 from dataclasses import dataclass
+from _common_test import narrow_to_prime, cdiv
 from typing import Callable
 
 FWD_IMPL = int(os.getenv('FWD_IMPL', default='0'))
@@ -95,6 +96,34 @@ class AttentionExtraArgs:
     fillnan : bool = False
     return_logsumexp : bool = False
     illaddr_handler : Callable = empty_handler
+    # `int` or `(qk, vo)`: the real head dim, when the inputs carry the 8xD
+    # slack the kernel's contract asks for. The OUTPUTS have to carry it too --
+    # the kernel writes `ceil8(hdim)` columns of O and of every gradient -- and
+    # `torch.empty_like` on a narrowed input silently compacts back to the odd
+    # width, which is the trap this field exists to avoid. Allocate at the
+    # 8-multiple, then narrow with `narrow_to_prime`. See that function.
+    prime_hdim : int | tuple[int, int] | None = None
+
+
+def _alloc_like_padded(t, prime_d):
+    """`empty_like(t)`, but keeping the 8xD slack a narrowed input implies.
+
+    `torch.empty_like` on a `[..., :73]` view returns a COMPACT `(..., 73)`
+    tensor -- pitch 73, no slack -- and the kernel then writes `ceil8(73) = 80`
+    columns of it, over the next row. Allocating at the 8-multiple and narrowing
+    gives the output the same shape-73/pitch-80 view the input has.
+    """
+    if prime_d is None or t is None:
+        return torch.empty_like(t) if t is not None else None
+    full = torch.empty(tuple(t.shape[:-1]) + (8 * cdiv(prime_d, 8),),
+                       device=t.device, dtype=t.dtype)
+    return narrow_to_prime(full, prime_d)
+
+
+def _prime_pair(attn_extra_args):
+    p = attn_extra_args.prime_hdim
+    return (None, None) if p is None else ((p, p) if isinstance(p, int) else p)
+
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -127,7 +156,14 @@ class _attention(torch.autograd.Function):
         # assert Lk in {16, 32, 64, 128}
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]
-        o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
+        _pqk, _pvo = _prime_pair(attn_extra_args)
+        if _pvo is None:
+            o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
+        else:
+            # Allocated at the 8-multiple and narrowed, so O carries the same
+            # slack the inputs do; see `_alloc_like_padded`.
+            o = narrow_to_prime(torch.empty((q.shape[0], q.shape[1], q.shape[2], 8 * cdiv(_pvo, 8)),
+                                            device=q.device, dtype=q.dtype), _pvo)
 
         # def round_to_16x(x):
         #     return ((x + 15) // 16) * 16
@@ -258,10 +294,11 @@ class _attention(torch.autograd.Function):
         return_autotune = ctx.return_autotune
         # if q.shape[-1] <= 32:
         # do = do.contiguous()
-        dq = torch.empty_like(q)
+        _pqk, _pvo = _prime_pair(attn_extra_args)
+        dq = _alloc_like_padded(q, _pqk)
         dq_acc = lazy_dq_acc(q)  # dq_acc only supports BHSD; lazy_dq_acc always produces BHSD to satisfy this.
-        dk = torch.empty_like(k)
-        dv = torch.empty_like(v)
+        dk = _alloc_like_padded(k, _pqk)
+        dv = _alloc_like_padded(v, _pvo)
         db = torch.empty_like(b) if b is not None else None
         delta = lazy_delta(L)
         seqlen_q = q.shape[2]
