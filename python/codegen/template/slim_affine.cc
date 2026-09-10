@@ -24,6 +24,11 @@ std::tuple<int, int>
 }
 
 
+// A functional axis wired to a context helper has its godel digit read from
+// `scratch_params.` rather than `args.` (codegen/interface.py). Slim affine
+// kernels never compute a godel number at all -- no autotune_table, no
+// head-dim axis, no binning step to redirect -- so that redirection neither
+// helps nor breaks them; it simply does not reach here.
 hipError_t
 [[context_class_name]]::lookup_optimal(Gpu gpu) {
     auto [arch_number, mod_number] = get_archmod_number(gpu);
