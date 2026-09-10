@@ -34,7 +34,15 @@ def fast_philox(philox_seed, philox_offset, M : tl.constexpr, N : tl.constexpr, 
                         "fast_philox expects tl.randint4x returns uint32. "
                         "The behavior has been changed in https://github.com/triton-lang/triton/pull/6832")
         tl.static_assert(PHILOX_RN_PER_OFFSET == 4)
-        r32 = tl.join(tl.join(r0, r1), tl.join(r2, r3)).reshape(M, N * 4).to(tl.int32, bitcast=True)
+        # The natural-looking (r0,r1),(r2,r3) would lay the columns out as [r0, r2, r1, r3].
+        # Swapping the middle two inputs cancels that and yields the required
+        # [r0, r1, r2, r3].
+        #
+        # This is required to match Philox PRNGs written in other programming
+        # languages (otherwise a swizzle is needed).
+        #
+        # Pinned by test_dropout_layout.py; no mask-derived test can catch this.
+        r32 = tl.join(tl.join(r0, r2), tl.join(r1, r3)).reshape(M, N * 4).to(tl.int32, bitcast=True)
     return r32
 
 @triton.jit
