@@ -460,6 +460,29 @@ class RootGenerator(object):
         rules = d.get("rules", [])
         self._altwheels = {}
         self._venvpython = {}
+        # NOT IMPLEMENTED, and deliberately recorded rather than left to be
+        # rediscovered: today `value` must be a YAML scalar -- either
+        # "python:<interpreter>" (use it, install nothing) or a wheel path, and
+        # either way `self._altwheels[name] = Path(value)`. A venv therefore maps
+        # to exactly one thing, so a per-arch flydsl pin (one arch wanting a
+        # different flydsl version from another) is not expressible; every venv
+        # gets the same third_party/flydsl-compiler.txt pin instead.
+        #
+        # A backward-compatible extension is specified in
+        # `docs/AltWheelExample.yaml`, which carries both forms side by side and
+        # the full rule. In outline: branch on the YAML node type. The scalar
+        # branch is unchanged and stays *wheels-only* -- a non-"python:" scalar
+        # must end in ".whl" and anything else must RAISE, pointing at the
+        # sequence form, because CMake's verbatim `pip install ${WHEEL}` would
+        # otherwise install a stray requirement string by accident and let the two
+        # forms drift. A *sequence* value is the new part: several pip requirement
+        # lines installed in order. `[value]` is not a safe stand-in, since the
+        # validation differs per branch.
+        #
+        # `CMakeLists.txt` parses this same file with an inline Python one-liner
+        # that assumes one wheel per venv (`list(POP_FRONT)` over alternating
+        # name/wheel pairs); it needs a matching update in lockstep, or a list
+        # value silently corrupts that 2-periodic alternation.
         for name, value in venvs.items():
             if value.startswith("python:"):
                 # Use the provided Python executable directly
