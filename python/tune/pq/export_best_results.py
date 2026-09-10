@@ -295,6 +295,76 @@ def insert_row(db: sqlite3.Connection, kernel: str,
 
 
 # ---------------------------------------------------------------------------
+# Half-precision cross-patching
+# ---------------------------------------------------------------------------
+
+DTYPE_COL = 'inputs$Q_dtype'
+
+# Ordered (missing, borrow_from) pairs. Only the two half-precision types
+# substitute for each other: they share element size, so the tuned tile shapes,
+# waves_per_eu and num_warps that make up a row transfer directly. float32 is
+# deliberately absent -- it has different occupancy and would not.
+DTYPE_FALLBACK_PAIRS = (
+    ('torch.float16',  'torch.bfloat16'),
+    ('torch.bfloat16', 'torch.float16'),
+)
+
+
+def patch_missing_dtypes(db: sqlite3.Connection, kernel: str, cols: list) -> int:
+    """Fill in a half-precision dtype that has no rows by copying the other one.
+
+    A GPU tuned only for bfloat16 leaves the float16 lookups with nothing to
+    find, and vice versa. Rather than leave those holes, copy the rows across
+    with only the dtype column rewritten.
+
+    Scoped per gpu, and only where the target is entirely absent for that gpu.
+    Per gpu because coverage is per gpu -- one architecture having both dtypes
+    says nothing about another. Only when entirely absent because a partially
+    tuned dtype is real data being extended in the wrong direction: mixing
+    measured rows with borrowed ones would leave no way to tell which is which,
+    and the measured half is the half worth trusting.
+
+    Returns the number of rows added.
+    """
+    names = _col_names(cols)
+    if DTYPE_COL not in names:
+        return 0
+
+    table = f'FLASH${kernel}'
+    col_str = ', '.join(f'"{c}"' for c in names)
+    # The dtype column is the one value being rewritten; everything else is
+    # carried over untouched, so the borrowed row is identical to its source
+    # apart from the label.
+    select_str = ', '.join('?' if c == DTYPE_COL else f'"{c}"' for c in names)
+
+    added = 0
+    gpus = [r[0] for r in db.execute(f'SELECT DISTINCT "gpu" FROM "{table}"')]
+    for gpu in gpus:
+        present = {
+            row[0]: row[1]
+            for row in db.execute(
+                f'SELECT "{DTYPE_COL}", COUNT(*) FROM "{table}" '
+                f'WHERE "gpu" = ? GROUP BY 1', (gpu,))
+        }
+        for missing, borrow_from in DTYPE_FALLBACK_PAIRS:
+            if present.get(missing, 0) or not present.get(borrow_from, 0):
+                continue
+            cur = db.execute(
+                f'INSERT OR IGNORE INTO "{table}" ({col_str}) '
+                f'SELECT {select_str} FROM "{table}" '
+                f'WHERE "gpu" = ? AND "{DTYPE_COL}" = ?',
+                (missing, gpu, borrow_from),
+            )
+            if cur.rowcount > 0:
+                added += cur.rowcount
+                logger.warning(
+                    'PATCHED %s %s: %d %s rows copied from %s (no measured '
+                    '%s data for this gpu)',
+                    table, gpu, cur.rowcount, missing, borrow_from, missing)
+    return added
+
+
+# ---------------------------------------------------------------------------
 # Main export logic
 # ---------------------------------------------------------------------------
 
@@ -371,15 +441,24 @@ def export(conn_params: dict, output_path: Path, arch: str | None = None) -> Non
             insert_row(db, iface_name, cols, values)
             counts[iface_name] = counts.get(iface_name, 0) + 1
 
+        # After every measured row is in, not during: the decision is "does
+        # this gpu have any rows of that dtype at all", which is only knowable
+        # once the loop has finished.
+        patched = sum(patch_missing_dtypes(db, kernel, cols)
+                      for kernel, (cols, _unique) in KERNEL_SCHEMAS.items())
+
         db.commit()
 
     for iface_name, n in sorted(counts.items()):
         logger.info('  %-20s: %d rows', iface_name, n)
 
     total = sum(counts.values())
+    if patched:
+        logger.warning('  %d row(s) were CROSS-PATCHED between float16 and '
+                       'bfloat16 and are not measured data', patched)
     logger.info(
-        'Done: %d rows exported to %s, %d skipped in %.1fs',
-        total, output_path, skipped, time.monotonic() - t0,
+        'Done: %d rows exported to %s (%d cross-patched), %d skipped in %.1fs',
+        total, output_path, patched, skipped, time.monotonic() - t0,
     )
     logger.info('Next step: .tune/bin/sancheck <workdir>')
 
@@ -450,15 +529,21 @@ def export_op(conn_params: dict, output_path: Path, arch: str | None = None) -> 
             insert_row(db, table_name, cols, values)
             counts[table_name] = counts.get(table_name, 0) + 1
 
+        patched = sum(patch_missing_dtypes(db, table_name, cols)
+                      for table_name, (cols, _unique) in OP_SCHEMAS.items())
+
         db.commit()
 
     for table_name, n in sorted(counts.items()):
         logger.info('  %-20s: %d rows', table_name, n)
 
     total = sum(counts.values())
+    if patched:
+        logger.warning('  %d row(s) were CROSS-PATCHED between float16 and '
+                       'bfloat16 and are not measured data', patched)
     logger.info(
-        'Done: %d rows exported to %s, %d skipped in %.1fs',
-        total, output_path, skipped, time.monotonic() - t0,
+        'Done: %d rows exported to %s (%d cross-patched), %d skipped in %.1fs',
+        total, output_path, patched, skipped, time.monotonic() - t0,
     )
     logger.info('Next step: .tune/bin/sancheck <workdir> --tuning_mode op')
 
