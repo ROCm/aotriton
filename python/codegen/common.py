@@ -13,9 +13,18 @@ class LaunchArg:
     KernelDescription.iter_launch_arguments() and consumed when building the
     prepare_arguments() function. `kind` selects the access expression form:
 
-      'tensor_ptr'    -> params.<aname>->kparam_data_ptr()
-      'tensor_stride' -> params.<tensor>->kparam_stride(<dim>)
-      'scalar'        -> CAST(&params.<aname>)
+      'tensor_ptr'      -> params.<aname>->kparam_data_ptr()
+      'tensor_stride'   -> params.<tensor>->kparam_stride(<dim>)
+      'scalar'          -> CAST(&params.<aname>)
+      'context_helper'  -> CAST(&context.scratch_params.<aname>)
+
+    'context_helper' is for an argument declared with
+    `wires_to=ati.context_helper(...)`: the value is COMPUTED by a hand-written
+    member function on the context class rather than read off an operator
+    operand. The launch-argument vector takes addresses, and a function's return
+    value has no address, so the context carries a mutable `scratch_params`
+    struct with one member per helper; the helper is evaluated into that member
+    once per lookup and the vector points at it for the duration of the launch.
 
     `expr` is the fully-rendered C++ expression; `aname` is the kernel argument
     name (used for the trailing comment + per-functional constexpr lookup)."""
