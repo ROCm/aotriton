@@ -461,7 +461,15 @@ def core_test_logsumexp_scaling(dtype):
                              return_logsumexp=True)
     tri_out, _, L = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
     ref_tensor = torch.full_like(L, REF_VALUE)
-    assert torch.allclose(L, ref_tensor)
+    # allclose's default rtol of 1e-5 is fp32's tolerance, but L is the log of a
+    # sum of exponentials of bf16/fp16 inputs, and the exp2 and the accumulation
+    # order differ between backends. Measured relative error against REF_VALUE:
+    # 1.5e-06 for fp16 and 1.3e-05 for bf16, identically on the Triton reference
+    # and on both flyc backends, so bf16 fails the default by a hair on all of
+    # them. 1e-4 covers that with room to spare and is still three orders of
+    # magnitude tighter than what this test is here to catch, which is a base-2
+    # versus base-e mixup in the LSE scaling -- an error of a factor of 1.44.
+    assert torch.allclose(L, ref_tensor, rtol=1e-4)
 
 def core_test_large_bf16_nan_values(hdim):
     real_device = "cuda" if not AOTRITON_TORCH_ONLY_USE_CPU else "cpu"

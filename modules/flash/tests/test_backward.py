@@ -35,17 +35,25 @@ from _core_test_backward import (
 if FOR_RELEASE >= 0:
     @pytest.mark.parametrize('BATCH', [3])
     @pytest.mark.parametrize('N_HEADS', [5, (10, 2)] if BWD_IMPL != 2 else [5], ids=fmt_nheads)
-    @pytest.mark.parametrize('D_HEAD', [8, 64, 184, (24, 152), (120, 8)], ids=fmt_hdim)
+    @pytest.mark.parametrize('D_HEAD', [8, 64, 184, (24, 152), (120, 8), (64, 32)], ids=fmt_hdim)
     @pytest.mark.parametrize('seqlen_q', [11, 523, 2048])
     @pytest.mark.parametrize('seqlen_k', [31, 337, 1063])
-    @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
+    # pairing causal and bias_type to eliminate programmatic skips.
+    # Gated on BWD_IMPL != 2 for the same reason line 71 below is: AITER ASM
+    # does not support bias, so the matrix-bias pair has to come out of the
+    # list rather than be skipped inside the test -- the point of pairing is
+    # that there is no programmatic skip left here.
+    @pytest.mark.parametrize('causal,bias_type',
+                             [(False, None), (False, 'matrix'), (True, None)]
+                             if BWD_IMPL != 2 else [(False, None), (True, None)],
+                             ids=['CausalOff-BiasOff', 'CausalOff-BiasOn', 'CausalOn-BiasOff']
+                             if BWD_IMPL != 2 else ['CausalOff-BiasOff', 'CausalOn-BiasOff'])
     @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
     @pytest.mark.parametrize('dtype', DTYPES)
     @pytest.mark.parametrize('sm_scale', ['l1'])
     @pytest.mark.parametrize('storage_flip', [True])
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)
-    def test_fast(request, gpu_id, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
-        bias_type = None
+    def test_fast(request, gpu_id, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
         core_test_op_bwd(request, args, device=gpu_id)
 
