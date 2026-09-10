@@ -111,7 +111,7 @@ class RootGenerator(object):
         # per generator; the lists are what the per-item generators iterate. The
         # descriptions live under <root_dir>/modules (passed explicitly, no guessing).
         (self._triton_kernels, self._dispatcher_operators,
-         self._affine_kernels) = Linker(self._args.root_dir / 'modules').link_all_families()
+         self._affine_kernels, self._flyc_kernels) = Linker(self._args.root_dir / 'modules').link_all_families()
 
     def generate(self):
         if self._args.selective:

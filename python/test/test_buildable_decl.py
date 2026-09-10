@@ -39,7 +39,7 @@ def _a_kernel_decl():
     """A real, cite-resolved decl off the linker -- not a hand-built one, so the
     clone under test is the object the builder is actually handed."""
     from aotriton.codegen.linker import Linker
-    kernels, _o, _a = Linker(_MODULES).link_all_families()
+    kernels, _o, _a, _f = Linker(_MODULES).link_all_families()
     return kernels[0].kernel_decl
 
 

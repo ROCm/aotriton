@@ -27,11 +27,12 @@ from graphlib import TopologicalSorter, CycleError
 class FamilyArtifacts:
     """The linked output for one family: the lists the codegen consumers iterate."""
 
-    def __init__(self, family, kernels, operators, affine_kernels):
+    def __init__(self, family, kernels, operators, affine_kernels, flyc_kernels):
         self.family = family
         self.kernels = kernels
         self.operators = operators
         self.affine_kernels = affine_kernels
+        self.flyc_kernels = flyc_kernels
 
 
 def _metro_subkernel_names(compiled, op_name, metro_name):
@@ -139,9 +140,79 @@ def _build_affines(compiled):
     return out
 
 
-def _build_metros(compiled, built_kernels):
-    """Build every MetroKernel, binding its sub-kernels by name to built kdescs."""
+def _build_flycs(compiled, built_kernels):
+    """Build every flyc KernelDescription from its parsed FlycDecl.
+
+    Runs BEFORE `_build_operators`, so a flyc kernel can be one of an operator's
+    `@ati.backend`s. What comes out is a HEADER: the argument surface is known,
+    the functional space is not, because that space belongs to the operator that
+    has not been built yet. `infer_shared_iface` supplies the other half
+    afterwards, and `_check_flycs_bound` verifies it did.
+
+    This is also where a flyc kernel's own `@ati.cite` is activated: the same
+    `resolve_cites` + `build_kernel` pipeline `_build_kernels` runs for Triton,
+    with `inherit_tune=False`. A flyc kernel must not inherit the cited Triton
+    kernel's `tune`; it has no perf-tuning concept of its own to receive it, and
+    silently acquiring one would give it a perf space it cannot enumerate.
+
+    `built_kernels` -- the already-built Triton {def-name -> KernelDescription}
+    dict -- is the `lookup` donor set. A flyc cite target like
+    'op_attn_fwd.triton.attn_fwd' is a 3-segment (kernel-level) cite, resolved
+    through the flat `lookup(family, kernel_name)` path, never through
+    `metro_lookup`/`op_lookup`."""
+    from aotriton.template_instantiation.ir.flyc import KernelDescription
+    from aotriton.template_instantiation.ir.ops.cite import resolve_cites
+    from aotriton.template_instantiation.builder import build_kernel
+
+    def lookup(_family, kernel_name):
+        return built_kernels.get(kernel_name)
+
+    out = {}
+    for name, decl in compiled.flycs.items():
+        spec = decl.clone()
+        resolve_cites(spec, family=compiled.family, lookup=lookup,
+                      inherit_tune=False)
+        bk = build_kernel(spec)
+        kdesc = KernelDescription(bk, family=compiled.family,
+                                  source_path=decl.source_path,
+                                  tensors=spec.tensors, scalars=spec.scalars,
+                                  builder_fn=decl.fn, hints_cls=decl.hints_cls)
+        kdesc.desc_path = decl.desc_path
+        kdesc.kernel_decl = spec       # the cite-resolved clone
+        out[name] = kdesc
+    return out
+
+
+def _check_flycs_bound(compiled, flycs):
+    """Every flyc kdesc must have been bound to its operator by
+    `infer_shared_iface`, which walks operator -> backends.
+
+    A flyc kernel that is not any operator's `@ati.backend` is never reached by
+    that walk and ends linking with no functional space, no params struct and no
+    identity to borrow. Fail here, where the cause is one sentence, rather than
+    at whichever delegating property a code generator touches first."""
+    for name, kdesc in flycs.items():
+        assert kdesc.SHARED_IFACE is not None, (
+            f'flyc kernel {name!r} is not reachable as an @ati.backend of any '
+            f'operator in family {compiled.family!r}, so nothing binds its '
+            f'functional space. Add it with @ati.backend(<index>, {name}, '
+            f'<enum name>) on the operator it belongs to.')
+
+
+def _build_metros(compiled, built_kernels, flycs):
+    """Build every MetroKernel, binding its sub-kernels by name to built kdescs.
+
+    The lookup spans triton AND flyc kernels: a metro step is whatever kind of
+    kernel the description names. The two name spaces are disjoint (both key on
+    the def name within a family), so one merged dict is the whole binding.
+
+    flyc kdescs are only half-built here -- `infer_shared_iface` binds their
+    functional space later -- but `lower_plan` stores the object and reads
+    nothing off it, so a metro can hold one before it is finished. That is the
+    same header/implementation split that lets a kernel cite a metro containing
+    it."""
     from aotriton.template_instantiation.builder import build_metro
+    built_kernels = {**built_kernels, **flycs}
     out = {}
     for name, shell in compiled.metros.items():
         out[name] = build_metro(shell.plan, built_kernels, name,
@@ -149,7 +220,7 @@ def _build_metros(compiled, built_kernels):
     return out
 
 
-def _backend_objs(op_shell, built_kernels, metros, affines):
+def _backend_objs(op_shell, built_kernels, metros, affines, flycs):
     """Resolve an operator shell's index-sorted backend refs to built IR objects."""
     objs = []
     for index, kind, name in op_shell.backend_refs:
@@ -157,6 +228,8 @@ def _backend_objs(op_shell, built_kernels, metros, affines):
             objs.append(metros[name])
         elif kind == 'kernel':
             objs.append(built_kernels[name])
+        elif kind == 'flyc':
+            objs.append(flycs[name])
         else:
             objs.append(affines[name])
     return objs
@@ -198,7 +271,7 @@ def _derive_struct_cfields(backends, default_kdesc):
     return build_merged_struct_cfields(contributors)
 
 
-def _build_operators(compiled, built_kernels, metros, affines):
+def _build_operators(compiled, built_kernels, metros, affines, flycs):
     """Build every Operator with derived default_kdesc + struct (A1/A3)."""
     from aotriton.template_instantiation.ir.operator import Operator
     out = {}
@@ -208,7 +281,7 @@ def _build_operators(compiled, built_kernels, metros, affines):
         indices = [i for i, _k, _n in shell.backend_refs]
         assert indices == list(range(len(indices))), (
             f'operator {name!r} backend indices must be dense 0..n-1, got {indices}')
-        backends = _backend_objs(shell, built_kernels, metros, affines)
+        backends = _backend_objs(shell, built_kernels, metros, affines, flycs)
         default_kdesc = _derive_default_kdesc(backends)
         struct_cfields = _derive_struct_cfields(backends, default_kdesc)
         out[name] = Operator(
@@ -262,34 +335,49 @@ class Linker:
 
     def link_family(self, aot_module, family):
         """Pass 2 for one family: compile (Pass 1) then resolve + build the final
-        tree. Returns FamilyArtifacts(kernels, operators, affine_kernels)."""
+        tree. Returns FamilyArtifacts(kernels, operators, affine_kernels,
+        flyc_kernels)."""
         from aotriton.template_instantiation.ir.ops.infer import infer_shared_iface
 
         compiled = self.parser.compile_family(aot_module, family)
         built_kernels = _build_kernels(compiled)
         _check_unresolved_arguments(built_kernels)
         affines = _build_affines(compiled)
-        metros = _build_metros(compiled, built_kernels)
-        operators = _build_operators(compiled, built_kernels, metros, affines)
+        # flyc kdescs are built here, BEFORE the operators, so a flyc kernel can
+        # be an operator backend. They are HEADERS at this point -- argument
+        # surface known, functional space not yet bound -- which is the same
+        # split that lets bwd_kernel_fuse cite three kernels that are still
+        # being linked. infer_shared_iface below supplies the other half.
+        flycs = _build_flycs(compiled, built_kernels)
+        metros = _build_metros(compiled, built_kernels, flycs)
+        operators = _build_operators(compiled, built_kernels, metros, affines,
+                                     flycs)
 
         op_list = [operators[n] for n in compiled.op_order]
+        # Binds every kernel that borrows an operator's surface, flyc included:
+        # a flyc kdesc's SHARED_IFACE IS its functionals_source, so the same
+        # `sub.SHARED_IFACE = op` walk finishes it. See _build_flycs for why it
+        # is only half-built until here.
         infer_shared_iface(op_list)
+        _check_flycs_bound(compiled, flycs)
 
         return FamilyArtifacts(
             family,
             kernels=list(built_kernels.values()),
             operators=op_list,
-            affine_kernels=list(affines.values()))
+            affine_kernels=list(affines.values()),
+            flyc_kernels=list(flycs.values()))
 
     def link_all_families(self):
         """Discover every family under module_dir, link each, and concatenate the
         artifacts the generator consumes. Returns (kernels, operators,
-        affine_kernels)."""
-        kernels, operators, affine_kernels = [], [], []
+        affine_kernels, flyc_kernels)."""
+        kernels, operators, affine_kernels, flyc_kernels = [], [], [], []
         for family in self.parser.discover_families():
             aot = self.parser.load_family_aot(family)
             arts = self.link_family(aot, family)
             kernels.extend(arts.kernels)
             operators.extend(arts.operators)
             affine_kernels.extend(arts.affine_kernels)
-        return kernels, operators, affine_kernels
+            flyc_kernels.extend(arts.flyc_kernels)
+        return kernels, operators, affine_kernels, flyc_kernels

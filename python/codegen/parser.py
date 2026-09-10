@@ -173,6 +173,7 @@ class CompiledFamily:
         self.kernels = {}      # def-name -> KernelShell
         self.metros = {}       # backend enum-name -> MetroShell
         self.affines = {}      # affine NAME -> AffineDecl
+        self.flycs = {}        # flyc NAME -> FlycDecl, reached as an @ati.backend
         self.operators = {}    # op-name -> OperatorShell
         self.op_order = []     # operator NAMEs in declared order
 
@@ -186,6 +187,7 @@ def _node_kind(ref):
     from aotriton.template_instantiation.specs.metro import MetroSpec
     from aotriton.template_instantiation.specs.kernel import KernelDecl
     from aotriton.template_instantiation.specs.affine import AffineDecl
+    from aotriton.template_instantiation.specs.flyc import FlycDecl
     node = getattr(ref, '__ati_node__', None)
     if not isinstance(node, AtiNode):
         raise AssertionError(
@@ -194,6 +196,7 @@ def _node_kind(ref):
     if isinstance(node, MetroSpec):  return 'metro'
     if isinstance(node, KernelDecl): return 'kernel'
     if isinstance(node, AffineDecl): return 'affine'
+    if isinstance(node, FlycDecl):   return 'flyc'
     raise AssertionError(f'unrecognised AtiNode type {type(node)!r} on {ref!r}')
 
 
@@ -257,6 +260,12 @@ class FamilyCompiler:
         if adecl.name not in self.compiled.affines:
             self.compiled.affines[adecl.name] = adecl
         return (b.index, 'affine', adecl.name)
+
+    def visit_flyc(self, b):
+        node = b.obj.__ati_node__   # FlycDecl
+        if node.name not in self.compiled.flycs:
+            self.compiled.flycs[node.name] = node
+        return (b.index, 'flyc', node.name)
 
     # --- metro sub-plan descent (Call | Cond tree) ---------------------------
 

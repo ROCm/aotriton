@@ -21,7 +21,7 @@ from aotriton.gpu_targets import cluster_gpus
 
 @lru_cache(maxsize=1)
 def _families():
-    _k, _o, _a = Linker(FAKE_MODULES).link_all_families()
+    _k, _o, _a, _f = Linker(FAKE_MODULES).link_all_families()
     return SimpleNamespace(kernels=_k, operators=_o, affine_kernels=_a)
 
 

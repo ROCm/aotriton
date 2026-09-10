@@ -168,7 +168,7 @@ def test_bwd_kernel_fuse_three_cite_stack_resolves():
     real two-pass Linker after the collector refactor."""
     from aotriton.codegen.linker import Linker
     fakefamily = Path(__file__).resolve().parent / 'fakefamily'
-    kernels, _ops, _aff = Linker(fakefamily).link_all_families()
+    kernels, _ops, _aff, _flyc = Linker(fakefamily).link_all_families()
     kdesc = next(k for k in kernels if k.NAME == 'bwd_kernel_fuse')
     fields = {cf.aname for cf in kdesc.func_cfields}
     # 'Out' is declared locally; 'Q' is a gap filled from the cited sub-kernels.
