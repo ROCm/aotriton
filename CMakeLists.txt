@@ -118,6 +118,27 @@ option(AOTRITON_BUILD_FOR_TUNING "Build all GPU kernels and set -DAOTRITON_BUILD
 set(AOTRITON_BUILD_FOR_TUNING_BUT_SKIP_KERNEL "" CACHE STRING "Use tuning database for certain kernels when AOTRITON_BUILD_FOR_TUNING=ON")
 option(AOTRITON_ENABLE_FP32_INPUTS "Enable FP32 support." ON)
 option(AOTRITON_NOIMAGE_MODE "Only build C++ Shim part. Kernel image builds are disabled" OFF)
+# Allow setting AOTRITON_DEBUG_SKIP_TRITON_KERNELS from env var, accept CMake values
+# (1/ON/TRUE), overriden by explicit -D
+set(_AOTRITON_SKIP_TRITON_DEFAULT OFF)
+if(DEFINED ENV{AOTRITON_DEBUG_SKIP_TRITON_KERNELS})
+  set(_AOTRITON_SKIP_TRITON_ENV "$ENV{AOTRITON_DEBUG_SKIP_TRITON_KERNELS}")
+  if(_AOTRITON_SKIP_TRITON_ENV)
+    set(_AOTRITON_SKIP_TRITON_DEFAULT ON)
+  endif()
+endif()
+option(AOTRITON_DEBUG_SKIP_TRITON_KERNELS "DEBUG ONLY. Make the code generator emit no Triton image rules, so other backends (flyc, aiter) can be iterated on without paying for tens of thousands of Triton compiles. C++ shims and the Triton wheel install are unaffected; other backends still reach aotriton.images normally. Settable via -D or the environment variable of the same name. Produces an INCOMPLETE image set: do not ship the result." ${_AOTRITON_SKIP_TRITON_DEFAULT})
+# Reported AFTER option() resolves, and reporting the EFFECTIVE value: printing the
+# environment's contribution beforehand reads as "this is what you are getting" in
+# precisely the case where it is not -- `AOTRITON_DEBUG_SKIP_TRITON_KERNELS=1 cmake
+# -DAOTRITON_DEBUG_SKIP_TRITON_KERNELS=OFF`, where the -D wins and the env is inert.
+if(DEFINED ENV{AOTRITON_DEBUG_SKIP_TRITON_KERNELS})
+  message(STATUS
+    "[AOTriton] AOTRITON_DEBUG_SKIP_TRITON_KERNELS is "
+    "${AOTRITON_DEBUG_SKIP_TRITON_KERNELS} (environment supplied "
+    "'${_AOTRITON_SKIP_TRITON_ENV}' as the default; -D or a value cached by an "
+    "earlier configure of this build directory takes precedence).")
+endif()
 option(AOTRITON_INHERIT_SYSTEM_SITE_TRITON "Use system site packages and verify triton availability instead of building from source" OFF)
 # No plan to support network based pip install
 set(AOTRITON_USE_LOCAL_TRITON_WHEEL "" CACHE STRING "Substitute install from third_party/triton with install from local pip wheel package.")

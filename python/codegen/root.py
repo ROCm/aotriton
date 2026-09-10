@@ -29,6 +29,38 @@ import yaml
 # DO NOT USE Path.absolute(), which does not resolve '..' in the path
 REL_PYTHON = Path(os.path.abspath(sys.executable)).relative_to(Path(sys.exec_prefix))
 
+# DEBUG ONLY. Omit every Triton image rule from the generated Bare.* files, so a build can
+# iterate on another backend without paying for tens of thousands of Triton compiles. The
+# C++ shims are still generated, so the library still builds -- it just cannot serve any
+# Triton-backed operator, which is why this must never be used for a shipped build.
+#
+# Set by v3src/CMakeLists.txt from -DAOTRITON_DEBUG_SKIP_TRITON_KERNELS, normalised there
+# to 1/0 for the bool(int(...)) idiom this codebase uses (see utils/log.py). It is read
+# from the environment rather than taken as a flag so that the worker subprocesses
+# launch_workers() spawns inherit it without threading it through argv.
+AOTRITON_DEBUG_SKIP_TRITON_KERNELS = bool(int(os.getenv('AOTRITON_DEBUG_SKIP_TRITON_KERNELS', default='0')))
+
+
+# Triton kernels that keep their image rules even under the flag above, because a
+# non-Triton backend cannot run without them and FlyDSL has no equivalent:
+#
+#   bwd_preprocess                          produces Delta = rowsum(dO * O), which
+#       both flyc backward kernels read and neither produces
+#   debug_simulate_encoded_softmax          the dropout-mask debug step a flyc
+#       forward metro deliberately keeps on Triton
+#
+# Skipping these does not give the "Triton operators do not work, everything else
+# does" the flag promises -- it gives a flyc metro with a missing step, i.e. an
+# empty .zip and a runtime failure.
+#
+# A hand-maintained list, matched by name: this is a debugging aid, not a
+# dependency solver. Add a name when a metro starts borrowing another Triton
+# kernel.
+AOTRITON_SKIP_TRITON_KEEP_KERNELS = frozenset({
+    'bwd_preprocess',
+    'debug_simulate_encoded_softmax',
+})
+
 def _shard_path(selective: str) -> Path:
     # --selective may be a glob pattern such as flash/affine/*; keep glob
     # metacharacters out of host filesystem paths used only for worker shards.
@@ -135,9 +167,14 @@ class RootGenerator(object):
         for k in kerns:
             ksg = KernelShimGenerator(self._args, k, parent_repo=None)
             ksg.generate()
+            shims += ksg.shim_files
+            # AOTRITON_DEBUG_SKIP_TRITON_KERNELS: emit the C++ shim but no image
+            # rules, except for the kernels another backend needs to run at all.
+            if (AOTRITON_DEBUG_SKIP_TRITON_KERNELS
+                    and k.NAME not in AOTRITON_SKIP_TRITON_KEEP_KERNELS):
+                continue
             hsacos = ksg.this_repo.get_data('hsaco')
             hsaco_for_kernels.append((k, hsacos))
-            shims += ksg.shim_files
 
         # TODO: Fix this for Windows
         # On Windows, you get "KeyError: 'validator_function'"
@@ -262,9 +299,12 @@ class RootGenerator(object):
 
         shard_names = ['Bare.shim', 'Bare.compile', 'Bare.cluster', 'Affine.cluster', 'Bare.flatzip']
         out_files = {name: args.build_dir / name for name in shard_names}
-        # Truncate output files before appending
+        # Truncate output files before appending.
+        # AOTRITON_DEBUG_SKIP_TRITON_KERNELS=1 generates empty files, and touch ensures
+        # the file won't be missing in this case.
         for path in out_files.values():
             path.unlink(missing_ok=True)
+            path.touch()
         for item in items:
             shard_dir = args.build_dir / 'Bare.shards' / _shard_path(item)
             for name, out_path in out_files.items():

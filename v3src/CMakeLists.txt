@@ -97,6 +97,19 @@ else()
   set(AOTRITON_ENABLE_FP32 0)
 endif()
 
+# Normalise ON/OFF to 1/0 here to make python `bool(int(os.getenv(...)))`
+# idiom work.
+if(AOTRITON_DEBUG_SKIP_TRITON_KERNELS)
+  set(AOTRITON_DEBUG_SKIP_TRITON_KERNELS_ENV 1)
+  message(WARNING
+    "[AOTriton] AOTRITON_DEBUG_SKIP_TRITON_KERNELS=ON: the generator will emit no Triton "
+    "image rules, so aotriton.images is INCOMPLETE and the resulting library cannot serve "
+    "any Triton-backed operator at runtime. Debugging aid for iterating on other backends; "
+    "never ship the result.")
+else()
+  set(AOTRITON_DEBUG_SKIP_TRITON_KERNELS_ENV 0)
+endif()
+
 if(NOT AOTRITON_NOIMAGE_MODE)
   find_package(Git REQUIRED)
   ## Handle aiter.txt
@@ -144,10 +157,16 @@ if(NOT AOTRITON_NOIMAGE_MODE)
 endif()
 
 ## Generate Bare.* files and shim files
+# AOTRITON_DEBUG_SKIP_TRITON_KERNELS is passed to the generator rather than acted on
+# here: it makes the generator omit Triton image rules from Bare.compile/Bare.cluster,
+# so the rule files this build reads below are simply empty and every loop over them
+# does nothing. No build-system special-casing, and the flatzip stage keeps working for
+# whatever non-Triton backends did emit rules.
 execute_process(
 COMMAND ${CMAKE_COMMAND}
 -E env VIRTUAL_ENV=${VENV_DIR}
 AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
+AOTRITON_DEBUG_SKIP_TRITON_KERNELS=${AOTRITON_DEBUG_SKIP_TRITON_KERNELS_ENV}
 "${VENV_BIN_PYTHON}" -X utf8 -m aotriton.generate
 --target_gpus ${EFFECTIVE_TARGET_GPUS}
 --build_dir "${AOTRITON_V2_BUILD_DIR}"
@@ -354,6 +373,7 @@ if(AOTRITON_BUILD_FOR_TUNING)
     COMMAND ${CMAKE_COMMAND}
     -E env VIRTUAL_ENV=${VENV_DIR}
     AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
+    AOTRITON_DEBUG_SKIP_TRITON_KERNELS=${AOTRITON_DEBUG_SKIP_TRITON_KERNELS_ENV}
     "${VENV_BIN_PYTHON}" -m aotriton.generate
     --target_gpus ${EFFECTIVE_TARGET_GPUS}
     --build_dir "${AOTRITON_V2_BUILD_DIR}"
