@@ -55,7 +55,31 @@ else:
     def lazy_delta(L):
         return torch.empty_like(L)
 
-FORCE_FWD_BACKEND = V3_API and (os.getenv('FWD_IMPL', default=None) is not None)
+# The NAME of the pinned forward backend ('triton' / 'flyc' / ...), or None when
+# FWD_IMPL is unset. A name rather than a flag: callers ask
+# `FORCE_FWD_BACKEND == 'flyc'`, which reads as what it means and needs no new
+# variable per backend. Still falsy when nothing is pinned, so the existing
+# `if FORCE_FWD_BACKEND:` guards are unchanged.
+#
+# The mapping comes from OpAttnFwdBackend.by_index, generated beside the
+# constants from the same @ati.backend list, so the index, the enum and the name
+# cannot disagree -- and this index already moved once, when flyc was added.
+FORCE_FWD_BACKEND = None
+if V3_API and os.getenv('FWD_IMPL', default=None) is not None:
+    from pyaotriton.v3.flash import OpAttnFwdBackend
+    try:
+        FORCE_FWD_BACKEND = OpAttnFwdBackend.by_index[FWD_IMPL]
+    except KeyError:
+        # This runs at MODULE IMPORT, so a bare KeyError here is a collection
+        # error on every test in every file that imports this module, reported
+        # as `KeyError: 7` with no mention of FWD_IMPL. The index is supplied by
+        # a human or by .ci/run-test.sh, and the set of valid ones is a property
+        # of the library that was built, so say both.
+        raise ValueError(
+            f'FWD_IMPL={FWD_IMPL} is not a backend index of op_attn_fwd in this '
+            f'build. Valid indices: '
+            f'{ {k: v for k, v in sorted(OpAttnFwdBackend.by_index.items())} }'
+        ) from None
 # When FORCE_BWD_BACKEND is True, backward_v3 sets extargs.force_backend_index = BWD_IMPL
 FORCE_BWD_BACKEND = V3_API and (os.getenv('BWD_IMPL', default=None) is not None)
 
