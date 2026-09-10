@@ -4,18 +4,19 @@
 """PON (Plain / Python Object Notation): a safe, separator-configurable
 `k=v;k=v` wire format, and the one home for both reading and writing it.
 
-`aotriton.tune.utils.parse_python` -- the format's original reader -- splits a
-line on `;`, then on `=` with `maxsplit=1`, then calls `eval(v)` on the value.
-Two problems: the `eval` can execute arbitrary code, and the separator is
-hard-coded to `;`, so a caller whose wire separator is something else (a
-space-separated `--signature`/`--hints` command line, say) cannot reuse it and
-writes its own splitter instead.
+The format's original reader was `aotriton.tune.utils.parse_python`, removed
+here: it split a line on `;`, then on `=` with `maxsplit=1`, then called
+`eval(v)` on the value. Two problems. The `eval` executed whatever the wire
+carried -- and this wire carries text a worker process wrote, not text a human
+typed. And the separator was hard-coded to `;`, so a caller whose wire
+separator is something else (a space-separated `--signature`/`--hints` command
+line, say) could not reuse it and wrote its own splitter instead.
 
 `parse_pon` keeps the shape and fixes both: `ast.literal_eval` accepts exactly
 the forms build inputs use -- ints, floats, quoted strings, tuples, lists,
 `True`/`False`/`None` -- and raises on anything else, including bare
-identifiers. `sep` defaults to `';'` so it is a drop-in for every
-`parse_python` caller (`FlashEntry.parse_text`,
+identifiers. `sep` defaults to `';'`, which is what made it a drop-in for the
+two readers that used to call `eval` (`FlashEntry.parse_text`,
 `FlashInputMetadata.parse_text`); a caller with a different wire separator
 passes `sep=' '` and gets the same parser rather than a second spelling of it.
 
