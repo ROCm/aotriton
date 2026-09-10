@@ -7,7 +7,11 @@
 #   1. Generate scratch/decompose_db.sh from scratch/centraldb.sqlite3
 #      via aotriton.database_decompose
 #   2. Execute the generated script to produce
-#      <workdir>/installed/database/amd/<arch>/<family>/<kernel>.sqlite3.tar.xz
+#      <workdir>/installed/database/<family>/database/amd/<arch>/<kernel>.sqlite3.tar.xz
+#
+# That shape is not arbitrary: it mirrors the checked-in
+# modules/<family>/database/amd/<arch>/, which is what
+# v3src/CMakeLists.txt globs for when handed --database_root.
 #
 # Usage:
 #   decomposedb <workdir> [--tuning_mode kernel|op] [--arch <arch>]
@@ -42,6 +46,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 . "$SCRIPT_DIR/../lib/require_aotriton_pkg.sh"
 
 DECOMPOSE_OUTPUT="$WORKDIR/installed/database"
+
+# The per-family subtree the non-sharded artifacts belong in. The sharded ones
+# get their family from the central database's table names (FLASH$attn_fwd ->
+# flash); these do not carry one, so it is named here. Only flash exists today;
+# a second family would make this a loop rather than a constant.
+DECOMPOSE_FAMILY="flash"
+FAMILY_DB_DIR="$DECOMPOSE_OUTPUT/$DECOMPOSE_FAMILY/database"
 mkdir -p "$DECOMPOSE_OUTPUT"
 
 if [ "$TUNING_MODE" = "op" ]; then
@@ -72,9 +83,10 @@ if [ "$TUNING_MODE" = "op" ]; then
     sqlite3 "$OP_DB" "VACUUM;"
 
     echo "Compressing op_database.sqlite3..."
-    tar -cJf "$DECOMPOSE_OUTPUT/op_database.sqlite3.tar.xz" \
+    mkdir -p "$FAMILY_DB_DIR"
+    tar -cJf "$FAMILY_DB_DIR/op_database.sqlite3.tar.xz" \
         -C "$(dirname "$OP_DB")" "$(basename "$OP_DB")"
-    echo "Decompose (op) complete: $DECOMPOSE_OUTPUT/op_database.sqlite3.tar.xz"
+    echo "Decompose (op) complete: $FAMILY_DB_DIR/op_database.sqlite3.tar.xz"
     exit 0
 fi
 
@@ -104,8 +116,10 @@ SCRIPT_OUTPUT="$WORKDIR/scratch/decompose_db.sh"
 # shards in place -- the unscoped wipe would delete them and never regenerate
 # them, since the centraldb this run reads holds only gfx950.
 if [ -n "$ARCH" ]; then
-    echo "Rebuilding only $DECOMPOSE_OUTPUT/amd/$ARCH; other architectures kept."
-    rm -rf "$DECOMPOSE_OUTPUT/amd/$ARCH"
+    echo "Rebuilding only */database/amd/$ARCH under $DECOMPOSE_OUTPUT; other architectures kept."
+    # Globbed over families rather than naming one: the shards are written per
+    # family by database_decompose, so an arch lives once per family.
+    rm -rf "$DECOMPOSE_OUTPUT"/*/database/amd/"$ARCH"
 else
     rm -rf "$DECOMPOSE_OUTPUT"
 fi
@@ -136,9 +150,11 @@ if [ -n "$ARCH" ]; then
     # already installed, and the checked-in baselines must not overwrite an
     # archive a previous run baked. The unscoped path has already deleted the
     # directory above, so there is nothing there to clobber.
-    cp -n "$REPO_ROOT"/modules/flash/database/*.sqlite3.tar.xz "$DECOMPOSE_OUTPUT/"
+    mkdir -p "$FAMILY_DB_DIR"
+    cp -n "$REPO_ROOT"/modules/"$DECOMPOSE_FAMILY"/database/*.sqlite3.tar.xz "$FAMILY_DB_DIR/"
 else
-    cp "$REPO_ROOT"/modules/flash/database/*.sqlite3.tar.xz "$DECOMPOSE_OUTPUT/"
+    mkdir -p "$FAMILY_DB_DIR"
+    cp "$REPO_ROOT"/modules/"$DECOMPOSE_FAMILY"/database/*.sqlite3.tar.xz "$FAMILY_DB_DIR/"
 fi
 
 echo ""

@@ -62,7 +62,14 @@ def write_script(args, dbc, out):
         emitted += 1
         arch = gpu2arch(gpu)
         sql = raw_sql.replace('id INTEGER PRIMARY KEY,', '')
-        db_dir = args.decompose_output / vendor / arch
+        # <family>/database/<vendor>/<arch>/, the same shape as the checked-in
+        # modules/<family>/database/amd/<arch>/. The family level is not
+        # decoration: v3src/CMakeLists.txt resolves an external database with
+        # `file(GLOB "${AOTRITON_TUNING_DATABASE_ROOT}/*/database")`, so a tree
+        # without it matches nothing, the extract-and-compose loop never runs,
+        # and the build fails much later with a missing tuning_database.sqlite3.
+        # `family` was already being computed here and thrown away.
+        db_dir = args.decompose_output / family / 'database' / vendor / arch
         dbf = db_dir / f'{kernel}.sqlite3'
         print(f'mkdir -p {db_dir.as_posix()}', file=out)
         print(f"sqlite3 '{dbf}' << 'EOF'", file=out)
@@ -78,11 +85,14 @@ def write_script(args, dbc, out):
         print(f"echo 'Warning: no gpu in {central_dbf} belongs to arch "
               f"{args.arch}; nothing to decompose.' >&2", file=out)
 
-    db_base = args.decompose_output / VENDOR
+    # Rooted at decompose_output, not at a <vendor> subdirectory: the shards now
+    # live under <family>/database/<vendor>/, so there is no single vendor
+    # directory to walk, and a family added later needs no change here.
+    db_base = args.decompose_output
     print(TARXZ, file=out)
     print(f'''export -f tarxz''', file=out)
-    # Deliberately NOT scoped to amd/<arch> even under --arch. tarxz() removes
-    # each .sqlite3 once it is archived, so a completed earlier run leaves none
+    # Deliberately NOT scoped to <arch> even under --arch. tarxz() removes each
+    # .sqlite3 once it is archived, so a completed earlier run leaves none
     # behind for this find to pick up -- it only ever sees what the INSERTs
     # above just created. Narrowing it would add a path that does not exist yet
     # on a first run, for no gain.

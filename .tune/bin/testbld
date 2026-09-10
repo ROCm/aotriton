@@ -4,7 +4,8 @@
 
 # Build Testing Version of AOTriton Libraries (run INSIDE container)
 #
-# Builds all tuned architectures detected from <workdir>/installed/database/amd/
+# Builds all tuned architectures detected from
+# <workdir>/installed/database/<family>/database/amd/
 # in one cmake pass and installs to <workdir>/installed/test/.
 #
 # This script must be run inside the CELERY_WORKER_IMAGE container.
@@ -54,9 +55,21 @@ source "$(dirname "$CELERY_WORKER_PYTHON")/activate"
 
 DATABASE_ROOT="$WORKDIR/installed/database"
 
+# Architectures live at <root>/<family>/database/amd/<arch>, mirroring the
+# checked-in modules/<family>/database. Enumerated across families rather than
+# from one fixed path: the same arch appears once per family, hence the sort -u.
+# This is also the shape v3src/CMakeLists.txt globs for -- it resolves
+# --database_root with `file(GLOB "${AOTRITON_TUNING_DATABASE_ROOT}/*/database")`
+# and silently extracts nothing when the family level is absent, which surfaces
+# far later as a missing tuning_database.sqlite3 during codegen.
+list_db_archs() {
+    find "$DATABASE_ROOT" -mindepth 4 -maxdepth 4 -type d -path '*/database/amd/*' \
+        -printf '%f\n' 2>/dev/null | sort -u
+}
+
 if [ "$SOURCE_DB" -eq 0 ]; then
-  if [ ! -d "$DATABASE_ROOT/amd" ]; then
-    echo "Error: no sharded database found at $DATABASE_ROOT/amd" >&2
+  if [ -z "$(list_db_archs)" ]; then
+    echo "Error: no sharded database found under $DATABASE_ROOT/*/database/amd/" >&2
     echo "Run .tune/bin/decomposedb first, or pass --source_db to use the source-embedded database." >&2
     exit 1
   fi
@@ -77,8 +90,8 @@ AOTRITON_ROOT="$(realpath "$SCRIPT_DIR/../..")"
 
 # Collect architectures to build
 if [ -n "$SINGLE_ARCH" ]; then
-  if [ "$SOURCE_DB" -eq 0 ] && [ ! -d "$DATABASE_ROOT/amd/$SINGLE_ARCH" ]; then
-    echo "Error: no sharded database found for arch '$SINGLE_ARCH' at $DATABASE_ROOT/amd/$SINGLE_ARCH" >&2
+  if [ "$SOURCE_DB" -eq 0 ] && ! list_db_archs | grep -qx "$SINGLE_ARCH"; then
+    echo "Error: no sharded database found for arch '$SINGLE_ARCH' under $DATABASE_ROOT/*/database/amd/" >&2
     exit 1
   fi
   ARCH_LIST=("$SINGLE_ARCH")
@@ -91,9 +104,9 @@ else
       exit 1
     fi
   else
-    mapfile -t ARCH_LIST < <(ls -1 "$DATABASE_ROOT/amd/")
+    mapfile -t ARCH_LIST < <(list_db_archs)
     if [ "${#ARCH_LIST[@]}" -eq 0 ]; then
-      echo "Error: no architectures found under $DATABASE_ROOT/amd/" >&2
+      echo "Error: no architectures found under $DATABASE_ROOT/*/database/amd/" >&2
       exit 1
     fi
   fi
