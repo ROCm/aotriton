@@ -2,8 +2,8 @@
 
 FlyDSL is a third kernel language AOTriton can build a backend from, alongside
 Triton (`@ati.source`) and aiter (`@ati.affine.*`). This document describes the
-*mechanism* — how a FlyDSL backend is pinned, vendored and compiled — and is
-deliberately kernel-family agnostic. Flash attention is used only as the worked
+*mechanism* — how a FlyDSL backend is pinned, vendored, compiled, generated and
+dispatched — and is deliberately kernel-family agnostic. Flash attention is used only as the worked
 example, because it is the family that exists; nothing here is specific to it,
 and a reader wiring up the next family should not have to read that one's head
 dimension ladders to find the machinery.
@@ -162,3 +162,195 @@ architecture at all — the build host is typically neither of the targets.
    `modules/<family>/tests/`. The latter is reserved for tests of the built
    library; a harness that imports the vendored kernels directly and times them
    is a different thing and should not need an AOTriton build to run.
+
+## Code generation: what the description turns into
+
+Everything above stops at "a signature and a set of hints produce one
+`.hsaco`". The build has to do that for every functional the backend serves,
+package the results, and emit C++ that picks the right one at runtime. That is
+the code generator's half, and it starts with one line on the operator.
+
+### Becoming a backend
+
+A flyc kernel reaches the generator by being an `@ati.backend` of an operator:
+
+```python
+@ati.backend(2, metro_fwd_flyc, 'flyc')
+```
+
+The index is an ABI — it is what a caller passes to force a backend — and the
+name is the vocabulary a caller selects through. Both are published as generated
+constants; see "Dispatch" below.
+
+The backend object may be the flyc kernel itself, or a metro containing it. A
+metro is the right answer whenever the backend needs a step FlyDSL has no
+equivalent for: a metro's steps are bound by kind, so a launcher may mix
+languages, and one metro can hold a FlyDSL kernel and a Triton one and run both
+on one stream.
+
+Linking then binds the operator into the flyc kernel, which is where its
+functional space comes from. A flyc kernel that is not any operator's backend
+fails linking with a message saying so, rather than surviving with no functional
+space and failing later at whichever generated file first asks it a question.
+
+### Narrowing the inherited space
+
+`@ati.disable(when=...)` says which of the operator's functionals this backend
+serves. Put every exclusion in one predicate — architecture included — rather
+than splitting architecture into a separate declaration: when a functional
+unexpectedly has no flyc kernel, one predicate is one place to look.
+
+`@ati.cite('<op>.<backend>.<kernel>')` fills the gaps. Any argument the
+description does not fully claim — a dtype variable, an operand with no strides
+declared — is cloned from the cited kernel by name, so two backends reading the
+same tensor cannot drift on what is in it.
+
+A flyc kernel does not inherit the cited kernel's `tune`. It has no perf space
+of its own to receive one.
+
+### Kernel arguments that are not operands
+
+`wires_to=` on `@ati.tensor` / `@ati.scalar` normally names an operator operand:
+this kernel argument IS that operand, under another name. When the value has to
+be COMPUTED instead, name a host-side function:
+
+```python
+@ati.scalar('num_seqlens', 'i32', wires_to=ati.context_helper('flyc_num_seqlens'))
+```
+
+That declares `int32_t flyc_num_seqlens() const;` on the generated context class
+and leaves the body to the author, in `modules/<family>/csrc/`. It is the same
+generator-declares / author-implements split `grid_calculator()` has always
+used; `ati.context_helper` only lets a description declare more of them.
+
+A helper takes no arguments, because the context already carries everything it
+could need: the operator's params struct, and the GPU `lookup_optimal` was
+called with. Its return type comes from the `@ati.scalar` type on the same line.
+
+Three rules govern them:
+
+* **A rename stays a rename.** If the argument IS an operand under another name,
+  spell it `wires_to='<Operand>'`. A helper for it would be a function whose
+  body is a field read.
+* **A helper must be a pure function of the params struct and the current GPU,
+  and helpers must be mutually independent.** They are all evaluated once, in
+  declaration order, at the top of `lookup_optimal`, before anything else. A
+  helper that read the selected kernel's knobs would get a default-constructed
+  value; one that read another helper's result would get a zero. Neither raises.
+* **The result is cached, not recomputed.** Each helper writes into a `mutable`
+  scratch member on the context, and the launch-argument vector holds that
+  member's address for the duration of the launch. A function's return value has
+  no address, which is why the indirection exists.
+
+### Redirecting a functional axis through a helper
+
+A backend that compiles a subset of an operator's axis has a dispatch problem:
+the caller's value is binned against the OPERATOR's ladder before a backend is
+chosen, and the resulting digit can name a rung this backend never built.
+
+Declaring the axis as a MARKER fixes it:
+
+```python
+@ati.scalar('BLOCK_DMODEL', options=[...],
+            wires_to=ati.context_helper('flyc_block_dmodel'))
+```
+
+`options=` and an explicit type are mutually exclusive, so a marker can never be
+mistaken for a real kernel argument; it is only ever found by axis name. What it
+does is redirect `godel_number()` to read the value the helper computes instead
+of the raw choice.
+
+The generator emits, per architecture, the set of rungs this backend actually
+compiled — derived from the same surviving-functional list that fills the
+dispatch table, never hand-maintained — so the helper rounds against what was
+built rather than against a list that can drift. An arch that compiles nothing
+for this kernel gets an empty row, which is correct: the helper returns a
+sentinel, the digit is rejected, and the launch fails with "unsupported" rather
+than reaching a kernel that does not exist.
+
+Any axis whose value another axis depends on must be derived from the SAME
+decision, not re-derived. A "padded head" flag that disagreed with the rung
+actually selected would be a silently wrong answer rather than a build error.
+
+### What the build emits
+
+Per flyc kernel, per functional it serves:
+
+| artifact | what it is |
+|---|---|
+| `<family>/flyc.<kernel>.{h,cc}` | the C++ shim: context class, helper declarations, launch-argument builders, the dispatch table |
+| `<family>/flytune.<kernel>/<functional>.cc` | one table entry, naming the single compiled image for that functional |
+| a row in `Fly.compile` | the command line that compiles that image, run by ninja |
+| an entry in the existing `.aks2` / flatzip rules | packaging, shared with every other backend |
+
+`Fly.compile` is the only rule file a FlyDSL backend adds. Its images are
+clustered and archived by the same rules Triton's are, so a FlyDSL backend costs
+one new compile rule and no new packaging.
+
+**Nothing in the generator ever invokes the FlyDSL compiler.** A description's
+builder returns `(build, knobs)`: `knobs` is a plain dict, already resolved, and
+`build` is a deferred callable that would construct the FlyDSL module. The
+generator reads `knobs` and two plain strings off `build`, and discards it
+without calling it. Only `flyc_compile`, run by ninja, calls it. Getting that
+wrong would put every kernel compile inside `cmake` configure.
+
+**A flyc kernel has no autotune LUT.** Every functional resolves to exactly one
+image, and what distinguishes that image is the full knob set the description
+chose. It travels in the entry name's `#P` section as a `k=v;k=v` string and is
+read back at runtime by a small parser rather than a generated struct — so
+adding a knob does not change any C++ type.
+
+### Iterating without paying for Triton
+
+`AOTRITON_DEBUG_SKIP_TRITON_KERNELS=1`, settable by `-D` or from the
+environment, makes the generator emit the Triton C++ shims but no Triton image
+rules. A configure+build then compiles only the other backends' kernels, which
+turns "does this backend reach the image archive at all" from an hours-long
+question into a short one.
+
+It produces an INCOMPLETE image set and must never be shipped; the build says so
+at configure time. Triton kernels that another backend's metro borrows are kept
+regardless, by name, because skipping them would not give "Triton operators do
+not work, everything else does" — it would give a metro with a missing step.
+
+## Dispatch: choosing the backend at runtime
+
+The backend index is public ABI. It is generated, per family, into
+`<build>/include/aotriton/<family>/backends.h` from the same list that assigns
+the internal enum, and installed alongside the hand-written headers:
+
+```cpp
+struct OpAttnFwdBackend {
+  static constexpr int32_t kTriton = 0;
+  static constexpr int32_t kAiter  = 1;
+  static constexpr int32_t kFlyc   = 2;
+  static constexpr int32_t Max     = 3;
+};
+```
+
+Named from what `@ati.backend` declared, not from the internal enum name: the
+internal name carries a prefix saying how the backend is assembled, which is the
+generator's business and would change under a caller if a bare kernel were
+re-shaped into a metro. Each struct also gets an X-macro, so a language binding
+lists the two struct names and nothing else — the constant names expand from the
+generator. That is deliberate: three constants in this repository have been
+hand-copied into a second file and drifted.
+
+`Max` is how many backends the LIBRARY was generated with. It is not how many
+are available on the machine in hand — a backend may be architecture-restricted —
+so a tool that probes backends should ask the runtime, not `Max`.
+
+At runtime the dispatch order per launch is fixed:
+
+1. `lookup_optimal(gpu)` captures the GPU, then evaluates every context helper
+   once into the scratch members.
+2. `godel_number()` runs, reading helper-wired axes from those scratch members
+   and everything else off the params struct.
+3. The table entry for `(arch, godel number)` selects the single compiled image,
+   and the knob string is parsed once from it.
+4. `launch()` builds the launch-argument vector — operands from the params
+   struct, computed values from the scratch members — and invokes the kernel
+   with the grid `grid_calculator()` returns.
+
+Steps 1 and 2 are why helper independence matters: everything in step 1 runs
+before anything in steps 2 to 4 exists.
