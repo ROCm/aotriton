@@ -53,6 +53,33 @@ def test_round_trip_custom_separator():
     assert parse_pon(text, sep=' ') == d
 
 
+def test_every_pair_is_space_free_under_a_space_separator():
+    # The invariant is on the PAIR, not on the joined string. With sep=' ' the
+    # joins are spaces by construction, so "no spaces anywhere" is the wrong
+    # assertion -- and the obvious way to write it, exempting sep=' ', disables
+    # the check in the one mode where a stray space is fatal rather than untidy,
+    # because here a space IS the token boundary.
+    d = {'BLOCK_M': 64, 'name': 'transposed', 'shape': (1, 2)}
+    text = render_pon(d, sep=' ')
+    assert parse_pon(text, sep=' ') == d
+    pairs = text.split(' ')
+    assert len(pairs) == len(d), text      # no pair split itself in two
+    for pair in pairs:
+        assert '=' in pair and ' ' not in pair, pair
+
+
+def test_render_pon_rejects_string_with_space_under_any_separator():
+    # Not a property of the ';' wire alone. Under sep=' ' a space-bearing value
+    # is not merely untransportable, it is unparseable: the reader splits mid
+    # string and ast.literal_eval sees an unterminated literal. So the refusal
+    # is unconditional, and a caller wanting a space in a value encodes it
+    # (U+2423, a full-width space) rather than the format growing a quoting
+    # layer every reader would have to implement.
+    for sep in (';', ' ', '|'):
+        with pytest.raises(ValueError, match='spacey'):
+            render_pon({'spacey': 'two words'}, sep=sep)
+
+
 def test_render_pon_quotes_strings():
     # The unified (quoted) dialect: a str value is rendered with its repr(),
     # not bare -- 'transposed', never transposed.

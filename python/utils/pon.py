@@ -31,18 +31,34 @@ Python-repr unescaper could read back. Holding the grammar down to that is what
 lets a reader outside Python strip exactly one pair of surrounding single
 quotes and be done.
 
-**A PON string contains NO SPACES.** This is a hard property of the format, not
-a cosmetic one, and it is why `render_pon` cannot simply call `repr()` on a
-container: `repr((1, 2))` is `'(1, 2)'`, with a space after the comma.
+**EVERY `k=v` PAIR CONTAINS NO SPACES, whatever `sep` is.** That is a hard
+property of the format, not a cosmetic one, and it is why `render_pon` cannot
+simply call `repr()` on a container: `repr((1, 2))` is `'(1, 2)'`, with a space
+after the comma.
 
-The reason is the exaid/testrun wire protocol. `ExaidProxy.write`
-(`python/tune/exaid.py`) joins its arguments with `' '`, and the worker's
-`first()` (`python/tune/testrun.py`) splits the line back apart on `' '`. A
-single embedded space therefore does not corrupt the value -- it silently
-re-tokenizes the whole command, so a later positional argument is read from the
-middle of an earlier one. `render_pon` renders containers with a bare `,`
-separator and rejects any value whose rendering would contain a space,
-including a `str` with a space inside it.
+Note what this does and does not say. The invariant is on the *pair*, not on
+the rendered string: with the default `sep=';'` the whole string is space-free,
+but with `sep=' '` the separators themselves are spaces and the string is a
+command line by construction. Both are the same rule -- no space may appear
+anywhere a reader would not expect a token boundary.
+
+Two consumers pin it from opposite directions. The exaid/testrun wire protocol
+needs the `;` form to survive as ONE token: `ExaidProxy.write`
+(`python/tune/exaid.py`) joins its arguments with `' '` and the worker's
+`first()` (`python/tune/testrun.py`) splits the line back apart on `' '`, so an
+embedded space does not corrupt a value -- it silently re-tokenizes the whole
+command, and a later positional argument is read from the middle of an earlier
+one. The cmake/ninja rule generator needs the `' '` form for the opposite
+reason: `;` is cmake's own list separator when it reads a file, so a
+`;`-joined string would be split by cmake before the rule ever saw it. There
+the space-free pair is what keeps each `k=v` a single cmake token.
+
+**A value may therefore never contain a space, under any `sep`.** This is a
+deliberate limitation and not an oversight: it keeps the strings short and the
+grammar small enough that no consumer needs a quoting layer, and nothing in
+this tree wants a space inside a value. A future caller that genuinely does
+should encode it -- U+2423 OPEN BOX, a full-width space, or a private-use
+codepoint -- rather than teaching every reader to unescape.
 
 **What `render_pon` rejects, and why the list is what it is.** The round-trip
 promise above -- `parse_pon(render_pon(d)) == d` -- is not a property of the
@@ -198,8 +214,10 @@ def _render_value(k, v, sep) -> str:
 def render_pon(d: dict, sep: str = ';') -> str:
     """Render `{k1: v1, k2: v2, ...}` as `"k1=v1<sep>k2=v2..."`.
 
-    `parse_pon(render_pon(d)) == d` for any `d` this function accepts, and the
-    result never contains a space. A `str` value must round-trip through a
+    `parse_pon(render_pon(d)) == d` for any `d` this function accepts, and
+    every `k=v` pair it emits is space-free. The rendered string as a whole is
+    therefore space-free too under the default `sep=';'`, and contains spaces
+    only at the joins when `sep=' '`. A `str` value must round-trip through a
     plain single-quoted `repr()` -- `repr(v) == "'" + v + "'"` -- or this
     raises `ValueError` naming the offending key; that precondition is what
     lets a reader outside Python strip exactly one pair of surrounding single
@@ -214,12 +232,21 @@ def render_pon(d: dict, sep: str = ';') -> str:
     _check_sep(sep)
     for k in d:
         _check_key(k, sep)
-    text = sep.join(f'{k}={_render_value(k, v, sep)}' for k, v in d.items())
-    # Belt and braces: _render_value rejects spaces per value, but a caller
-    # passing sep=' ' would reintroduce them at the joins, and that is legal --
-    # a space-separated --signature string is a command line, not a single
-    # wire token.
-    # Only assert the property the per-value checks are responsible for.
-    assert sep == ' ' or ' ' not in text, (
-        f'render_pon: emitted a space with sep={sep!r}: {text!r}')
-    return text
+    pairs = [f'{k}={_render_value(k, v, sep)}' for k, v in d.items()]
+    # The invariant checked where it is stated: on the PAIR, not on the joined
+    # string. Checking the join instead has to special-case sep=' ' -- and the
+    # obvious spelling of that exemption, `sep == ' ' or ' ' not in text`,
+    # disables the check in precisely the mode where a stray space is fatal
+    # rather than merely untidy, since there a space IS the token boundary.
+    #
+    # `_check_key` and `_render_value` already reject a space on either side of
+    # the `=`, so this cannot fire today. It is here so a rendering path added
+    # around them later cannot quietly emit a pair that re-tokenizes -- and it
+    # raises rather than asserts because `python -O` drops asserts, and a build
+    # running under -O is exactly where corrupt wire text is hardest to trace.
+    for pair in pairs:
+        if ' ' in pair:
+            raise ValueError(
+                f'render_pon: pair {pair!r} contains a space; every k=v pair '
+                f'must be space-free whatever sep is (sep={sep!r})')
+    return sep.join(pairs)
