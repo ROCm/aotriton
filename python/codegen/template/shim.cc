@@ -45,6 +45,10 @@ hipError_t
     // lookup_optimal() as well.
     if (!launch_condition)
       return hipSuccess;
+    // Mirrors flyc.cc, which captures the Gpu before anything that might ask
+    // for it can run. Nothing on this path reads it yet -- see shim.h's
+    // current_gpu.
+    current_gpu = gpu;
 #if AOTRITON_BUILD_FOR_TUNING && [[shared_iface]]
     if (call_options) {
         auto& kctl = *call_options->kernel_fine_control[KERNEL_SLOT_INDEX];
