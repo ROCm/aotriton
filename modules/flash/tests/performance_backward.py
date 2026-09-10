@@ -7,6 +7,7 @@ import pytest
 import torch
 
 import triton
+from _perf_report import run_report
 from collections import defaultdict
 from attn_torch_function import attention, AttentionExtraArgs, BWD_IMPL, V3_API
 
@@ -46,6 +47,53 @@ def _get_modename():
     if BWD_IMPL == 0:
         return 'Split'
 
+# One line per AOTriton backward BACKEND. See performance_forward.py for the
+# rationale; the only difference here is that there are three or four of them
+# (triton_split, triton_fuse, aiter, flyc) rather than two, and that BWD_IMPL's
+# process-wide pin is what this replaces.
+#
+# Only the BACKWARD backend varies. The forward runs once, outside do_bench's
+# timed region, on whichever backend the operator selects -- held constant
+# across lines on purpose, so a difference here is the backward's.
+if V3_API:
+    from pyaotriton.v3.flash import OpAttnBwdBackend
+    BACKEND_INDEX = {name: i for i, name in OpAttnBwdBackend.by_index.items()}
+else:
+    BACKEND_INDEX = {}
+
+def _aotriton_backends():
+    if not V3_API:
+        return ['triton']   # no operator API, so no backend to select
+    published = list(BACKEND_INDEX)
+    want = os.getenv('BACKENDS', default=None)
+    if want is None:
+        return published
+    want = want.split(',')
+    missing = [w for w in want if w not in published]
+    assert not missing, f'BACKENDS={want} names {missing}, but this build publishes {published}'
+    return want
+
+AOTRITON_BACKENDS = _aotriton_backends()
+print(f'{AOTRITON_BACKENDS=}')
+
+_UNIT = 'TFLOPS' if USE_TFLOPS else 'ms'
+_LINE_COLORS = ['red', 'blue', 'green', 'purple', 'orange']
+_LINE_DASHES = ['-', '--', ':']
+
+
+def _line_styles(n):
+    """`n` distinct (color, dash) pairs, cycling instead of truncating.
+
+    The old `_LINE_STYLES[:n]` silently returned FEWER than `n` entries once the
+    backend list outgrew it, and triton.testing zips styles against line_vals
+    positionally -- so the shortfall is an IndexError at plot time, after the
+    whole sweep has run. Backward is already at the five-entry limit (four
+    AOTriton backends plus flash), so one more backend was enough.
+    """
+    return [(_LINE_COLORS[i % len(_LINE_COLORS)],
+             _LINE_DASHES[(i // len(_LINE_COLORS)) % len(_LINE_DASHES)])
+            for i in range(n)]
+
 BATCH, N_HEADS, N_CTX, D_HEAD = 4, 48, 4096, 64
 # BATCH, N_HEADS, N_CTX, D_HEAD = 512, 32, 512, 64
 # vary seq length for fixed head and batch=4
@@ -61,9 +109,10 @@ for mode in ['bwd']:
                 # x_vals=[2**i for i in range(10, 15)],
                 # x_vals=[2**13],
                 line_arg='provider',
-                line_vals=['triton'] + (['flash'] if HAS_FLASH else []),
-                line_names=['Triton(TFLOPS)' if USE_TFLOPS else 'Triton(ms)'] + ([f'Flash-{FLASH_VER}'] if HAS_FLASH else []),
-                styles=[('red', '-'), ('blue', '-')],
+                line_vals=list(AOTRITON_BACKENDS) + (['flash'] if HAS_FLASH else []),
+                line_names=[f'{b}({_UNIT})' for b in AOTRITON_BACKENDS]
+                           + ([f'Flash-{FLASH_VER}'] if HAS_FLASH else []),
+                styles=_line_styles(len(AOTRITON_BACKENDS) + (1 if HAS_FLASH else 0)),
                 ylabel='TFLOPS' if USE_TFLOPS else 'ms',
                 plot_name=f'fused-attention-batch{BATCH}-head{N_HEADS}-d{D_HEAD}-{modename}-causal={causal}',
                 args={
@@ -87,7 +136,7 @@ def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype
     # Bwd pass only supports causal=True right now
     if mode == 'bwd':
         split_kernel = True if causal else split_kernel
-    if provider == "triton":
+    if provider in AOTRITON_BACKENDS:
         q = torch.randn((BATCH, H, N_CTX, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
         k = torch.randn((BATCH, H, N_CTX, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
         v = torch.randn((BATCH, H, N_CTX, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
@@ -96,7 +145,8 @@ def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype
         ext = AttentionExtraArgs(return_encoded_softmax=causal,
                 autotune=False,
                 return_autotune=False,
-                is_testing=False)
+                is_testing=False,
+                force_bwd_backend_index=BACKEND_INDEX.get(provider))
         fn = lambda: attention(q, k, v, None, causal, sm_scale, dropout_p, ext)
         if mode == 'bwd':
             o, _, _ = fn()
@@ -133,4 +183,6 @@ def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype
 
 
 # only works on post-Ampere GPUs right now
-bench_flash_attention.run(save_path='.', print_data=True)
+# save_path=None skips the plot, which needs matplotlib. Set SAVE_PLOT=. (or any
+# directory) to draw one; the numbers are printed either way.
+run_report(bench_flash_attention, save_path=os.getenv("SAVE_PLOT", default=None))
