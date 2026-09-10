@@ -29,6 +29,17 @@ TORCH_VERSION_TUPLE = _get_torch_version()
 
 TORCH_GE_2_7 = (TORCH_VERSION_TUPLE >= (2, 7))
 
+def _get_hip_version():
+    # None on a CUDA build. torch 2.12.0+rocm7.14.0 reports '7.14.60850'.
+    if torch.version.hip is None:
+        return None
+    strver = str(torch.version.hip).split('.')[:2]
+    return tuple([int(e) for e in strver])
+
+HIP_VERSION_TUPLE = _get_hip_version()
+
+ROCM_IS_7_14 = (HIP_VERSION_TUPLE == (7, 14))
+
 def fmt_hdim(val):
     if isinstance(val, tuple):
         return 'hdim(' + ','.join([str(e) for e in val]) + ')'
@@ -313,7 +324,40 @@ class SdpaContext(object):
             ref_device_option = 'cpu'
         else:
             ref_device_option = AOTRITON_REF_DEVICE_OPTION
-        if ref_device_option == 'default' and TORCH_GE_2_7:
+        '''
+        torch's bf16 batched GEMM leaves part of its output UNWRITTEN on gfx950
+        under ROCm 7.14, which poisons lp_ref and makes ref_error nan -- and a
+        nan threshold fails every tensor at once, so a torch bug reads as a
+        backend bug. Reachable with neither AOTriton nor FlyDSL loaded:
+
+            a = torch.rand(15, 257,   16, device='cuda', dtype=torch.bfloat16)
+            b = torch.rand(15,  16, 2081, device='cuda', dtype=torch.bfloat16)
+            out = torch.full((15, 257, 2081), -12345.0, device='cuda', dtype=torch.bfloat16)
+            torch.bmm(a, b, out=out)
+            (out == torch.tensor(-12345.0, dtype=torch.bfloat16)).sum()  # 274733
+
+        The nan is UNINITIALIZED MEMORY, not a computed value: every element the
+        GEMM writes is correct, it simply never writes 274733 of them, and those
+        keep whatever the caching allocator last left there. Prefill with a
+        finite value and the nan count is zero while the same 274733 elements
+        are wrong. So nan was the lucky case -- when the leftover bytes decode
+        as plausible floats the oracle is quietly wrong and the test passes.
+
+        Hence the shape test covers WHERE WE SAW IT, not the trigger surface.
+        The failure needs bf16 + batch 15 + M 257 + N 2081 + K <= 64 together to
+        show up as nan, but the failing set moves between runs and the rest of
+        the family is silently wrong without tripping anything. Widening this to
+        every bf16 case would be sound and is far too slow; catching the quiet
+        ones needs _validate to reject a nan REFERENCE, which it does not yet.
+
+        Gated on the ROCm version so it retires itself, rather than lingering
+        the way the cunn_SoftMaxForward workaround below did.
+        '''
+        if (ref_device_option == 'default' and ROCM_IS_7_14
+                and self.dtype == torch.bfloat16
+                and (self.seqlen_q, self.seqlen_k) == (257, 2081)):
+            ref_device = 'cpu'
+        elif ref_device_option == 'default' and TORCH_GE_2_7:
             ref_device = 'cuda'  # Known softmax issues have been fixed in 2.7
         elif ref_device_option == 'default':
             ref_device = target_gpu_device
