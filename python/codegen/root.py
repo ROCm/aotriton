@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import subprocess
 from .linker import Linker
 from .kernel import KernelShimGenerator
+from .flyc import FlycShimGenerator
 from .slim_affine import SlimAffineGenerator
 from .operator import OperatorGenerator
 from ..utils import (
@@ -111,7 +112,8 @@ class RootGenerator(object):
         # per generator; the lists are what the per-item generators iterate. The
         # descriptions live under <root_dir>/modules (passed explicitly, no guessing).
         (self._triton_kernels, self._dispatcher_operators,
-         self._affine_kernels, self._flyc_kernels) = Linker(self._args.root_dir / 'modules').link_all_families()
+         self._affine_kernels, self._flyc_kernels) = \
+            Linker(self._args.root_dir / 'modules').link_all_families()
 
     def generate(self):
         if self._args.selective:
@@ -136,6 +138,7 @@ class RootGenerator(object):
                     f"Use e.g. '{_sel_path.parent}/*'"
 
         hsaco_for_kernels = []
+        flyc_hsaco_for_kernels = []
         asms_for_kernels = []
         shims = []
         # (arch, op_name, lut_value) -> count
@@ -193,6 +196,27 @@ class RootGenerator(object):
                 asms_for_kernels.append((ak, asms))
             shims += aksg.shim_files
 
+        # flyc mirrors the Triton kerns loop above via FlycShimGenerator, so the
+        # generated flyc.<name>.{h,cc} shim -- and the flytune.<name>/ per-functional
+        # .cc files, written as a side effect of generate() through
+        # FlycTuneCodeGenerator -- participate in the same Bare.shim aggregation.
+        # Unlike Triton, flyc image rules are never gated by
+        # AOTRITON_DEBUG_SKIP_TRITON_KERNELS: that flag skips only the Triton image
+        # pipeline, and flyc rows are exactly what a skipping build exists to exercise.
+        flycs = self._flyc_kernels
+        if sel is not None:
+            flycs = [fk for fk in flycs if fk.unique_path.match(sel)]
+        for fk in flycs:
+            fsg = FlycShimGenerator(self._args, fk, parent_repo=None)
+            fsg.generate()
+            shims += fsg.shim_files
+            # return_none=True: an arch where every functional of this flyc kernel
+            # is disabled never registers the HsacoRegistry at all -- the same gap
+            # the affine loop above already guards against for 'asms'. Empty is the
+            # correct answer there, not a crash.
+            hsacos = fsg.this_repo.get_data('hsaco', return_none=True) or {}
+            flyc_hsaco_for_kernels.append((fk, hsacos))
+
         if args.build_for_tuning_second_pass:
             return
 
@@ -210,7 +234,8 @@ class RootGenerator(object):
         flatzip_dict: dict[Path, dict[str, str]] = {}
         aks2_dir   = args.build_dir / 'aks2'
         images_dir = args.build_dir / 'aotriton.images'
-        with LazyFile(out_dir / 'Bare.compile') as rulefile:
+        with LazyFile(out_dir / 'Bare.compile') as rulefile, \
+             LazyFile(out_dir / 'Fly.compile') as flyrulefile:
             for kdesc, hsacos in hsaco_for_kernels:
                 image_path = hsaco_dir(args.build_dir, kdesc)
                 image_path.mkdir(parents=True, exist_ok=True)
@@ -226,6 +251,37 @@ class RootGenerator(object):
                     fzp_stem = fodp.parent  # drop <sha256> leaf → <vendor-arch>/<family>/<kernel>
                     aks2_abs = (aks2_dir / fodp).with_suffix('.aks2').absolute().as_posix()
                     flatzip_dict.setdefault(fzp_stem, {})[aks2_abs] = functional.filepack_inzip_name
+
+            # flyc images are compiled during the build from a FlyDSL description,
+            # by a separate driver (`aotriton.flyc_compile`) whose command line is a
+            # different shape from Triton's -- hence a rule file of its own,
+            # Fly.compile. Deliberately NOT gated by
+            # AOTRITON_DEBUG_SKIP_TRITON_KERNELS above: that flag skips only the
+            # Triton image pipeline.
+            #
+            # `hsacos` here has the same shape as Triton's
+            # `ksg.this_repo.get_data('hsaco')` above ({functional: [ksig, ...]}),
+            # populated by FlycTuneCodeGenerator via HsacoRegistry -- flyc's
+            # KernelSignature already carries the knob-derived perf string, so there
+            # is no second signature construction to do here. Disabled functionals
+            # never reach this dict: FlycShimGenerator.create_sub_generator drops
+            # them, so no .cc and no hsaco entry is ever registered for them.
+            for fk, hsacos in flyc_hsaco_for_kernels:
+                image_path = hsaco_dir(args.build_dir, fk)
+                image_path.mkdir(parents=True, exist_ok=True)
+                for functional, signatures in hsacos.items():
+                    for ksig in signatures:
+                        self.write_flyc_hsaco(fk, image_path, functional, ksig, flyrulefile)
+                    # The SAME cluster_dict/flatzip_dict Triton and affine populate:
+                    # Fly.compile is the only new rule file, and Bare.cluster /
+                    # Bare.flatzip already cover both backends' rows.
+                    fodp = functional.filepack_ondisk_path  # meta_object = fk (flyc's own .zip)
+                    cluster_dict.setdefault(fodp, {}).update(
+                        {self._absobjfn(image_path, fk, ksig): hsaco_inaks2_name(fk, ksig)
+                         for ksig in signatures}
+                    )
+                    aks2_abs = (aks2_dir / fodp).with_suffix('.aks2').absolute().as_posix()
+                    flatzip_dict.setdefault(fodp.parent, {})[aks2_abs] = functional.filepack_inzip_name
         with LazyFile(out_dir / 'Bare.cluster') as clusterfile:
             for fodp, path_entry_map in cluster_dict.items():
                 self.write_cluster(aks2_dir, fodp, path_entry_map, clusterfile)
@@ -272,6 +328,7 @@ class RootGenerator(object):
         items: list[str] = []
         items += [op.unique_path.as_posix() for op in self._dispatcher_operators]
         items += [k.unique_path.as_posix()  for k in self._triton_kernels]
+        items += [fk.unique_path.as_posix() for fk in self._flyc_kernels]
 
         # Affine kernels sharing the same FAMILY produce entries in the same ZIP
         # (affine_kernels.zip), so they must run in one worker via a glob pattern
@@ -297,7 +354,8 @@ class RootGenerator(object):
         for f in futures:
             f.result()  # re-raise any worker exception
 
-        shard_names = ['Bare.shim', 'Bare.compile', 'Bare.cluster', 'Affine.cluster', 'Bare.flatzip']
+        shard_names = ['Bare.shim', 'Bare.compile', 'Bare.cluster', 'Affine.cluster', 'Bare.flatzip',
+                       'Fly.compile']
         out_files = {name: args.build_dir / name for name in shard_names}
         # Truncate output files before appending.
         # AOTRITON_DEBUG_SKIP_TRITON_KERNELS=1 generates empty files, and touch ensures
@@ -331,6 +389,54 @@ class RootGenerator(object):
               ksig.waves_per_eu,
               functional.arch,
               ksig.triton_signature_string,  # Functional is not Triton-specific
+              sep=';', file=rulefile)
+
+    def write_flyc_hsaco(self, kdesc, path, functional, ksig, rulefile):
+        """One `Fly.compile` row:
+
+            VENVPYTHON;HSACO;DESC;KERNEL_NAME;TGTGPU;SIGNATURE;HINTS
+
+        VENVPYTHON is a SINGLE column here, unlike write_hsaco's two ('venv' and
+        'python'): `aotriton.flyc_compile` takes no venv-name argument, and the
+        CMake loop that consumes this file only `list(POP_FRONT)`s one field for
+        it.
+
+        SIGNATURE and HINTS must be space-separated `key=value`, never `;`.
+        `file(STRINGS)` keeps the whole line as one list element, but
+        `list(POP_FRONT)` re-splits it on `;`, so a semicolon inside a payload is
+        indistinguishable from a field boundary and silently truncates the row.
+        Asserted at write time rather than trusted: ATI functional values are
+        dtype strings, ints and bools, so none should ever contain a space, and a
+        truncated payload is far harder to debug than this assert firing.
+        """
+        log(lambda : f'{ksig=}')
+        # The DEFAULT venv, never a rule-matched alt venv. The altwheel rules
+        # (--alt_triton_wheel_config_file) key on arch/family, not on backend
+        # kind, so a flyc functional matches them exactly as a Triton one does --
+        # but an alt venv holds only requirements.txt plus a Triton wheel. It has
+        # neither `flydsl` (installed only into VENV_DIR by aotriton_venv_flydsl)
+        # nor `aotriton` itself, so `<altvenv>/bin/python -m aotriton.flyc_compile`
+        # dies with ModuleNotFoundError at ninja time for every flyc image.
+        # Choosing a Triton version is meaningless for a FlyDSL compile anyway.
+        python = self._venvpython['default']
+        def _kv(name, choice):
+            value = repr(choice.triton_compile_signature)
+            assert ' ' not in value, (
+                f'flyc SIGNATURE value for {name!r} contains a space: {value!r} -- '
+                f'a Fly.compile payload must be space-separated')
+            return f'{name}={value}'
+        signature = ' '.join(_kv(name, choice) for name, choice in functional.compact_choices.items())
+        # No hint tuning yet: every build uses the description's declared
+        # @ati.flyc.hints defaults, so HINTS is empty and the driver
+        # (flyc_compile._build_hints) applies no override.
+        hints = ''
+        print(python.as_posix(),
+              self._absobjfn(path, kdesc, ksig),
+              kdesc.desc_path.as_posix(),
+              kdesc.NAME,
+              functional.arch,
+              signature,
+              hints,
               sep=';', file=rulefile)
 
     def write_cluster(self, base_dir, odp, path_entry_map, clusterfile):
