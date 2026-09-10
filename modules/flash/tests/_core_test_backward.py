@@ -17,6 +17,7 @@ from attn_torch_function import (
     attention,
     AttentionExtraArgs,
     BWD_IMPL,
+    FORCE_FWD_BACKEND,
     V3_API,
     PROBE_UNSUPPORTED,
     hipError_t,
@@ -72,6 +73,14 @@ SKIP_BWD = bool(int(os.getenv('SKIP_BWD', default='0')))
 
 DTYPES = [torch.float16, torch.bfloat16, torch.float32]
 
+if FORCE_FWD_BACKEND == 'flyc':
+    # flyc is f16/bf16 WMMA only -- modules/flash/aot/flyc_attn_fwd.py's
+    # _flyc_fwd_disabled rejects fp32 outright, so no hsaco exists for those
+    # functionals. Forcing the backend bypasses that predicate (it is the
+    # operator's selection it overrides, not the kernel's own support), so
+    # without this every fp32 case asks for a kernel that was never built.
+    DTYPES = [torch.float16, torch.bfloat16]
+
 if BWD_IMPL is None or BWD_IMPL == 0:
     POT_HEADDIMS = [16, 32, 64, 128, 256, 512]
     NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
@@ -85,6 +94,19 @@ elif BWD_IMPL == 2:
     NPOT_HEADDIMS = [48, 80, 96, 160, 192]
     M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184]
     DTYPES = [torch.float16, torch.bfloat16]
+elif BWD_IMPL == 3:
+    # flyc. Full head-dim coverage, same as the split path: both FlyDSL backward
+    # tile ladders (fmha_tuning_bwd_{dkdv,dq}_gfx1201._BLOCK_DMODEL_LADDER) cover
+    # every value of the operator's BLOCK_DMODEL axis, so an off-ladder test head
+    # dim rounds up to a compiled tile and rides the PADDED_HEAD axis exactly as
+    # it does for Triton.
+    #
+    # DTYPES is deliberately NOT set here. The fp32 exclusion is the FORWARD
+    # backend's (see above) -- pinning the backward to flyc while leaving the
+    # forward on Triton is a legitimate mixed run, and fp32 is fine for it.
+    POT_HEADDIMS = [16, 32, 64, 128, 256, 512]
+    NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
+    M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216, 248, 408]
 else:
     assert False, f'Unsupported BWD_IMPL {BWD_IMPL}'
 # Prime head dimensions must be disabled
@@ -181,6 +203,8 @@ Note: for now we cannot really test both fused and split kernel at the same
 #TODO: Let BWDOP determine the real backward op at runtime
 
 def _get_BWDOP_id():
+    if BWD_IMPL == 3:
+        return 'Flyc'
     if BWD_IMPL == 2:
         return 'AITERASM'
     if BWD_IMPL == 1:
@@ -376,6 +400,10 @@ def core_test_op_bwd(request, args, device : int | None = None):
 # DEFINED in (Item.location[0] resolves the function's own code object), not the file
 # it was collected from -- so conftest.py's _FILE_ORDER never matched it and it sorted
 # behind every varlen test instead of running with the rest of test_backward.py.
+#
+# The dtype axis lives on the test_* wrapper in test_backward.py and is DTYPES,
+# not a third hardcoded copy of the list: this runs the forward, so the flyc
+# fp32 exclusion applies to it exactly as it does to every other forward here.
 def core_test_logsumexp_scaling(dtype):
     REF_VALUE = 2.79018449783325195
     device = 'cuda'

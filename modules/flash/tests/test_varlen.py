@@ -21,6 +21,12 @@ from _common_test import (
     SdpaParams,
     fmt_hdim,
 )
+# The dtype set, from the one place that decides it. This file used to spell the
+# list out and gate it on `BWD_IMPL == 2` alone, which is half the rule: fp32 is
+# also out when the FORWARD is pinned to flyc, and that half was added to
+# _core_test_backward.py only -- so every fp32 varlen case asked for a kernel
+# that was never built. Importing the name is what stops the two drifting again.
+from _core_test_backward import DTYPES
 
 FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
 
@@ -271,7 +277,7 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
 @pytest.mark.parametrize('n_seqlen', range(2, 24, 5))
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
 @pytest.mark.parametrize('dropout_p', [0.0] if BWD_IMPL == 2 else [0.0, 0.5])
-@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16] if BWD_IMPL == 2 else [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize('dtype', DTYPES)
 @pytest.mark.parametrize('sm_scale', ['l1', 'l2'] if FOR_RELEASE > 0 else ['l1'])
 @pytest.mark.parametrize('varlen_type', ['compact', 'padded', 'strided'])
 @pytest.mark.parametrize('lse_layout', ['HT', 'TH'] if FOR_RELEASE > 0 else ['HT'])
