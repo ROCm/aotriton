@@ -22,21 +22,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .choices import ChoiceView, ChoiceVarAbsent
+
 if TYPE_CHECKING:
     from .typed_choice import TypedChoice
 
 
-class ChoiceVarAbsent(AttributeError):
-    """Raised by ChoiceView when a predicate reads a choice variable the functional
-    does not have. Subclasses AttributeError so getattr/hasattr duck-typing still
-    behaves, but is_functional_disabled catches it specifically to emit a
-    write-your-own-@ati.disable diagnostic (a cited disable predicate that reads a
-    variable absent from the citing kernel)."""
-
-
-class ChoiceView:
-    """Ergonomic accessor over a Functional's pinned choices
-    Step 1.5.md §6, ati+newbinds_rev1.md §5).
+class FunctionalChoiceView(ChoiceView):
+    """`ChoiceView` backed by a Functional (Step 1.5.md §6,
+    ati+newbinds_rev1.md §5).
 
     Attribute access is keyed by *choice-variable name*: `f.choices.T_io` returns
     the variable's triton signature. `.tc(var)` returns the raw TypedChoice;
@@ -108,9 +102,9 @@ class Functional:
 
     @property
     def choices(self) -> ChoiceView:
-        """Cached ergonomic accessor; see ChoiceView."""
+        """Cached ergonomic accessor; see FunctionalChoiceView."""
         if self._choices_view is None:
-            self._choices_view = ChoiceView(self)
+            self._choices_view = FunctionalChoiceView(self)
         return self._choices_view
 
     @property

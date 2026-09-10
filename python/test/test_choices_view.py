@@ -1,7 +1,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Unit test for Functional.choices accessor view (executive plan Step 1.5)."""
+"""Unit tests for the ChoiceView interface and its Functional-backed backing."""
 
 import sys
 from pathlib import Path
@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from aotriton.template_instantiation.ir import (
     TypedChoice, Axis, Override, eq, Interface,
+    ChoiceView, ChoiceVarAbsent, FunctionalChoiceView,
 )
 
 
@@ -93,6 +94,52 @@ def test_arg_reads_resolved():
 def test_view_is_cached():
     f = _functional(bias_type=1)
     assert f.choices is f.choices
+
+
+def test_functional_view_is_a_choiceview():
+    f = _functional(bias_type=1)
+    assert isinstance(f.choices, ChoiceView)
+
+
+def test_bare_choiceview_uninstantiable():
+    # ChoiceView is an ABC (ir/choices.py): it declares the interface but has
+    # no backing of its own, so instantiating it directly must fail, naming
+    # every unimplemented abstract method.
+    try:
+        ChoiceView()
+    except TypeError as e:
+        msg = str(e)
+        for name in ('arg', '__getattr__'):
+            assert name in msg, f'{name!r} missing from TypeError message: {msg!r}'
+        return
+    raise AssertionError('expected TypeError instantiating ChoiceView')
+
+
+def test_tc_and_arg_tc_are_not_on_the_interface():
+    # tc/arg_tc hand back a raw TypedChoice, which only a Functional has. They
+    # are deliberately NOT part of the ABC: requiring them would force a
+    # mapping-backed view to declare two methods whose only possible body is a
+    # raise -- an interface that advertises an operation and then denies it. A
+    # caller needing a TypedChoice must hold a FunctionalChoiceView, and finds
+    # that out from the type rather than at the call.
+    assert ChoiceView.__abstractmethods__ == frozenset({'arg', '__getattr__'})
+    assert not hasattr(ChoiceView, 'tc')
+    assert not hasattr(ChoiceView, 'arg_tc')
+    assert callable(FunctionalChoiceView.tc)
+    assert callable(FunctionalChoiceView.arg_tc)
+
+
+def test_unknown_var_raises_choice_var_absent():
+    # The absent-variable signal is ChoiceVarAbsent, a declared AttributeError
+    # subclass, so getattr/hasattr duck-typing still behaves while
+    # is_functional_disabled can catch it specifically.
+    f = _functional(bias_type=1)
+    try:
+        _ = f.choices.NoSuchVar
+    except ChoiceVarAbsent as e:
+        assert isinstance(e, AttributeError)
+        return
+    raise AssertionError('expected ChoiceVarAbsent')
 
 
 def main():
