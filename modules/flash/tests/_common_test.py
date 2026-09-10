@@ -556,6 +556,11 @@ class SdpaContext(object):
             print(f'{ref_out[err_idx]=}')
             print(f'{tri_out[0, 0, :4, :16]=}')
             print(f'{ref_out[0, 0, :4, :16]=}')
+        if not grads_allclose:
+            # Forward-only validation (validate_with_reference(no_backward=True),
+            # as SKIP_BWD uses): there are no gradients to diagnose, and the
+            # unpack below would raise before printing anything useful.
+            return
         dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
         tri_dq, tri_dk, tri_dv, tri_db = self.dout_tensors
         ref_dq, ref_dk, ref_dv, ref_db = self.dref_tensors

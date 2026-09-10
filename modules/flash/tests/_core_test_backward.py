@@ -56,6 +56,19 @@ def exit_pytest():
 
 FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
 SMALL_VRAM = bool(int(os.getenv('SMALL_VRAM', default='0')))
+# SKIP_BWD=1 runs the forward half of these tests only: the forward launch, the
+# reference comparison, and the dropout-mask path -- everything up to and
+# excluding .backward().
+#
+# This exists so a forward-only backend can be exercised by the same tests as
+# everything else. The flyc backend (FWD_IMPL=2) has no backward at all, so
+# every backward case would fail for a reason that says nothing about the
+# forward kernel under test.
+#
+# It also makes test_forward.py retirable: with SKIP_BWD=1 these tests cover
+# the same ground, over a wider parameter set, and there is then one file
+# describing a forward rather than two that must agree.
+SKIP_BWD = bool(int(os.getenv('SKIP_BWD', default='0')))
 
 DTYPES = [torch.float16, torch.bfloat16, torch.float32]
 
@@ -275,6 +288,33 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
     dropout_mask = encoded_softmax >= 0 if encoded_softmax is not None else None
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
+
+    if SKIP_BWD:
+        # Forward-only: validate the forward output against the reference and
+        # stop. Uses validate_with_reference's existing no_backward= rather than
+        # a separate path, so the forward assertion below is exactly the one the
+        # full path makes.
+        is_allclose, adiff, _grads_allclose, _grads_adiff, tfts = ctx.validate_with_reference(
+            tri_out, [], no_backward=True,
+            return_target_fudge_factors=True, use_adiff_entry=use_adiff_entry)
+        ctx.display_validation_results(tri_out, is_allclose, adiff, [], [])
+        # RECORD_ADIFFS_TO before the assert, exactly as the full path below has
+        # it. A tolerance-calibration pass exists to COLLECT the mismatches, so
+        # asserting first would hard-fail the very run whose job is to record
+        # them -- and the only builds that set SKIP_BWD=1 are the flyc ones
+        # whose tolerances are least well known.
+        if RECORD_ADIFFS_TO is not None and not is_allclose:
+            with open(RECORD_ADIFFS_TO, 'a') as f:
+                # grads_adiff is [] rather than absent: the consumer reads a
+                # fixed pair of keys, and "no backward was run" is honestly an
+                # empty list of gradient diffs.
+                dj = { "adiff" : adiff, "grads_adiff" : [] }
+                print(utname, "\t", json.dumps(dj), file=f, flush=True, sep='')
+            pytest.xfail(f"RECORD ADIFFS {adiff=} (SKIP_BWD=1)")
+        assert is_allclose, f'Forward pass {is_allclose=} {tfts=}'
+        print(f'{tri_out=}')
+        print(f'{adiff=} (SKIP_BWD=1, backward not run)')
+        return seqlen_q * seqlen_k * HDIM_MAX
 
     dout = torch.rand_like(tri_out)
     if PROBE_UNSUPPORTED:
