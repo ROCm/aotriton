@@ -302,6 +302,7 @@ def _build_operators(compiled, built_kernels, metros, affines, flycs):
         assert indices == list(range(len(indices))), (
             f'operator {name!r} backend indices must be dense 0..n-1, got {indices}')
         backends = _backend_objs(shell, built_kernels, metros, affines, flycs)
+        backend_names = [n for _i, _k, _key, n in shell.backend_refs]
         default_kdesc = _derive_default_kdesc(backends)
         struct_cfields = _derive_struct_cfields(backends, default_kdesc)
         out[name] = Operator(
@@ -309,7 +310,8 @@ def _build_operators(compiled, built_kernels, metros, affines, flycs):
             struct_cfields=struct_cfields, backends=backends,
             optune_keys=dict(decl.binning),
             call_options_name=decl.opspec.call_options_name,
-            partially_tuned_functionals=dict(decl.fallback))
+            partially_tuned_functionals=dict(decl.fallback),
+            backend_names=backend_names)
     return out
 
 

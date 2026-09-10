@@ -86,14 +86,33 @@ def _build_op_dict():
             return self.EXT_CLASS.for_op_backend(backend_index)
 
     class attn_fwd(SdpaOpCommon, _attn_fwd):
-        # kMetro_Triton=0, kSlimAffine_AiterFmhaV3Fwd=1 (gfx942/gfx950 only)
+        # The index vocabulary is pyaotriton.v3.flash.OpAttnFwdBackend, generated
+        # from the same list that assigns BackendEnum. Read it rather than the
+        # comment that used to sit here.
+        #
+        # BACKEND_COUNT is NOT OpAttnFwdBackend.Max, and the difference is the
+        # point: Max is how many backends the LIBRARY was generated with (the
+        # enum is the same on every arch), while this is how many the tuner
+        # sweeps here. aiter is gfx942/gfx950-only, so a tuner driven by Max
+        # would probe a backend that cannot run there.
+        #
+        # It is NOT "how many are available on the arch in hand" either, and the
+        # gap is deliberate: flyc took fwd index 2 and bwd index 3, and these
+        # counts do not include it, so `enumerate_variants` never probes flyc on
+        # gfx1201 or gfx950 -- the two arches that DO have flyc kernels -- and
+        # produces no tuning-DB rows for it. Raising the counts is not the fix
+        # on its own: whether a library carries flyc IMAGES is a build-time
+        # choice independent of the arch, and the tuner has no probe for it, so
+        # a raised count would fail every sweep on a flyc-less build of the same
+        # arch. flyc stays reachable through an explicit `force_backend_index`
+        # until that probe exists.
 
         @property
         def BACKEND_COUNT(self):
             return 2 if _gpu_arch() in ('gfx942', 'gfx950') else 1
 
     class attn_bwd(SdpaOpCommon, _bwd_kernel_dk_dv):
-        # kMetro_TritonSplit=0, kShim_BwdKernelFuse=1, kSlimAffine_AiterFmhaV3Bwd=2 (gfx942/gfx950 only)
+        # See attn_fwd above on OpAttnBwdBackend and why BACKEND_COUNT is not Max.
 
         OUTPUT_TNAMES = ["dk", "dv", "dq", "db"]
 
@@ -105,7 +124,12 @@ def _build_op_dict():
             im, view, devm = direct_inputs
             import torch
             from aotriton.tune.gpu_utils import zero_devm
-            if extargs.backend_index == 2:  # kSlimAffine_AiterFmhaV3Bwd accumulates into dq_acc; clear before each call.
+            # The aiter backend accumulates into dq_acc; clear before
+            # each call. Named, not 2: the literal was correct only as long as
+            # nobody inserted a backend ahead of it, which is exactly what
+            # happened to attn_fwd when flyc took index 2.
+            from pyaotriton.v3.flash import OpAttnBwdBackend
+            if extargs.backend_index == OpAttnBwdBackend.kAiter:
                 zero_devm(devm.dq_acc)
             err = self._direct_call(direct_inputs, extargs)
             return (devm.dk, devm.dv, devm.dq, devm.db), err
