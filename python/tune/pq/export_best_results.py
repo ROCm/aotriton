@@ -310,7 +310,8 @@ DTYPE_FALLBACK_PAIRS = (
 )
 
 
-def patch_missing_dtypes(db: sqlite3.Connection, kernel: str, cols: list) -> int:
+def patch_missing_dtypes(db: sqlite3.Connection, kernel: str, cols: list,
+                         arch: str | None = None) -> int:
     """Fill in a half-precision dtype that has no rows by copying the other one.
 
     A GPU tuned only for bfloat16 leaves the float16 lookups with nothing to
@@ -323,6 +324,14 @@ def patch_missing_dtypes(db: sqlite3.Connection, kernel: str, cols: list) -> int
     tuned dtype is real data being extended in the wrong direction: mixing
     measured rows with borrowed ones would leave no way to tell which is which,
     and the measured half is the half worth trusting.
+
+    `arch` restricts the patching to that architecture's gpus, honouring the
+    export's own --arch. Usually redundant -- the wrapper deletes the output
+    file first, so an arch-scoped export writes a database holding only that
+    arch -- but not always: --output can be aimed at an existing database, and
+    ensure_table/insert_row then add to whatever is already in it. Without this
+    an arch-scoped run would reach into another architecture's rows and
+    fabricate entries for it, which is the one thing --arch promises not to do.
 
     Returns the number of rows added.
     """
@@ -339,6 +348,11 @@ def patch_missing_dtypes(db: sqlite3.Connection, kernel: str, cols: list) -> int
 
     added = 0
     gpus = [r[0] for r in db.execute(f'SELECT DISTINCT "gpu" FROM "{table}"')]
+    if arch is not None:
+        # Split on '_mod' rather than matching a constructed '<arch>_mod0':
+        # an architecture may carry several mods, and all of them belong to it.
+        # Same rule sancheck applies to its own gpu list.
+        gpus = [g for g in gpus if g.split('_mod', 1)[0] == arch]
     for gpu in gpus:
         present = {
             row[0]: row[1]
@@ -444,7 +458,7 @@ def export(conn_params: dict, output_path: Path, arch: str | None = None) -> Non
         # After every measured row is in, not during: the decision is "does
         # this gpu have any rows of that dtype at all", which is only knowable
         # once the loop has finished.
-        patched = sum(patch_missing_dtypes(db, kernel, cols)
+        patched = sum(patch_missing_dtypes(db, kernel, cols, arch=arch)
                       for kernel, (cols, _unique) in KERNEL_SCHEMAS.items())
 
         db.commit()
@@ -529,7 +543,7 @@ def export_op(conn_params: dict, output_path: Path, arch: str | None = None) -> 
             insert_row(db, table_name, cols, values)
             counts[table_name] = counts.get(table_name, 0) + 1
 
-        patched = sum(patch_missing_dtypes(db, table_name, cols)
+        patched = sum(patch_missing_dtypes(db, table_name, cols, arch=arch)
                       for table_name, (cols, _unique) in OP_SCHEMAS.items())
 
         db.commit()
