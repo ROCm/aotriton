@@ -98,10 +98,12 @@ class OperatorGenerator(InterfaceGenerator):
 
     def codegen_single_launcher(self, backend : Interface, nalign):
         # Dispatch by CODEGEN_MODULE (duck-typed), not class: a single-kernel (kshim)
-        # backend is a triton kernel or the slim affine kernel ('triton'/'affine'); a
-        # metro launcher is 'op' and exposes list_kernels().
+        # backend is a triton kernel, the slim affine kernel, or a flyc kernel
+        # ('triton'/'affine'/'flyc') -- all three are one kernel behind one
+        # context, which is the whole of what the kshim launcher needs. A metro
+        # launcher is 'op' and exposes list_kernels().
         cgmod = getattr(backend, 'CODEGEN_MODULE', None)
-        if cgmod in ('triton', 'affine'):
+        if cgmod in ('triton', 'affine', 'flyc'):
             return self.codegen_kshim_launcher(backend, nalign)
         if cgmod == 'op' and hasattr(backend, 'list_kernels'):
             return self.codegen_metro_launcher(backend, nalign)

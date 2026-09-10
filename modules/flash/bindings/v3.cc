@@ -111,6 +111,9 @@ namespace pyaotriton::v3 {
           .value("bwd_kernel_dk_dv", attn_options::KernelSlot::bwd_kernel_dk_dv)
           .value("bwd_kernel_dq", attn_options::KernelSlot::bwd_kernel_dq)
           .value("bwd_kernel_fuse", attn_options::KernelSlot::bwd_kernel_fuse)
+          .value("flyc_attn_fwd", attn_options::KernelSlot::flyc_attn_fwd)
+          .value("flyc_bwd_dkdv", attn_options::KernelSlot::flyc_bwd_dkdv)
+          .value("flyc_bwd_dq", attn_options::KernelSlot::flyc_bwd_dq)
           .value("MaxKernels", attn_options::KernelSlot::MaxKernels)
           .export_values()
         ;

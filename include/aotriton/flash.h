@@ -59,7 +59,17 @@ struct AOTRITON_API attn_options {
     bwd_kernel_dq = 4,
     bwd_kernel_fuse = 5,
 
-    MaxKernels = 6
+    // FlyDSL (flyc) kernels. Required, not optional: the flyc shim template
+    // (python/codegen/template/flyc.cc) builds KERNEL_SLOT_INDEX from the
+    // kernel NAME exactly as the Triton shim does, so a flyc kernel with no
+    // slot here does not compile at all under AOTRITON_BUILD_FOR_TUNING -- and
+    // MaxKernels must count them, or kernel_fine_control is sized too small and
+    // KernelFineControl::at() throws on the first flyc launch.
+    flyc_attn_fwd = 6,
+    flyc_bwd_dkdv = 7,
+    flyc_bwd_dq = 8,
+
+    MaxKernels = 9
   };
 
   // Fine-grained kernel control within Metro backends
