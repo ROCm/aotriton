@@ -80,6 +80,22 @@ def test_render_pon_rejects_string_with_space_under_any_separator():
             render_pon({'spacey': 'two words'}, sep=sep)
 
 
+def test_parse_pon_names_the_key_whose_value_is_malformed():
+    # literal_eval reports SyntaxError for most malformed wire text and
+    # ValueError only for text that parses but is not a literal. Both arrive
+    # as one ValueError naming the key, the token and the line -- this reads
+    # text a human never typed, so "unterminated string literal (detected at
+    # line 1)" on its own is not a diagnosis.
+    for bad, original in (("BLOCK_M=64;name='unterminated", SyntaxError),
+                          ('BLOCK_M=64;name=no_such_name', ValueError),
+                          ('BLOCK_M=64;shape=[1,', SyntaxError)):
+        with pytest.raises(ValueError, match='name|shape') as exc:
+            parse_pon(bad)
+        assert 'parse_pon' in str(exc.value)
+        assert bad in str(exc.value)              # the whole line, for context
+        assert isinstance(exc.value.__cause__, original)   # nothing discarded
+
+
 def test_render_pon_quotes_strings():
     # The unified (quoted) dialect: a str value is rendered with its repr(),
     # not bare -- 'transposed', never transposed.

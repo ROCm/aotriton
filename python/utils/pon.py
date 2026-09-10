@@ -112,6 +112,10 @@ def parse_pon(line: str, sep: str = ';') -> dict:
     literal (int, float, quoted string, tuple, list, `True`/`False`/`None`);
     anything else -- notably a bare identifier or a call -- raises rather
     than executing.
+
+    Every malformed input raises `ValueError` naming the offending key or
+    token and the line it came from, whatever `literal_eval` raised
+    underneath; the original is chained as `__cause__`.
     """
     _check_sep(sep)
     d = {}
@@ -124,8 +128,28 @@ def parse_pon(line: str, sep: str = ';') -> dict:
             raise ValueError(
                 f'parse_pon: {assignment!r} is not a key=value pair (no '
                 f'{"="!r}) in {line!r} (sep={sep!r})')
-        k, v = assignment.split('=', maxsplit=1)
-        d[k.strip()] = ast.literal_eval(v.strip())
+        k, v = (s.strip() for s in assignment.split('=', maxsplit=1))
+        try:
+            d[k] = ast.literal_eval(v)
+        except (ValueError, TypeError, SyntaxError) as e:
+            # Same reason as the branch above, and the same error type on
+            # purpose. `literal_eval` reports SyntaxError for most malformed
+            # wire text -- an unterminated string, a truncated list, a bad
+            # numeric literal -- and ValueError only for text that parses but
+            # is not a literal, such as a bare identifier. Letting both
+            # propagate untouched leaves "PON could not read this" as two
+            # different exception types, one of which names neither the key,
+            # the token, nor the line it came from.
+            #
+            # Narrowing to ValueError makes the failure one catchable thing
+            # and matches what this function already raises for a pair with
+            # no `=`. `from e` keeps the original type and message reachable
+            # as __cause__, so the distinction between "not a literal" and
+            # "malformed syntax" is preserved for anyone who needs it -- it
+            # simply stops being the caller's problem to discriminate.
+            raise ValueError(
+                f'parse_pon: value of {k!r} is not a Python literal: {v!r} '
+                f'in {line!r} (sep={sep!r})') from e
     return d
 
 
