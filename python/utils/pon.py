@@ -4,6 +4,22 @@
 """PON (Plain / Python Object Notation): a safe, separator-configurable
 `k=v;k=v` wire format, and the one home for both reading and writing it.
 
+**PON is strict on write and tolerant on read**, in the network-protocol sense,
+and that asymmetry is deliberate rather than an accident of implementation.
+`render_pon` emits exactly one dialect and refuses anything it could not read
+back unambiguously; `parse_pon` accepts whatever `ast.literal_eval` does. What
+the reader happens to accept beyond what the writer emits -- double-quoted
+strings, for instance -- is **not a promise**, and a caller should not build on
+it: the writer's grammar is the contract, and the reader's extra tolerance
+exists so that a stray hand-written line or an older producer does not become
+an outage.
+
+Most of what follows is a consequence of that rule rather than a separate
+decision. The refusal list under "What `render_pon` rejects" is the write-strict
+half enumerated; `parse_pon` narrowing every malformed input to one `ValueError`
+while chaining the original as `__cause__` is the read-tolerant half -- one
+outcome for the caller to handle, full detail kept for whoever wants it.
+
 The format's original reader was `aotriton.tune.utils.parse_python`, removed
 here: it split a line on `;`, then on `=` with `maxsplit=1`, then called
 `eval(v)` on the value. Two problems. The `eval` executed whatever the wire
