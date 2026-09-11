@@ -54,7 +54,7 @@ import flyc_polyfill
 
 try:
     from kernels.attention import flash_attn_utils as dualwave
-except ImportError:  # generator: no flydsl, no kernel root
+except ModuleNotFoundError:  # generator: no flydsl, no kernel root
     dualwave = flyc_polyfill
 else:
     # Both definitions exist, so the copy's claim to be verbatim is checkable

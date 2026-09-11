@@ -113,7 +113,7 @@ DEFAULT_ROUNDS = 10
 #   64     8           65.7         26
 #
 # 32-bit is **4.3x** the throughput per random and costs 18 fewer registers.
-# Both margins are wider than the instruction counts predicted (~2x): RDNA4
+# Both margins are wider than the instruction counts predicted (~2x): gfx1201
 # has `v_mul_hi_u32` as a single instruction, while the 64-bit variant needs
 # the *high* half of a 64x64 product, whose expansion is worse than the low
 # half that was counted. The register gap is the six-vs-twelve state words
@@ -200,7 +200,7 @@ def _mul_hi(a: Word, b: Word, width: PhiloxWidth) -> Word:
     """High half of an unsigned product.
 
     `arith.mului_extended` yields both halves in one op, which lowers to
-    `v_mul_hi_u32` on RDNA4 rather than a shift of a widened product. At width
+    `v_mul_hi_u32` on gfx1201 rather than a shift of a widened product. At width
     64 the backend expands it; that expansion is exactly what makes the 64-bit
     variant expensive, and is the thing the microbenchmark prices.
     """

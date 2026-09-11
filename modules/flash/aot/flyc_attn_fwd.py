@@ -19,8 +19,8 @@ already has:
                            1:1 argument names, functional axes ARE kernel params
     aiter  (@ati.affine.*) prebuilt .co, no perf space, no axes of its own —
                            inherits the operator's and filters them
-    flyc   (@ati.flyc.*)   compiled during the build (from triton), inherits and
-                           filters the operator's axes (from aiter), and — unique
+    flyc   (@ati.flyc.*)   compiled during the build (like triton), inherits and
+                           filters the operator's axes (like aiter), and — unique
                            to it — dispatches an hsaco whose kernarg list is NOT
                            the operator's
 

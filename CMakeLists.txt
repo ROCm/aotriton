@@ -447,10 +447,13 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       DEPENDS "${AOTRITON_USE_LOCAL_FLYDSL_WHEEL}"
       VERBATIM)
   else()
+    # DEPENDS on the pin: without it the stamp stays newer than an edited pin
+    # and ninja keeps the old compiler version installed.
     add_custom_command(OUTPUT "${AOTRITON_FLYDSL_STAMP}"
       COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
       "${VENV_BIN_PYTHON}" -m pip install -r
       "${CMAKE_CURRENT_LIST_DIR}/third_party/flydsl-compiler.txt"
+      DEPENDS "${CMAKE_CURRENT_LIST_DIR}/third_party/flydsl-compiler.txt"
       VERBATIM)
   endif()
   add_custom_target(aotriton_venv_flydsl ALL DEPENDS "${AOTRITON_FLYDSL_STAMP}")
