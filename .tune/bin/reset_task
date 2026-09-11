@@ -113,6 +113,19 @@ def main() -> None:
                  f"  The 'aotriton' package must be importable and current.\n"
                  f"  Install or refresh it with: pip install -e '{_REPO_ROOT}'")
 
+    # Importable is not the same as current. A non-editable install is a
+    # snapshot taken at pip time, so an `aotriton` from before this tool existed
+    # imports perfectly and then fails on the first attribute it does not have.
+    # Check once, here, and say what to do -- rather than surfacing an
+    # AttributeError from whichever call happened to come first.
+    for _needed in ('find_resettable', 'STALE_TIMEOUT_SECONDS'):
+        if not hasattr(TaskQueue, _needed):
+            sys.exit(
+                f"Error: the installed 'aotriton' package is out of date "
+                f"(TaskQueue has no {_needed}).\n"
+                f"  Loaded from: {sys.modules[TaskQueue.__module__].__file__}\n"
+                f"  Refresh it with: pip install -e '{_REPO_ROOT}'")
+
     delete_results = not args.no_clear
     conn_params = get_db_connection_params(workdir)
     print(f'Stale timeout: {TaskQueue.STALE_TIMEOUT_SECONDS}s')
