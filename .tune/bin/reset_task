@@ -42,24 +42,6 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _TUNE_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_TUNE_ROOT / 'libexec'))
-
-try:
-    import aotriton  # noqa: F401
-except ImportError:
-    sys.exit(
-        "Error: the 'aotriton' package is not importable by python3.\n"
-        f"  Install it with: pip install -e '{_REPO_ROOT}'"
-    )
-
-import psycopg
-
-from aotriton.tune.pq.queue import TaskQueue
-from aotriton.tune.utils import get_db_connection_params
-from pq_helpers import find_resettable, reset_to_pending
-
-# Surfaced for the help text; the selection itself is TaskQueue's.
-STALE_TIMEOUT_SECONDS = TaskQueue.STALE_TIMEOUT_SECONDS
 
 
 def print_summary(what: str, rows: list[dict]) -> None:
@@ -101,9 +83,10 @@ def main() -> None:
     )
     parser.add_argument('workdir', help='Project workdir containing config.rc')
     parser.add_argument('--select', required=True, choices=['stale', 'failed'],
-                        help="Which rows to reset: 'stale' = running past the "
-                             f"{STALE_TIMEOUT_SECONDS}s timeout, "
-                             "'failed' = status='failed'")
+                        help="Which rows to reset: 'stale' = still running "
+                             "past the stale timeout, 'failed' = the task "
+                             "failed. The effective timeout is printed at run "
+                             "time.")
     parser.add_argument('--no_clear', action='store_true',
                         help='Keep the tasks\' existing tuning_results and '
                              'most_accurate_tuning_results rows. Default is to '
@@ -114,8 +97,25 @@ def main() -> None:
     if not workdir.is_dir():
         sys.exit(f'Error: workdir does not exist: {workdir}')
 
+    # Imported here, after the arguments are parsed and validated. At module
+    # scope these pull in psycopg and, through pq_helpers, the flash tune
+    # module -- so `-h` used to fail with an ImportError from somewhere three
+    # packages down instead of printing usage. Nothing about the usage text
+    # needs the database stack to be importable.
+    sys.path.insert(0, str(_TUNE_ROOT / 'libexec'))
+    try:
+        import psycopg
+        from aotriton.tune.pq.queue import TaskQueue
+        from aotriton.tune.utils import get_db_connection_params
+        from pq_helpers import find_resettable, reset_to_pending
+    except ImportError as exc:
+        sys.exit(f"Error: {exc}\n"
+                 f"  The 'aotriton' package must be importable and current.\n"
+                 f"  Install or refresh it with: pip install -e '{_REPO_ROOT}'")
+
     delete_results = not args.no_clear
     conn_params = get_db_connection_params(workdir)
+    print(f'Stale timeout: {TaskQueue.STALE_TIMEOUT_SECONDS}s')
 
     with psycopg.connect(**conn_params, autocommit=False) as conn:
         print(f'Querying task_queue for {args.select} tasks …')
