@@ -53,38 +53,13 @@ except ImportError:
     )
 
 import psycopg
-from psycopg.rows import dict_row
 
+from aotriton.tune.pq.queue import TaskQueue
 from aotriton.tune.utils import get_db_connection_params
-from pq_helpers import reset_to_pending
+from pq_helpers import find_resettable, reset_to_pending
 
-# Same threshold TaskQueue.reset_stale_tasks() uses. A task still running after
-# this long is assumed abandoned rather than slow.
-STALE_TIMEOUT_SECONDS = 7200
-
-
-def select_rows(conn, what: str) -> list[dict]:
-    """task_queue rows matching the selection, with the columns needed below.
-
-    tuning_level comes back with each row because reset_to_pending is scoped by
-    it: an id list drawn from the whole queue can span both levels, and
-    deleting a task's results under the wrong level would delete nothing while
-    reporting success.
-    """
-    if what == 'stale':
-        where = ("status = 'running' "
-                 "AND EXTRACT(EPOCH FROM (NOW() - started_at)) > %s")
-        params = (STALE_TIMEOUT_SECONDS,)
-    else:
-        where = "status = 'failed'"
-        params = ()
-
-    with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(
-            'SELECT id, arch, tuning_level, status, node_hostname, '
-            '       EXTRACT(EPOCH FROM (NOW() - started_at))::bigint AS age_s '
-            f'FROM task_queue WHERE {where} ORDER BY arch, id', params)
-        return cur.fetchall()
+# Surfaced for the help text; the selection itself is TaskQueue's.
+STALE_TIMEOUT_SECONDS = TaskQueue.STALE_TIMEOUT_SECONDS
 
 
 def print_summary(what: str, rows: list[dict]) -> None:
@@ -144,7 +119,7 @@ def main() -> None:
 
     with psycopg.connect(**conn_params, autocommit=False) as conn:
         print(f'Querying task_queue for {args.select} tasks …')
-        rows = select_rows(conn, args.select)
+        rows = find_resettable(conn, args.select)
         print_summary(args.select, rows)
 
         if not rows:

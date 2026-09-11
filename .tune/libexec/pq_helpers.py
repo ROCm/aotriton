@@ -75,6 +75,13 @@ def print_summary(label: str, count: int, matches: list[dict]) -> None:
         print(f'  {status}: {n}')
 
 
+def find_resettable(conn, what: str, *,
+                    timeout_seconds: int | None = None) -> list[dict]:
+    """Stale or failed task_queue rows. Thin wrapper over
+    aotriton.tune.pq.queue.TaskQueue.find_resettable, which owns the SQL."""
+    return TaskQueue(conn).find_resettable(what, timeout_seconds=timeout_seconds)
+
+
 def reset_to_pending(conn, row_ids: list[int], tuning_level: str, *,
                      delete_results: bool) -> int:
     """Reset the given task_queue ids to pending. Returns affected row count.

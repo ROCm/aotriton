@@ -430,6 +430,42 @@ class TaskQueue:
                 f'WHERE id = ANY(%s) ORDER BY arch, id', (task_ids,))
             return cur.fetchall()
 
+    # Same threshold reset_stale_tasks() uses: a task still 'running' after
+    # this long is assumed abandoned rather than slow.
+    STALE_TIMEOUT_SECONDS = 7200
+
+    def find_resettable(self, what: str, *,
+                        timeout_seconds: int | None = None) -> list[dict]:
+        """Rows that will never be retried without intervention.
+
+        what='stale'   status='running' with started_at older than
+                       timeout_seconds. A worker that died leaves its claim
+                       behind; nothing reaps it and no other worker takes the
+                       row.
+        what='failed'  status='failed', terminal until something moves it.
+
+        Returns id, arch, tuning_level, status, node_hostname and the age in
+        seconds. tuning_level is included because reset_to_pending() is scoped
+        by it, so a caller resetting these has to group by it first.
+        """
+        if what == 'stale':
+            where = ("status = 'running' "
+                     "AND EXTRACT(EPOCH FROM (NOW() - started_at)) > %s")
+            params: tuple = (timeout_seconds if timeout_seconds is not None
+                             else self.STALE_TIMEOUT_SECONDS,)
+        elif what == 'failed':
+            where = "status = 'failed'"
+            params = ()
+        else:
+            raise ValueError(f"unknown selection {what!r}; expected "
+                             f"'stale' or 'failed'")
+        with self.conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                'SELECT id, arch, tuning_level, status, node_hostname, '
+                '       EXTRACT(EPOCH FROM (NOW() - started_at))::bigint AS age_s '
+                f'FROM task_queue WHERE {where} ORDER BY arch, id', params)
+            return cur.fetchall()
+
     def get_progress(self, tuning_level: str, *,
                      recent_window: str = '5 minutes',
                      stale_seconds: int = 7200) -> dict:
