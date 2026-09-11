@@ -19,7 +19,8 @@ Rows are chosen either by a rule (--select) or by naming them (--id).
 
 --id takes task ids directly and does not look at status, for the cases no rule
 covers -- a task wedged in a state you have just diagnosed, or a handful picked
-out of a report. Ids that are not in the table are listed and skipped.
+out of a report. Ids that are not in the table are listed and skipped. End the
+id list with `--` before the workdir.
 
 By default the tasks' existing measurements in tuning_results and
 most_accurate_tuning_results are deleted, so the re-run starts clean rather
@@ -38,10 +39,10 @@ Usage:
     .tune/bin/reset_task --select stale  ~/wkdir.v3.5
     .tune/bin/reset_task --select failed ~/wkdir.v3.5
     .tune/bin/reset_task --select failed --no_clear ~/wkdir.v3.5
-    .tune/bin/reset_task ~/wkdir.v3.5 --id 1234 1235 1236
+    .tune/bin/reset_task --id 1234 1235 1236 -- ~/wkdir.v3.5
 
-Note the workdir comes before --id: --id is variadic and would
-otherwise swallow it.
+--id is variadic, so `--` ends the id list and separates it from the workdir.
+(.tune/bin/reset_task ~/wkdir.v3.5 --id 1234 works too, for the same reason.)
 """
 
 import argparse
@@ -54,19 +55,19 @@ _TUNE_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _task_id(value: str) -> int:
-    """int(), with the argument-order mistake spelled out.
+    """int(), with the fix for the usual mistake spelled out.
 
-    --id is variadic, so it consumes every following token -- including the
-    workdir if that comes after it. argparse would otherwise report only
-    "invalid int value: '/path/to/wkdir'", which describes the symptom and not
-    the cause.
+    --id is variadic, so it consumes every following token, workdir included.
+    `--` ends the list, which is what argparse already documents for this case;
+    on its own argparse reports "invalid int value: '/path/to/wkdir'", which
+    names the symptom and not the remedy.
     """
     try:
         return int(value)
     except ValueError:
         raise argparse.ArgumentTypeError(
-            f'{value!r} is not a task id. --id takes every token after it, so '
-            f'the workdir has to come first: reset_task <workdir> --id 1 2 3')
+            f'{value!r} is not a task id. --id takes every token after it; end '
+            f'the list with -- : reset_task --id 1 2 3 -- <workdir>')
 
 
 def print_summary(what: str, rows: list[dict]) -> None:
