@@ -188,6 +188,7 @@ class ExaidWorker(object):
         """
         logger.info(f"benchmark: workdir={workdir}, impl_selector={impl_selector.as_text()}")
         self.proxy.write('benchmark', workdir.as_posix(), impl_selector.as_text())
+        # TODO: Need a keep alive protocol for long experiments
         result = json.loads(self.proxy.readinfo(timeout=300))
         logger.info(f"benchmark completed: {impl_selector.as_text()} "
                    f"result={result.get('result', 'unknown')}")
