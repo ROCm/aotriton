@@ -82,6 +82,12 @@ def find_resettable(conn, what: str, *,
     return TaskQueue(conn).find_resettable(what, timeout_seconds=timeout_seconds)
 
 
+def find_resettable_by_ids(conn, task_ids: list[int]) -> list[dict]:
+    """task_queue rows for explicitly named ids, shaped like find_resettable.
+    Thin wrapper over aotriton.tune.pq.queue.TaskQueue.find_resettable_by_ids."""
+    return TaskQueue(conn).find_resettable_by_ids(task_ids)
+
+
 def reset_to_pending(conn, row_ids: list[int], tuning_level: str, *,
                      delete_results: bool) -> int:
     """Reset the given task_queue ids to pending. Returns affected row count.

@@ -5,8 +5,9 @@
 """
 Move task_queue rows back to 'pending' so they are picked up and run again.
 
-Two selections, both of which leave tasks that will never be retried on their
-own:
+Rows are chosen either by a rule (--select) or by naming them (--id).
+
+--select covers the two states nothing retries on its own:
 
     --select stale    status='running' with started_at older than the stale
                       timeout. A worker that died, was killed, or lost its
@@ -15,6 +16,10 @@ own:
                       take it.
     --select failed   status='failed'. These are terminal until something moves
                       them, which is this.
+
+--id takes task ids directly and does not look at status, for the cases no rule
+covers -- a task wedged in a state you have just diagnosed, or a handful picked
+out of a report. Ids that are not in the table are listed and skipped.
 
 By default the tasks' existing measurements in tuning_results and
 most_accurate_tuning_results are deleted, so the re-run starts clean rather
@@ -33,6 +38,10 @@ Usage:
     .tune/bin/reset_task --select stale  ~/wkdir.v3.5
     .tune/bin/reset_task --select failed ~/wkdir.v3.5
     .tune/bin/reset_task --select failed --no_clear ~/wkdir.v3.5
+    .tune/bin/reset_task ~/wkdir.v3.5 --id 1234 1235 1236
+
+Note the workdir comes before --id: --id is variadic and would
+otherwise swallow it.
 """
 
 import argparse
@@ -42,6 +51,22 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _TUNE_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _task_id(value: str) -> int:
+    """int(), with the argument-order mistake spelled out.
+
+    --id is variadic, so it consumes every following token -- including the
+    workdir if that comes after it. argparse would otherwise report only
+    "invalid int value: '/path/to/wkdir'", which describes the symptom and not
+    the cause.
+    """
+    try:
+        return int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f'{value!r} is not a task id. --id takes every token after it, so '
+            f'the workdir has to come first: reset_task <workdir> --id 1 2 3')
 
 
 def print_summary(what: str, rows: list[dict]) -> None:
@@ -64,6 +89,15 @@ def print_summary(what: str, rows: list[dict]) -> None:
     for k, n in sorted(by_level.items()):
         print(f'  {k}: {n}')
 
+    if what == 'ids':
+        # --id does not filter on status, so what those ids actually are is the
+        # thing the operator has not been told yet. Resetting a 'completed' row
+        # is legitimate but rarely intended.
+        by_status: Counter = Counter(r['status'] for r in rows)
+        print('\nBy current status:')
+        for k, n in sorted(by_status.items()):
+            print(f'  {k}: {n}')
+
     if what == 'stale':
         # The oldest claim is the one worth eyeballing: if it is barely over the
         # threshold, the "stale" task may just be slow, and resetting it hands
@@ -82,11 +116,14 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument('workdir', help='Project workdir containing config.rc')
-    parser.add_argument('--select', required=True, choices=['stale', 'failed'],
-                        help="Which rows to reset: 'stale' = still running "
-                             "past the stale timeout, 'failed' = the task "
-                             "failed. The effective timeout is printed at run "
-                             "time.")
+    how = parser.add_mutually_exclusive_group(required=True)
+    how.add_argument('--select', choices=['stale', 'failed'],
+                     help="Which rows to reset: 'stale' = still running past "
+                          "the stale timeout, 'failed' = the task failed. The "
+                          "effective timeout is printed at run time.")
+    how.add_argument('--id', nargs='+', type=_task_id, metavar='ID',
+                     help='Reset these task ids, whatever their status. '
+                          'Ids that do not exist are reported and skipped.')
     parser.add_argument('--no_clear', action='store_true',
                         help='Keep the tasks\' existing tuning_results and '
                              'most_accurate_tuning_results rows. Default is to '
@@ -107,7 +144,8 @@ def main() -> None:
         import psycopg
         from aotriton.tune.pq.queue import TaskQueue
         from aotriton.tune.utils import get_db_connection_params
-        from pq_helpers import find_resettable, reset_to_pending
+        from pq_helpers import (find_resettable, find_resettable_by_ids,
+                                reset_to_pending)
     except ImportError as exc:
         sys.exit(f"Error: {exc}\n"
                  f"  The 'aotriton' package must be importable and current.\n"
@@ -118,7 +156,8 @@ def main() -> None:
     # imports perfectly and then fails on the first attribute it does not have.
     # Check once, here, and say what to do -- rather than surfacing an
     # AttributeError from whichever call happened to come first.
-    for _needed in ('find_resettable', 'STALE_TIMEOUT_SECONDS'):
+    for _needed in ('find_resettable', 'find_resettable_by_ids',
+                    'STALE_TIMEOUT_SECONDS'):
         if not hasattr(TaskQueue, _needed):
             sys.exit(
                 f"Error: the installed 'aotriton' package is out of date "
@@ -128,12 +167,25 @@ def main() -> None:
 
     delete_results = not args.no_clear
     conn_params = get_db_connection_params(workdir)
-    print(f'Stale timeout: {TaskQueue.STALE_TIMEOUT_SECONDS}s')
+    if args.select == 'stale':
+        print(f'Stale timeout: {TaskQueue.STALE_TIMEOUT_SECONDS}s')
 
     with psycopg.connect(**conn_params, autocommit=False) as conn:
-        print(f'Querying task_queue for {args.select} tasks …')
-        rows = find_resettable(conn, args.select)
-        print_summary(args.select, rows)
+        if args.id:
+            label = 'ids'
+            print(f'Querying task_queue for {len(args.id)} id(s) …')
+            rows = find_resettable_by_ids(conn, args.id)
+            # Named ids that are not in the table are the caller's typo or a
+            # stale list; say which rather than silently resetting fewer rows
+            # than were asked for.
+            missing = sorted(set(args.id) - {r['id'] for r in rows})
+            if missing:
+                print(f'  not found: {", ".join(str(i) for i in missing)}')
+        else:
+            label = args.select
+            print(f'Querying task_queue for {args.select} tasks …')
+            rows = find_resettable(conn, args.select)
+        print_summary(label, rows)
 
         if not rows:
             print('\nNothing to do.')

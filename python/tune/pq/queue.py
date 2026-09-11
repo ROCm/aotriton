@@ -434,6 +434,15 @@ class TaskQueue:
     # this long is assumed abandoned rather than slow.
     STALE_TIMEOUT_SECONDS = 7200
 
+    # Shared by both requeue lookups so their callers can treat the rows
+    # interchangeably. tuning_level is in here because reset_to_pending() is
+    # scoped by it; age_s because a caller deciding whether a claim is
+    # abandoned needs to see how old it is.
+    _RESET_COLUMNS = (
+        'id, arch, tuning_level, status, node_hostname, '
+        'EXTRACT(EPOCH FROM (NOW() - started_at))::bigint AS age_s'
+    )
+
     def find_resettable(self, what: str, *,
                         timeout_seconds: int | None = None) -> list[dict]:
         """Rows that will never be retried without intervention.
@@ -461,9 +470,25 @@ class TaskQueue:
                              f"'stale' or 'failed'")
         with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                'SELECT id, arch, tuning_level, status, node_hostname, '
-                '       EXTRACT(EPOCH FROM (NOW() - started_at))::bigint AS age_s '
+                f'SELECT {self._RESET_COLUMNS} '
                 f'FROM task_queue WHERE {where} ORDER BY arch, id', params)
+            return cur.fetchall()
+
+    def find_resettable_by_ids(self, task_ids: list[int]) -> list[dict]:
+        """The same rows find_resettable() returns, for explicitly named ids.
+
+        Deliberately unfiltered by status: a caller naming ids has already
+        decided, and the statuses worth requeuing by hand are exactly the ones
+        no rule covers. Ids that do not exist are simply absent from the
+        result, so a caller can diff against what it asked for and say so.
+        """
+        if not task_ids:
+            return []
+        with self.conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f'SELECT {self._RESET_COLUMNS} '
+                f'FROM task_queue WHERE id = ANY(%s) ORDER BY arch, id',
+                (task_ids,))
             return cur.fetchall()
 
     def get_progress(self, tuning_level: str, *,
