@@ -243,6 +243,7 @@ def start(jit_fn):
     decorator's spec is always the kind discriminant (O(1), no scan):
       * OperatorSpec     → operator stack → OperatorDecl
       * AffineKernelSpec → affine stack   → AffineDecl
+      * FlycKernelSpec   → flyc stack     → FlycDecl
       * MetroPlan        → metro stack    → fn.__ati_node__ (MetroPlan)
       * anything else    → kernel stack   → KernelSpec via describe()
     """
@@ -255,12 +256,15 @@ def start(jit_fn):
     # Dispatch on the innermost spec (specs[-1]) — the kind discriminant.
     from ..decorators import OperatorSpec
     from ..decorators.affine import AffineKernelSpec
+    from ..decorators.flyc import FlycKernelSpec
     from .metro import MetroPlan
     marker = specs[-1]
     if isinstance(marker, OperatorSpec):
         _finalize_operator(jit_fn, specs)
     elif isinstance(marker, AffineKernelSpec):
         _finalize_affine(jit_fn, specs)
+    elif isinstance(marker, FlycKernelSpec):
+        _finalize_flyc(jit_fn, specs)
     elif isinstance(marker, MetroPlan):
         _finalize_metro(jit_fn, specs)
     else:
@@ -284,6 +288,16 @@ def _finalize_metro(fn, specs):
 def _finalize_affine(placeholder, specs):
     """PASSIVE: attach the AffineDecl to fn.__ati_node__."""
     placeholder.__ati_node__ = collect_affine_decl(specs)
+    return placeholder
+
+
+def _finalize_flyc(placeholder, specs):
+    """PASSIVE: attach the FlycDecl to fn.__ati_node__. Deliberately not via
+    describe(): the decorated def is the BUILDER, not the kernel whose argument
+    list the specs declare, so there is no signature to validate against. See
+    specs/flyc.py."""
+    from .flyc import collect_flyc_decl
+    placeholder.__ati_node__ = collect_flyc_decl(placeholder, specs)
     return placeholder
 
 

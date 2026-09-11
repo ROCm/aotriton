@@ -1,7 +1,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Unit tests for the ChoiceView interface and its Functional-backed backing."""
+"""Unit tests for the ChoiceView interface and its two backings."""
 
 import sys
 from pathlib import Path
@@ -12,6 +12,8 @@ from aotriton.template_instantiation.ir import (
     TypedChoice, Axis, Override, eq, Interface,
     ChoiceView, ChoiceVarAbsent, FunctionalChoiceView,
 )
+# MappingChoiceView lives with its only user, the build-time driver.
+from aotriton.flyc_compile import MappingChoiceView
 
 
 class _IRStub(Interface):
@@ -96,11 +98,6 @@ def test_view_is_cached():
     assert f.choices is f.choices
 
 
-def test_functional_view_is_a_choiceview():
-    f = _functional(bias_type=1)
-    assert isinstance(f.choices, ChoiceView)
-
-
 def test_bare_choiceview_uninstantiable():
     # ChoiceView is an ABC (ir/choices.py): it declares the interface but has
     # no backing of its own, so instantiating it directly must fail, naming
@@ -117,7 +114,7 @@ def test_bare_choiceview_uninstantiable():
 
 def test_tc_and_arg_tc_are_not_on_the_interface():
     # tc/arg_tc hand back a raw TypedChoice, which only a Functional has. They
-    # are deliberately NOT part of the ABC: requiring them would force a
+    # are deliberately NOT part of the ABC: requiring them would force the
     # mapping-backed view to declare two methods whose only possible body is a
     # raise -- an interface that advertises an operation and then denies it. A
     # caller needing a TypedChoice must hold a FunctionalChoiceView, and finds
@@ -129,17 +126,65 @@ def test_tc_and_arg_tc_are_not_on_the_interface():
     assert callable(FunctionalChoiceView.arg_tc)
 
 
-def test_unknown_var_raises_choice_var_absent():
-    # The absent-variable signal is ChoiceVarAbsent, a declared AttributeError
-    # subclass, so getattr/hasattr duck-typing still behaves while
-    # is_functional_disabled can catch it specifically.
+def test_both_backings_implement_the_interface():
+    # The claim this file's docstring makes -- "one interface, TWO backings" --
+    # asserted rather than assumed, for each backing. `ChoiceView` is an ABC
+    # with two abstract methods, so this also pins that neither backing has
+    # stopped implementing one of them: an incomplete subclass is not
+    # instantiable at all, and a class that quietly stopped inheriting from
+    # ChoiceView would still work everywhere it is used today (both call sites
+    # are duck-typed) while silently ending the shared contract.
     f = _functional(bias_type=1)
+    assert isinstance(f.choices, ChoiceView)
+    assert isinstance(MappingChoiceView({'BLOCK_DMODEL': 16}), ChoiceView)
+
+
+def test_mapping_getattr_and_arg_read_the_same_dict():
+    view = MappingChoiceView({'BLOCK_DMODEL': 16, 'Q': '*fp16:16'})
+    assert view.BLOCK_DMODEL == 16
+    assert view.arg('BLOCK_DMODEL') == 16
+    assert view.arg('Q') == '*fp16:16'
+
+
+def test_mapping_unknown_key_raises():
+    view = MappingChoiceView({'BLOCK_DMODEL': 16})
     try:
-        _ = f.choices.NoSuchVar
+        _ = view.NoSuchVar
     except ChoiceVarAbsent as e:
-        assert isinstance(e, AttributeError)
+        assert isinstance(e, AttributeError)   # duck-typing contract (choices.py)
+        assert 'NoSuchVar' in str(e)
+        assert 'BLOCK_DMODEL' in str(e)
+    else:
+        raise AssertionError('expected ChoiceVarAbsent')
+    try:
+        view.arg('NoSuchVar')
+    except KeyError as e:
+        assert 'NoSuchVar' in str(e)
         return
-    raise AssertionError('expected ChoiceVarAbsent')
+    raise AssertionError('expected KeyError from MappingChoiceView.arg')
+
+
+def test_both_backings_agree_on_shared_keys():
+    # FunctionalChoiceView (real Functional) and MappingChoiceView (parsed
+    # dict) must answer identically for a key/var both can honestly hold --
+    # the whole point of ChoiceView being one declared interface with two
+    # backings (ir/choices.py) rather than a dict on one side and an object
+    # on the other.
+    f = _functional(bias_type=1)
+    mapping = MappingChoiceView({
+        'T_io': f.choices.T_io,
+        'CAUSAL_TYPE': f.choices.CAUSAL_TYPE,
+        'BIAS_TYPE': f.choices.BIAS_TYPE,
+    })
+    # Attribute access is keyed by var_name on both backings.
+    for var in ('T_io', 'CAUSAL_TYPE', 'BIAS_TYPE'):
+        assert getattr(f.choices, var) == getattr(mapping, var)
+    # .arg(aname) is keyed by real argument name; T_io's var_name is not one
+    # of its own argument names (its axis spans Q/K/V/B/Out), but a
+    # single-argument axis like CAUSAL_TYPE/BIAS_TYPE has var_name == its
+    # only argument name, so both backings must agree there too.
+    for var in ('CAUSAL_TYPE', 'BIAS_TYPE'):
+        assert f.choices.arg(var) == mapping.arg(var)
 
 
 def main():
