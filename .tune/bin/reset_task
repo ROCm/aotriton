@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+"""
+Move task_queue rows back to 'pending' so they are picked up and run again.
+
+Two selections, both of which leave tasks that will never be retried on their
+own:
+
+    --select stale    status='running' with started_at older than the stale
+                      timeout. A worker that died, was killed, or lost its
+                      container leaves its claim behind; nothing reaps it, so
+                      the task stays 'running' forever and no other worker will
+                      take it.
+    --select failed   status='failed'. These are terminal until something moves
+                      them, which is this.
+
+By default the tasks' existing measurements in tuning_results and
+most_accurate_tuning_results are deleted, so the re-run starts clean rather
+than mixing new results with the ones that are already there. --no_clear keeps
+them: use it when the rows are believed good and only the queue state is wrong
+(a worker that finished the work but died before reporting completion).
+
+Both tuning levels are handled. A selection is made across the whole queue and
+the ids are grouped by their own tuning_level before resetting, because
+tuning_results is shared between levels and the delete has to be scoped to the
+level each id actually belongs to.
+
+Shows what it matched and asks before changing anything.
+
+Usage:
+    .tune/bin/reset_task --select stale  ~/wkdir.v3.5
+    .tune/bin/reset_task --select failed ~/wkdir.v3.5
+    .tune/bin/reset_task --select failed --no_clear ~/wkdir.v3.5
+"""
+
+import argparse
+import sys
+from collections import Counter, defaultdict
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_TUNE_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_TUNE_ROOT / 'libexec'))
+
+try:
+    import aotriton  # noqa: F401
+except ImportError:
+    sys.exit(
+        "Error: the 'aotriton' package is not importable by python3.\n"
+        f"  Install it with: pip install -e '{_REPO_ROOT}'"
+    )
+
+import psycopg
+from psycopg.rows import dict_row
+
+from aotriton.tune.utils import get_db_connection_params
+from pq_helpers import reset_to_pending
+
+# Same threshold TaskQueue.reset_stale_tasks() uses. A task still running after
+# this long is assumed abandoned rather than slow.
+STALE_TIMEOUT_SECONDS = 7200
+
+
+def select_rows(conn, what: str) -> list[dict]:
+    """task_queue rows matching the selection, with the columns needed below.
+
+    tuning_level comes back with each row because reset_to_pending is scoped by
+    it: an id list drawn from the whole queue can span both levels, and
+    deleting a task's results under the wrong level would delete nothing while
+    reporting success.
+    """
+    if what == 'stale':
+        where = ("status = 'running' "
+                 "AND EXTRACT(EPOCH FROM (NOW() - started_at)) > %s")
+        params = (STALE_TIMEOUT_SECONDS,)
+    else:
+        where = "status = 'failed'"
+        params = ()
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            'SELECT id, arch, tuning_level, status, node_hostname, '
+            '       EXTRACT(EPOCH FROM (NOW() - started_at))::bigint AS age_s '
+            f'FROM task_queue WHERE {where} ORDER BY arch, id', params)
+        return cur.fetchall()
+
+
+def print_summary(what: str, rows: list[dict]) -> None:
+    print(f'\nSelected ({what}): {len(rows)}')
+    if not rows:
+        return
+
+    by_arch: Counter = Counter()
+    by_level: Counter = Counter()
+    by_host: Counter = Counter()
+    for r in rows:
+        by_arch[r['arch']] += 1
+        by_level[r['tuning_level']] += 1
+        by_host[r['node_hostname'] or '(none)'] += 1
+
+    print('\nBy arch:')
+    for k, n in sorted(by_arch.items()):
+        print(f'  {k}: {n}')
+    print('\nBy tuning level:')
+    for k, n in sorted(by_level.items()):
+        print(f'  {k}: {n}')
+
+    if what == 'stale':
+        # The oldest claim is the one worth eyeballing: if it is barely over the
+        # threshold, the "stale" task may just be slow, and resetting it hands
+        # the same work to a second worker while the first is still on it.
+        ages = sorted((r['age_s'] or 0) for r in rows)
+        print(f'\nRunning for (hours): min {ages[0]/3600:.1f}, '
+              f'max {ages[-1]/3600:.1f}')
+        print('\nBy worker host:')
+        for k, n in sorted(by_host.items()):
+            print(f'  {k}: {n}')
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument('workdir', help='Project workdir containing config.rc')
+    parser.add_argument('--select', required=True, choices=['stale', 'failed'],
+                        help="Which rows to reset: 'stale' = running past the "
+                             f"{STALE_TIMEOUT_SECONDS}s timeout, "
+                             "'failed' = status='failed'")
+    parser.add_argument('--no_clear', action='store_true',
+                        help='Keep the tasks\' existing tuning_results and '
+                             'most_accurate_tuning_results rows. Default is to '
+                             'delete them so the re-run starts clean.')
+    args = parser.parse_args()
+
+    workdir = Path(args.workdir)
+    if not workdir.is_dir():
+        sys.exit(f'Error: workdir does not exist: {workdir}')
+
+    delete_results = not args.no_clear
+    conn_params = get_db_connection_params(workdir)
+
+    with psycopg.connect(**conn_params, autocommit=False) as conn:
+        print(f'Querying task_queue for {args.select} tasks …')
+        rows = select_rows(conn, args.select)
+        print_summary(args.select, rows)
+
+        if not rows:
+            print('\nNothing to do.')
+            return
+
+        if delete_results:
+            print('\nExisting tuning_results and most_accurate_tuning_results '
+                  'rows for these tasks WILL BE DELETED (--no_clear keeps them).')
+        else:
+            print('\n--no_clear: existing results are kept; the re-run will '
+                  'write alongside them.')
+
+        answer = input('\nReset these rows to pending? [y/N] ').strip().lower()
+        if answer != 'y':
+            print('Aborted.')
+            return
+
+        # Grouped by level, one call each: reset_to_pending scopes every
+        # statement by tuning_level, so a mixed id list handed to a single call
+        # would silently reset only the part matching the level passed.
+        by_level: dict[str, list[int]] = defaultdict(list)
+        for r in rows:
+            by_level[r['tuning_level']].append(r['id'])
+
+        affected = 0
+        for level, ids in sorted(by_level.items()):
+            n = reset_to_pending(conn, ids, tuning_level=level,
+                                 delete_results=delete_results)
+            print(f'  {level}: {n} rows reset')
+            affected += n
+        conn.commit()
+        print(f'Done: {affected} rows reset to pending.')
+
+
+if __name__ == '__main__':
+    main()
