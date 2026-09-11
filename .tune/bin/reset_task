@@ -24,9 +24,9 @@ id list with `--` before the workdir.
 
 By default the tasks' existing measurements in tuning_results and
 most_accurate_tuning_results are deleted, so the re-run starts clean rather
-than mixing new results with the ones that are already there. --no_clear keeps
-them: use it when the rows are believed good and only the queue state is wrong
-(a worker that finished the work but died before reporting completion).
+than mixing new results with the ones that are already there. --keep_results
+spares them, for when the rows are believed good and only the queue state is
+wrong -- a worker that finished the work but died before reporting it.
 
 Both tuning levels are handled. A selection is made across the whole queue and
 the ids are grouped by their own tuning_level before resetting, because
@@ -38,7 +38,7 @@ Shows what it matched and asks before changing anything.
 Usage:
     .tune/bin/reset_task --select stale  ~/wkdir.v3.5
     .tune/bin/reset_task --select failed ~/wkdir.v3.5
-    .tune/bin/reset_task --select failed --no_clear ~/wkdir.v3.5
+    .tune/bin/reset_task --select failed --keep_results ~/wkdir.v3.5
     .tune/bin/reset_task --id 1234 1235 1236 -- ~/wkdir.v3.5
 
 --id is variadic, so `--` ends the id list and separates it from the workdir.
@@ -125,8 +125,8 @@ def main() -> None:
     how.add_argument('--id', nargs='+', type=_task_id, metavar='ID',
                      help='Reset these task ids, whatever their status. '
                           'Ids that do not exist are reported and skipped.')
-    parser.add_argument('--no_clear', action='store_true',
-                        help='Keep the tasks\' existing tuning_results and '
+    parser.add_argument('--keep_results', action='store_true',
+                        help="Keep the tasks' existing tuning_results and "
                              'most_accurate_tuning_results rows. Default is to '
                              'delete them so the re-run starts clean.')
     args = parser.parse_args()
@@ -166,7 +166,7 @@ def main() -> None:
                 f"  Loaded from: {sys.modules[TaskQueue.__module__].__file__}\n"
                 f"  Refresh it with: pip install -e '{_REPO_ROOT}'")
 
-    delete_results = not args.no_clear
+    delete_results = not args.keep_results
     conn_params = get_db_connection_params(workdir)
     if args.select == 'stale':
         print(f'Stale timeout: {TaskQueue.STALE_TIMEOUT_SECONDS}s')
@@ -194,10 +194,10 @@ def main() -> None:
 
         if delete_results:
             print('\nExisting tuning_results and most_accurate_tuning_results '
-                  'rows for these tasks WILL BE DELETED (--no_clear keeps them).')
+                  'rows for these tasks WILL BE DELETED (--keep_results spares them).')
         else:
-            print('\n--no_clear: existing results are kept; the re-run will '
-                  'write alongside them.')
+            print('\n--keep_results: existing results are kept; the re-run '
+                  'will write alongside them.')
 
         answer = input('\nReset these rows to pending? [y/N] ').strip().lower()
         if answer != 'y':
