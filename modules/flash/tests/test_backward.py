@@ -31,6 +31,7 @@ from _core_test_backward import (
     core_test_op_bwd,
     core_test_large_bf16_nan_values,
 )
+from _common_test import ALL_LAYOUTS, StorageLayout
 
 if FOR_RELEASE >= 0:
     @pytest.mark.parametrize('BATCH', [3])
@@ -127,6 +128,74 @@ if FOR_RELEASE >= 0:
     @pytest.mark.parametrize('bias_type', [None], ids=['BiasOff'])
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)
     def test_prime_hdim(request, gpu_id, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
+        args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+        core_test_op_bwd(request, args, device=gpu_id)
+
+if FOR_RELEASE >= 0:
+    # **Every tensor in a different memory layout, with the head dim off the
+    # 8-multiple grid.** test_prime_hdim above proves the 8xD contract holds; this
+    # proves the DESCRIPTOR PITCH that implements it is derived from the right
+    # stride, which is a question only a permuted layout can ask.
+    #
+    # The gfx950 kernels bound each `(batch, head)` slab with a buffer descriptor
+    # whose `num_records` must cover the last row's full 8-element access and
+    # nothing beyond the allocation. The width of a row is `ceil8(hdim)`, capped
+    # by the pitch -- and the pitch is `min(stride_batch, stride_head, stride_seq)`,
+    # not `stride_seq`. Under BHSD those are the same number, which is why a
+    # `stride_seq`-only cap survived every test there was: BHSD and the single
+    # transposition `storage_flip` reaches are the only layouts anything exercised.
+    # Under BSHD the next thing after a row is the next HEAD, and under SHBD
+    # `stride_seq` balloons to `batch * heads * hdim` while the real gap is still
+    # one head -- so a `stride_seq` cap is vacuous there and lets the descriptor
+    # run past the end of the buffer.
+    #
+    # Sensitivity, stated concretely: with the pitch wrong (or, before it was
+    # capped at all, with the slab simply ending at the last real element), the
+    # hardware drops the dword holding columns `hdim-1` and `hdim` because only
+    # half of it is inside `num_records`, and takes the REAL column `hdim-1` with
+    # it -- on the last row of every slab. Measured at exactly these shapes:
+    # `O[.., seqlen_q-1, hdim-1]` never stored, `dQ[.., seqlen_q-1, hdim-1]` and
+    # `dK/dV[.., seqlen_kv-1, hdim-1]` garbage, and the NaN left in O reaches
+    # every element of dK through delta.
+    LAYOUT_CASES = [StorageLayout.round_robin(case) for case in range(len(ALL_LAYOUTS))]
+
+    # BATCH and N_HEADS must BOTH be > 1. At 1 the corresponding stride is
+    # arbitrary and unconstrained, the six permutations collapse into fewer than
+    # six distinct stride patterns, and `min(s0, s1, s2)` can be decided by an
+    # axis that does not exist -- which is the degenerate case the pitch is
+    # floored at `hdim` to survive, not the case this test is here to measure.
+    @pytest.mark.parametrize('BATCH', [3])
+    @pytest.mark.parametrize('N_HEADS', [5], ids=fmt_nheads)
+    # One prime on each side of the point where the D axis stops being a single
+    # tile: 53 rides one block, 179 is loaded as a composed 128+64 pair, so both
+    # the simple and the composed store path meet a row whose last dword straddles
+    # the slab bound. Both are odd, which is what puts the last real column in the
+    # same dword as the first pad column.
+    @pytest.mark.parametrize('D_HEAD', [53, 179], ids=fmt_hdim)
+    # Off the block grid in both directions, as test_prime_hdim uses them: the
+    # defect is on the LAST row of a slab, so a seqlen that divides the block size
+    # evenly would never produce a ragged one.
+    @pytest.mark.parametrize('seqlen_q', [257])
+    @pytest.mark.parametrize('seqlen_k', [571])
+    # Paired rather than crossed, the way test_fast pairs them, so there is no
+    # programmatic skip: `causal and bias_type is not None` is rejected by
+    # _scaled_dot_product_attention, and AITER ASM has no bias at all. Bias is in
+    # here because it has a descriptor of its own (`_bias_slab_num_records_bytes`)
+    # and an innermost axis that is the KV sequence rather than a head dim.
+    @pytest.mark.parametrize('causal,bias_type',
+                             [(False, None), (False, 'matrix'), (True, None)]
+                             if BWD_IMPL != 2 else [(False, None), (True, None)],
+                             ids=['CausalOff-BiasOff', 'CausalOff-BiasOn', 'CausalOn-BiasOff']
+                             if BWD_IMPL != 2 else ['CausalOff-BiasOff', 'CausalOn-BiasOff'])
+    @pytest.mark.parametrize('dropout_p', [0.0])
+    @pytest.mark.parametrize('dtype', DTYPES)
+    @pytest.mark.parametrize('sm_scale', ['l1'])
+    # The `storage_flip` slot takes either spelling; _do_test_op_bwd dispatches on
+    # the type. See _common_test.StorageLayout for the round robin these are.
+    @pytest.mark.parametrize('storage_flip', LAYOUT_CASES,
+                             ids=[f'Layouts{case}' for case in range(len(ALL_LAYOUTS))])
+    @pytest.mark.parametrize('BWDOP', BWDOP_ids)
+    def test_memory_layouts(request, gpu_id, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
         core_test_op_bwd(request, args, device=gpu_id)
 
