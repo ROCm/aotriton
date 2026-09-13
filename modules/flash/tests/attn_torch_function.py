@@ -22,7 +22,14 @@ if not IGNORE_BACKWARD_IMPORT:
     )
 from collections import namedtuple
 from dataclasses import dataclass
-from _common_test import narrow_to_prime, cdiv
+from _common_test import (
+    BHSD,
+    alloc_with_layout,
+    assert_layout,
+    cdiv,
+    layout_of,
+    narrow_to_prime,
+)
 from typing import Callable
 
 FWD_IMPL = int(os.getenv('FWD_IMPL', default='0'))
@@ -115,21 +122,67 @@ class AttentionExtraArgs:
     # width, which is the trap this field exists to avoid. Allocate at the
     # 8-multiple, then narrow with `narrow_to_prime`. See that function.
     prime_hdim : int | tuple[int, int] | None = None
+    # `{tname: perm}` over `'o'`/`'dq'`/`'dk'`/`'dv'`/`'db'`, from a
+    # `StorageLayout`; see `_common_test.StorageLayout`. None -- every existing
+    # caller -- keeps the layout each output has always had, which is the input
+    # tensor's for a gradient and BHSD for `O`.
+    #
+    # The outputs need their own entry because they are not derivable from the
+    # inputs: `O`, `dK` and `dV` each carry a separate buffer descriptor in the
+    # gfx950 kernels, so pinning them to whatever q/k/v happen to use would
+    # leave most of that arithmetic reading one layout forever.
+    output_layouts : dict[str, tuple[int, int, int]] | None = None
 
 
-def _alloc_like_padded(t, prime_d):
-    """`empty_like(t)`, but keeping the 8xD slack a narrowed input implies.
+def _alloc_output(tname, dims, *, dtype, device, attn_extra_args, narrow_to, like):
+    """An output tensor with the right LAYOUT and the right 8xD SLACK.
 
-    `torch.empty_like` on a `[..., :73]` view returns a COMPACT `(..., 73)`
-    tensor -- pitch 73, no slack -- and the kernel then writes `ceil8(73) = 80`
-    columns of it, over the next row. Allocating at the 8-multiple and narrowing
-    gives the output the same shape-73/pitch-80 view the input has.
+    Two independent things have to be right at once, and `torch.empty_like`
+    gets each of them wrong under the conditions the other one cares about.
+
+    *Slack.* `torch.empty_like` on a `[..., :73]` view returns a COMPACT
+    `(..., 73)` tensor -- pitch 73, no slack -- and the kernel then writes
+    `ceil8(73) = 80` columns of it, over the next row. `narrow_to` is the real
+    extent; the allocation rounds it up to the 8-multiple and hands back the
+    narrowed view, so the output has the same shape-73/pitch-80 view the input
+    does. It is spelled as an extent rather than a flag because the bias
+    gradient wants the same treatment on an axis that is not the head dim: `db`
+    mirrors `b`, which `_create_inputs` allocates at `round_to_8x(seqlen_k)`.
+
+    *Layout.* `torch.empty_like` preserves strides only for a NON-OVERLAPPING
+    DENSE tensor, and a narrowed view is neither -- so the moment the slack
+    above exists, `empty_like` also silently flattens the layout back to BHSD.
+    `like` reproduces the old behaviour where it was right (an input's own
+    layout, read off its strides) and `output_layouts` overrides it where a
+    caller wants to choose.
     """
-    if prime_d is None or t is None:
-        return torch.empty_like(t) if t is not None else None
-    full = torch.empty(tuple(t.shape[:-1]) + (8 * cdiv(prime_d, 8),),
-                       device=t.device, dtype=t.dtype)
-    return narrow_to_prime(full, prime_d)
+    if dims is None:
+        return None
+    layouts = attn_extra_args.output_layouts
+    if layouts is not None and tname in layouts:
+        perm = layouts[tname]
+    elif like is not None:
+        perm = layout_of(like)
+    else:
+        perm = BHSD
+    width = dims[3] if narrow_to is None else 8 * cdiv(narrow_to, 8)
+    full = alloc_with_layout(tuple(dims[:3]) + (width,), perm, dtype=dtype, device=device)
+    # Checked HERE rather than in the test, for the gradients' sake. A test can
+    # read `o` back off the forward's return value, but `dq`/`dk`/`dv`/`db` only
+    # reach it through `Tensor.grad`, and `SdpaContext._compute_backward` clones
+    # that -- `clone()` keeps strides only for a non-overlapping dense tensor, so
+    # a narrowed gradient arrives flattened to BHSD no matter what was
+    # allocated. The one place that still knows is this one.
+    assert_layout(full, perm, width, tname)
+    return narrow_to_prime(full, narrow_to)
+
+
+def _alloc_like(t, tname, attn_extra_args, narrow_to):
+    """`_alloc_output` for a gradient, whose shape and default layout are its input's."""
+    if t is None:
+        return None
+    return _alloc_output(tname, tuple(t.shape), dtype=t.dtype, device=t.device,
+                         attn_extra_args=attn_extra_args, narrow_to=narrow_to, like=t)
 
 
 def _prime_pair(attn_extra_args):
@@ -169,13 +222,12 @@ class _attention(torch.autograd.Function):
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]
         _pqk, _pvo = _prime_pair(attn_extra_args)
-        if _pvo is None:
-            o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
-        else:
-            # Allocated at the 8-multiple and narrowed, so O carries the same
-            # slack the inputs do; see `_alloc_like_padded`.
-            o = narrow_to_prime(torch.empty((q.shape[0], q.shape[1], q.shape[2], 8 * cdiv(_pvo, 8)),
-                                            device=q.device, dtype=q.dtype), _pvo)
+        # `like=None`: O has always been allocated BHSD regardless of what q/k/v
+        # are stored as, and only an explicit `output_layouts['o']` moves it.
+        # See `_alloc_output` for the slack.
+        o = _alloc_output('o', (q.shape[0], q.shape[1], q.shape[2], v.shape[3]),
+                          dtype=q.dtype, device=q.device,
+                          attn_extra_args=attn_extra_args, narrow_to=_pvo, like=None)
 
         # def round_to_16x(x):
         #     return ((x + 15) // 16) * 16
@@ -310,11 +362,14 @@ class _attention(torch.autograd.Function):
         # if q.shape[-1] <= 32:
         # do = do.contiguous()
         _pqk, _pvo = _prime_pair(attn_extra_args)
-        dq = _alloc_like_padded(q, _pqk)
+        dq = _alloc_like(q, 'dq', attn_extra_args, _pqk)
         dq_acc = lazy_dq_acc(q)  # dq_acc only supports BHSD; lazy_dq_acc always produces BHSD to satisfy this.
-        dk = _alloc_like_padded(k, _pqk)
-        dv = _alloc_like_padded(v, _pvo)
-        db = torch.empty_like(b) if b is not None else None
+        dk = _alloc_like(k, 'dk', attn_extra_args, _pqk)
+        dv = _alloc_like(v, 'dv', attn_extra_args, _pvo)
+        # `db` mirrors `b`, on the KV axis rather than the head dim: the bias is
+        # allocated at `round_to_8x(seqlen_k)` and narrowed, so its gradient is
+        # too, and the two agree on strides instead of only on shape.
+        db = _alloc_like(b, 'db', attn_extra_args, None if b is None else b.shape[-1])
         delta = lazy_delta(L)
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]

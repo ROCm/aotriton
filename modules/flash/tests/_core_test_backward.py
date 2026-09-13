@@ -24,10 +24,14 @@ from attn_torch_function import (
     hipGetLastError,
 )
 from _common_test import (
+    BHSD,
     SdpaContext,
     SdpaParams,
     SdpaContextFromNPZ,
+    StorageLayout,
     AOTRITON_TORCH_ONLY_USE_CPU,
+    alloc_with_layout,
+    assert_layout,
     fmt_hdim,
     fmt_nheads,
     narrow_to_prime,
@@ -304,10 +308,19 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
     SKIP_DB = True if bias_type is None else False
     USE_AUTOTUNE = True
     torch.manual_seed(20)
-    if isinstance(storage_flip, tuple):
+    # The `storage_flip` slot carries either spelling. A `StorageLayout` names a
+    # layout per tensor, including the ones the kernel writes; a bool or an
+    # `(x, y)` pair is the old single transposition of q/k/v/b. See
+    # `_common_test.StorageLayout` for why both exist.
+    if isinstance(storage_flip, StorageLayout):
+        transpose = None
+        storage_layout = storage_flip
+    elif isinstance(storage_flip, tuple):
         transpose = storage_flip
+        storage_layout = None
     else:
         transpose = (1, 2) if storage_flip else None
+        storage_layout = None
     # **A head dim off the 8-multiple grid is allocated on it and narrowed.**
     # The kernel's input contract is 8xD -- loads and stores are 8 columns wide,
     # so it touches `ceil8(hdim)` columns of every row and the caller must own
@@ -327,10 +340,25 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
         else (8 * cdiv(HDIM_QK, 8), 8 * cdiv(HDIM_VO, 8)))
     ctx = SdpaContext(BATCH, N_HEADS, _alloc_hdim, seqlen_q, seqlen_k, dtype,
                       bias_type=bias_type, storage_flip=transpose, device=device_str, fillnan=True,
-                      prime_hdim=_prime_hdim)
+                      prime_hdim=_prime_hdim, storage_layout=storage_layout)
     ctx.create_ref_inputs()
     ctx.set_require_grads(skip_dq=SKIP_DQ, skip_dk_dv=SKIP_DK_DV, skip_db=SKIP_DB)
     q, k, v, b = ctx.dev_tensors
+    # The row pitch each tensor's INNERMOST axis requires. For everything but a
+    # bias that is the 8xD contract, restated: the kernel accesses `ceil8(hdim)`
+    # columns of every row, and the gfx950 descriptors cap their D round-up at
+    # the true row pitch -- so a pitch below the grid turns that cap into a clip
+    # of the last real column. A bias's innermost axis is the KV sequence, which
+    # carries no such contract (`_bias_slab_num_records_bytes`), so `seqlen_k`
+    # is all it owes.
+    _row_pitch = {'q': 8 * cdiv(HDIM_QK, 8), 'k': 8 * cdiv(HDIM_QK, 8),
+                  'v': 8 * cdiv(HDIM_VO, 8), 'b': seqlen_k,
+                  'dout': 8 * cdiv(HDIM_VO, 8), 'o': 8 * cdiv(HDIM_VO, 8)}
+    def _check_layout(t, tname):
+        if storage_layout is not None:
+            assert_layout(t, storage_layout[tname], _row_pitch[tname], tname)
+    for _tname, _t in zip(('q', 'k', 'v', 'b'), ctx.dev_tensors):
+        _check_layout(_t, _tname)
     # autotune = True
     # # triton implementation
     ext = AttentionExtraArgs(return_encoded_softmax=False if dropout_p == 0 else True,
@@ -342,8 +370,14 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
                              # inputs do; `torch.empty_like` on a narrowed view
                              # would compact it away.
                              prime_hdim=_prime_hdim,
+                             # O and the gradients get their own layouts; the
+                             # kernel gives each of O, dK and dV a buffer
+                             # descriptor of its own, so leaving them BHSD would
+                             # leave that arithmetic untested.
+                             output_layouts=None if storage_layout is None else storage_layout.outputs(),
                              )
     tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
+    _check_layout(tri_out, 'o')
     dropout_mask = encoded_softmax >= 0 if encoded_softmax is not None else None
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
@@ -376,11 +410,15 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
         return seqlen_q * seqlen_k * HDIM_MAX
 
     # dO is read column-wise by the backward, so it needs the slack too --
-    # `rand_like` on the narrowed `tri_out` would hand over a compact row.
-    dout = narrow_to_prime(torch.rand(tuple(tri_out.shape[:-1]) + (8 * cdiv(HDIM_VO, 8),),
-                                      device=tri_out.device, dtype=tri_out.dtype),
-                           _prime_hdim if _prime_hdim is None else HDIM_VO) \
-        if _prime_hdim is not None else torch.rand_like(tri_out)
+    # `rand_like` on the narrowed `tri_out` would hand over a compact row. It
+    # carries a layout for the same reason O does: dO reaches the kernel through
+    # its own descriptor, riding the forward's V slot.
+    _dout_width = tri_out.shape[-1] if _prime_hdim is None else 8 * cdiv(HDIM_VO, 8)
+    dout = narrow_to_prime(alloc_with_layout(tuple(tri_out.shape[:-1]) + (_dout_width,),
+                                             BHSD if storage_layout is None else storage_layout['dout'],
+                                             dtype=tri_out.dtype, device=tri_out.device, rand=True),
+                           None if _prime_hdim is None else HDIM_VO)
+    _check_layout(dout, 'dout')
     if PROBE_UNSUPPORTED:
         try:
             ctx.compute_backward(tri_out, dout)

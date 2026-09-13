@@ -81,6 +81,171 @@ def narrow_to_prime(t, prime_d, poison=float('nan')):
     t[..., prime_d:] = poison
     return t[..., :prime_d]
 
+# The three OUTER axes of a rank-4 attention tensor can be stored in any of the
+# 3! = 6 orders. The innermost axis never moves, and is not the same axis for
+# every tensor: on q/k/v/o/dout and every gradient it is the head dim, which the
+# kernel loads and stores 8 columns at a time; on a bias it is the KV sequence,
+# which is that tensor's own vectorised axis. Either way it must stay stride-1,
+# so only the outer three permute.
+#
+# A layout is written in MEMORY ORDER -- outermost stride first -- naming
+# LOGICAL axes. `(0, 2, 1)` therefore means "batch outermost, then the sequence,
+# then the head", i.e. BSHD, which is what `storage_flip=(1, 2)` has always
+# produced. `BHSD` is the identity, and is what everything else allocates.
+BHSD = (0, 1, 2)
+BSHD = (0, 2, 1)
+HBSD = (1, 0, 2)
+HSBD = (1, 2, 0)
+SBHD = (2, 0, 1)
+SHBD = (2, 1, 0)
+ALL_LAYOUTS = (BHSD, BSHD, HBSD, HSBD, SBHD, SHBD)
+LAYOUT_NAMES = {BHSD: 'BHSD', BSHD: 'BSHD', HBSD: 'HBSD',
+                HSBD: 'HSBD', SBHD: 'SBHD', SHBD: 'SHBD'}
+
+def layout_inverse(perm):
+    """The `permute()` argument taking an allocation in order `perm` to logical order."""
+    inv = [0, 0, 0]
+    for pos, axis in enumerate(perm):
+        inv[axis] = pos
+    return (inv[0], inv[1], inv[2], 3)
+
+def layout_alloc_dims(dims, perm):
+    """Logical rank-4 `dims`, reordered into the allocation order `perm`."""
+    return tuple(dims[axis] for axis in perm) + (dims[3],)
+
+def layout_of(t):
+    """The layout `t` is actually stored in, read back off its strides.
+
+    Descending stride *is* memory order, by definition. The tie-break on the
+    axis index only decides anything for an axis of extent 1, whose stride says
+    nothing about where it sits; the layout tests keep all three extents above 1
+    for exactly that reason, so that no two layouts can come back equal here.
+    """
+    return tuple(sorted(range(3), key=lambda axis: (-t.stride(axis), axis)))
+
+def alloc_with_layout(dims, perm, *, dtype, device, generator=None, rand=False):
+    """A tensor of logical shape `dims`, stored in memory order `perm`.
+
+    Allocated in `perm` order -- so it is genuinely contiguous, with no gaps --
+    and handed back as the permuted view, which is the only thing the caller and
+    the kernel ever see. `rand`, or a `generator`, fills it; the values land in
+    ALLOCATION order, so two layouts of the same logical shape do not hold the
+    same numbers. That is intentional: a test that needs identical inputs under
+    two layouts must copy, not re-seed.
+    """
+    adims = layout_alloc_dims(dims, perm)
+    if rand or generator is not None:
+        raw = torch.rand(*adims, generator=generator, dtype=dtype, device=device)
+    else:
+        raw = torch.empty(adims, dtype=dtype, device=device)
+    return raw.permute(*layout_inverse(perm))
+
+# Every tensor whose layout a caller may choose, in the order `StorageLayout`'s
+# round robin walks them. The first five are allocated by `SdpaContext`; the
+# rest are outputs, allocated inside `attn_torch_function.py` and reached
+# through `AttentionExtraArgs.output_layouts`.
+LAYOUT_INPUT_TENSORS = ('q', 'k', 'v', 'b', 'dout')
+LAYOUT_OUTPUT_TENSORS = ('o', 'dq', 'dk', 'dv', 'db')
+LAYOUT_TENSOR_ORDER = LAYOUT_INPUT_TENSORS + LAYOUT_OUTPUT_TENSORS
+
+class StorageLayout:
+    """One memory layout per tensor, for a whole SDPA call.
+
+    **`storage_flip` cannot express this, and is not being replaced by it.**
+    That parameter is a single TRANSPOSITION applied IDENTICALLY to q/k/v/b: it
+    reaches two of the six orders, never a 3-cycle, it cannot give two tensors
+    different orders, and it says nothing at all about dout or about any tensor
+    the kernel WRITES. `O`, `dK` and `dV` each carry their own buffer descriptor
+    in the gfx950 kernels, so a layout test that leaves them contiguous leaves
+    most of the descriptor arithmetic unexercised. Both spellings are accepted
+    and every existing caller keeps passing `True`/`False`/`(x, y)`.
+
+    Look up with `layout['q']`; an unnamed tensor defaults to `BHSD`.
+    """
+
+    def __init__(self, perms, case=None):
+        self._perms = dict(perms)
+        self._case = case
+
+    @classmethod
+    def round_robin(cls, case):
+        """Case `case` of the round robin: tensor `t` gets layout `(case + t) % 6`.
+
+        **A Latin square, not a cross product.** Ten tensors over six layouts is
+        6**10 combinations, which is not a test suite. Rows are cases, columns
+        are tensors in `LAYOUT_TENSOR_ORDER`, and the entry is
+        `ALL_LAYOUTS[(case + column) % 6]`. Reading it down a column, each tensor
+        visits all six layouts across the six cases, independently of every
+        other tensor -- so no tensor is ever stuck on the contiguous layout that
+        would hide a stride bug. Reading it across a row, all six layouts are
+        live in the same kernel launch at once, which is the case that catches a
+        descriptor reusing one tensor's strides for another.
+
+        What it deliberately does NOT cover is a particular PAIR of layouts on a
+        particular pair of tensors. The defect this exists for is per-descriptor
+        arithmetic, one tensor at a time -- each descriptor reads its own
+        tensor's three strides and nothing else -- so pairs would buy nothing
+        for the 6**10 / 6 times the cost.
+        """
+        n = len(ALL_LAYOUTS)
+        return cls({tname: ALL_LAYOUTS[(case + column) % n]
+                    for column, tname in enumerate(LAYOUT_TENSOR_ORDER)},
+                   case=case)
+
+    @classmethod
+    def from_storage_flip(cls, storage_flip):
+        """The `storage_flip` spelling, as a `StorageLayout`.
+
+        `dout` keeps `BHSD`: `storage_flip` predates it and has never reached
+        it, and this is a translation, not an improvement.
+        """
+        x, y = storage_flip
+        assert x != 3 and y != 3, 'Cannot storage_flip last dimension. Last dimension must be continuous'
+        flipped = list(BHSD)
+        flipped[x], flipped[y] = flipped[y], flipped[x]
+        flipped = tuple(flipped)
+        perms = {tname: flipped for tname in ('q', 'k', 'v', 'b')}
+        perms['dout'] = BHSD
+        return cls(perms)
+
+    def __getitem__(self, tname):
+        return self._perms.get(tname, BHSD)
+
+    def outputs(self):
+        """The `{tname: perm}` dict `AttentionExtraArgs.output_layouts` wants."""
+        return {tname: self[tname] for tname in LAYOUT_OUTPUT_TENSORS}
+
+    @property
+    def case(self):
+        return self._case
+
+    def __repr__(self):
+        body = ' '.join(f'{t}={LAYOUT_NAMES[self[t]]}' for t in LAYOUT_TENSOR_ORDER)
+        return f'StorageLayout(case={self._case}, {body})'
+
+def assert_layout(t, perm, min_pitch, tname):
+    """`t` is stored in `perm`, with at least `min_pitch` between its rows.
+
+    Both halves guard the same thing from different sides, and neither is
+    redundant. The first catches a refactor that silently NORMALISES a layout --
+    a `.contiguous()` slipped in somewhere, an `empty_like` on a view that is
+    not dense -- which would leave the test green while testing nothing but
+    BHSD. The second catches a refactor that silently COMPACTS the D axis: the
+    8xD contract is what makes `ceil8(hdim)` columns the caller's, and a
+    descriptor capped at the true row pitch is only meaningfully capped if that
+    pitch is on the grid. Allocate at `hdim` instead of `ceil8(hdim)` and the
+    cap starts doing the clipping the fix exists to stop, quietly.
+    """
+    if t is None:
+        return
+    got = layout_of(t)
+    assert got == perm, (f'{tname} is stored as {LAYOUT_NAMES.get(got, got)}, '
+                         f'expected {LAYOUT_NAMES.get(perm, perm)}: '
+                         f'{tuple(t.shape)=} {t.stride()=}')
+    pitch = min(t.stride(axis) for axis in range(3))
+    assert pitch >= min_pitch, (f'{tname} has row pitch {pitch}, below the {min_pitch} '
+                                f'its innermost axis needs: {tuple(t.shape)=} {t.stride()=}')
+
 def calc_checksums(tensors):
     def checksum(t):
         if t is None:
@@ -198,6 +363,7 @@ class SdpaContext(object):
                  prng_seed=0x9be9_98d4_cf17_5339,
                  with_backward=True,
                  prime_hdim=None,
+                 storage_layout=None,
                  ):
         real_device = 'cpu' if AOTRITON_TORCH_ONLY_USE_CPU else device
         self._real_device = real_device
@@ -206,6 +372,12 @@ class SdpaContext(object):
         # `int` or `(qk, vo)`; see `narrow_to_prime`. `D_HEAD` stays the
         # ALLOCATED width and must be the 8-multiple that covers it.
         self._prime_hdim = prime_hdim
+        # A `StorageLayout`, or None to take the layout from `storage_flip`.
+        # Mutually exclusive with it: the two say the same kind of thing, and
+        # honouring both at once would only raise the question of which wins.
+        assert storage_layout is None or storage_flip is None, \
+            'storage_layout and storage_flip both given; they are two spellings of one thing'
+        self._storage_layout = storage_layout
         self._input_shapes = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype, bias_type, storage_flip, device, fillnan, prng_seed, with_backward)
         self._create_inputs()
         # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
@@ -239,16 +411,18 @@ class SdpaContext(object):
         def round_to_8x(n):
             return 8 * cdiv(n, 8)
         bdims = (BATCH, Q_HEADS, seqlen_q, round_to_8x(seqlen_k))
-        if storage_flip is not None:
-            order = [0,1,2,3]
-            x, y = storage_flip
-            assert x != 3 and y != 3, 'Cannot storage_flip last dimension. Last dimension must be continuous'
-            order[x], order[y] = order[y], order[x]
-            i, j, k, l = order
-            qdims = (qdims[i], qdims[j], qdims[k], qdims[l])
-            kdims = (kdims[i], kdims[j], kdims[k], kdims[l])
-            vdims = (vdims[i], vdims[j], vdims[k], vdims[l])
-            bdims = (bdims[i], bdims[j], bdims[k], bdims[l])
+        # One code path for both spellings: `storage_flip` becomes the
+        # `StorageLayout` it always meant, and `alloc_with_layout` does what the
+        # dims-permute-then-`torch.transpose` pair below used to do. The
+        # translation is exact -- a transposition is its own inverse, so the
+        # `permute()` it emits IS the old `transpose()` -- down to the order the
+        # generator is drawn in, so no existing case changes value.
+        if self._storage_layout is not None:
+            layout = self._storage_layout
+        elif storage_flip is not None:
+            layout = StorageLayout.from_storage_flip(storage_flip)
+        else:
+            layout = StorageLayout({})
         # print(f'{qdims=}')
         # print(f'{kdims=}')
         # print(f'{vdims=}')
@@ -258,28 +432,27 @@ class SdpaContext(object):
         # v = torch.empty(vdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
         g = torch.Generator(device=self._real_device)
         g.manual_seed(self._prng_seed)
-        def rng(dims):
-            return torch.rand(*dims, generator=g, dtype=dtype, device=self._real_device)
-        q = rng(qdims)
-        k = rng(kdims)
-        v = rng(vdims)
+        def rng(dims, tname):
+            return alloc_with_layout(dims, layout[tname], dtype=dtype,
+                                     device=self._real_device, generator=g)
+        q = rng(qdims, 'q')
+        k = rng(kdims, 'k')
+        v = rng(vdims, 'v')
         if bias_type is None or bias_type == 0:
             b = None
         elif bias_type == 'matrix' or bias_type == 1:
             # b = torch.empty(bdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
-            b = rng(bdims)
+            # Allocated at `round_to_8x(seqlen_k)` and narrowed, so the bias
+            # carries the slack the kernel's 8-wide KV loads read past the end
+            # of a ragged row. That is a property of the LAST axis and survives
+            # any permutation of the other three, because the last axis is the
+            # one that never permutes.
+            b = rng(bdims, 'b')
             b = b[:, :, :, :seqlen_k]
             # b = b.expand(BATCH, Q_HEADS, b.shape[0], b.shape[1])
         else:
             assert False, f'Unsupported bias_type {bias_type}'
-        if storage_flip is not None:
-            x, y = storage_flip
-            q = torch.transpose(q, x, y)
-            k = torch.transpose(k, x, y)
-            v = torch.transpose(v, x, y)
-            if b is not None:
-                b = torch.transpose(b, x, y)
-        dout = rng(odims) if with_backward else None
+        dout = rng(odims, 'dout') if with_backward else None
 
         # **The narrowing step, after every allocation and before anything
         # reads these.** The reference is built from `dev_tensors`, so it has to
