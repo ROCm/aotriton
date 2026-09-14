@@ -168,7 +168,10 @@ def _attn_fwd_inner(
             # While bias is added after multiplying qk with sm_scale,
             # our optimization to use 2^x instead of e^x results in an additional
             # scale factor of log2(e) which we must also multiply the bias with.
-            qk += (bias * 1.44269504089)
+            # Upcast first: a bare literal is evaluated at the bias dtype, which
+            # rounds log2(e) to 1.4453125 in bf16 and corrupts the saved LSE. The
+            # bwd kernels apply this factor in fp32, so the two must agree.
+            qk += (bias.to(qk.dtype) * 1.44269504089)
 
         if alibi_slope is not None:
             # Compute the global position of each token within the sequence
@@ -176,7 +179,7 @@ def _attn_fwd_inner(
             global_n_positions = start_N + tl.arange(0, BLOCK_N)
             alibi_block = compute_alibi_block(alibi_slope, actual_seqlen_q, actual_seqlen_k, global_m_positions,
                                               global_n_positions)
-            qk += (alibi_block * 1.44269504089)  # scale factor of log2(e)
+            qk += (alibi_block.to(qk.dtype) * 1.44269504089)  # scale factor of log2(e)
 
         # softmax
         # Note: DO NOT USE the following FMA optimization pattern, which has
