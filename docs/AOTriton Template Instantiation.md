@@ -209,6 +209,9 @@ description stays terse.
 Excludes functionals where the predicate fires from code generation. The
 predicate receives a `Functional` and reads `f.choices.<var>` and `f.arch`.
 
+A stack carries **at most one** `@ati.disable`; two exclusions go in one
+predicate, `or`-ed. A second one is an error at decoration time.
+
 When a kernel `@ati.cite`s another and inherits its disable predicate, but the
 predicate reads choice variables the citing kernel doesn't have, use
 `@ati.no_disable()` to explicitly replace the inherited predicate with one that
@@ -422,16 +425,17 @@ Codegen:               IR tree → C++ headers, operator dispatchers, autotune
 ### 2. Stage 2: Passive Description Records (specs/)
 
 Every `@ati.start` block produces one **AtiNode** subclass instance stored as
-`fn.__ati_node__`. All four record classes share this attribute name, allowing
+`fn.__ati_node__`. All five record classes share this attribute name, allowing
 `isinstance()` dispatch everywhere.
 
 ```
 AtiNode (specs/node.py)
-  └── BuildableDecl (specs/node.py)    — every field the builder pipeline reads
-        ├── KernelDecl   (specs/kernel.py)   — @ati.source + all specs
-        ├── AffineDecl   (specs/affine.py)   — @ati.affine.* stack
-        ├── OperatorDecl (specs/operator.py) — @ati.operator stack
-        └── MetroSpec    (specs/metro.py)    — @ati.metro_kernel transpiled AST
+  ├── BuildableDecl (specs/node.py)    — every field the builder pipeline reads
+  │     └── KernelDecl   (specs/kernel.py)   — @ati.source + all specs
+  ├── AffineDecl   (specs/affine.py)   — a prebuilt affine kernel: marker, metadata, disable
+  ├── FlycDecl     (specs/flyc.py)     — a FlyDSL kernel: vendored dir, hints, kernarg list
+  ├── OperatorDecl (specs/operator.py) — an operator: its index-sorted backends and optune
+  └── MetroSpec    (specs/metro.py)    — a metro body transpiled to ordered Call/Cond steps
 ```
 
 **Naming: `*Spec` is the record ONE `@ati.*` decorator produces; `*Decl` is the
@@ -439,10 +443,11 @@ finalized per-stack collection** attached as `fn.__ati_node__`. `MetroSpec` is
 both — the transpiled body is itself the innermost marker — which is why it
 keeps the `*Spec` name.
 
-**`KernelDecl`** is the kernel's passive "object file". It differs from the
-other three records in that it must be **cloned and mutated during linking**
-(cite resolution appends gap tensors/scalars/overrides onto a per-link copy).
-`OperatorDecl` and `AffineDecl` carry no cross-kernel references, so the linker
+**`KernelDecl`** is the kernel's passive "object file", and the only record the
+builder pipeline lowers — which is why `BuildableDecl` sits above it alone. It
+must be **cloned and mutated during linking** (cite resolution appends gap
+tensors/scalars/overrides onto a per-link copy). The other four derive straight
+from `AtiNode`: they have no `clone()` and no builder fields, and the linker
 reads them verbatim.
 
 `BuildableDecl.clone()` is reflective over `dataclasses.fields()` and returns
@@ -513,8 +518,9 @@ def describe(kernel, *specs, _validate=True):
 
 1. Introspect params via `kernel_params(kernel)` (reads `KernelStub.params`, or
    falls back to `inspect.signature` for plain callables in test fixtures).
-2. Partition specs into typed buckets: tensors, scalars, overrides, tune, disables,
-   dtype_vars, cites, plus placeholder-def string annotations → extra ScalarSpecs.
+2. Partition specs into typed buckets: tensors, scalars, overrides, tune, the
+   disable, dtype_vars, cites, plus placeholder-def string annotations → extra
+   ScalarSpecs.
 3. Validate completeness: every signature parameter must be claimed exactly once
    by a tensor/scalar/tune-schema/stride-glob. Unclaimed params are only allowed
    when `@ati.cite` is present (the linker fills gaps at build time).

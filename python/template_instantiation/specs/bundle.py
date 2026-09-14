@@ -107,7 +107,11 @@ def partition(specs) -> SpecBundle:
         elif isinstance(s, Override):
             b.overrides.append(s)
         elif isinstance(s, DisableSpec):
-            assert b.disable is None, 'multiple @ati.disable on one stack'
+            # One per stack. An assert would vanish under `python -O`.
+            if b.disable is not None:
+                raise AssertionError(
+                    f'a stack carries at most one @ati.disable, got {b.disable!r} '
+                    f'and {s!r}; combine them into one predicate')
             b.disable = s
         elif isinstance(s, tune_types):
             b.tune_records.append(s)

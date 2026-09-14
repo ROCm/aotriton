@@ -21,9 +21,10 @@ def _is_callable_class_instance(when) -> bool:
 
 class DisableSpec(StackedSpec):
     """One @ati.disable(when=callable): a predicate over the functional marking it
-    excluded from generation (compiler/numerical correctness exclusion). Multiple
-    compose with OR. The callable reads functional state (f.arch, f.choices.<var>).
-    This is the user interface to is_functional_disabled.
+    excluded from generation (compiler/numerical correctness exclusion). At most one
+    per stack; write `a(f) or b(f)` rather than stacking two. The callable reads
+    functional state (f.arch, f.choices.<var>). This is the user interface to
+    is_functional_disabled.
 
     `@ati.disable` is citeable (rev0 §4.5): a kernel with no local disable inherits
     the cited target's; a LOCAL disable REPLACES the cited one. To EXTEND (not
@@ -56,6 +57,8 @@ def disable(when, *, I_understand_this_overrides_cited_disable=False):
 
       ati.disable(when=lambda f: f.choices.CAUSAL_TYPE and f.choices.BIAS_TYPE != 0)
       ati.disable(when=lambda f: f.arch == 'gfx950' and f.choices.BLOCK_DMODEL == 16)
+
+    A stack carries at most one; two exclusions go in one predicate, `or`-ed.
 
     When the kernel also has an @ati.cite, a LOCAL disable replaces the cited one.
     A bare lambda/function cannot call super() to extend the cited predicate, so it
