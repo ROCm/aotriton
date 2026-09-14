@@ -32,12 +32,33 @@ import importlib.util
 from pathlib import Path
 
 
-# family NAME -> the most recently loaded `aot` package for it. Not sys.modules
-# directly: two module trees can supply the same family (the real modules/ and
-# python/test/fakefamily/ both have a `flash`), and they must not share a cache
-# entry. Parser.load_family_aot keys sys.modules by tree as well as family and
-# records the result here.
+# family NAME -> the one `aot` package loaded for it in this process. Not
+# sys.modules directly: two module trees can supply the same family (the real
+# modules/ and python/test/fakefamily/ both have a `flash`), and they must not
+# share a cache entry. Parser.load_family_aot keys sys.modules by tree as well
+# as family and records the result here.
 _LOADED_AOT = {}
+
+
+def _register_loaded_aot(family, mod):
+    """Bind `family` to its `aot` package, once per process.
+
+    A second TREE supplying the same family is rejected rather than allowed to
+    win the binding. Both can be parsed, but only one can be generated: every
+    generated path is keyed by family alone, so the second tree would overwrite
+    the first's output. Before this raised, the binding was last-writer-wins,
+    and a description from the first tree reaching back through
+    `load_family_aot` (ir/triton/kdesc.py's sancheck) silently got the second
+    tree's package.
+    """
+    prev = _LOADED_AOT.get(family)
+    if prev is not None and prev is not mod:
+        raise RuntimeError(
+            f'family {family!r} is already loaded from {getattr(prev, "__file__", prev)!r}; '
+            f'refusing to also load {getattr(mod, "__file__", mod)!r}. Generated '
+            f'files are keyed by family alone, so one process generates from one tree.')
+    _LOADED_AOT[family] = mod
+    return mod
 
 
 def load_family_aot(family):
@@ -48,8 +69,8 @@ def load_family_aot(family):
     sancheck back-edge, which runs after the family was loaded during linking.
     It never loads: the family must already be loaded by a Parser.
 
-    When more than one tree supplies the family, this is the most recently
-    loaded one, which is the linking currently in progress."""
+    Unambiguous because a family binds to one tree per process; see
+    `_register_loaded_aot`."""
     return _LOADED_AOT.get(family)
 
 
@@ -303,14 +324,16 @@ class Parser:
         alone meant whichever loaded first served both. That is invisible while
         the two describe the same thing, and silently wrong the moment they
         diverge: adding a third backend to the real op_attn_fwd made a fakefamily
-        test see three backends in a full-suite run and two in isolation."""
+        test see three backends in a full-suite run and two in isolation.
+
+        Distinct module objects are also what lets `_register_loaded_aot` see a
+        second tree and refuse it."""
         digest = hashlib.blake2b(str(self.module_dir.resolve()).encode(),
                                  digest_size=6).hexdigest()
         modname = f'_aotriton_modules_{digest}_{family}_aot'
         cached = sys.modules.get(modname)
         if cached is not None:
-            _LOADED_AOT[family] = cached
-            return cached
+            return _register_loaded_aot(family, cached)
         aot_dir = self.module_dir / family / 'aot'
         spec = importlib.util.spec_from_file_location(
             modname, aot_dir / '__init__.py',
@@ -318,8 +341,7 @@ class Parser:
         mod = importlib.util.module_from_spec(spec)
         sys.modules[modname] = mod
         spec.loader.exec_module(mod)
-        _LOADED_AOT[family] = mod
-        return mod
+        return _register_loaded_aot(family, mod)
 
     # --- compile ------------------------------------------------------------
 
