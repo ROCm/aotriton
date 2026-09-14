@@ -65,9 +65,11 @@ private:
   // Note: do NOT drop the decompressed directory, its content is used by
   //       the unordered_map directory_
   std::vector<uint8_t> decompressed_content_;
-  hipError_t final_status_;
+  // Default to the failed state so an early return from the constructor can
+  // never leave these indeterminate.
+  hipError_t final_status_ = hipErrorInvalidSource;
 
-  const uint8_t* kernel_start_;
+  const uint8_t* kernel_start_ = nullptr;
   // Note: again, AKS2_Metadata points to directory at decompressed_content_
   std::unordered_map<std::string_view, const AKS2_Metadata*> directory_;
 };
