@@ -4,14 +4,12 @@
 """
 ATI description of the flash bwd dK/dV FlyDSL backend (gfx1201 and gfx950).
 
-DEMO / DESIGN SKETCH -- not wired into flash_entry.py yet, and carrying only
-the half the ahead-of-time compile driver reads. See `flyc_attn_fwd.py`.
-
 The backward half of `flyc_attn_fwd.py`, and it works the same way: no perf
 axes (`fmha_tuning_bwd_dkdv_gfx1201.resolve_knobs` is the sole producer of a
 schedule), no functional axes of its own (it inherits `op_attn_bwd`'s and
-narrows them), and a declared kernel-argument list, because the hsaco's layout
-comes from `bwd_dkdv_kernel` and nothing else can supply it.
+narrows them with `@ati.disable`), and a declared kernel-argument list, because
+the hsaco's layout comes from `bwd_dkdv_kernel` and nothing else can supply
+it.
 
 What differs from the forward, beyond the operand list:
 
@@ -27,7 +25,7 @@ What differs from the forward, beyond the operand list:
 from dataclasses import asdict
 
 import aotriton.template_instantiation as ati
-from ._flyc_common import FlycBwdHints
+from ._flyc_common import FlycBwdHints, flyc_bwd_disabled
 
 
 # The compiled tile ladder, from fmha_tuning_bwd_dkdv_gfx1201._BLOCK_DMODEL_LADDER.
@@ -50,7 +48,22 @@ _FLYC_BWD_DKDV_HEAD_DIMS_BY_ARCH = {
 }
 
 
+def _flyc_bwd_dkdv_disabled(f):
+    return flyc_bwd_disabled(f, head_dims=_FLYC_BWD_DKDV_HEAD_DIMS_BY_ARCH)
+
+
 @ati.start
+# The cited disable is the WEAKER of the two, despite the kwarg's name: it is
+# flash_disabled(f, gfx950_bad_hdims={48, 80}), and the predicate above rejects
+# every arch but the two this kernel serves, which leaves parts of the cited
+# predicate unreachable. Same argument the forward records; widening the arch
+# gate expires it.
+@ati.disable(when=_flyc_bwd_dkdv_disabled,
+             I_understand_this_overrides_cited_disable=True)
+# `cite` fills the GAPS: any argument below that this description does not fully
+# claim is cloned from the Triton dK/dV kernel by apparel name, so the two
+# backends cannot drift on a shared operand's type.
+@ati.cite('op_attn_bwd.triton_split.bwd_kernel_dk_dv')
 #
 # --- the kernarg ABI, in `bwd_dkdv_kernel` order -----------------------------
 #
@@ -106,8 +119,12 @@ _FLYC_BWD_DKDV_HEAD_DIMS_BY_ARCH = {
 # decoded `varlen_bits` and the Q tensor's own extents: FlyDSL wants how many
 # sequences are packed into a 1THD tensor, zero when the Q side is not packed,
 # and branches on it directly. AOTriton has no field carrying that -- only the
-# layout word it is derived from. See flyc_attn_fwd.py.
-@ati.scalar('num_seqlens', 'i32')
+# layout word it is derived from. `ati.context_helper` is how that host-side
+# code is declared, for the reason flyc_attn_fwd.py sets out at length; the
+# implementation is shared across all three flyc kernels via csrc/flyc_common.h,
+# and it is also where an underivable sequence count is rejected. See
+# flyc_attn_fwd.py.
+@ati.scalar('num_seqlens', 'i32', wires_to=ati.context_helper('flyc_num_seqlens'))
 #
 # --- plain renames -----------------------------------------------------------
 #
@@ -131,8 +148,8 @@ _FLYC_BWD_DKDV_HEAD_DIMS_BY_ARCH = {
 #
 # AOTriton carries a float `dropout_p`; FlyDSL wants the i32 threshold and the
 # 1/(1-p) scale that `philox.dropout_threshold` and `dropout_args` produce.
-@ati.scalar('idropout_p',    'i32')
-@ati.scalar('dropout_scale', 'fp32')
+@ati.scalar('idropout_p',    'i32',  wires_to=ati.context_helper('flyc_idropout_p'))
+@ati.scalar('dropout_scale', 'fp32', wires_to=ati.context_helper('flyc_dropout_scale'))
 #
 # --- plain renames, continued ------------------------------------------------
 @ati.scalar('num_head_q', 'i32',  wires_to='num_head_q')
@@ -153,8 +170,10 @@ _FLYC_BWD_DKDV_HEAD_DIMS_BY_ARCH = {
 # arch), so `options=` is the union of both ladders -- see flyc_attn_fwd.py's
 # BLOCK_DMODEL marker for why a single arch's ladder would under-document.
 @ati.scalar('BLOCK_DMODEL',
-            options=sorted(FLYC_BWD_DKDV_HEAD_DIMS | FLYC_GFX950_BWD_DKDV_HEAD_DIMS))
-@ati.scalar('PADDED_HEAD', options=[False, True])
+            options=sorted(FLYC_BWD_DKDV_HEAD_DIMS | FLYC_GFX950_BWD_DKDV_HEAD_DIMS),
+            wires_to=ati.context_helper('flyc_block_dmodel'))
+@ati.scalar('PADDED_HEAD', options=[False, True],
+            wires_to=ati.context_helper('flyc_padded_head'))
 @ati.flyc.hints(FlycBwdHints)
 @ati.flyc.kernel()
 def flyc_bwd_dkdv(arch, choices, hints):
@@ -272,9 +291,9 @@ def flyc_bwd_dkdv(arch, choices, hints):
             dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
             bias=bool(choices.BIAS_TYPE),
             dropout=bool(choices.ENABLE_DROPOUT),
-            # There is no varlen field to set: the kernel decodes the bits
-            # flyc_varlen_bits() puts on the wire unconditionally, and a dense
-            # call is bits == 0.
+            # There is no varlen field to set: the kernel decodes the
+            # `varlen_bits` word unconditionally, and a dense call is
+            # bits == 0.
             #
             # lse_layout_th stays at its False default, and that default no
             # longer decides anything. It used to: the row read was specialised

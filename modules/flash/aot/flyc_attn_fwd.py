@@ -4,13 +4,9 @@
 """
 ATI description of the flash attn_fwd FlyDSL backend (gfx1201 and gfx950).
 
-DEMO / DESIGN SKETCH -- not wired into flash_entry.py yet. What is here is the
-half the ahead-of-time compile driver reads: the marker, the hints dataclass,
-the declared kernel-argument list, and the builder. Registering this as a
-backend of `op_attn_fwd`, and the citation, disable and context-helper wiring
-the code generator reads, come later. `python -m aotriton.flyc_compile` on this
-file already produces an hsaco for either architecture, with no GPU; see
-`docs/FlyDSL.md`.
+Registered as backend 2 of `op_attn_fwd`, through `metro_fwd_flyc`.
+`python -m aotriton.flyc_compile` on this file also produces an hsaco for
+either architecture with no GPU; see `docs/FlyDSL.md`.
 
 A FlyDSL backend is a THIRD kind, and it takes one half from each of the two ATI
 already has:
@@ -39,20 +35,25 @@ Three consequences, each handled below:
 
 2. **No functional axes are declared here as kernel ARGUMENTS.** They belong to
    the operator (owned by the default triton backend); this backend inherits
-   them and narrows. `flyc_attn_fwd` then reads `choices.NAME` (a `ChoiceView`)
+   them and narrows with `@ati.disable`, exactly as `aiter_fwd.py` does.
+   `flyc_attn_fwd` then reads `choices.NAME` (a `ChoiceView`)
    — the OPERATOR's choices, parsed from `--signature` text by the driver — and
    maps them to builder knobs. This is also why the axes cannot be re-declared
    as a PLAIN `@ati.scalar`: they are not arguments of the flyc kernel at all,
    they are build-time Python values.
 
    `BLOCK_DMODEL`/`PADDED_HEAD` ARE declared below, near the bottom of the
-   stack — but as MARKERS (`options=` and no type), a different, narrower shape
+   stack — but as MARKERS (`options=...` plus
+   `wires_to=ati.context_helper(...)`, and no type), a different, narrower shape
    from every other `@ati.scalar` in this file. A marker never becomes a kernel
    argument, since `options=` and an explicit type are mutually exclusive, so it
    can never claim a kernel-argument slot the way `varlen_bits`'s `'i32'` does.
-   It exists so that dispatch can be redirected to the rounded value this
-   backend actually compiled, rather than the raw choice: this backend's ladder
-   is a strict subset of the declared axis.
+   It exists purely so that `godel_number()` can be redirected to read the
+   rounded value a context helper computes, rather than the raw, off-ladder
+   choice: this backend's ladder is a strict subset of the declared axis. See
+   `ir/flyc/kdesc.py`'s `context_helper_for_functional` for the mechanism, and
+   for why it must not be confused with the three real, explicit-type helpers
+   above it.
 
 3. **The kernarg list is declared, because nothing else can supply it.** aiter hands
    the params struct to a C++ cookie and never names a kernarg; triton gets its list
@@ -64,6 +65,7 @@ Three consequences, each handled below:
 from dataclasses import dataclass, asdict
 
 import aotriton.template_instantiation as ati
+from ._common import flash_disabled, check_value
 
 
 @dataclass
@@ -112,16 +114,60 @@ FLYC_HEAD_DIMS = frozenset({16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 384
 # already superseded.
 FLYC_GFX950_HEAD_DIMS = frozenset({32, 64, 96, 128, 160, 192, 224, 256, 384, 512})
 
-# Per-arch ladder lookup, keyed the same way the builder branch below is. It is
-# also the statement of which architectures this backend serves at all, and the
-# table the backend's disable predicate keys on.
+# Per-arch ladder lookup, keyed the same way the disable predicate and the
+# builder branch below are. Also what `_flyc_fwd_disabled` uses to decide which
+# arches this backend serves at all -- `f.arch in _FLYC_FWD_LADDERS`.
 _FLYC_FWD_LADDERS = {
     'gfx1201': FLYC_HEAD_DIMS,
     'gfx950': FLYC_GFX950_HEAD_DIMS,
 }
 
 
+def _flyc_fwd_disabled(f):
+    """Everything this backend cannot serve, in one predicate.
+
+    Arch lives here rather than in a `@ati.flyc.arch([...])` declaration: it is one
+    more exclusion among several, and splitting it across two mechanisms means two
+    places to look when a functional unexpectedly has no flyc kernel. (`aiter_fwd.py`
+    uses @ati.affine.arch; that predates `f.arch` being available to predicates.)
+
+    `_FLYC_FWD_LADDERS` maps each served arch to its own compiled ladder;
+    everything else about the predicate -- the WMMA dtype restriction, the cited
+    flash_disabled() call -- is arch-independent.
+    """
+    if f.arch not in _FLYC_FWD_LADDERS:
+        return True
+    if flash_disabled(f):
+        return True
+    # f16/bf16 WMMA only.
+    if '*fp32' in check_value(f, ['Q']):
+        return True
+    # Off-ladder head dims are rejected outright by `resolve_knobs`/`resolve()`,
+    # not rounded: rounding is the *interface*'s job, because it also has to
+    # arrange the runtime extent and the padded-head contract that make the
+    # rounding safe.
+    if check_value(f, ['BLOCK_DMODEL']) not in _FLYC_FWD_LADDERS[f.arch]:
+        return True
+    return False
+
+
 @ati.start
+# Overriding drops nothing: the cited disable is the WEAKER of the two, despite
+# the kwarg's name. It is flash_disabled(f, gfx950_bad_hdims={16}); this
+# predicate calls flash_disabled(f) unconditionally and only narrows further
+# (arch membership, the WMMA dtype restriction, the per-arch ladder), so every
+# functional the cited predicate disables is disabled here too -- gfx950 head_dim
+# 16 in particular is excluded via _FLYC_FWD_LADDERS['gfx950'] (see the ladder's
+# own comment), which is a strict superset of the cited predicate's {16} on that
+# axis alone. Measured while gfx1201 was the only served arch: of 576
+# functionals the cited predicate disables 144, and all 144 were disabled here
+# too.
+@ati.disable(when=_flyc_fwd_disabled,
+             I_understand_this_overrides_cited_disable=True)
+# `cite` fills the GAPS: any argument below that this description does not fully
+# claim (dtype variables, strideless operands) is cloned from the triton kernel by
+# apparel name, so the two backends cannot drift on a shared operand's type.
+@ati.cite('op_attn_fwd.triton.attn_fwd')
 #
 # --- the kernarg ABI, in `flash_attn_func_aiw_kernel` order ------------------
 #
@@ -224,7 +270,13 @@ _FLYC_FWD_LADDERS = {
 # multiple of `max_seqlen`. Getting either wrong fails SILENTLY, in FlyDSL's own
 # words: "it launches N programs over a tensor whose batch axis is 1, and every
 # one of them addresses a plausible row."
-@ati.scalar('num_seqlens', 'i32')
+#
+# That rejection is worth naming here, because it moves with this declaration:
+# `flyc_classify_varlen()` throws on an underivable count, and it is
+# `flyc_num_seqlens()` that calls it. Still every launch -- all three
+# descriptions declare `num_seqlens` with this helper, and helpers are evaluated
+# once per `lookup_optimal`.
+@ati.scalar('num_seqlens', 'i32', wires_to=ati.context_helper('flyc_num_seqlens'))
 #
 # --- plain renames ------------------------------------------------------------
 @ati.scalar('max_seqlen_q', 'i32', wires_to='Max_seqlen_q')
@@ -246,8 +298,8 @@ _FLYC_FWD_LADDERS = {
 @ati.tensor('philox_offset_output', 'T_u64', rank=0)
 #
 # --- the two dropout arguments that are not a rename --------------------------
-@ati.scalar('idropout_p',    'i32')
-@ati.scalar('dropout_scale', 'fp32')
+@ati.scalar('idropout_p',    'i32',  wires_to=ati.context_helper('flyc_idropout_p'))
+@ati.scalar('dropout_scale', 'fp32', wires_to=ati.context_helper('flyc_dropout_scale'))
 #
 # --- plain renames, continued -------------------------------------------------
 @ati.scalar('num_head_q', 'i32',  wires_to='Num_head_q')
@@ -258,22 +310,70 @@ _FLYC_FWD_LADDERS = {
 # (FlyDSL 1b58fb93 made one kernarg convention across all four).
 @ati.scalar('sm_scale',   'fp32', wires_to='Sm_scale')
 #
+# --- why `ati.context_helper` and not an inline expression --------------------
+#
+# Three arguments above are not renames of an operator operand. They need
+# host-side code, and the place that code already goes is a member function on
+# the generated CONTEXT class, hand-implemented in modules/flash/csrc/:
+#
+#     wires_to=ati.context_helper('flyc_num_seqlens')
+#       -> declares  int32_t flyc_num_seqlens() const;  on FlycAttnFwdContext
+#       -> author implements it in modules/flash/csrc/flyc_attn_fwd.cc
+#
+# This is not a new concept. `dim3 grid_calculator() const;` is declared in the
+# generated context struct (codegen/template/shim.h) and implemented by hand as
+# `AttnFwdContext::grid_calculator()` in modules/flash/csrc/attn_fwd.cc -- same
+# class, same namespace (AOTRITON_NS::v3::flash), same split. `context_helper`
+# only lets a description declare MORE of them instead of the set being
+# hardwired.
+#
+# NO ARGUMENTS, because the context already carries everything: `params` (the
+# whole operator params struct), the dispatching `current_gpu`, and the selected
+# knobs are members. grid_calculator demonstrates the range -- it reads
+# params->Varlen_bits, params->Max_seqlen_q, params->Q->size(1), params->Batch,
+# this->BLOCK_M and this->PERSISTENT_TYPE, and takes nothing.
+#
+# The return type is not declared twice: it comes from the @ati.scalar type on
+# the same line, so `'i32'` fixes the signature as `int32_t`.
+#
+# Rejected alternative -- `wires_to=ati.expr('<C++ expression>')`, i.e. a C++
+# string in the Python description:
+#   * a typo is caught only when the generated .cc compiles, and the error points
+#     at generated code; a missing context helper is a LINK error naming the
+#     symbol
+#   * a string cannot be unit-tested, stepped through, or given a comment
+#     explaining the varlen decoding at the point it happens
+#   * anything past one expression does not fit
+#   * two mechanisms for host-side code -- grid_calculator in csrc, expressions
+#     in the description -- means two places to look
+# The cost is that trivial cases (dropout_scale is one divide) also become
+# functions. Uniformity is worth it: one mechanism, one file, one place a
+# reviewer looks.
+#
+# THE LAUNCH GRID lands in the same place: `grid_calculator()` is already the
+# hook, and FlycAttnFwdContext implements it in modules/flash/csrc/. The knobs
+# it needs -- `block_m`, and the axis order -- are not perf fields on the
+# context, because flyc declares no perf axes; they arrive in the selected
+# image's `#P` section and are read back through `perf()`.
+#
 # --- functional-axis markers, NOT kernel arguments ----------------------------
 #
-# `BLOCK_DMODEL`/`PADDED_HEAD` are the operator's own axes, inherited by this
-# backend and narrowed by it -- NOT part of `flash_attn_func_aiw_kernel`'s
-# argument list declared above, so these two lines are deliberately kept out of
-# that ordered block. `options=` and an explicit type are mutually exclusive, so
-# a marker can never be read as a real launch argument; it is only ever found by
-# axis name.
+# `BLOCK_DMODEL`/`PADDED_HEAD` are the operator's own axes, inherited via
+# `@ati.cite` above and narrowed by `_flyc_fwd_disabled`'s ladder check -- NOT
+# part of `flash_attn_func_aiw_kernel`'s argument list declared above, so these
+# two lines are deliberately kept out of that ordered block. `options=` and an
+# explicit type are mutually exclusive, so a marker can never be read by
+# `iter_launch_arguments` as a real launch argument; it is only ever found by
+# axis name, via `context_helper_for_functional` (ir/flyc/kdesc.py).
 #
 # Why either axis needs a marker at all: dispatch bins the caller's head
 # dimension to a `BLOCK_DMODEL` rung on the OPERATOR's ladder before a backend
-# is chosen, and this backend's compiled ladder is a strict subset of it, so
-# the digit has to be redirected to the rung this backend actually built.
-# `PADDED_HEAD` must follow that decision -- a kernel re-rounded to a wider
-# rung with `PADDED_HEAD` left false is a silent wrong answer, not a build
-# error.
+# is chosen, and this backend's compiled ladder is a strict subset of it. Wiring
+# the axis to a context helper lets `godel_number()` read the ROUNDED value the
+# helper computes (modules/flash/csrc/flyc_attn_fwd.cc) instead of the raw,
+# potentially off-ladder choice. `PADDED_HEAD` must follow that decision -- a
+# kernel re-rounded to a wider rung with `PADDED_HEAD` left false is a silent
+# wrong answer, not a build error.
 #
 # The `options=` lists restate each ladder as free documentation, not as a
 # second source of truth: the digit's real range comes from the OPERATOR's
@@ -283,8 +383,10 @@ _FLYC_FWD_LADDERS = {
 # arch), so `options=` is the UNION of both ladders rather than either alone --
 # neither is a subset of the other, so one arch's list would under-document the
 # other's compiled rungs.
-@ati.scalar('BLOCK_DMODEL', options=sorted(FLYC_HEAD_DIMS | FLYC_GFX950_HEAD_DIMS))
-@ati.scalar('PADDED_HEAD', options=[False, True])
+@ati.scalar('BLOCK_DMODEL', options=sorted(FLYC_HEAD_DIMS | FLYC_GFX950_HEAD_DIMS),
+            wires_to=ati.context_helper('flyc_block_dmodel'))
+@ati.scalar('PADDED_HEAD', options=[False, True],
+            wires_to=ati.context_helper('flyc_padded_head'))
 @ati.flyc.hints(FlycFwdHints)
 @ati.flyc.kernel()
 def flyc_attn_fwd(arch, choices, hints):
@@ -323,7 +425,7 @@ def flyc_attn_fwd(arch, choices, hints):
                axis would multiply the functional space and the godel
                numbering for every backend in order to serve one.
 
-    Deliberate asymmetry with a disable predicate, which takes a real
+    Deliberate asymmetry with `_flyc_fwd_disabled` above, which takes a real
     `ir.Functional` and reads `f.arch`: disable predicates run GENERATOR-side,
     where the linked IR exists; this function runs DRIVER-side, where only
     `--signature` text exists. `choices` is not a `Functional` and
@@ -436,8 +538,9 @@ def flyc_attn_fwd(arch, choices, hints):
             # gfx950's FmhaInputMetadata has no `causal_type` field — only
             # `causal`/`window` (window requires causal: "a left bound *on
             # top of* the causal one"). The kernel only ever compiles
-            # CAUSAL_TYPE in {0, 3}, which is also all the operator's own
-            # axis offers here, so this is 1:1, no mapping, exactly like
+            # CAUSAL_TYPE in {0, 3} -- checked by _flyc_fwd_disabled's cited
+            # flash_disabled, and all the operator's own axis offers here --
+            # so this is 1:1, no mapping, exactly like
             # the gfx1201 branch's causal_type line.
             causal=choices.CAUSAL_TYPE != 0,
             window=choices.CAUSAL_TYPE != 0,
@@ -510,7 +613,7 @@ def flyc_attn_fwd(arch, choices, hints):
         return build, asdict(knobs)
 
     else:
-        # Unreachable: this backend serves exactly the architectures in
-        # _FLYC_FWD_LADDERS. Fail loudly rather than silently building nothing
-        # if that ever stops being true.
+        # Unreachable: _flyc_fwd_disabled only lets gfx1201/gfx950 functionals
+        # through _FLYC_FWD_LADDERS. Fail loudly rather than silently building
+        # nothing if that ever stops being true.
         assert False, f'flyc_attn_fwd: no builder branch for arch {arch!r}'

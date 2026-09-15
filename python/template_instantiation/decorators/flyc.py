@@ -14,9 +14,13 @@ declared, which nothing else can supply. Its description uses the stacked-@
 form:
 
     @ati.start
+    @ati.disable(when=_flyc_fwd_disabled)         # which functionals it serves
+    @ati.cite('op_attn_fwd.triton.attn_fwd')      # fills argument-type GAPS
     @ati.tensor('Q', 'T_io', rank=4, strides='stride_q_*', wires_to='Q')
     ...
-    @ati.scalar('varlen_bits', 'i32', wires_to='Varlen_bits')
+    @ati.scalar('varlen_bits', 'i32', wires_to='Varlen_bits')     # a plain rename
+    @ati.scalar('num_seqlens', 'i32',                             # computed host-side
+                wires_to=ati.context_helper('flyc_num_seqlens'))
     @ati.flyc.hints(FlycFwdHints)                 # optimization-input dataclass
     @ati.flyc.kernel()                            # innermost marker
     def flyc_attn_fwd(arch, choices, hints):

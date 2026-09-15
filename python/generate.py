@@ -65,7 +65,7 @@ def parse():
 def run_sancheck(args) -> int:
     """Validate all ATI descriptions; print every error; return process exit code."""
     import sys
-    triton_kernels, dispatcher_operators, _aff = \
+    triton_kernels, dispatcher_operators, _aff, _flyc = \
         Linker(args.root_dir / 'modules').link_all_families()
     from .template_instantiation.tools import sancheck_report
     ok, errors = sancheck_report(kernels=triton_kernels,
@@ -80,7 +80,7 @@ def run_sancheck(args) -> int:
 
 def run_preview(args, selective) -> int:
     """Print the implicit structures of the ATI descriptions matching `selective`."""
-    triton_kernels, dispatcher_operators, _aff = \
+    triton_kernels, dispatcher_operators, _aff, _flyc = \
         Linker(args.root_dir / 'modules').link_all_families()
     from .template_instantiation.tools import preview
     sel = None if selective == '*' else selective

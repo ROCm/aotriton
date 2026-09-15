@@ -149,7 +149,7 @@ def partition_kernel(specs):
     `partition()` recognises (tensors/scalars/overrides/dtype_vars/cites/
     disable/tune records), so there is nothing to `forbid()`. Still a named
     wrapper, rather than describe() calling `partition()` directly, so every
-    stack kind (kernel/affine/operator) has a matching `partition_*`
+    stack kind (kernel/affine/flyc/operator) has a matching `partition_*`
     entry point and the same `reject_remaining()` idiom catches whatever a
     kernel stack does not recognise either."""
     b = partition(specs)

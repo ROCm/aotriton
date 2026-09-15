@@ -4,13 +4,10 @@
 """
 ATI description of the flash bwd dQ/dB FlyDSL backend (gfx1201 and gfx950).
 
-DEMO / DESIGN SKETCH -- not wired into flash_entry.py yet, and carrying only
-the half the ahead-of-time compile driver reads. See `flyc_attn_fwd.py`.
-
 The dQ/dB half of the flyc backward, and the sibling of `flyc_bwd_dkdv.py` --
 see that file for the shared rationale (no perf axes, no functional axes of its
-own, a declared kernel-argument list, and why the backend needs a Triton
-`bwd_preprocess` in front).
+own, a declared kernel-argument list, and why the backend is a metro with a
+Triton `bwd_preprocess` in front).
 
 Two things are specific to this kernel:
 
@@ -30,7 +27,7 @@ Two things are specific to this kernel:
 from dataclasses import asdict
 
 import aotriton.template_instantiation as ati
-from ._flyc_common import FlycBwdHints
+from ._flyc_common import FlycBwdHints, flyc_bwd_disabled
 
 
 # The compiled tile ladder, from fmha_tuning_bwd_dq_gfx1201._BLOCK_DMODEL_LADDER.
@@ -53,7 +50,14 @@ _FLYC_BWD_DQ_HEAD_DIMS_BY_ARCH = {
 }
 
 
+def _flyc_bwd_dq_disabled(f):
+    return flyc_bwd_disabled(f, head_dims=_FLYC_BWD_DQ_HEAD_DIMS_BY_ARCH)
+
+
 @ati.start
+@ati.disable(when=_flyc_bwd_dq_disabled,
+             I_understand_this_overrides_cited_disable=True)
+@ati.cite('op_attn_bwd.triton_split.bwd_kernel_dq')
 #
 # --- the kernarg ABI, in `bwd_dq_kernel` order -------------------------------
 #
@@ -84,7 +88,7 @@ _FLYC_BWD_DQ_HEAD_DIMS_BY_ARCH = {
 # is computed from the decoded layout word and Q's extents. See
 # flyc_bwd_dkdv.py.
 @ati.scalar('varlen_bits', 'i32', wires_to='varlen_bits')
-@ati.scalar('num_seqlens', 'i32')
+@ati.scalar('num_seqlens', 'i32', wires_to=ati.context_helper('flyc_num_seqlens'))
 @ati.scalar('max_seqlen_q', 'i32', wires_to='max_seqlen_q')
 @ati.scalar('max_seqlen_k', 'i32', wires_to='max_seqlen_k')
 @ati.scalar('window_left',  'i32', wires_to='Window_left')
@@ -92,8 +96,8 @@ _FLYC_BWD_DQ_HEAD_DIMS_BY_ARCH = {
 @ati.tensor('philox_seed_ptr', '*u64', rank=0)
 @ati.tensor('philox_offset1', '*u64', rank=0)
 @ati.scalar('philox_offset2', 'u64')
-@ati.scalar('idropout_p',    'i32')
-@ati.scalar('dropout_scale', 'fp32')
+@ati.scalar('idropout_p',    'i32',  wires_to=ati.context_helper('flyc_idropout_p'))
+@ati.scalar('dropout_scale', 'fp32', wires_to=ati.context_helper('flyc_dropout_scale'))
 @ati.scalar('num_head_q', 'i32',  wires_to='num_head_q')
 @ati.scalar('num_head_k', 'i32',  wires_to='num_head_k')
 @ati.scalar('hdim_qk',    'i32',  wires_to='hdim_qk')
@@ -112,8 +116,10 @@ _FLYC_BWD_DQ_HEAD_DIMS_BY_ARCH = {
 # arch), so `options=` is the union of both ladders -- see flyc_attn_fwd.py's
 # BLOCK_DMODEL marker for why a single arch's ladder would under-document.
 @ati.scalar('BLOCK_DMODEL',
-            options=sorted(FLYC_BWD_DQ_HEAD_DIMS | FLYC_GFX950_BWD_DQ_HEAD_DIMS))
-@ati.scalar('PADDED_HEAD', options=[False, True])
+            options=sorted(FLYC_BWD_DQ_HEAD_DIMS | FLYC_GFX950_BWD_DQ_HEAD_DIMS),
+            wires_to=ati.context_helper('flyc_block_dmodel'))
+@ati.scalar('PADDED_HEAD', options=[False, True],
+            wires_to=ati.context_helper('flyc_padded_head'))
 @ati.flyc.hints(FlycBwdHints)
 @ati.flyc.kernel()
 def flyc_bwd_dq(arch, choices, hints):

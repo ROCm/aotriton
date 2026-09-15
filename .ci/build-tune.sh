@@ -8,9 +8,10 @@ fi
 # Parse options using getopt
 shim_only=false
 altwheel_config=""
-TEMP=$(getopt -o '' --long shim,altwheel_config: -n 'build-tune.sh' -- "$@")
+flydsl_wheel=""
+TEMP=$(getopt -o '' --long shim,altwheel_config:,flydsl_wheel: -n 'build-tune.sh' -- "$@")
 if [ $? != 0 ]; then
-  echo 'Usage: build-tune.sh [--shim] [--altwheel_config <yaml>] <target arch> [optional pre-compiled triton wheel]' >&2
+  echo 'Usage: build-tune.sh [--shim] [--altwheel_config <yaml>] [--flydsl_wheel <whl>] <target arch> [optional pre-compiled triton wheel]' >&2
   exit 1
 fi
 
@@ -26,6 +27,10 @@ while true; do
       altwheel_config="$2"
       shift 2
       ;;
+    --flydsl_wheel)
+      flydsl_wheel="$2"
+      shift 2
+      ;;
     --)
       shift
       break
@@ -38,7 +43,7 @@ while true; do
 done
 
 if [ "$#" -lt 1 ]; then
-  echo 'Missing arguments. Usage: build-tune.sh [--shim] [--altwheel_config <yaml>] <target arch> [optional pre-compiled triton wheel]' >&2
+  echo 'Missing arguments. Usage: build-tune.sh [--shim] [--altwheel_config <yaml>] [--flydsl_wheel <whl>] <target arch> [optional pre-compiled triton wheel]' >&2
   exit 1
 fi
 
@@ -57,6 +62,12 @@ fi
 
 if [ -n "$altwheel_config" ]; then
   build_args+=("-DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=$(realpath "$altwheel_config")")
+fi
+
+# Install a flydsl wheel from local disk instead of the third_party/flydsl-compiler.txt
+# pin. realpath is what satisfies cmake's absolute-path requirement on this variable.
+if [ -n "$flydsl_wheel" ]; then
+  build_args+=("-DAOTRITON_USE_LOCAL_FLYDSL_WHEEL=$(realpath "$flydsl_wheel")")
 fi
 
 # Add optional triton wheel argument if provided -- not when an altwheel

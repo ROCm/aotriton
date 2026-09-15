@@ -28,7 +28,7 @@ class Operator(Interface):
 
     def __init__(self, name, *, family, default_kdesc, backends, optune_keys,
                  call_options_name, struct_cfields=None,
-                 partially_tuned_functionals=None):
+                 partially_tuned_functionals=None, backend_names=None):
         self.NAME = name
         self.FAMILY = family
         # default_kdesc owns the FUNCTIONAL axes (godel/gen_functionals/axis lookups).
@@ -42,6 +42,14 @@ class Operator(Interface):
         self._optune_keys = dict(optune_keys)      # arg name -> BinningSelector
         self.CALL_OPTIONS_NAME = call_options_name
         self._backend_dict = {b.enum_name: b for b in self._backends}
+        # The names @ati.backend DECLARED, index-aligned with _backends. This is
+        # the user-facing vocabulary -- 'triton', 'aiter', 'flyc' -- and is what
+        # the published backend constants are built from. Deliberately NOT
+        # b.enum_name: that carries the kMetro_/kShim_/kSlimAffine_ prefix, which
+        # says how the backend is assembled. That is a fact about the generator,
+        # and it has no business in an interface a caller selects through.
+        self._backend_names = list(backend_names) if backend_names else [
+            b.NAME for b in self._backends]
         # Operator-level partial tuning. EXPLICIT — never inherited from default_kdesc:
         # a kernel's @ati.tune.fallback is a per-perf-row downgrade that would fight
         # the operator's backend-selection tuning. Default {} (the legacy operators'
@@ -72,6 +80,11 @@ class Operator(Interface):
     @property
     def fallback_backend(self):
         return self._backends[0]
+
+    @property
+    def backend_names(self):
+        """The @ati.backend-declared names, index-aligned with list_backends()."""
+        return list(self._backend_names)
 
     @property
     def nbackends(self):
