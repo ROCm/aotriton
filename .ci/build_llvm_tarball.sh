@@ -72,6 +72,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/common-git-cache.sh"
+. "${SCRIPT_DIR}/common-pin.sh"
 
 # The pin AOTriton keeps for LLVM, independent of the FlyDSL compiler and
 # kernel pins. This script is only its consumer: the file arrives with the
@@ -84,35 +85,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # an emptying so the next person still learns what the file is for.
 LLVM_PIN_FILE="${SCRIPT_DIR}/../third_party/flydsl-llvm.txt"
 
-# One PEP 508 direct reference: git+<scheme>://<url>@<ref>. Split on the LAST
-# '@', which is unambiguous for that form and stays unambiguous for
-# git+ssh://git@host/org/repo@ref. The scp-style git@github.com:org/repo is the
-# one spelling the rule cannot disambiguate, so it is rejected rather than
-# guessed at.
-parse_llvm_pin() {
-  local line count=0 pin=""
-  while IFS= read -r line || [[ -n "${line}" ]]; do
-    line="${line#"${line%%[![:space:]]*}"}"   # ltrim
-    line="${line%"${line##*[![:space:]]}"}"   # rtrim
-    [[ -z "${line}" || "${line}" == \#* ]] && continue
-    pin="${line}"
-    count=$((count + 1))
-  done < "$1"
-  if [[ "${count}" -gt 1 ]]; then
-    echo "Error: ${1} has ${count} non-comment lines; it must have at most one." >&2
-    return 1
-  fi
-  [[ "${count}" -eq 0 ]] && return 0
-  if [[ "${pin}" != git+*://*@* ]]; then
-    echo "Error: cannot parse '${pin}' in ${1}." >&2
-    echo "Expected one PEP 508 direct reference, e.g." >&2
-    echo "  git+https://github.com/ROCm/llvm-project@aotriton/0.14b/rc0" >&2
-    echo "scp-style URLs (git@github.com:org/repo) are not accepted: the ref" >&2
-    echo "separator and the user separator are the same character." >&2
-    return 1
-  fi
-  printf '%s\n%s\n' "${pin%@*}" "${pin##*@}"
-}
 
 if [[ -z "${LLVM_ORIGIN}" || -z "${LLVM_COMMIT}" ]]; then
   if [[ ! -f "${LLVM_PIN_FILE}" ]]; then

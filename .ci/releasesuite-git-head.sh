@@ -42,14 +42,15 @@ Options:
  --triton_origin <url>: Override the Triton git origin for wheel builds.
                         Accepts a fork URL or a local checkout via file:///abs/path
                         (default: https://github.com/ROCm/triton)
- --flydsl_commit <ref>: Build a FlyDSL compiler wheel from source (branch, tag
-                        or SHA) and build the GPU images against it, instead of
-                        installing the wheel third_party/flydsl-compiler.txt
-                        pins. This is what third_party/flydsl-llvm.txt being
-                        non-empty demands: the released wheel is then known to
-                        be built against a bad LLVM, and cmake refuses to
-                        proceed without a local one. Costs an LLVM build on
-                        first use, so it is opt-in and off by default.
+ --flydsl_commit <ref>: Build a FlyDSL compiler wheel from this ref (branch,
+                        tag or SHA) and build the GPU images against it,
+                        instead of installing the wheel
+                        third_party/flydsl-compiler.txt pins.
+                        Implied, with the ref taken from that same pin, when
+                        third_party/flydsl-llvm.txt is non-empty: the released
+                        wheel is then known to be built against a bad LLVM and
+                        cmake refuses it, so the source build is the only one
+                        that can finish. Costs an LLVM build on first use.
  --flydsl_origin <url>: Override the FlyDSL git origin. Same "fork URL or
                         file:///abs/path" contract as --triton_origin
                         (default: https://github.com/ROCm/FlyDSL)
@@ -232,6 +233,7 @@ echo "SUITE_RUNTIME_LIST ${SUITE_RUNTIME_LIST[@]}"
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
 . "${SCRIPT_DIR}/common-git-cache.sh"
+. "${SCRIPT_DIR}/common-pin.sh"
 . "${SCRIPT_DIR}/common-git-https-origin.sh"
 # --origin auto: keep the GIT_HTTPS_ORIGIN auto-derived from the tracked
 # remote by common-git-https-origin.sh (ssh/git URLs already rewritten to
@@ -301,19 +303,35 @@ if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
     WHEEL_CFG="/cache/wheels/$(basename "${WHEEL_CFG}")"
   fi
 
-  # The FlyDSL compiler wheel, on exactly the same terms as the Triton wheels
-  # above: built here, before the suite, cached under <output>/.cache, and
-  # handed to the build by path. Only when asked -- a release with no FlyDSL
-  # flags installs the wheel third_party/flydsl-compiler.txt pins and never
-  # enters this path, which is what keeps an hour of LLVM off the default
-  # route. When third_party/flydsl-llvm.txt is non-empty that default build
-  # fails at configure time instead of silently shipping kernels built by a
-  # spill-miscompiling LLVM, and the message it prints names this flag.
+  # The FlyDSL compiler wheel, on the Triton wheels' terms: built here, cached
+  # under <output>/.cache, handed to the build by path. Skipped unless asked,
+  # which keeps an hour of LLVM off the default route.
   #
-  # RELEASE_PYVER, not a separate --flydsl_python: the aotriton:buildenv-rocm*
-  # images derive from aotriton:base, whose PYVER default is the same 3.11 the
-  # Triton wheels are built for, and a flydsl wheel whose cp tag disagrees with
-  # the build venv is rejected by cmake anyway. One version, one place.
+  # RELEASE_PYVER, not a --flydsl_python: cmake rejects a wheel whose cp tag
+  # disagrees with the build venv, so one version, one place.
+
+  # A non-empty LLVM pin makes the source build mandatory: cmake refuses that
+  # wheel, so a release without --flydsl_commit would run until configure and
+  # die there. pin_line is build_llvm_tarball.sh's reader, which also rejects a
+  # file that has grown a second pin.
+  FLYDSL_LLVM_PIN="$(pin_line "${SCRIPT_DIR}/../third_party/flydsl-llvm.txt")" || exit 1
+  if [[ -z "${SUITE_FLYDSL_COMMIT}" && -n "${FLYDSL_LLVM_PIN}" ]]; then
+    # The ref to build is the one flydsl-compiler.txt names, spelled as a tag.
+    # FlyDSL releases are tagged vX.Y.Z, so `flydsl==0.3.1` is `v0.3.1`. Any
+    # other requirement shape is not something to guess at.
+    FLYDSL_REQ="$(pin_line "${SCRIPT_DIR}/../third_party/flydsl-compiler.txt")" || exit 1
+    if [[ "${FLYDSL_REQ}" =~ ^flydsl[[:space:]]*==[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+      SUITE_FLYDSL_COMMIT="v${BASH_REMATCH[1]}"
+    else
+      echo "Error: third_party/flydsl-llvm.txt pins ${FLYDSL_LLVM_PIN}, so this" >&2
+      echo "release must build FlyDSL from source, but the ref to build cannot be" >&2
+      echo "derived from third_party/flydsl-compiler.txt ('${FLYDSL_REQ}')." >&2
+      echo "Pass --flydsl_commit <ref> explicitly." >&2
+      exit 1
+    fi
+    echo "third_party/flydsl-llvm.txt is non-empty (${FLYDSL_LLVM_PIN})."
+    echo "Building FlyDSL ${SUITE_FLYDSL_COMMIT} from source; the pinned wheel cannot be used."
+  fi
   if [[ -n "${SUITE_FLYDSL_COMMIT}" ]]; then
     FLYDSL_CACHE_DIR="${CACHE_DIR}/flydsl"
     # The LLVM tarball first, as a step of this script rather than a side
