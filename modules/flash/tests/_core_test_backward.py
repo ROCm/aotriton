@@ -107,9 +107,10 @@ elif BWD_IMPL == 3:
     # dim rounds up to a compiled tile and rides the PADDED_HEAD axis exactly as
     # it does for Triton.
     #
-    # DTYPES is deliberately NOT set here. The fp32 exclusion is the FORWARD
-    # backend's (see above) -- pinning the backward to flyc while leaving the
-    # forward on Triton is a legitimate mixed run, and fp32 is fine for it.
+    # f16/bf16 only, and this is the BACKWARD's own exclusion, not an echo of
+    # the forward's above: _flyc_common.py's predicate rejects fp32 too, so a
+    # mixed Triton-forward run still has no fp32 backward kernel to call.
+    DTYPES = [torch.float16, torch.bfloat16]
     POT_HEADDIMS = [16, 32, 64, 128, 256, 512]
     NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
     M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216, 248, 408]

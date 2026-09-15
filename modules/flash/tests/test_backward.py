@@ -133,37 +133,27 @@ if FOR_RELEASE >= 0:
 
 if FOR_RELEASE >= 0:
     # **Every tensor in a different memory layout, with the head dim off the
-    # 8-multiple grid.** test_prime_hdim above proves the 8xD contract holds; this
-    # proves the DESCRIPTOR PITCH that implements it is derived from the right
-    # stride, which is a question only a permuted layout can ask.
+    # 8-multiple grid.** test_prime_hdim above proves the 8xD contract holds;
+    # this proves the descriptor that implements it is derived from the right
+    # tensor's stride, which is a question only a permuted layout can ask.
     #
-    # The gfx950 kernels bound each `(batch, head)` slab with a buffer descriptor
-    # whose `num_records` must cover the last row's full 8-element access and
-    # nothing beyond the allocation. The width of a row is `ceil8(hdim)`, capped
-    # by the pitch -- and the pitch is `min(stride_batch, stride_head, stride_seq)`,
-    # not `stride_seq`. Under BHSD those are the same number, which is why a
-    # `stride_seq`-only cap survived every test there was: BHSD and the single
-    # transposition `storage_flip` reaches are the only layouts anything exercised.
-    # Under BSHD the next thing after a row is the next HEAD, and under SHBD
-    # `stride_seq` balloons to `batch * heads * hdim` while the real gap is still
-    # one head -- so a `stride_seq` cap is vacuous there and lets the descriptor
-    # run past the end of the buffer.
+    # `_slab_span_elems` spans a `(batch, head)` slab as
+    # `(rows-1)*stride_seq + ceil8(hdim)`, built per tensor from THAT tensor's
+    # own stride. Under BHSD every tensor agrees, so reading the wrong one is
+    # invisible -- and BHSD plus the single transposition `storage_flip` reaches
+    # were the only layouts anything exercised.
     #
-    # Sensitivity, stated concretely: with the pitch wrong (or, before it was
-    # capped at all, with the slab simply ending at the last real element), the
-    # hardware drops the dword holding columns `hdim-1` and `hdim` because only
-    # half of it is inside `num_records`, and takes the REAL column `hdim-1` with
-    # it -- on the last row of every slab. Measured at exactly these shapes:
-    # `O[.., seqlen_q-1, hdim-1]` never stored, `dQ[.., seqlen_q-1, hdim-1]` and
-    # `dK/dV[.., seqlen_kv-1, hdim-1]` garbage, and the NaN left in O reaches
-    # every element of dK through delta.
+    # Sensitivity: end a slab at `hdim` instead and the hardware drops the dword
+    # holding columns `hdim-1` and `hdim`, taking the real column with it on the
+    # last row of every slab. Measured at these shapes: `O[.., seqlen_q-1,
+    # hdim-1]` never stored, `dQ[.., seqlen_q-1, hdim-1]` and `dK/dV[..,
+    # seqlen_kv-1, hdim-1]` garbage, and the NaN left in O reaches every element
+    # of dK through delta.
     LAYOUT_CASES = [StorageLayout.round_robin(case) for case in range(len(ALL_LAYOUTS))]
 
     # BATCH and N_HEADS must BOTH be > 1. At 1 the corresponding stride is
-    # arbitrary and unconstrained, the six permutations collapse into fewer than
-    # six distinct stride patterns, and `min(s0, s1, s2)` can be decided by an
-    # axis that does not exist -- which is the degenerate case the pitch is
-    # floored at `hdim` to survive, not the case this test is here to measure.
+    # arbitrary and unconstrained, so the six permutations collapse into fewer
+    # than six distinct stride patterns and the test stops asking its question.
     @pytest.mark.parametrize('BATCH', [3])
     @pytest.mark.parametrize('N_HEADS', [5], ids=fmt_nheads)
     # One prime on each side of the point where the D axis stops being a single

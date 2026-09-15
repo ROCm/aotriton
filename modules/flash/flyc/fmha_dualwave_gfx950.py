@@ -1312,8 +1312,10 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         redirected there is dropped by the hardware bound -- which is how
         `ParityStoreHelper` suppresses the D-tail chunks without branching.
         `_slab_span_elems` can only shrink the descriptor below this, never
-        grow it past -- its `minui` is what guarantees that, including when the
-        D axis rounds up -- so the two stay in the order the suppression needs.
+        grow it past. No clamp enforces that; the 8xD contract does, by
+        guaranteeing `stride_seq >= ceil8(hdim)` -- see that docstring, which
+        rejects a clamp outright -- so the two stay in the order the
+        suppression needs even when the D axis rounds up.
         On a contiguous `(.., seqlen, ceil8(hdim))` layout they are equal, which
         is out of range and always has been.
         """
