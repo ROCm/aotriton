@@ -327,13 +327,22 @@ launcher AOTriton never uses — it compiles under `COMPILE_ONLY=1` — so the R
 version has no bearing on the kernels the wheel produces, and **no GPU is
 needed** for any of this.
 
-`.ci/flydsl-patch/*.patch` is applied to the FlyDSL checkout first, and today
-holds one patch: upstream searches `/opt/rocm*` for HIP, which a TheRock root
-is not — it is a site-packages directory named by `rocm-sdk path --root`. The
-patch prefers `ROCM_PATH` and keeps the glob as the fallback, the same
-precedence `CMakeLists.txt` in the repository root uses. A patch that stops
-applying is a hard error: FlyDSL having moved that code is something to look
-at, not to build through.
+`.ci/flydsl-patch/*.patch` is applied to the FlyDSL checkout first. Two today:
+
+* `lib/Runtime/ROCm/CMakeLists.txt` searches `/opt/rocm*` for HIP, which a
+  TheRock root is not — it is a site-packages directory named by `rocm-sdk
+  path --root`. The patch prefers `ROCM_PATH` and keeps the glob as the
+  fallback, the same precedence the repository root's `CMakeLists.txt` uses.
+* `pyproject.toml` asks for `nanobind>=2.0`, which resolves to 3.0.1, while
+  MLIR's `MLIRDetectPythonEnv.cmake` does `find_package(nanobind 2.9)` and
+  nanobind treats a major bump as incompatible. The bound has to be in
+  `pyproject.toml` because pip's build isolation installs build requirements
+  into its own overlay, where a `pip install nanobind==...` in the surrounding
+  interpreter does not reach.
+
+The count appears in the wheel's version (`.p<n>`), so adding a patch is a
+cache miss. A patch that stops applying is a hard error: FlyDSL having moved
+the code underneath it is something to look at, not to build through.
 
 Neither script requires a credential: the FlyDSL compiler repo
 (`https://github.com/ROCm/FlyDSL`) and `https://github.com/ROCm/llvm-project`

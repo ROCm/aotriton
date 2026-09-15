@@ -23,7 +23,7 @@ usage() {
 Usage: build_flydsl_wheel.sh --wheel_output_dir <dir> --flydsl_commit <ref> [options]
 Options:
   --wheel_output_dir <dir>  Required. Wheel cache; a matching
-                            flydsl-*+git<sha8>*llvm<sha12>*-cp<XY>-*.whl here is
+                            flydsl-*+git<sha8>*llvm<sha12>.p<n>-cp<XY>-*.whl here is
                             a hit. The LLVM identity is part of the key: the pin
                             names a moving branch, and a wheel built against the
                             wrong LLVM miscompiles rather than fails.
@@ -37,7 +37,7 @@ Options:
                             third_party/flydsl-llvm.txt.
     --version_suffix <s>    Appended inside the wheel's local version segment,
                             after the git hash and before the LLVM tag:
-                            <base>+git<sha8><s>.llvm<sha12>.
+                            <base>+git<sha8><s>.llvm<sha12>.p<patches>.
      --pat_environ <VAR>    Name (not value) of an environment variable
                             holding a GitHub PAT, for a private origin.
          --python <X.Y>     CPython to build for. Default 3.11. flydsl wheels
@@ -149,11 +149,18 @@ else
   echo "different LLVMs." >&2
   exit 1
 fi
+# The patches in .ci/flydsl-patch/ are part of what the wheel IS -- one of them
+# moves a build requirement -- so their count goes in the name. Adding a patch
+# must not return the wheel built before it. (A count, not a digest: editing a
+# patch in place still collides. Bump nothing and rebuild by hand if you do
+# that.)
+FLYDSL_PATCH_COUNT="$(ls "${SCRIPT_DIR}"/flydsl-patch/*.patch 2>/dev/null | wc -l)"
 # Appended INSIDE the local version segment, after the git hash and after any
-# caller --version_suffix: <base>+git<flydsl sha8><suffix>.llvm<llvm sha12>.
+# caller --version_suffix:
+# <base>+git<flydsl sha8><suffix>.llvm<llvm sha12>.p<patches>.
 # PEP 440 allows [a-z0-9.] there, and the wheel filename is what both cache
 # probes below glob against.
-WHEEL_VERSION_SUFFIX="${VERSION_SUFFIX}.llvm${LLVM_SHA}"
+WHEEL_VERSION_SUFFIX="${VERSION_SUFFIX}.llvm${LLVM_SHA}.p${FLYDSL_PATCH_COUNT}"
 
 # flydsl wheels are CPython-ABI specific (flydsl-...-cp313-cp313-linux_x86_64.whl)
 # and AOTriton's CMake already fails a build whose --flydsl_wheel cp tag does
