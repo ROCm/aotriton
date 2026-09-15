@@ -279,7 +279,7 @@ class FallbackSpec(StackedSpec):
 # --- the kernel's collected tuning metadata --------------------------------
 
 class TuneSpec:
-    """All tuning metadata gathered for one kernel (lives on KernelSpec.tune)."""
+    """All tuning metadata gathered for one kernel (lives on KernelDecl.tune)."""
     __slots__ = ('schema', 'configs', 'binning', 'fallback')
 
     def __init__(self):

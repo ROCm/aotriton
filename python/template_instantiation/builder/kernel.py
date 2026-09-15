@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-Builder: KernelSpec -> (axes, overrides) IR
+Builder: KernelDecl -> (axes, overrides) IR
 
 This closes the loop from the decorator surface (Step 2.1-2.3) to the enumeration
 core (Step 1.2-1.4): it groups the collected specs by choice variable, builds
@@ -142,7 +142,7 @@ def _resolve_signature_name(dtype, arg_names, kernel_name):
     return arg_names[0]
 
 
-def _resolve_named_dtypes(kernel_spec, name):
+def _resolve_named_dtypes(decl, name):
     """Resolve string `dtype` references on tensor/scalar specs against the kernel's
     named dtype-variable table (rev0 §4.2).
 
@@ -155,11 +155,11 @@ def _resolve_named_dtypes(kernel_spec, name):
       (4) else DescriptionError.
     A `dtype` already given by object (ChoiceVar) or a literal already validated is
     left untouched. Mutates the spec dtype slots in place."""
-    by_name = {dv.name: dv for dv in getattr(kernel_spec, 'dtype_vars', [])}
+    by_name = {dv.name: dv for dv in getattr(decl, 'dtype_vars', [])}
     # Scalars use `.dtype` only for a shared ChoiceVar; a literal type rides on
     # `.type_`. A scalar that named a dtype-var by string lands in `.type_`
     # (ScalarSpec puts any str second-arg there), so we must check both slots.
-    for t in kernel_spec.tensors:
+    for t in decl.tensors:
         d = t.dtype
         if not isinstance(d, str):
             continue
@@ -171,7 +171,7 @@ def _resolve_named_dtypes(kernel_spec, name):
                 f"{d!r}, which is neither an @ati.type_var on this kernel "
                 f"{sorted(by_name)} nor a literal ATI type. Declare it with "
                 f"@ati.type_var({d!r}, dtype=[...]) or fix the type string.")
-    for s in kernel_spec.scalars:
+    for s in decl.scalars:
         d = s.type_
         if not isinstance(d, str):
             continue
@@ -247,8 +247,8 @@ def _iter_stride_axes(tensor, contiguous, param_index, param_names, nonunit_stri
                    stride_of=(tensor.arg_name, dim))
 
 
-def _build_axes(kernel_spec, param_index: dict, kernel_name: str):
-    """Build all Axis objects (tensor, stride, scalar) from the KernelSpec.
+def _build_axes(decl, param_index: dict, kernel_name: str):
+    """Build all Axis objects (tensor, stride, scalar) from the KernelDecl.
 
     Returns (axes, nonunit_strides):
       axes            — unsorted list of Axis objects
@@ -256,9 +256,9 @@ def _build_axes(kernel_spec, param_index: dict, kernel_name: str):
     """
     axes = []
     nonunit_strides = {}
-    param_names = kernel_spec.param_names
+    param_names = decl.param_names
 
-    for var_name, group in _group_by_var_name(kernel_spec.tensors).items():
+    for var_name, group in _group_by_var_name(decl.tensors).items():
         first = group[0]
         choices = _resolve_tensor_choices(first)
         ranks, contiguous = _resolve_tensor_metadata(group, param_names)
@@ -272,7 +272,7 @@ def _build_axes(kernel_spec, param_index: dict, kernel_name: str):
             axes.extend(_iter_stride_axes(t, contiguous, param_index,
                                           param_names, nonunit_strides))
 
-    for var_name, group in _group_by_var_name(kernel_spec.scalars).items():
+    for var_name, group in _group_by_var_name(decl.scalars).items():
         first = group[0]
         choices = _resolve_scalar_choices(first, kernel_name)
         arg_names = [a for s in group for a in s.arg_names]
@@ -336,22 +336,22 @@ def _synthesize_stride_overrides(functional_overrides, nonunit_strides) -> list:
     return extra
 
 
-def build_kernel(kernel_spec) -> BuiltKernel:
-    """Lower a KernelSpec (from describe()) into Axis + Override IR."""
-    name = getattr(kernel_spec.kernel, '__name__', 'kernel')
-    param_index = {p.name: i for i, p in enumerate(kernel_spec.params)}
-    _resolve_named_dtypes(kernel_spec, name)
+def build_kernel(decl) -> BuiltKernel:
+    """Lower a KernelDecl (from describe()) into Axis + Override IR."""
+    name = decl.name
+    param_index = {p.name: i for i, p in enumerate(decl.params)}
+    _resolve_named_dtypes(decl, name)
 
-    axes, nonunit_strides = _build_axes(kernel_spec, param_index, name)
+    axes, nonunit_strides = _build_axes(decl, param_index, name)
     axes.sort(key=lambda a: a.anchor)
 
-    wiring = _collect_wiring(kernel_spec.tensors, kernel_spec.scalars)
+    wiring = _collect_wiring(decl.tensors, decl.scalars)
     functional_overrides, perf_overrides = _split_overrides(
-        kernel_spec.overrides, kernel_spec.tune, name)
+        decl.overrides, decl.tune, name)
     functional_overrides += _synthesize_stride_overrides(
         functional_overrides, nonunit_strides)
 
     return BuiltKernel(name, axes, functional_overrides,
-                       [p.name for p in kernel_spec.params],
-                       tune=kernel_spec.tune, perf_overrides=perf_overrides,
-                       disables=list(kernel_spec.disables), wiring=wiring)
+                       [p.name for p in decl.params],
+                       tune=decl.tune, perf_overrides=perf_overrides,
+                       disables=list(decl.resolved_disables), wiring=wiring)

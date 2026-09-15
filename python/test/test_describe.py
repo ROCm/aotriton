@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.introspect import kernel_params, kernel_param_names
-from aotriton.template_instantiation.describe import get_kernel_spec
+from aotriton.template_instantiation.describe import get_kernel_decl
 
 
 # A plain function stands in for a @triton.jit kernel; introspection falls back to
@@ -46,7 +46,7 @@ def test_describe_mode_b():
           CAUSAL_TYPE: 'constexpr', BIAS_TYPE: 'constexpr'):
         pass
     ati.describe(k, *_specs())
-    spec = get_kernel_spec(k)
+    spec = get_kernel_decl(k)
     assert spec is not None
     assert len(spec.tensors) == 2
     assert len(spec.scalars) == 3
@@ -68,7 +68,7 @@ def test_stacked_at_sugar_matches_mode_b():
           CAUSAL_TYPE: 'constexpr', BIAS_TYPE: 'constexpr'):
         pass
 
-    spec = get_kernel_spec(k)
+    spec = get_kernel_decl(k)
     assert spec is not None
     # Same tensors/scalars as Mode B, in source order.
     assert [t.arg_name for t in spec.tensors] == ['Q', 'K']
@@ -89,7 +89,7 @@ def test_overrides_in_stack():
           BIAS_TYPE: 'constexpr'):
         pass
 
-    spec = get_kernel_spec(k)
+    spec = get_kernel_decl(k)
     assert len(spec.overrides) == 1
     assert spec.overrides[0].targets == ('B',)
 
@@ -120,7 +120,7 @@ def test_completeness_flags_double_claim():
     raise AssertionError('expected double-claim completeness error')
 
 
-def test_get_kernel_spec_rejects_unterminated_stack():
+def test_get_kernel_decl_rejects_unterminated_stack():
     T = ati.type_var('T', dtype=['*fp16:16'])
 
     def k(Q, stride_qz, stride_qh, stride_qm, stride_qk):
@@ -128,7 +128,7 @@ def test_get_kernel_spec_rejects_unterminated_stack():
     # accumulate without @ati.start terminator
     ati.tensor('Q', T, strides='stride_q?')(k)
     try:
-        get_kernel_spec(k)
+        get_kernel_decl(k)
     except AssertionError as e:
         assert 'un-finalized' in str(e)
         return

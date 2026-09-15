@@ -1,7 +1,7 @@
 # Copyright © 2025-2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from aotriton.utils import parse_pon
+from aotriton.utils import parse_pon, render_pon
 from dataclasses import dataclass, asdict
 
 '''
@@ -47,15 +47,7 @@ class FlashEntry:
         # KEEP BYTE-IDENTICAL to modules/flash/aot/flash_entry.py's FlashEntry.as_text()
         # (codegen-side copy, torch-free -- see that file's docstring, and
         # python/test/test_tune_infra.py's test_flash_entry_as_text_matches_codegen_copy).
-        def tr(v) -> str:
-            if isinstance(v, str):
-                return f"'{v}'"
-            if isinstance(v, tuple):
-                return '(' + ','.join(tr(x) for x in v) + ')'
-            if isinstance(v, list):
-                return '[' + ','.join(tr(x) for x in v) + ']'
-            return str(v)
-        return ';'.join([f"{k}={tr(v)}" for k, v in asdict(self).items()])
+        return render_pon(asdict(self))
 
     @property
     def qkh(self):

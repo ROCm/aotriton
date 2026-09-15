@@ -5,7 +5,7 @@
 The `@ati.metro_kernel` decorator (pipeline Stage 1).
 
 Innermost marker of a metro stacked-@ block: transpiles the body (never executed)
-into a MetroPlan and ACCUMULATES it onto the pending list so @ati.start can
+into a MetroSpec and ACCUMULATES it onto the pending list so @ati.start can
 finalise the whole stack (including @ati.hints.union_precedence above it). A metro
 wires an operator's collaborating kernels with ordinary Python if/else:
 
@@ -23,7 +23,7 @@ from ..specs.metro import transpile
 
 def metro_kernel(fn):
     """@ati.metro_kernel: transpile the function body (never executed) into a
-    MetroPlan (a StackedSpec), accumulate it onto fn's pending list, and return fn
+    MetroSpec (a StackedSpec), accumulate it onto fn's pending list, and return fn
     so @ati.start above receives the original function object."""
     plan = transpile(fn)
-    return plan(fn)          # MetroPlan.__call__(fn) → accumulate_spec(plan, fn) → fn
+    return plan(fn)          # MetroSpec.__call__(fn) → accumulate_spec(plan, fn) → fn

@@ -91,6 +91,13 @@ public:
                            size_t sizeof_struct,
                            hipStream_t stream);
 
+  // The perf/copt knob set is a PON (Plain / Python Object Notation)
+  // ';'-separated string, not a C struct. These read-only views let a shim
+  // build a `Pon` (aotriton/_internal/pon.h) over the selected kernel's
+  // psel/copt component once, in `lookup_optimal()`, without exposing the
+  // underlying storage.
+  std::string_view psel() const { return ksig_psel_; }
+  std::string_view copt() const { return ksig_copt_; }
 
 private:
 

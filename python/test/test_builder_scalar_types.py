@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.decorators import KernelStub
-from aotriton.template_instantiation.describe import describe, get_kernel_spec
+from aotriton.template_instantiation.describe import describe, get_kernel_decl
 from aotriton.template_instantiation.builder import build_kernel, DescriptionError
 
 
@@ -28,7 +28,7 @@ def _stub(name, params, annotations=None):
 
 def _build(kernel, *specs):
     describe(kernel, *specs, _validate=False)
-    return build_kernel(get_kernel_spec(kernel))
+    return build_kernel(get_kernel_decl(kernel))
 
 
 def test_explicit_type_wins():

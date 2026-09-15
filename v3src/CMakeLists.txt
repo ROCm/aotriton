@@ -375,6 +375,10 @@ message(STATUS "AOTRITON_SHIM_FLAGS ${AOTRITON_SHIM_FLAGS}")
 file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES ENCODING UTF-8)
 
 aux_source_directory(. CC_FILES)
+# aux_source_directory is NOT recursive: a subdirectory such as pon/ is
+# silently ignored unless added explicitly, and the omission only surfaces
+# later as a link error for its symbols.
+aux_source_directory(./pon CC_FILES)
 # Modular family C++ sources: every modules/<family>/csrc/**.cc (recursively, so
 # per-family subdirs like csrc/aiter are picked up). Convention over hardcoding —
 # adding a family needs no edit here. CONFIGURE_DEPENDS re-globs when files change.

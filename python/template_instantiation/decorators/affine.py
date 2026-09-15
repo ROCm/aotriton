@@ -28,7 +28,7 @@ operator union (build_merged_struct_cfields) picks it up so the struct is a pure
 union over all backends with no hand-injection.
 
 These produce passive spec records; specs/finalize.py collects them into an AffineDecl
-and the linker builds the ir.affine.AffineKernel.
+and the linker builds the ir.affine.kdesc.AffineKernel.
 """
 
 from __future__ import annotations

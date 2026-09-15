@@ -18,6 +18,8 @@ TODO: Merge with modules/flash/tune in ATI Phase 2: Modularization.
 
 from dataclasses import dataclass, asdict
 
+from aotriton.utils import render_pon
+
 
 @dataclass
 class FlashEntry:
@@ -30,12 +32,4 @@ class FlashEntry:
     bias_type: int = 0
 
     def as_text(self) -> str:
-        def tr(v) -> str:
-            if isinstance(v, str):
-                return f"'{v}'"
-            if isinstance(v, tuple):
-                return '(' + ','.join(tr(x) for x in v) + ')'
-            if isinstance(v, list):
-                return '[' + ','.join(tr(x) for x in v) + ']'
-            return str(v)
-        return ';'.join([f"{k}={tr(v)}" for k, v in asdict(self).items()])
+        return render_pon(asdict(self))

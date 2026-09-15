@@ -5,15 +5,15 @@
 describe() + the stacked-@ sugar finalizer
 
 This is the GLUE that turns the loose @ati.* spec-records into the passive Stage-2
-"object files" (specs/kernel.py KernelSpec, specs/affine.py AffineDecl,
+"object files" (specs/kernel.py KernelDecl, specs/affine.py AffineDecl,
 specs/operator.py OperatorDecl):
 
 `ati.describe(kernel, *specs)` is the canonical primitive: it introspects the
 kernel's parameter list, validates that the specs claim every argument exactly
-once, and attaches a KernelSpec sidecar (`kernel.__ati_node__`). The stacked-@ form
+once, and attaches a KernelDecl to the kernel (`kernel.__ati_node__`). The stacked-@ form
 lowers to the same path — each `@ati.tensor(...)` returns a spec and the eventual
 `@triton.jit`-adjacent collection is replayed through describe() — so the two
-authoring modes share one implementation and produce an identical KernelSpec.
+authoring modes share one implementation and produce an identical KernelDecl.
 
 This step stores the collected, validated specs. Lowering them to the
 Axis/Override IR (enumerate_functionals input) is Step 2.4 (builder.py).
@@ -22,9 +22,12 @@ Axis/Override IR (enumerate_functionals input) is Step 2.4 (builder.py).
 from ..decorators import TensorSpec, ScalarSpec, ChoiceVar
 from ..ir import Override
 from ..introspect import kernel_params, kernel_annotations
-from .kernel import KernelSpec
-from .affine import AffineDecl, collect_affine_decl
-from .operator import OperatorDecl, collect_operator_decl
+from .bundle import partition
+from .kernel import KernelDecl
+from .node import derived_decl_fields
+from .affine import collect_affine_decl
+from .operator import collect_operator_decl
+from .flyc import collect_flyc_decl
 
 
 def _build_tune_spec(tune_records):
@@ -50,33 +53,6 @@ def _build_tune_spec(tune_records):
         else:
             raise AssertionError(f'unrecognized tune spec {r!r}')
     return ts
-
-
-def _partition(specs):
-    from .tune import PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec
-    from ..decorators import DisableSpec, CiteSpec
-    tune_types = (PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec)
-    tensors, scalars, overrides, tune_records, disables, dtype_vars, cites, others = \
-        [], [], [], [], [], [], [], []
-    for s in specs:
-        if isinstance(s, TensorSpec):
-            tensors.append(s)
-        elif isinstance(s, ScalarSpec):
-            scalars.append(s)
-        elif isinstance(s, ChoiceVar):
-            dtype_vars.append(s)
-        elif isinstance(s, CiteSpec):
-            cites.append(s)
-        elif isinstance(s, Override):
-            overrides.append(s)
-        elif isinstance(s, DisableSpec):
-            disables.append(s)
-        elif isinstance(s, tune_types):
-            tune_records.append(s)
-        else:
-            others.append(s)
-    return (tensors, scalars, overrides, tune_records, disables, dtype_vars,
-            cites, others)
 
 
 def _validate_completeness(params, tensors, scalars, tune_records, has_cite=False):
@@ -167,27 +143,41 @@ def _annotation_specs(kernel, tensors, scalars):
     return new_tensors, new_scalars
 
 
+def partition_kernel(specs):
+    """Common vocabulary, unrestricted: describe() (both authoring modes --
+    Mode A stacked-@ and Mode B ati.describe()) accepts every kind
+    `partition()` recognises (tensors/scalars/overrides/dtype_vars/cites/
+    disable/tune records), so there is nothing to `forbid()`. Still a named
+    wrapper, rather than describe() calling `partition()` directly, so every
+    stack kind (kernel/affine/operator) has a matching `partition_*`
+    entry point and the same `reject_remaining()` idiom catches whatever a
+    kernel stack does not recognise either."""
+    b = partition(specs)
+    b.reject_remaining('ati.describe()')
+    return b
+
+
 def describe(kernel, *specs, _validate=True):
-    """Attach an ATI KernelSpec to a kernel. Canonical for both authoring modes."""
+    """Attach an ATI KernelDecl to a kernel. Canonical for both authoring modes."""
     params = kernel_params(kernel)
-    tensors, scalars, overrides, tune_records, disables, dtype_vars, cites, others = \
-        _partition(specs)
-    assert not others, f'describe() got unrecognized specs: {others}'
+    b = partition_kernel(specs)
     # Placeholder-def string annotations become TensorSpec (pointer types: '*...' /
     # 'LazyTensor:...') or ScalarSpec (all others). Appended so completeness sees
     # them like any other tensor/scalar.
-    ann_tensors, ann_scalars = _annotation_specs(kernel, tensors, scalars)
-    tensors = tensors + ann_tensors
-    scalars = scalars + ann_scalars
+    ann_tensors, ann_scalars = _annotation_specs(kernel, b.tensors, b.scalars)
+    tensors = b.tensors + ann_tensors
+    scalars = b.scalars + ann_scalars
     if _validate:
-        errors = _validate_completeness(params, tensors, scalars, tune_records,
-                                        has_cite=bool(cites))
+        errors = _validate_completeness(params, tensors, scalars, b.tune_records,
+                                        has_cite=bool(b.cites))
         assert not errors, (
             f'ATI describe({getattr(kernel, "__name__", kernel)!r}) validation '
             f'failed:\n  ' + '\n  '.join(errors))
-    spec = KernelSpec(kernel, params, tensors, scalars, overrides,
-                      tune=_build_tune_spec(tune_records), disables=disables,
-                      dtype_vars=dtype_vars, cites=cites)
+    spec = KernelDecl(params=params, tensors=tensors, scalars=scalars,
+                      overrides=b.overrides,
+                      tune=_build_tune_spec(b.tune_records),
+                      dtype_vars=b.dtype_vars, cites=b.cites,
+                      **derived_decl_fields(kernel, b.disable))
     kernel.__ati_node__ = spec
     return kernel
 
@@ -240,12 +230,16 @@ def start(jit_fn):
 
     Generic over four stack kinds dispatched by the INNERMOST spec (specs[-1] after
     source-order reversal) — Python applies decorators bottom-up, so the innermost
-    decorator's spec is always the kind discriminant (O(1), no scan):
+    decorator's spec is always the kind discriminant (O(1), no scan). A
+    {marker type: collect_*_decl} table maps it straight to the passive-record
+    collector for that stack, attached uniformly as `fn.__ati_node__`:
       * OperatorSpec     → operator stack → OperatorDecl
       * AffineKernelSpec → affine stack   → AffineDecl
-      * FlycKernelSpec   → flyc stack     → FlycDecl
-      * MetroPlan        → metro stack    → fn.__ati_node__ (MetroPlan)
-      * anything else    → kernel stack   → KernelSpec via describe()
+      * FlycKernelSpec   → flyc stack     → FlycDecl (NOT routed through
+                                             describe() — see specs/flyc.py)
+      * MetroSpec        → metro stack    → MetroSpec itself (collect_metro_decl
+                                             only fills in precedence)
+      * anything else    → kernel stack   → KernelDecl via describe()
     """
     pending = getattr(jit_fn, _PENDING, None)
     assert pending is not None, (
@@ -253,68 +247,38 @@ def start(jit_fn):
         'least one @ati.tensor/@ati.scalar/@ati.overrides above @ati.start, or '
         'use ati.describe(kernel, *specs) (Mode B) instead.')
     specs = list(reversed(pending))      # bottom-up application -> source order
-    # Dispatch on the innermost spec (specs[-1]) — the kind discriminant.
+    # Dispatch on the innermost spec's TYPE (specs[-1]) — the kind discriminant.
+    # Local imports: decorators/{affine,flyc}.py import from specs/base.py, so
+    # importing their marker types at this module's top level would risk a
+    # circular import; importing here, inside start(), sidesteps it.
     from ..decorators import OperatorSpec
     from ..decorators.affine import AffineKernelSpec
     from ..decorators.flyc import FlycKernelSpec
-    from .metro import MetroPlan
+    from .metro import MetroSpec, collect_metro_decl
+    collectors = {
+        OperatorSpec: collect_operator_decl,
+        AffineKernelSpec: collect_affine_decl,
+        FlycKernelSpec: collect_flyc_decl,
+        MetroSpec: collect_metro_decl,
+    }
     marker = specs[-1]
-    if isinstance(marker, OperatorSpec):
-        _finalize_operator(jit_fn, specs)
-    elif isinstance(marker, AffineKernelSpec):
-        _finalize_affine(jit_fn, specs)
-    elif isinstance(marker, FlycKernelSpec):
-        _finalize_flyc(jit_fn, specs)
-    elif isinstance(marker, MetroPlan):
-        _finalize_metro(jit_fn, specs)
+    collector = collectors.get(type(marker))
+    if collector is not None:
+        jit_fn.__ati_node__ = collector(jit_fn, specs)
     else:
         describe(jit_fn, *specs)
     delattr(jit_fn, _PENDING)
     return jit_fn
 
 
-def _finalize_metro(fn, specs):
-    """PASSIVE: attach the MetroPlan to fn.__ati_node__. Reads the optional
-    UnionPrecedenceSpec from the pending list and stores it on the plan directly."""
-    from ..decorators.hints import UnionPrecedenceSpec
-    plan = specs[-1]          # innermost — the MetroPlan
-    for s in specs[:-1]:
-        if isinstance(s, UnionPrecedenceSpec):
-            assert plan.precedence is None, 'duplicate @ati.hints.union_precedence'
-            plan.precedence = s.names
-    fn.__ati_node__ = plan
-
-
-def _finalize_affine(placeholder, specs):
-    """PASSIVE: attach the AffineDecl to fn.__ati_node__."""
-    placeholder.__ati_node__ = collect_affine_decl(specs)
-    return placeholder
-
-
-def _finalize_flyc(placeholder, specs):
-    """PASSIVE: attach the FlycDecl to fn.__ati_node__. Deliberately not via
-    describe(): the decorated def is the BUILDER, not the kernel whose argument
-    list the specs declare, so there is no signature to validate against. See
-    specs/flyc.py."""
-    from .flyc import collect_flyc_decl
-    placeholder.__ati_node__ = collect_flyc_decl(placeholder, specs)
-    return placeholder
-
-
-def _finalize_operator(placeholder, specs):
-    """PASSIVE: attach the OperatorDecl to fn.__ati_node__."""
-    placeholder.__ati_node__ = collect_operator_decl(specs)
-    return placeholder
-
-
-def get_kernel_spec(kernel_obj):
-    """The finalized KernelSpec for a kernel, or None. Consumers (the Step 2.4
+def get_kernel_decl(kernel_obj):
+    """The finalized KernelDecl for a kernel, or None. Consumers (the Step 2.4
     builder) use this. Asserts the stacked-@ block was terminated with
     @ati.start (no un-finalized pending specs left dangling)."""
     assert getattr(kernel_obj, _PENDING, None) is None, (
         f'{getattr(kernel_obj, "__name__", kernel_obj)!r} has un-finalized ATI '
         f'specs; a stacked-@ block must end with @ati.start at the top.')
     from .node import AtiNode
-    from .kernel import KernelSpec
+    from .kernel import KernelDecl
     node = getattr(kernel_obj, '__ati_node__', None)
-    return node if isinstance(node, KernelSpec) else None
+    return node if isinstance(node, KernelDecl) else None

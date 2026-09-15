@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import aotriton.template_instantiation as ati
-from aotriton.template_instantiation.describe import describe, get_kernel_spec
+from aotriton.template_instantiation.describe import describe, get_kernel_decl
 from aotriton.template_instantiation.builder import build_kernel, BuiltKernel
 from aotriton.template_instantiation.ir import Interface
 
@@ -66,7 +66,7 @@ def _describe_attn_fwd_subset():
         ati.overrides('B', to=0, when=ati.eq('BIAS_TYPE', 0)),
     ]
     describe(attn_fwd, *specs, _validate=False)
-    return get_kernel_spec(attn_fwd)
+    return get_kernel_decl(attn_fwd)
 
 
 def test_build_returns_built_kernel():

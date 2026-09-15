@@ -26,21 +26,52 @@ top-level name so its relative imports resolve without a `<family>` namespace pk
 its `kernel/` sources keep importing each other by bare name.
 """
 
+import hashlib
 import sys
 import importlib.util
 from pathlib import Path
 
 
+# family NAME -> the one `aot` package loaded for it in this process. Not
+# sys.modules directly: two module trees can supply the same family (the real
+# modules/ and python/test/fakefamily/ both have a `flash`), and they must not
+# share a cache entry. Parser.load_family_aot keys sys.modules by tree as well
+# as family and records the result here.
+_LOADED_AOT = {}
+
+
+def _register_loaded_aot(family, mod):
+    """Bind `family` to its `aot` package, once per process.
+
+    A second TREE supplying the same family is rejected rather than allowed to
+    win the binding. Both can be parsed, but only one can be generated: every
+    generated path is keyed by family alone, so the second tree would overwrite
+    the first's output. Before this raised, the binding was last-writer-wins,
+    and a description from the first tree reaching back through
+    `load_family_aot` (ir/triton/kdesc.py's sancheck) silently got the second
+    tree's package.
+    """
+    prev = _LOADED_AOT.get(family)
+    if prev is not None and prev is not mod:
+        raise RuntimeError(
+            f'family {family!r} is already loaded from {getattr(prev, "__file__", prev)!r}; '
+            f'refusing to also load {getattr(mod, "__file__", mod)!r}. Generated '
+            f'files are keyed by family alone, so one process generates from one tree.')
+    _LOADED_AOT[family] = mod
+    return mod
+
+
 def load_family_aot(family):
     """Fetch an already-loaded family's `aot` package from the import cache.
 
-    The Parser loads each family by path under the synthetic name
-    `_aotriton_modules_<family>_aot`; this free function returns that cached module
-    (or None) for the few consumers that need the loaded package but do not have a
-    Parser handle — e.g. ir/kdesc.py's flash sancheck back-edge, which runs after the
-    family was loaded during linking. It never loads (no modules_dir): the family
-    must already be loaded by a Parser."""
-    return sys.modules.get(f'_aotriton_modules_{family}_aot')
+    Returns the module (or None) for the few consumers that need the loaded
+    package but do not have a Parser handle — e.g. ir/triton/kdesc.py's flash
+    sancheck back-edge, which runs after the family was loaded during linking.
+    It never loads: the family must already be loaded by a Parser.
+
+    Unambiguous because a family binds to one tree per process; see
+    `_register_loaded_aot`."""
+    return _LOADED_AOT.get(family)
 
 
 # --- Pass-1 shells (relocations stored on the shell) -------------------------
@@ -64,16 +95,19 @@ def load_family_aot(family):
 # state — every consumer would need guards. The shell/IR split makes incompleteness
 # unrepresentable: an IR object that exists is always fully constructed.
 #
-# NOTE: there is no KernelDecl alongside OperatorDecl / AffineDecl. That is because
-# KernelSpec *is* the kernel's passive "object file" — it plays the same role. The
-# difference is that KernelSpec must be cloned and mutated during linking (cite
-# resolution appends to its tensors/scalars/overrides on a per-link copy), so it
-# cannot be a frozen record the way OperatorDecl and AffineDecl are. OperatorDecl /
-# AffineDecl contain no unresolved cross-kernel references; their contents are fully
-# known at parse time and the linker reads them verbatim.
+# NOTE: KernelDecl plays the same passive-record role as OperatorDecl / AffineDecl,
+# with one difference underneath the shared name: cite resolution still needs a
+# per-link mutable copy of it (`KernelDecl.clone()`), because gap
+# tensors/scalars/overrides/dtype_vars have to be appended somewhere before the
+# builder can read them, and that must never touch the module-level declared
+# KernelDecl every test/description reads directly. OperatorDecl / AffineDecl carry
+# no unresolved cross-kernel references, so the linker reads them verbatim with no
+# clone. The declared KernelDecl itself, though, is exactly as passive as the other
+# three -- resolve_cites writes only the per-link clone's `resolved_disables`
+# (see specs/kernel.py), never mutating the declared record in place.
 
 class KernelShell:
-    """A parsed triton-kernel description: its un-cite-resolved KernelSpec + identity.
+    """A parsed triton-kernel description: its un-cite-resolved KernelDecl + identity.
     NAME / triton_kernel_name / the family-scoped key are all the def __name__ (== the
     Triton kernel symbol name, since @ati.source loads that symbol); source_path rides
     on the spec. The linker resolves @ati.cite gaps then builds the KernelDescription."""
@@ -91,7 +125,7 @@ class KernelShell:
 
 
 class MetroShell:
-    """A parsed @ati.metro_kernel backend: its MetroPlan + the backend enum-name. The
+    """A parsed @ati.metro_kernel backend: its MetroSpec + the backend enum-name. The
     sub-kernel NAMES (plan Call strings) are the relocation the linker binds.
 
     `precedence` is the optional @ati.hints.union_precedence order (highest priority
@@ -149,16 +183,16 @@ def _node_kind(ref):
     """The visit_* method suffix for a backend ref — dispatched by isinstance on the
     AtiNode subclass stored as fn.__ati_node__."""
     from aotriton.template_instantiation.specs.node import AtiNode
-    from aotriton.template_instantiation.specs.metro import MetroPlan
-    from aotriton.template_instantiation.specs.kernel import KernelSpec
+    from aotriton.template_instantiation.specs.metro import MetroSpec
+    from aotriton.template_instantiation.specs.kernel import KernelDecl
     from aotriton.template_instantiation.specs.affine import AffineDecl
     node = getattr(ref, '__ati_node__', None)
     if not isinstance(node, AtiNode):
         raise AssertionError(
             f'backend ref {ref!r} has no __ati_node__ '
             f'(not a metro, kernel, nor affine description)')
-    if isinstance(node, MetroPlan):  return 'metro'
-    if isinstance(node, KernelSpec): return 'kernel'
+    if isinstance(node, MetroSpec):  return 'metro'
+    if isinstance(node, KernelDecl): return 'kernel'
     if isinstance(node, AffineDecl): return 'affine'
     raise AssertionError(f'unrecognised AtiNode type {type(node)!r} on {ref!r}')
 
@@ -201,7 +235,7 @@ class FamilyCompiler:
         self.compiled.op_order.append(decl.name)
 
     def visit_metro(self, b):
-        plan = b.obj.__ati_node__   # MetroPlan
+        plan = b.obj.__ati_node__   # MetroSpec
         sub_names = list(self._iter_plan_subkernels(plan.steps))
         for sub_name in sub_names:
             sub_def = getattr(self.aot, sub_name, None)
@@ -242,8 +276,8 @@ class FamilyCompiler:
     def _record_kernel(self, def_obj):
         """Record a triton-kernel def as a KernelShell (no-op if already recorded).
         Returns the kernel def-name."""
-        from aotriton.template_instantiation.specs.finalize import get_kernel_spec
-        spec = get_kernel_spec(def_obj)
+        from aotriton.template_instantiation.specs.finalize import get_kernel_decl
+        spec = get_kernel_decl(def_obj)
         assert spec is not None, (
             f'{getattr(def_obj, "__name__", def_obj)!r} has no @ati.* kernel spec')
         name = getattr(spec.kernel, '__name__', None)
@@ -282,11 +316,24 @@ class Parser:
         `kernel/` sources keep importing each other by bare name; loading `aot` by
         name would require `<family>` to be a clean namespace package, which any
         sys.path entry containing a `<family>.py` (e.g. a stray `flash.py` on sys.path) would
-        shadow. Loading by path sidesteps that entirely. Cached in sys.modules."""
-        modname = f'_aotriton_modules_{family}_aot'
+        shadow. Loading by path sidesteps that entirely. Cached in sys.modules.
+
+        The cache key includes a digest of `module_dir`, not just the family
+        name. Two trees can supply the same family -- the real `modules/` and
+        `python/test/fakefamily/` both have a `flash` -- and keying on the name
+        alone meant whichever loaded first served both. That is invisible while
+        the two describe the same thing, and silently wrong the moment they
+        diverge: adding a third backend to the real op_attn_fwd made a fakefamily
+        test see three backends in a full-suite run and two in isolation.
+
+        Distinct module objects are also what lets `_register_loaded_aot` see a
+        second tree and refuse it."""
+        digest = hashlib.blake2b(str(self.module_dir.resolve()).encode(),
+                                 digest_size=6).hexdigest()
+        modname = f'_aotriton_modules_{digest}_{family}_aot'
         cached = sys.modules.get(modname)
         if cached is not None:
-            return cached
+            return _register_loaded_aot(family, cached)
         aot_dir = self.module_dir / family / 'aot'
         spec = importlib.util.spec_from_file_location(
             modname, aot_dir / '__init__.py',
@@ -294,7 +341,7 @@ class Parser:
         mod = importlib.util.module_from_spec(spec)
         sys.modules[modname] = mod
         spec.loader.exec_module(mod)
-        return mod
+        return _register_loaded_aot(family, mod)
 
     # --- compile ------------------------------------------------------------
 

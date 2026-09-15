@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: MIT
 
 """
-The MetroPlan spec + its transpiler (pipeline Stage 2).
+The MetroSpec record + its transpiler (pipeline Stage 2).
 
 `@ati.metro_kernel` (decorators/metro.py) wires an operator's collaborating kernels
 with ordinary Python if/else; this module PARSES that function's AST (never executes
-it) into a MetroPlan of Call/Cond steps. The builder (builder.metro.lower_plan / the
+it) into a MetroSpec of Call/Cond steps. The builder (builder.metro.lower_plan / the
 linker's build_metro) lowers the plan to the MetroKernel / ConditionalKernel IR.
 """
 
@@ -57,7 +57,7 @@ class Cond:
                 f'then={self.then}, orelse={self.orelse})')
 
 
-class MetroPlan(AtiNode, StackedSpec):
+class MetroSpec(AtiNode, StackedSpec):
     """The transpiled metro: its name, the params variable, and an ordered list of
     steps (Call | Cond). Subclasses StackedSpec so @ati.metro_kernel can simply
     return transpile(fn) and the result, being callable, accumulates itself onto the
@@ -68,10 +68,33 @@ class MetroPlan(AtiNode, StackedSpec):
         self.name = name
         self.params_name = params_name
         self.steps = steps
-        self.precedence = None   # filled by _finalize_metro from @ati.hints.union_precedence
+        self.precedence = None   # filled by collect_metro_decl from @ati.hints.union_precedence
 
     def __repr__(self):
-        return f'MetroPlan({self.name!r}, steps={self.steps})'
+        return f'MetroSpec({self.name!r}, steps={self.steps})'
+
+
+def collect_metro_decl(placeholder, specs):
+    """Read the optional UnionPrecedenceSpec off the pending list and store it on
+    the MetroSpec (specs[-1], the innermost spec -- the metro stack's kind
+    marker), then return it.
+
+    Metro is the one stack whose marker IS the finished record: the transpiler
+    already produced it, so there is no separate collection to build and nothing
+    named `MetroDecl` exists. That is why `fn.__ati_node__` holds a `*Spec` here
+    and a `*Decl` on the other four paths -- an asymmetry in the thing, not in
+    the naming.
+
+    `placeholder` is unused, accepted only so every collect_*_decl shares the
+    (placeholder, specs) signature specs/finalize.py's start() dispatch table
+    calls them all through."""
+    from ..decorators.hints import UnionPrecedenceSpec
+    spec = specs[-1]          # innermost -- the MetroSpec
+    for s in specs[:-1]:
+        if isinstance(s, UnionPrecedenceSpec):
+            assert spec.precedence is None, 'duplicate @ati.hints.union_precedence'
+            spec.precedence = s.names
+    return spec
 
 
 def _err(name, node, msg):
@@ -171,8 +194,8 @@ def _dedent(src):
     return textwrap.dedent(src)
 
 
-def transpile(fn) -> MetroPlan:
-    """Parse a @ati.metro_kernel function into a MetroPlan. Never executes it."""
+def transpile(fn) -> MetroSpec:
+    """Parse a @ati.metro_kernel function into a MetroSpec. Never executes it."""
     src = inspect.getsource(fn)
     src = _dedent(src)
     mod = ast.parse(src)
@@ -185,4 +208,4 @@ def transpile(fn) -> MetroPlan:
                          f'(the params object)')
     params_name = args.args[0].arg
     steps = _lower_body(fdef.name, fdef.body, params_name)
-    return MetroPlan(fdef.name, params_name, steps)
+    return MetroSpec(fdef.name, params_name, steps)

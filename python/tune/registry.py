@@ -19,11 +19,35 @@ argument -- it lists and resolves impls of every tuning level directly, keyed
 by DSL name (see `aotriton.tune.tdesc.TuningDescription`).
 """
 
+import hashlib
 import os
 import sys
 import importlib
 import importlib.util
 from pathlib import Path
+
+
+def _tree_cache_key(modules_dir, family: str, block: str) -> str:
+    """Synthetic module name for `<modules_dir>/<family>/<block>`.
+
+    Keyed on a digest of the RESOLVED `modules_dir`, not on the family name
+    alone -- exactly as `python/codegen/parser.py`'s `load_family_aot` is, and
+    for the same reason. Two trees can supply the same family (the real
+    `modules/` and `python/test/fakefamily/` both have a `flash`), and a
+    name-only key means whichever tree loaded first serves both. That is
+    invisible while the two agree and silently wrong the moment they diverge.
+
+    The two halves have to agree, because `ir/triton/kdesc.py`'s
+    `_lut_sancheck` calls `load_family_aot` and `load_family_tune` one line
+    apart on the same tree: with only one of them tree-keyed, `aot` resolves to
+    the requested tree while `tune` returns whichever loaded first. The
+    fakefamily tree has no `tune/` at all, so the stale hit silently returns
+    the REAL `LutSancheck` instead of raising the ImportError that would have
+    exposed the mismatch.
+    """
+    digest = hashlib.blake2b(str(Path(modules_dir).resolve()).encode(),
+                             digest_size=6).hexdigest()
+    return f'_aotriton_modules_{digest}_{family}_{block}'
 
 # Family names (as used in the CLI / task_queue.module column) registered
 # under modules/<family>/tune/.
@@ -96,14 +120,18 @@ def load_family_tune(family: str, modules_dir: 'Path | None' = None):
     synthetic unique package name, so `modules/<family>` stays a plain
     directory (not a package) -- identical rationale to
     `python/codegen/parser.py`'s `load_family_aot` (see also
-    `modules/flash/tune/__init__.py`). Cached in `sys.modules`.
+    `modules/flash/tune/__init__.py`). Cached in `sys.modules`, under a key
+    that includes the module TREE -- see `_tree_cache_key`.
     """
-    modname = f'_aotriton_modules_{family}_tune'
+    # modules_dir is resolved BEFORE the cache probe, not after: the key is a
+    # function of the tree, so there is no key to look up until the tree is
+    # known.
+    if modules_dir is None:
+        modules_dir = default_modules_dir()
+    modname = _tree_cache_key(modules_dir, family, 'tune')
     cached = sys.modules.get(modname)
     if cached is not None:
         return cached
-    if modules_dir is None:
-        modules_dir = default_modules_dir()
     tune_dir = Path(modules_dir) / family / 'tune'
     init_path = tune_dir / '__init__.py'
     if not init_path.is_file():
@@ -123,7 +151,8 @@ def load_family_visperf(family: str, modules_dir: 'Path | None' = None):
     """Import `<modules_dir>/<family>/visperf/__init__.py` by path under a
     synthetic unique package name, mirroring `load_family_tune` above
     (identical rationale, F6: `modules/<family>` stays a plain directory,
-    not a package). Cached in `sys.modules`.
+    not a package). Cached in `sys.modules`, under the same tree-keyed name
+    `load_family_tune` uses -- see `_tree_cache_key`.
 
     The returned module exports `DESCRIPTOR` (a dict consumed by
     `aotriton.tune.pq.visperf`'s query builder and the webui's perf page)
@@ -133,12 +162,12 @@ def load_family_visperf(family: str, modules_dir: 'Path | None' = None):
     inlined by `aotriton.tune.pq.export_visperf` for the standalone export
     (modular-tune.md §3d).
     """
-    modname = f'_aotriton_modules_{family}_visperf'
+    if modules_dir is None:
+        modules_dir = default_modules_dir()
+    modname = _tree_cache_key(modules_dir, family, 'visperf')
     cached = sys.modules.get(modname)
     if cached is not None:
         return cached
-    if modules_dir is None:
-        modules_dir = default_modules_dir()
     visperf_dir = Path(modules_dir) / family / 'visperf'
     init_path = visperf_dir / '__init__.py'
     if not init_path.is_file():

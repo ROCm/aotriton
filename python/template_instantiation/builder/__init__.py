@@ -5,8 +5,8 @@
 ATI builder package (pipeline Stage 4 — LOWER).
 
 Lowers the passive Stage-2 specs into the IR the code generators consume:
-- kernel.py:   build_kernel + BuiltKernel (KernelSpec -> axes/overrides IR).
-- metro.py:    lower_plan / build_metro (MetroPlan -> MetroKernel IR).
+- kernel.py:   build_kernel + BuiltKernel (KernelDecl -> axes/overrides IR).
+- metro.py:    lower_plan / build_metro (MetroSpec -> MetroKernel IR).
 - errors.py:   DescriptionError (the front-end diagnostic).
 
 build_merged_struct_cfields lives in ir/ops/union.py (it merges IR-level func_cfields

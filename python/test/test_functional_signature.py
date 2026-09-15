@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import aotriton.template_instantiation as ati
-from aotriton.template_instantiation.describe import describe, get_kernel_spec
+from aotriton.template_instantiation.describe import describe, get_kernel_decl
 from aotriton.template_instantiation.builder import build_kernel, DescriptionError
 
 
@@ -26,7 +26,7 @@ def test_multichoice_shared_var_requires_signature_name():
     describe(k, ati.tensor('a', T, rank=2), ati.tensor('b', T, rank=2),
              _validate=False)
     try:
-        build_kernel(get_kernel_spec(k))
+        build_kernel(get_kernel_decl(k))
     except DescriptionError as e:
         assert 'signature_name' in str(e)
         return
@@ -40,7 +40,7 @@ def test_single_choice_shared_var_exempt():
     T = ati.type_var('T', dtype=['*fp16:16'])               # 1 choice
     describe(k, ati.tensor('a', T, rank=2), ati.tensor('b', T, rank=2),
              _validate=False)
-    bk = build_kernel(get_kernel_spec(k))           # must not raise
+    bk = build_kernel(get_kernel_decl(k))           # must not raise
     assert bk is not None
 
 

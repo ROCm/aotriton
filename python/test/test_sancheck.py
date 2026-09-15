@@ -10,8 +10,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import aotriton.template_instantiation as ati
-from aotriton.template_instantiation.describe import describe, get_kernel_spec
-from aotriton.template_instantiation.tools import sancheck_kernel_spec
+from aotriton.template_instantiation.describe import describe, get_kernel_decl
+from aotriton.template_instantiation.tools import sancheck_kernel_decl
 
 
 def _good_kernel():
@@ -23,11 +23,11 @@ def _good_kernel():
              ati.scalar('CAUSAL_TYPE', options=[0, 3]),
              ati.derives('Q', to=0, when=ati.eq('CAUSAL_TYPE', 0)),
              _validate=False)
-    return get_kernel_spec(k)
+    return get_kernel_decl(k)
 
 
 def test_clean_description_no_errors():
-    assert sancheck_kernel_spec(_good_kernel()) == []
+    assert sancheck_kernel_decl(_good_kernel()) == []
 
 
 def test_orphan_and_bad_target_reported_together():
@@ -39,7 +39,7 @@ def test_orphan_and_bad_target_reported_together():
              ati.scalar('CAUSAL_TYPE', options=[0, 3]),
              ati.derives('NoSuchArg', to=0, when=ati.eq('CAUSAL_TYPE', 0)),
              _validate=False)
-    errs = sancheck_kernel_spec(get_kernel_spec(k))
+    errs = sancheck_kernel_decl(get_kernel_decl(k))
     # both problems surface in one pass
     assert any("'Z'" in e and 'not claimed' in e for e in errs)
     assert any("'NoSuchArg'" in e for e in errs)
@@ -54,7 +54,7 @@ def test_double_claim_reported():
              ati.tensor('Q', T, strides='stride_q?'),
              ati.scalar('Q', 'i32'),             # Q claimed twice
              _validate=False)
-    errs = sancheck_kernel_spec(get_kernel_spec(k))
+    errs = sancheck_kernel_decl(get_kernel_decl(k))
     assert any("'Q'" in e and 'multiple' in e for e in errs)
 
 
@@ -68,7 +68,7 @@ def test_predicate_scope_reported():
              # predicate over a non-free, non-arch variable -> scope error
              ati.derives('Q', to=0, when=ati.eq('NotAnAxis', 0)),
              _validate=False)
-    errs = sancheck_kernel_spec(get_kernel_spec(k))
+    errs = sancheck_kernel_decl(get_kernel_decl(k))
     assert any('NotAnAxis' in e for e in errs)
 
 
