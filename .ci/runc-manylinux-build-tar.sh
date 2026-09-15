@@ -20,6 +20,11 @@
 #     AOTRITON_INSTALL_PREFIX — install prefix, e.g. /scratch/install
 #                               AOTRITON_INSTALL_PATH is derived as $AOTRITON_INSTALL_PREFIX/aotriton
 #     PIP_CACHE_DIR          — pip download cache (bind-mounted from host)
+#     AOTRITON_USE_LOCAL_FLYDSL_WHEEL — optional; path (inside this container,
+#                              normally under /cache) to a FlyDSL compiler
+#                              wheel built by .ci/build_flydsl_wheel.sh. When
+#                              unset the build installs the wheel
+#                              third_party/flydsl-compiler.txt pins.
 #   Tools (provided by the ROCm AlmaLinux 8 image):
 #     hipconfig        — to locate ROCM_PATH
 #     gcc-toolset-13   — C++17 compiler via scl enable (non-asan path only)
@@ -92,6 +97,16 @@ if [ "${NOIMAGE_MODE}" == "OFF" ]; then
     cmake_arg="-DAOTRITON_USE_LOCAL_TRITON_WHEEL=${WHEEL_CFG}"
   fi
   build_args+=("${cmake_arg}")
+  # Only image builds compile kernels, so only they need a FlyDSL compiler at
+  # all. Forwarded from the environment rather than a positional argument
+  # because it is optional; see the caller in releasesuite-git-head.sh.
+  if [ -n "${AOTRITON_USE_LOCAL_FLYDSL_WHEEL}" ]; then
+    if [ ! -f "${AOTRITON_USE_LOCAL_FLYDSL_WHEEL}" ]; then
+      echo "Error: AOTRITON_USE_LOCAL_FLYDSL_WHEEL points at a file this container cannot see: ${AOTRITON_USE_LOCAL_FLYDSL_WHEEL}" >&2
+      exit 1
+    fi
+    build_args+=("-DAOTRITON_USE_LOCAL_FLYDSL_WHEEL=${AOTRITON_USE_LOCAL_FLYDSL_WHEEL}")
+  fi
 fi
 
 if [[ "${ASAN_MODE}" == "ON" ]]; then

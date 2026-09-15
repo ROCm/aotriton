@@ -42,6 +42,21 @@ Options:
  --triton_origin <url>: Override the Triton git origin for wheel builds.
                         Accepts a fork URL or a local checkout via file:///abs/path
                         (default: https://github.com/ROCm/triton)
+ --flydsl_commit <ref>: Build a FlyDSL compiler wheel from this ref (branch,
+                        tag or SHA) and build the GPU images against it,
+                        instead of installing the wheel
+                        third_party/flydsl-compiler.txt pins.
+                        Implied, with the ref taken from that same pin, when
+                        third_party/flydsl-llvm.txt is non-empty: the released
+                        wheel is then known to be built against a bad LLVM and
+                        cmake refuses it, so the source build is the only one
+                        that can finish. Costs an LLVM build on first use.
+ --flydsl_origin <url>: Override the FlyDSL git origin. Same "fork URL or
+                        file:///abs/path" contract as --triton_origin
+                        (default: https://github.com/ROCm/FlyDSL)
+ --llvm_tarball <path>: Use this prebuilt LLVM/MLIR tarball for the FlyDSL
+                        wheel instead of building one from
+                        third_party/flydsl-llvm.txt.
 By default both GPU images and runtimes are built.
 If either --image or --runtime is specified, the missing one will not be built.
 
@@ -54,7 +69,7 @@ EOF
   exit $1
 }
 
-TEMP=$(getopt -o hr: --longoptions image,runtime,asan,debug,arch:,yaml:,origin:,triton_origin: -- "$@")
+TEMP=$(getopt -o hr: --longoptions image,runtime,asan,debug,arch:,yaml:,origin:,triton_origin:,flydsl_commit:,flydsl_origin:,llvm_tarball: -- "$@")
 
 if [ $? -ne 0 ]; then
   echo "Error: Invalid option." >&2
@@ -74,6 +89,9 @@ SUITE_DEFAULT_SELECTION=1
 SUITE_YAML=""
 SUITE_ORIGIN=""
 SUITE_TRITON_ORIGIN=""
+SUITE_FLYDSL_COMMIT=""
+SUITE_FLYDSL_ORIGIN=""
+SUITE_LLVM_TARBALL=""
 SUITE_DEBUG=0
 SUITE_ASAN=0
 SUITE_ARCH="ALL"
@@ -120,6 +138,18 @@ while true; do
       shift
       SUITE_TRITON_ORIGIN="$1"
       ;;
+    --flydsl_commit)
+      shift
+      SUITE_FLYDSL_COMMIT="$1"
+      ;;
+    --flydsl_origin)
+      shift
+      SUITE_FLYDSL_ORIGIN="$1"
+      ;;
+    --llvm_tarball)
+      shift
+      SUITE_LLVM_TARBALL="$1"
+      ;;
     '--')
       shift
       break
@@ -151,6 +181,30 @@ if [ ${SUITE_DEBUG} -gt 0 ] && [ ${#CMDLIST[@]} -ne 1 ]; then
   help 1
 fi
 
+# --flydsl_commit is the switch; the other two only modify how it is honoured.
+# Silently ignoring them would be the wrong kind of quiet: someone who passed
+# --flydsl_origin meant to build FlyDSL from source, and a release that did not
+# is not obviously different from one that did until it is on hardware.
+if [ -z "${SUITE_FLYDSL_COMMIT}" ]; then
+  for _flag in --flydsl_origin:"${SUITE_FLYDSL_ORIGIN}" --llvm_tarball:"${SUITE_LLVM_TARBALL}"; do
+    if [ -n "${_flag#*:}" ]; then
+      echo "Error: ${_flag%%:*} has no effect without --flydsl_commit." >&2
+      help 1
+    fi
+  done
+elif [ ${SUITE_SELECT_IMAGE} -le 0 ]; then
+  # Same rule one level up, and it has to be stated because the FlyDSL block
+  # below sits inside the image branch: a runtime-only build runs with
+  # AOTRITON_NOIMAGE_MODE, compiles no kernel of any language, and so has
+  # nothing for a FlyDSL wheel to do. Silently completing an hour of LLVM whose
+  # output is discarded -- or, worse, silently NOT building it and producing a
+  # release the caller believes is FlyDSL-backed -- is the wrong kind of quiet,
+  # exactly as above.
+  echo "Error: --flydsl_commit has no effect on a runtime-only build (--runtime)." >&2
+  echo "       A runtime build compiles no GPU kernels, so no FlyDSL wheel is used." >&2
+  help 1
+fi
+
 # --asan: AddressSanitizer needs TheRock's clang, which ships only with ROCm
 # >= 7.10 (the theRock.Dockerfile path). Every -r must therefore be a TheRock
 # (pre-release) version, given as a long nightly string. With no -r, default
@@ -179,6 +233,7 @@ echo "SUITE_RUNTIME_LIST ${SUITE_RUNTIME_LIST[@]}"
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
 . "${SCRIPT_DIR}/common-git-cache.sh"
+. "${SCRIPT_DIR}/common-pin.sh"
 . "${SCRIPT_DIR}/common-git-https-origin.sh"
 # --origin auto: keep the GIT_HTTPS_ORIGIN auto-derived from the tracked
 # remote by common-git-https-origin.sh (ssh/git URLs already rewritten to
@@ -215,6 +270,7 @@ DEFAULT_HASH="${TRITON_HASHES[0]}"
 # Runtime builds consume pre-built wheels from /cache/wheels via WHEEL_CFG.
 # Runtime-only ASAN builds skip wheel resolution entirely (WHEEL_CFG=NONE).
 WHEEL_CFG="NONE"
+FLYDSL_WHEEL_CFG=""
 if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
   TRITON_WHEEL_VERSION_SUFFIX="+aotriton${aotriton_major}.${aotriton_minor}"
   TRITON_ORIGIN_ENV=()
@@ -246,6 +302,80 @@ if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
     fi
     WHEEL_CFG="/cache/wheels/$(basename "${WHEEL_CFG}")"
   fi
+
+  # The FlyDSL compiler wheel, on the Triton wheels' terms: built here, cached
+  # under <output>/.cache, handed to the build by path. Skipped unless asked,
+  # which keeps an hour of LLVM off the default route.
+  #
+  # RELEASE_PYVER, not a --flydsl_python: cmake rejects a wheel whose cp tag
+  # disagrees with the build venv, so one version, one place.
+
+  # A non-empty LLVM pin makes the source build mandatory: cmake refuses that
+  # wheel, so a release without --flydsl_commit would run until configure and
+  # die there. pin_line is build_llvm_tarball.sh's reader, which also rejects a
+  # file that has grown a second pin.
+  #
+  # TODO: PEP 508 compatible parser
+  FLYDSL_LLVM_PIN="$(pin_line "${SCRIPT_DIR}/../third_party/flydsl-llvm.txt")" || exit 1
+  if [[ -z "${SUITE_FLYDSL_COMMIT}" && -n "${FLYDSL_LLVM_PIN}" ]]; then
+    # The ref to build is the one flydsl-compiler.txt names, spelled as a tag.
+    # FlyDSL releases are tagged vX.Y.Z, so `flydsl==0.3.1` is `v0.3.1`. Any
+    # other requirement shape is not something to guess at.
+    FLYDSL_REQ="$(pin_line "${SCRIPT_DIR}/../third_party/flydsl-compiler.txt")" || exit 1
+    if [[ "${FLYDSL_REQ}" =~ ^flydsl[[:space:]]*==[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+      SUITE_FLYDSL_COMMIT="v${BASH_REMATCH[1]}"
+    else
+      echo "Error: third_party/flydsl-llvm.txt pins ${FLYDSL_LLVM_PIN}, so this" >&2
+      echo "release must build FlyDSL from source, but the ref to build cannot be" >&2
+      echo "derived from third_party/flydsl-compiler.txt ('${FLYDSL_REQ}')." >&2
+      echo "Pass --flydsl_commit <ref> explicitly." >&2
+      exit 1
+    fi
+    echo "third_party/flydsl-llvm.txt is non-empty (${FLYDSL_LLVM_PIN})."
+    echo "Building FlyDSL ${SUITE_FLYDSL_COMMIT} from source; the pinned wheel cannot be used."
+  fi
+  if [[ -n "${SUITE_FLYDSL_COMMIT}" ]]; then
+    FLYDSL_CACHE_DIR="${CACHE_DIR}/flydsl"
+    # The LLVM tarball first, as a step of this script rather than a side
+    # effect of the wheel build. It is an input both halves of a release can
+    # want -- a Triton wheel built against a custom LLVM is the next one -- so
+    # it is produced here and handed down, not owned by whoever happens to need
+    # it first. --llvm_tarball skips this and supplies one directly.
+    if [[ -n "${SUITE_LLVM_TARBALL}" ]]; then
+      LLVM_TARBALL_HOST="$(realpath "${SUITE_LLVM_TARBALL}")"
+      if [[ ! -f "${LLVM_TARBALL_HOST}" ]]; then
+        echo "Error: --llvm_tarball ${SUITE_LLVM_TARBALL} does not exist." >&2
+        exit 1
+      fi
+    else
+      LLVM_ARGS=(
+        --tarball_output_dir "${CACHE_DIR}/llvm-tarballs"
+        --python "${RELEASE_PYVER}"
+      )
+      LLVM_TARBALL_HOST=$(bash "${SCRIPT_DIR}/build_llvm_tarball.sh" "${LLVM_ARGS[@]}")
+      if [[ -z "${LLVM_TARBALL_HOST}" ]]; then
+        echo "Error: build_llvm_tarball.sh produced no tarball." >&2
+        exit 1
+      fi
+    fi
+    FLYDSL_ARGS=(
+      --wheel_output_dir "${FLYDSL_CACHE_DIR}"
+      --flydsl_commit "${SUITE_FLYDSL_COMMIT}"
+      --python "${RELEASE_PYVER}"
+      --version_suffix ".aotriton${aotriton_major}.${aotriton_minor}"
+    )
+    [[ -n "${SUITE_FLYDSL_ORIGIN}" ]] && FLYDSL_ARGS+=(--flydsl_origin "${SUITE_FLYDSL_ORIGIN}")
+    FLYDSL_ARGS+=(--llvm_tarball "${LLVM_TARBALL_HOST}")
+    FLYDSL_WHEEL_HOST=$(bash "${SCRIPT_DIR}/build_flydsl_wheel.sh" "${FLYDSL_ARGS[@]}")
+    if [[ -z "${FLYDSL_WHEEL_HOST}" ]]; then
+      echo "Error: build_flydsl_wheel.sh produced no wheel for ${SUITE_FLYDSL_COMMIT}." >&2
+      exit 1
+    fi
+    # CACHE_DIR is bind-mounted at /cache inside the build container, so the
+    # path the build sees is the host path with that one prefix swapped --
+    # same translation the Triton wheels get.
+    FLYDSL_WHEEL_CFG="/cache/flydsl/$(basename "${FLYDSL_WHEEL_HOST}")"
+  fi
 fi
 
 function build_inside() {
@@ -269,6 +399,13 @@ function build_inside() {
   EXTRA_ENV=()
   if [[ "${ASAN_MODE}" == "ON" ]]; then
     EXTRA_ENV+=(-e "TRITON_ENABLE_ASAN=1")
+  fi
+  # By environment rather than as a fifth positional: runc-manylinux-build-tar.sh's
+  # argument list is a fixed shape shared with anything else that drives it, and
+  # this is optional in a way NOIMAGE_MODE/WHEEL_CFG/ASAN_MODE/ARCH_LIST are not.
+  # Named for the cmake variable it becomes, so there is one name to grep for.
+  if [[ -n "${FLYDSL_WHEEL_CFG}" ]]; then
+    EXTRA_ENV+=(-e "AOTRITON_USE_LOCAL_FLYDSL_WHEEL=${FLYDSL_WHEEL_CFG}")
   fi
   TTY_FLAGS=()
   [ ${SUITE_DEBUG} -gt 0 ] && TTY_FLAGS=(-t -e SUITE_DEBUG=1)
