@@ -178,12 +178,13 @@ fi
   # 'flyc' is the name @ati.backend declares and the library publishes. Sits here
   # rather than beside the other backends because it needs PYTHONPATH.
   #
-  # The backward half is conditional ON THE BUILD, not on a flag here: it runs
-  # when the library publishes a 'flyc' entry on OpAttnBwdBackend and not
-  # otherwise, so a library built without one -- or with a filtered operator
-  # list -- falls back to the forward half instead of failing in .backward(),
-  # which is a failure that says nothing about the forward kernel under test.
-  # Nothing in this file changes when the answer changes.
+  # Both lookups should always succeed: backends.h is generated from the full
+  # operator list (codegen/root.py's _write_backend_constants), and the flyc
+  # backends are declared unconditionally, so no build option drops either name.
+  # The checks stay as defence in depth, and both are fatal. Setting SKIP_BWD=1
+  # here instead was invisible from this script's interface and would turn a
+  # library missing a backend into a green run; only the caller may ask for the
+  # forward half alone.
   if [[ "$backend" == "flyc" ]]; then
     # `|| _rc=$?` both captures the status and keeps `set -e` (common-vars.sh)
     # from killing the script before the case below can tell the two failure
@@ -191,21 +192,26 @@ fi
     _rc=0; FWD_IMPL=$(backend_index_of OpAttnFwdBackend flyc) || _rc=$?
     case "${_rc}" in
       0) ;;
-      3) echo "run-test.sh: this build publishes no 'flyc' forward backend" >&2; exit 1 ;;
+      3) echo "run-test.sh: this library publishes no 'flyc' forward backend," \
+              "which should be impossible; the build is broken" >&2; exit 1 ;;
       *) echo "run-test.sh: the OpAttnFwdBackend lookup itself failed" >&2; exit 1 ;;
     esac
     export FWD_IMPL
-    # Only exit code 3 -- backend_index_of's "the library published no such
-    # name" -- may fall back to the forward half. Any other failure is the
-    # lookup itself being broken, and must not be reported as a green
-    # forward-only pass.
+    # Exit code 3 is backend_index_of's "the library published no such name";
+    # anything else is the lookup itself being broken. Neither may be reported
+    # as a green forward-only pass unless the caller asked for one.
     _rc=0; BWD_IMPL=$(backend_index_of OpAttnBwdBackend flyc) || _rc=$?
     case "${_rc}" in
       0) export BWD_IMPL
          echo "run-test.sh: flyc FWD_IMPL=${FWD_IMPL} BWD_IMPL=${BWD_IMPL} (forward and backward)" ;;
-      3) export SKIP_BWD=1
-         echo "run-test.sh: flyc FWD_IMPL=${FWD_IMPL}; no flyc backward backend in this build, SKIP_BWD=1" ;;
-      *) echo "run-test.sh: the OpAttnBwdBackend lookup itself failed; not falling back" >&2
+      3) if [ -z "${SKIP_BWD:-}" ]; then
+           echo "run-test.sh: this library publishes no 'flyc' backward backend," \
+                "which should be impossible; the build is broken. Re-run with" \
+                "SKIP_BWD=1 to test the forward half anyway" >&2
+           exit 1
+         fi
+         echo "run-test.sh: flyc FWD_IMPL=${FWD_IMPL}; no flyc backward backend in this library, SKIP_BWD=${SKIP_BWD} as asked" ;;
+      *) echo "run-test.sh: the OpAttnBwdBackend lookup itself failed" >&2
          exit 1 ;;
     esac
   fi
