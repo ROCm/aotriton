@@ -61,6 +61,12 @@ def _register_loaded_aot(family, mod):
     return mod
 
 
+def reset_loaded_aot():
+    """Drop every family -> tree binding. For a process that links several trees
+    in sequence to INSPECT them (the unit tests); never during generation."""
+    _LOADED_AOT.clear()
+
+
 def load_family_aot(family):
     """Fetch an already-loaded family's `aot` package from the import cache.
 
