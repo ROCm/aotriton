@@ -119,7 +119,7 @@ set(AOTRITON_BUILD_FOR_TUNING_BUT_SKIP_KERNEL "" CACHE STRING "Use tuning databa
 option(AOTRITON_ENABLE_FP32_INPUTS "Enable FP32 support." ON)
 option(AOTRITON_NOIMAGE_MODE "Only build C++ Shim part. Kernel image builds are disabled" OFF)
 # Allow setting AOTRITON_DEBUG_SKIP_TRITON_KERNELS from env var, accept CMake values
-# (1/ON/TRUE), overriden by explicit -D
+# (1/ON/TRUE), overridden by explicit -D
 set(_AOTRITON_SKIP_TRITON_DEFAULT OFF)
 if(DEFINED ENV{AOTRITON_DEBUG_SKIP_TRITON_KERNELS})
   set(_AOTRITON_SKIP_TRITON_ENV "$ENV{AOTRITON_DEBUG_SKIP_TRITON_KERNELS}")

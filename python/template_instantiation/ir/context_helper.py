@@ -3,7 +3,9 @@
 
 """
 ContextHelper — a `wires_to=` value naming a host-side C++ member function instead
-of an operand rename.
+of an operand rename. **`@ati.scalar` only**: the helper's result is stored in
+`scratch_params` and CAST into the kernarg, which has no tensor form, so
+`@ati.tensor` rejects one.
 
 `wires_to` on `@ati.tensor` / `@ati.scalar` has historically been a plain operand
 name (the real→apparel wiring: this kernel argument IS that operator operand, under
@@ -59,7 +61,7 @@ class ContextHelper:
     """A `wires_to=` value naming a host-side context member function, not an
     operand rename. `name` is the C++ member function name (e.g.
     `flyc_num_seqlens`), declared with no arguments and a return type taken from
-    the `@ati.scalar`/`@ati.tensor` this value is attached to."""
+    the `@ati.scalar` this value is attached to."""
 
     name: str
 
