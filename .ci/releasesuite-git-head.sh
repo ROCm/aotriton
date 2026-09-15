@@ -315,7 +315,7 @@ if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
   # die there. pin_line is build_llvm_tarball.sh's reader, which also rejects a
   # file that has grown a second pin.
   #
-  # TODO: PEP 508 compatiable parser
+  # TODO: PEP 508 compatible parser
   FLYDSL_LLVM_PIN="$(pin_line "${SCRIPT_DIR}/../third_party/flydsl-llvm.txt")" || exit 1
   if [[ -z "${SUITE_FLYDSL_COMMIT}" && -n "${FLYDSL_LLVM_PIN}" ]]; then
     # The ref to build is the one flydsl-compiler.txt names, spelled as a tag.

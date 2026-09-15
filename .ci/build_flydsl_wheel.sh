@@ -47,8 +47,10 @@ Options:
                             list. FlyJitRuntime links HIP but AOTriton never
                             launches through it, so this does not affect the
                             kernels the wheel produces.
-           --jobs <N>       Parallel build jobs for the LLVM build. FlyDSL's
-                            own build.sh hardcodes -j$(nproc) and ignores it.
+           --jobs <N>       CMAKE_BUILD_PARALLEL_LEVEL for the FlyDSL build.
+                            Advisory only: FlyDSL's own build.sh passes an
+                            explicit -j$(nproc), which beats it. Nothing here
+                            builds LLVM.
 EOF
   exit "${1:-1}"
 }

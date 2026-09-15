@@ -114,11 +114,20 @@ mkdir -p "${TARBALL_OUTPUT_DIR}"
 TARBALL_OUTPUT_DIR="$(realpath "${TARBALL_OUTPUT_DIR}")"
 
 # The tarball name carries a distro slug (the aotriton:base-py* family is
-# AlmaLinux 8) because .ci/triton-patch/docker-script-build.sh's LLVM
-# filenames do, and one naming scheme beats two. It is not something this
-# script chooses, so match on a glob rather than reconstructing it.
+# AlmaLinux 8) because .ci/triton-patch/docker-script-build.sh's LLVM filenames
+# do, and one naming scheme beats two.
+#
+# The slug is matched, not globbed: this path always builds in the AlmaLinux
+# image, so a same-SHA tarball from some other distro is a DIFFERENT artifact
+# and must not answer for this one. It would otherwise be linked into the
+# FlyDSL wheel and fail, or not fail, depending on the host's glibc.
+#
+# Forwarded to the container below rather than left to be derived twice: the
+# runc half reads /etc/os-release, and the two must agree or the build lands
+# under a name this lookup cannot see.
+TARBALL_DISTRO="${LLVM_TARBALL_DISTRO:-almalinux}"
 cached_tarball() {
-  ls "${TARBALL_OUTPUT_DIR}"/llvm-"${1:0:12}"-*-x64.tar.gz 2>/dev/null | head -n1
+  ls "${TARBALL_OUTPUT_DIR}"/llvm-"${1:0:12}"-"${TARBALL_DISTRO}"-x64.tar.gz 2>/dev/null | head -n1
 }
 
 # Cache before network, part 1: a pin that is already a SHA needs no
@@ -212,6 +221,7 @@ docker run --network=host -i --rm \
   --tmpfs "/scratch:exec" \
   --mount "type=bind,source=${TARBALL_OUTPUT_DIR},target=/cache/llvm" \
   --mount "type=bind,source=$(realpath "${SCRIPT_DIR}/runc-build-llvm-tarball.sh"),target=/tmp/runc-build-llvm-tarball.sh,readonly" \
+  -e "LLVM_TARBALL_DISTRO=${TARBALL_DISTRO}" \
   "${PAT_ENV_ARG[@]}" \
   "${BASE_DOCKER_IMAGE}" \
   bash -s "${RESOLVED}" "${JOBS}" >&2 << 'EOF'
@@ -224,7 +234,7 @@ EOF
 
 HIT="$(cached_tarball "${RESOLVED}")"
 if [[ -z "${HIT}" ]]; then
-  echo "Error: build reported success but no llvm-${RESOLVED:0:12}-*-x64.tar.gz appeared in ${TARBALL_OUTPUT_DIR}." >&2
+  echo "Error: build reported success but no llvm-${RESOLVED:0:12}-${TARBALL_DISTRO}-x64.tar.gz appeared in ${TARBALL_OUTPUT_DIR}." >&2
   exit 1
 fi
 realpath "${HIT}"

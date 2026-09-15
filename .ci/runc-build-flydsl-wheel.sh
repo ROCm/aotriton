@@ -210,9 +210,7 @@ export FLY_REBUILD=1
 # Advisory. FlyDSL's scripts/build.sh -- which setup.py invokes with no
 # arguments -- passes an explicit `-j$(nproc)` to `cmake --build`, and an
 # explicit -j beats CMAKE_BUILD_PARALLEL_LEVEL, so this only takes effect for
-# any cmake step that does not set its own. FlyDSL's build is small enough
-# next to LLVM's that this has not been worth working around; <jobs> is here
-# for the LLVM half, which honours it.
+# a cmake step that does not set its own.
 export CMAKE_BUILD_PARALLEL_LEVEL="${JOBS}"
 
 mkdir -p "${OUTPUT_DIR}"
