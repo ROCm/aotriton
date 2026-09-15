@@ -27,7 +27,7 @@ from _common_test import (
 # also out when the FORWARD is pinned to flyc, and that half was added to
 # _core_test_backward.py only -- so every fp32 varlen case asked for a kernel
 # that was never built. Importing the name is what stops the two drifting again.
-from _core_test_backward import DTYPES
+from _core_test_backward import DTYPES, SKIP_BWD
 
 FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
 
@@ -208,6 +208,17 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
     dropout_mask = encoded_softmax >= 0 if dropout_p > 0.0 else None
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
+
+    if SKIP_BWD:
+        # Forward-only, the same contract `_core_test_backward` honours: a
+        # backward-less backend must not be judged on a backward this harness
+        # launched for it. `no_backward=True` keeps the forward assertion below
+        # exactly the one the full path makes.
+        is_allclose, adiff, _ga, _gd, tfts = ctx.validate_with_reference(
+            tri_out, [], no_backward=True, return_target_fudge_factors=True)
+        assert is_allclose, f'Forward pass {is_allclose=} {tfts=}'
+        print(f'{adiff=} (SKIP_BWD=1, backward not run)')
+        return
 
     # # Backward
     dout = torch.rand_like(tri_out)

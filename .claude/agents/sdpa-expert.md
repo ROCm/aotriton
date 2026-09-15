@@ -440,12 +440,11 @@ entry point, not an SDPA test.
 
 | File | What it tests |
 |------|---------------|
-| `test_forward.py` | Forward pass: regular batch/heads/seqlen/dtype, GQA, bias, irregular dims/seqlen, BSHD layout |
+| `test_forward.py` | Deprecated; `SKIP_BWD=1 test_backward.py` covers the same ground over a wider parameter set |
 | `test_backward.py` | Backward pass (dq/dk/dv/db): same parameter space as forward |
 | `test_varlen.py` | Compact, padded, and strided varlen — forward and backward |
 | `triton_forward.py` | Pure Triton forward kernel (no C++ dispatcher), layout/dropout encoding |
 | `triton_backward.py` | Pure Triton backward kernels, compares vs PyTorch `_scaled_dot_product_attention_math` |
-| `triton_tester.py` | Forces split-kernel backend (`BWD_IMPL=0`, `V3_API=0`) to exercise the Triton compiler path |
 | `bwd_preprocess.py` | Standalone delta preprocess kernel |
 | `bwd_split_kernel.py` | Standalone dk/dv and dq split kernels |
 | `performance_forward.py` | TFLOPS benchmarks vs Flash Attention v1/v2 |
@@ -455,7 +454,7 @@ entry point, not an SDPA test.
 
 | File | Role |
 |------|------|
-| `attn_torch_function.py` | `_attention`: wraps V3 forward+backward with lazy `dq_acc` / `delta`; controls backend via `BWD_IMPL` / `V3_API` env vars |
+| `attn_torch_function.py` | `_attention`: wraps forward+backward with lazy `dq_acc` / `delta`; resolves the `FWD_IMPL` / `BWD_IMPL` backend NAMES into the indices it forces |
 | `varlen_attn_torch_function.py` | `_attention_varlen`: same, plus `cu_seqlens`, `seq_strides`, `varlen_type` |
 | `triton_attn_torch_function.py` | Triton-only backend; calls `bwd_preprocess`, `bwd_kernel_dk_dv`, `bwd_kernel_dq` directly |
 
@@ -484,14 +483,21 @@ for correlating failures across test categories.
 
 ### Backend control (environment variables)
 
+`FWD_IMPL` / `BWD_IMPL` hold a backend NAME, in the vocabulary `@ati.backend`
+declares and `OpAttn{Fwd,Bwd}Backend.by_index` publishes. Unset means the
+operator selects; an unknown name raises at import, listing what this build has.
+
 ```
-V3_API=1          # Use V3 API (default); 0 falls back to V2
-BWD_IMPL=0        # 0=split (default), 1=fused, 2=AITER ASM
-FWD_IMPL=0        # Force forward backend index
+FWD_IMPL=flyc     # op_attn_fwd: triton | aiter | flyc
+BWD_IMPL=aiter    # op_attn_bwd: triton_split | triton_fuse | aiter | flyc
+SKIP_BWD=1        # Run the forward half of test_backward.py / test_varlen.py only
 PROBE_UNSUPPORTED # Raise NotImplementedError on unsupported configs
 FOR_RELEASE=0     # 0/1/2/3 — test coverage level
 SMALL_VRAM=0      # Reduce parameters for smaller GPUs
 ```
+
+The resolved indices are `FWD_IMPL_IDX` / `BWD_IMPL_IDX`, and they are the only
+thing `attn_options.force_backend_index` sees.
 
 ### Varlen input shapes
 
