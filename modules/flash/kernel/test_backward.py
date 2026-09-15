@@ -111,6 +111,42 @@ def test_gqa(BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     bias_type = None
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
+# Softmax over a single key is exactly 1 whatever the bias is, so the fwd must pass V
+# through untouched and the bwd must pass dO through to dV. The bwd recomputes p from
+# the LSE the fwd saved, so both only hold while the two kernels apply the log2(e)
+# factor to the bias at the same precision. Spelling the fwd scale as a bare
+# `bias * 1.44269504089` evaluates it at the bias dtype, rounding log2(e) to 1.4453125
+# in bf16 while the bwd applies it in fp32; dV then comes back as
+# 2**(bias * (log2(e)_fp32 - log2(e)_bf16)), i.e. 0.973 at bias=16 and 0.891 at
+# bias=64. Biases this large are the point of the test: the random biases in
+# test_op_bwd_with_matrix_bias are small enough to hide the error under its tolerance.
+@pytest.mark.parametrize('bias_val', [0.0, 4.0, 16.0, -16.0, 64.0])
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
+def test_matrix_bias_fwd_bwd_symmetry(dtype, bias_val):
+    D_HEAD = 16
+    q = torch.zeros((1, 1, 1, D_HEAD), device='cuda', dtype=dtype, requires_grad=True)
+    k = torch.zeros((1, 1, 1, D_HEAD), device='cuda', dtype=dtype, requires_grad=True)
+    v = torch.ones((1, 1, 1, D_HEAD), device='cuda', dtype=dtype, requires_grad=True)
+    b = torch.full((1, 1, 1, 1), bias_val, device='cuda', dtype=dtype)
+    sm_scale = D_HEAD ** -0.5
+
+    ext = AttentionExtraArgs(return_encoded_softmax=False,
+                             autotune=False,
+                             return_autotune=False)
+    tri_out, _, _ = attention(q, k, v, b, False, sm_scale, 0.0, ext)
+
+    # Not asserted exactly: converting the LSE to base 2 and back costs fp32 a few
+    # 1e-7. ATOL still sits ~800x below the smallest error the asymmetry produces
+    # (7.8e-3, at bias=4 in bf16).
+    ATOL = 1e-5
+    assert torch.allclose(tri_out, v, atol=ATOL, rtol=ATOL), \
+        f'single-key fwd should return V, off by {(tri_out - v).abs().max().item()}'
+
+    dout = torch.ones_like(tri_out)
+    dq, dk, dv = torch.autograd.grad(tri_out, [q, k, v], dout)
+    assert torch.allclose(dv, dout, atol=ATOL, rtol=ATOL), \
+        f'single-key bwd should return dO as dV, off by {(dv - dout).abs().max().item()}'
+
 def test_large_bf16_nan_values():
     q = torch.full((1, 1, 1, 16), 133120.0, dtype=torch.bfloat16, device="cuda")
     k = torch.full((1, 1, 1, 16), 133120.0, dtype=torch.bfloat16, device="cuda")
