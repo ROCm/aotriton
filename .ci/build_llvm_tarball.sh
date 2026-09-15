@@ -25,7 +25,7 @@ usage() {
 Usage: build_llvm_tarball.sh --tarball_output_dir <dir> [options]
 Options:
   --tarball_output_dir <dir>  Required. Tarball cache; a matching
-                              llvm-<sha8>-<distro>-x64.tar.gz here is a hit.
+                              llvm-<sha12>-<distro>-x64.tar.gz here is a hit.
        --llvm_origin <url>    Override the git origin from
                               third_party/flydsl-llvm.txt.
        --llvm_commit <ref>    Override the ref from that file. Branch, tag or
@@ -146,7 +146,7 @@ TARBALL_OUTPUT_DIR="$(realpath "${TARBALL_OUTPUT_DIR}")"
 # filenames do, and one naming scheme beats two. It is not something this
 # script chooses, so match on a glob rather than reconstructing it.
 cached_tarball() {
-  ls "${TARBALL_OUTPUT_DIR}"/llvm-"${1:0:8}"-*-x64.tar.gz 2>/dev/null | head -n1
+  ls "${TARBALL_OUTPUT_DIR}"/llvm-"${1:0:12}"-*-x64.tar.gz 2>/dev/null | head -n1
 }
 
 # Cache before network, part 1: a pin that is already a SHA needs no
@@ -154,7 +154,7 @@ cached_tarball() {
 if [[ "${LLVM_COMMIT}" =~ ^[0-9a-fA-F]{40}$ ]]; then
   HIT="$(cached_tarball "${LLVM_COMMIT}")"
   if [[ -n "${HIT}" ]]; then
-    echo "LLVM tarball for ${LLVM_COMMIT:0:8} already cached, skipping." >&2
+    echo "LLVM tarball for ${LLVM_COMMIT:0:12} already cached, skipping." >&2
     realpath "${HIT}"
     exit 0
   fi
@@ -183,7 +183,7 @@ fi
 # volume is never deleted, so a warm one plus a swallowed fetch failure
 # resolves the moving branch below against the STALE tip -- and then builds,
 # names and caches the previous RC under an authoritative-looking
-# llvm-<sha8>-<distro> filename that nothing will ever invalidate. Failing here
+# llvm-<sha12>-<distro> filename that nothing will ever invalidate. Failing here
 # costs a re-run; not failing costs a wrong tarball, forever.
 if ! sync_mirror "${MIRROR_VOLUME}" "${LLVM_ORIGIN}" "${BASE_DOCKER_IMAGE}" "${PAT_ENVIRON}" >&2; then
   echo "Error: could not sync the git mirror ${MIRROR_VOLUME} from ${LLVM_ORIGIN}." >&2
@@ -218,19 +218,10 @@ fi
 # an hour, and that is the thing a cache hit has to prevent.
 HIT="$(cached_tarball "${RESOLVED}")"
 if [[ -n "${HIT}" ]]; then
-  echo "LLVM tarball for ${RESOLVED:0:8} already cached, skipping." >&2
+  echo "LLVM tarball for ${RESOLVED:0:12} already cached, skipping." >&2
   realpath "${HIT}"
   exit 0
 fi
-
-# Not a tmpfs. build_triton_wheels.sh builds Triton in `--tmpfs /scratch`, but
-# an LLVM tree with assertions is tens of gigabytes and RAM-backed scratch of
-# that size is not something a build host can be assumed to have. A named
-# volume also survives the run, so a re-spin of the same RC rebuilds
-# incrementally instead of from scratch. runc-build-llvm-tarball.sh keys its
-# subdirectories by SHA, so two commits never share a CMakeCache.
-LLVM_BUILD_VOLUME="${LLVM_BUILD_VOLUME:-aotriton-llvm-build}"
-docker volume create --name "${LLVM_BUILD_VOLUME}" >/dev/null
 
 PAT_ENV_ARG=()
 if [[ -n "${PAT_ENVIRON}" ]]; then
@@ -246,7 +237,7 @@ fi
 # path and nothing else.
 docker run --network=host -i --rm \
   -v "${MIRROR_VOLUME}:/mirror:ro" \
-  -v "${LLVM_BUILD_VOLUME}:/build" \
+  --tmpfs "/scratch:exec" \
   --mount "type=bind,source=${TARBALL_OUTPUT_DIR},target=/cache/llvm" \
   --mount "type=bind,source=$(realpath "${SCRIPT_DIR}/runc-build-llvm-tarball.sh"),target=/tmp/runc-build-llvm-tarball.sh,readonly" \
   "${PAT_ENV_ARG[@]}" \
@@ -256,12 +247,12 @@ set -ex
 COMMIT="$1"
 JOBS="$2"
 scl enable gcc-toolset-13 -- bash /tmp/runc-build-llvm-tarball.sh \
-  file:///mirror "$COMMIT" /cache/llvm /build "$JOBS"
+  file:///mirror "$COMMIT" /cache/llvm /scratch/build "$JOBS"
 EOF
 
 HIT="$(cached_tarball "${RESOLVED}")"
 if [[ -z "${HIT}" ]]; then
-  echo "Error: build reported success but no llvm-${RESOLVED:0:8}-*-x64.tar.gz appeared in ${TARBALL_OUTPUT_DIR}." >&2
+  echo "Error: build reported success but no llvm-${RESOLVED:0:12}-*-x64.tar.gz appeared in ${TARBALL_OUTPUT_DIR}." >&2
   exit 1
 fi
 realpath "${HIT}"

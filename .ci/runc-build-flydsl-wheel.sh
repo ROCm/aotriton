@@ -12,7 +12,7 @@
 #   <flydsl_source>  git URL, normally file:///mirror.
 #   <commit>         a resolved 40-hex SHA -- it goes into the wheel's version
 #                    and therefore into the cache key, so a moving ref will not do.
-#   <llvm_tarball>   llvm-<sha8>-<distro>-x64.tar.gz from runc-build-llvm-tarball.sh.
+#   <llvm_tarball>   llvm-<sha12>-<distro>-x64.tar.gz from runc-build-llvm-tarball.sh.
 #                    Extracted here and handed to FlyDSL as MLIR_PATH.
 #   <output_dir>     where the .whl is written.
 #   <version_suffix> appended inside the local version segment, after the git
@@ -20,8 +20,8 @@
 #                    giving 0.3.1+git421935cc.aotriton0.14. Same idea as
 #                    TRITON_WHEEL_VERSION_SUFFIX, spelled for FlyDSL's own
 #                    FLYDSL_PACKAGE_VERSION_OVERRIDE.
-#   <build_dir>      scratch root; the checkout and the extracted LLVM live
-#                    here and are reused. Defaults to a fresh mktemp -d.
+#   <build_dir>      scratch root for this run; the checkout and the extracted
+#                    LLVM live here. Defaults to a fresh mktemp -d.
 #   <jobs>           advisory only, see CMAKE_BUILD_PARALLEL_LEVEL below.
 #
 # The environment variable that points FlyDSL's setup.py at a prebuilt LLVM is
@@ -70,35 +70,27 @@ git config --global --add safe.directory '*'
 # --- Unpack the LLVM/MLIR install prefix ---
 # The tarball holds a single top-level directory named after itself (see
 # runc-build-llvm-tarball.sh), so the extracted prefix is predictable without
-# listing the archive. Extraction of a multi-gigabyte tree is skipped when it
-# is already there: BUILD_DIR is normally a persistent volume.
+# listing the archive. Extracted unconditionally: BUILD_DIR is per-run scratch,
+# so "is it already there" can only ever answer no, and a check that can only
+# answer one way hides the case where it answers the other.
 LLVM_NAME="$(basename "${LLVM_TARBALL}")"
 LLVM_NAME="${LLVM_NAME%.tar.gz}"
 LLVM_ROOT="${BUILD_DIR}/llvm"
 export MLIR_PATH="${LLVM_ROOT}/${LLVM_NAME}"
-if [ ! -d "${MLIR_PATH}/lib/cmake/mlir" ]; then
-  mkdir -p "${LLVM_ROOT}"
-  tar -xzf "${LLVM_TARBALL}" -C "${LLVM_ROOT}"
-fi
+mkdir -p "${LLVM_ROOT}"
+tar -xzf "${LLVM_TARBALL}" -C "${LLVM_ROOT}"
 if [ ! -d "${MLIR_PATH}/lib/cmake/mlir" ]; then
   echo "Error: ${LLVM_TARBALL} did not unpack to a prefix with lib/cmake/mlir at ${MLIR_PATH}." >&2
   exit 1
 fi
 
 # --- Check out FlyDSL ---
-# In-tree, on the persistent build dir: FlyDSL's setup.py refuses a
-# FLY_BUILD_DIR outside its own repo root, so incremental rebuilds require the
-# checkout itself to persist, not just a scratch build directory.
+# Under BUILD_DIR, because FlyDSL's setup.py refuses a FLY_BUILD_DIR outside its
+# own repo root, so the build tree has to live inside the checkout.
 SRC_DIR="${BUILD_DIR}/flydsl"
-if [ ! -d "${SRC_DIR}/.git" ]; then
-  git init "${SRC_DIR}"
-  git -C "${SRC_DIR}" remote add origin "${FLYDSL_SOURCE}"
-else
-  git -C "${SRC_DIR}" remote set-url origin "${FLYDSL_SOURCE}"
-fi
-if ! git -C "${SRC_DIR}" cat-file -e "${COMMIT}^{commit}" 2>/dev/null; then
-  git -C "${SRC_DIR}" fetch --depth=1 origin "${COMMIT}"
-fi
+git init "${SRC_DIR}"
+git -C "${SRC_DIR}" remote add origin "${FLYDSL_SOURCE}"
+git -C "${SRC_DIR}" fetch --depth=1 origin "${COMMIT}"
 git -C "${SRC_DIR}" checkout -f "${COMMIT}"
 # dlpack and tvm-ffi are submodules FlyDSL's CMake include()s headers from.
 # scripts/build.sh initialises them itself, but only by probing for one header;
@@ -158,22 +150,27 @@ BASE_VERSION=$(python3 - <<'PY'
 import pathlib, re
 text = pathlib.Path("python/flydsl/__init__.py").read_text(encoding="utf-8")
 m = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', text, re.MULTILINE)
-# A base that already carries a local segment cannot take ours; drop theirs
-# rather than emit a PEP 440-invalid double '+'.
-print((m.group(1) if m else "0.0.0").split("+")[0])
+# Nothing printed when the declaration is missing or has changed shape: the
+# caller turns an empty value into an error. A stand-in like "0.0.0" would
+# publish a wheel whose version names neither what is in it nor the fact that
+# the version could not be read.
+if m:
+    # A base that already carries a local segment cannot take ours; drop theirs
+    # rather than emit a PEP 440-invalid double '+'.
+    print(m.group(1).split("+")[0])
 PY
 )
 if [ -z "${BASE_VERSION}" ]; then
-  echo "Error: could not read __version__ from python/flydsl/__init__.py." >&2
+  echo "Error: could not read __version__ from python/flydsl/__init__.py" >&2
+  echo "in FlyDSL ${SHORT}. The declaration is gone or has changed shape." >&2
   exit 1
 fi
 export FLYDSL_PACKAGE_VERSION_OVERRIDE="${BASE_VERSION}+git${SHORT}${VERSION_SUFFIX}"
 
 # --- Build ---
-# FLY_BUILD_DIR is keyed by ABI tag and LLVM tarball so that a rebuild for a
-# different Python, or against a different LLVM, never inherits the previous
-# CMakeCache. It must stay relative to the repo root (setup.py rejects a path
-# outside it), which is also why the checkout above is the persistent thing.
+# FLY_BUILD_DIR must stay relative to the repo root: setup.py rejects a path
+# outside it. Named by ABI tag and LLVM so the directory says what configured
+# it, which a build log needs even when nothing is reused.
 ABI_TAG=$(python3 -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')
 export FLY_BUILD_DIR="build-fly/build_${ABI_TAG}_${LLVM_NAME}"
 # "auto" would reuse a stale embedded _mlir from a previous LLVM; always

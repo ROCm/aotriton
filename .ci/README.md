@@ -259,7 +259,7 @@ anything here.
 **The LLVM build takes about an hour.** Everything about these scripts is
 arranged so that a cache miss is the only thing that costs anything:
 
-* The tarball is `llvm-<sha8>-<distro>-x64.tar.gz`, the same filename shape
+* The tarball is `llvm-<sha12>-<distro>-x64.tar.gz`, the same filename shape
   `.ci/triton-patch/docker-script-build.sh` already consumes, so one built here
   drops into `$HOME/.triton/llvm` unchanged. It is keyed on the LLVM commit
   only — **not** on the Python version, because FlyDSL rebuilds MLIR's Python
@@ -273,8 +273,15 @@ arranged so that a cache miss is the only thing that costs anything:
   one whose tag does not match the build venv. A wheel cached for a different
   Python is not a cache hit. The wheel's version carries the FlyDSL commit as
   `+git<sha8>`, the same way Triton's does.
-* A cached wheel is found before the LLVM tarball is even looked for, so a
-  re-run of an already-built configuration does no work at all.
+* The LLVM tarball is resolved (and built, on a miss) *before* either wheel
+  cache probe, because the resolved LLVM identity is part of the wheel's key —
+  a wheel built against the wrong LLVM miscompiles register spills and returns
+  wrong numbers rather than failing. So a warm wheel still costs a mirror sync
+  and a `rev-parse`, seconds against an existing tarball cache; it does not
+  cost an LLVM build.
+* `--llvm_tarball` must be named `llvm-<sha12>-<...>.tar.gz`. A name that
+  carries no commit is refused rather than keyed on a digest of itself, which
+  would make `custom.tar.gz` mean whatever it meant last time.
 
 **The filename shape changed, and that is not a broken cache.** A wheel built
 by hand — `bash scripts/build_wheels.sh` in a FlyDSL checkout — is named from
@@ -295,14 +302,11 @@ that are never wiped (see `.ci/CLAUDE.md`):
 | volume | holds |
 |---|---|
 | `llvm-mirror`, `flydsl-mirror` | bare git mirrors; a per-origin `-<md5>` slug is used for a non-default origin |
-| `aotriton-llvm-build` | the LLVM checkout, build and install trees |
-| `aotriton-flydsl-build` | the extracted LLVM prefix, the FlyDSL checkout and its build tree |
 
-The two build volumes are named volumes rather than the `--tmpfs /scratch` the
-Triton wheel build uses: an LLVM tree with assertions is tens of gigabytes, and
-RAM-backed scratch that large cannot be assumed. Keeping them also makes a
-re-spin of the same RC an incremental rebuild. Both scripts key their
-subdirectories by commit, so two different inputs never share a `CMakeCache`.
+Mirrors are the only volumes. Both builds run in `--tmpfs /scratch:exec` and
+keep nothing, exactly as the Triton wheel build does: a shared mutable build
+tree is not a cache but a race, since two invocations of different commits
+would take turns rewriting one checkout.
 
 ### Build environments
 

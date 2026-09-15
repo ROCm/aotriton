@@ -23,7 +23,7 @@ usage() {
 Usage: build_flydsl_wheel.sh --wheel_output_dir <dir> --flydsl_commit <ref> [options]
 Options:
   --wheel_output_dir <dir>  Required. Wheel cache; a matching
-                            flydsl-*+git<sha8>*llvm<sha8>*-cp<XY>-*.whl here is
+                            flydsl-*+git<sha8>*llvm<sha12>*-cp<XY>-*.whl here is
                             a hit. The LLVM identity is part of the key: the pin
                             names a moving branch, and a wheel built against the
                             wrong LLVM miscompiles rather than fails.
@@ -38,7 +38,7 @@ Options:
       --llvm_commit <ref>   Forwarded to build_llvm_tarball.sh.
     --version_suffix <s>    Appended inside the wheel's local version segment,
                             after the git hash and before the LLVM tag:
-                            <base>+git<sha8><s>.llvm<sha8>.
+                            <base>+git<sha8><s>.llvm<sha12>.
      --pat_environ <VAR>    Name (not value) of an environment variable
                             holding a GitHub PAT, for a private origin.
          --python <X.Y>     CPython to build for. Default 3.11. flydsl wheels
@@ -147,25 +147,31 @@ if [[ ! -f "${LLVM_TARBALL}" ]]; then
 fi
 LLVM_TARBALL="$(realpath "${LLVM_TARBALL}")"
 
-# The LLVM identity, as eight characters that go into the wheel's local version
-# segment and into the cache glob. build_llvm_tarball.sh names its output
-# llvm-<sha8>-<distro>-x64.tar.gz, so the SHA is already in the filename and
-# there is nothing to recompute. A tarball handed in with --llvm_tarball may be
-# named anything, so fall back to a digest of its basename: not the LLVM SHA,
-# but still a stable identity that distinguishes two different hand-supplied
-# tarballs, which is all the key needs to do.
+# The LLVM identity that goes into the wheel's local version segment and into
+# the cache glob. build_llvm_tarball.sh names its output
+# llvm-<sha12>-<distro>-x64.tar.gz, so the SHA is already in the filename.
+#
+# A tarball whose name does not carry one is REFUSED rather than keyed on
+# something invented. A digest of the basename would make `custom.tar.gz` mean
+# whatever it meant last time -- replace its contents and the cache serves a
+# wheel built against the old LLVM, which is exactly the miscompile
+# third_party/flydsl-llvm.txt exists to keep out. Rename the tarball to
+# llvm-<sha12>-<anything>.tar.gz and the key is honest again.
 LLVM_TARBALL_BASE="$(basename "${LLVM_TARBALL}")"
-if [[ "${LLVM_TARBALL_BASE}" =~ ^llvm-([0-9a-fA-F]{8}) ]]; then
-  LLVM_SHA8="${BASH_REMATCH[1]}"
+if [[ "${LLVM_TARBALL_BASE}" =~ ^llvm-([0-9a-fA-F]{12}) ]]; then
+  LLVM_SHA="${BASH_REMATCH[1]}"
 else
-  LLVM_SHA8="$(printf '%s' "${LLVM_TARBALL_BASE}" | md5sum | cut -c1-8)"
-  echo "Note: ${LLVM_TARBALL_BASE} does not follow llvm-<sha8>-*; keying the wheel cache on ${LLVM_SHA8} (digest of the name)." >&2
+  echo "Error: ${LLVM_TARBALL_BASE} does not name its LLVM commit." >&2
+  echo "--llvm_tarball must be llvm-<sha12>-<...>.tar.gz: the wheel cache is keyed" >&2
+  echo "on that SHA, and a name carrying no identity cannot distinguish two" >&2
+  echo "different LLVMs." >&2
+  exit 1
 fi
 # Appended INSIDE the local version segment, after the git hash and after any
-# caller --version_suffix: <base>+git<flydsl sha8><suffix>.llvm<llvm sha8>.
+# caller --version_suffix: <base>+git<flydsl sha8><suffix>.llvm<llvm sha12>.
 # PEP 440 allows [a-z0-9.] there, and the wheel filename is what both cache
 # probes below glob against.
-WHEEL_VERSION_SUFFIX="${VERSION_SUFFIX}.llvm${LLVM_SHA8}"
+WHEEL_VERSION_SUFFIX="${VERSION_SUFFIX}.llvm${LLVM_SHA}"
 
 # flydsl wheels are CPython-ABI specific (flydsl-...-cp313-cp313-linux_x86_64.whl)
 # and AOTriton's CMake already fails a build whose --flydsl_wheel cp tag does
@@ -173,8 +179,11 @@ WHEEL_VERSION_SUFFIX="${VERSION_SUFFIX}.llvm${LLVM_SHA8}"
 # cached for another Python is not a hit for this one. Same reasoning, and the
 # same helper, as build_triton_wheels.sh.
 ABI_TAG="$(altwheel_abi_glob "${PYVER}")"
+# Every component of the version this run would produce, in order, so a wheel
+# built from the same FlyDSL and LLVM but under a different --version_suffix is
+# a MISS rather than a silently mislabelled hit.
 cached_wheel() {
-  ls "${WHEEL_OUTPUT_DIR}"/flydsl-*+*"${1:0:8}"*"llvm${LLVM_SHA8}"*"${ABI_TAG}"*.whl 2>/dev/null | head -n1
+  ls "${WHEEL_OUTPUT_DIR}"/flydsl-*+git"${1:0:8}${WHEEL_VERSION_SUFFIX}"-*"${ABI_TAG}"*.whl 2>/dev/null | head -n1
 }
 
 # Cache before the FlyDSL network round-trip: a SHA needs no resolution, so a
@@ -250,12 +259,6 @@ if [[ -n "${HIT}" ]]; then
   exit 0
 fi
 
-# Persistent, not tmpfs: this volume holds the extracted LLVM prefix (several
-# GB) as well as the FlyDSL checkout and build tree, and keeping it means the
-# next wheel skips the extraction and rebuilds incrementally.
-FLYDSL_BUILD_VOLUME="${FLYDSL_BUILD_VOLUME:-aotriton-flydsl-build}"
-docker volume create --name "${FLYDSL_BUILD_VOLUME}" >/dev/null
-
 PAT_ENV_ARG=()
 if [[ -n "${PAT_ENVIRON}" ]]; then
   # By NAME only: docker resolves the value from this shell's environment, so
@@ -267,7 +270,7 @@ fi
 # Container stdout goes to stderr; this script's stdout is the wheel path.
 docker run --network=host -i --rm \
   -v "${MIRROR_VOLUME}:/mirror:ro" \
-  -v "${FLYDSL_BUILD_VOLUME}:/build" \
+  --tmpfs "/scratch:exec" \
   --mount "type=bind,source=${WHEEL_OUTPUT_DIR},target=/cache/wheels" \
   --mount "type=bind,source=${LLVM_TARBALL},target=/cache/llvm/$(basename "${LLVM_TARBALL}"),readonly" \
   --mount "type=bind,source=$(realpath "${SCRIPT_DIR}/runc-build-flydsl-wheel.sh"),target=/tmp/runc-build-flydsl-wheel.sh,readonly" \
@@ -281,12 +284,12 @@ VERSION_SUFFIX="$3"
 JOBS="$4"
 scl enable gcc-toolset-13 -- bash /tmp/runc-build-flydsl-wheel.sh \
   file:///mirror "$COMMIT" "/cache/llvm/${LLVM_TARBALL_NAME}" /cache/wheels \
-  "$VERSION_SUFFIX" /build "$JOBS"
+  "$VERSION_SUFFIX" /scratch/build "$JOBS"
 EOF
 
 HIT="$(cached_wheel "${RESOLVED}")"
 if [[ -z "${HIT}" ]]; then
-  echo "Error: build reported success but no flydsl-*${RESOLVED:0:8}*llvm${LLVM_SHA8}*${ABI_TAG}*.whl appeared in ${WHEEL_OUTPUT_DIR}." >&2
+  echo "Error: build reported success but no flydsl-*+git${RESOLVED:0:8}${WHEEL_VERSION_SUFFIX}-*${ABI_TAG}*.whl appeared in ${WHEEL_OUTPUT_DIR}." >&2
   exit 1
 fi
 realpath "${HIT}"

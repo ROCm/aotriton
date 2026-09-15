@@ -16,7 +16,7 @@
 #                  named after this value and the name is a cache key, so the
 #                  host half rev-parses the pin before calling us (see D7 in
 #                  the FlyDSL integration plan, and build_llvm_tarball.sh).
-#   <output_dir>   where llvm-<sha8>-<distro>-x64.tar.gz is written.
+#   <output_dir>   where llvm-<sha12>-<distro>-x64.tar.gz is written.
 #   <build_dir>    scratch root; the checkout and build tree live here and are
 #                  reused across runs. Defaults to a fresh mktemp -d, which
 #                  throws away an hour of work on every invocation -- pass a
@@ -76,7 +76,7 @@ if [ -z "$DISTRO" ]; then
   DISTRO="${DISTRO:-almalinux}"
 fi
 
-SHORT="${COMMIT:0:8}"
+SHORT="${COMMIT:0:12}"
 # The install prefix is named after the tarball, not "mlir_install" (FlyDSL's
 # own name for it), and the tarball holds that one directory at top level --
 # same shape as Triton's llvm-<hash>-almalinux-x64.tar.gz. FlyDSL only ever
@@ -87,10 +87,9 @@ TARBALL_NAME="llvm-${SHORT}-${DISTRO}-x64"
 TARBALL="${OUTPUT_DIR}/${TARBALL_NAME}.tar.gz"
 
 SRC_DIR="${BUILD_DIR}/llvm-project"
-# Key the build and install trees by SHA so a second commit never inherits the
-# first one's CMakeCache. Nothing is ever deleted to make room: a stale tree
-# for some other SHA is a cache, and .ci/CLAUDE.md's rule about not wiping
-# caches applies to build trees for the same reason it applies to mirrors.
+# Named by SHA even though BUILD_DIR is per-run scratch: the name says which
+# commit a tree belongs to, which is what a build log needs when something goes
+# wrong in it.
 CMAKE_BUILD_DIR="${BUILD_DIR}/build-${SHORT}"
 INSTALL_ROOT="${BUILD_DIR}/install-${SHORT}"
 INSTALL_DIR="${INSTALL_ROOT}/${TARBALL_NAME}"
@@ -105,15 +104,9 @@ git config --global --add safe.directory '*'
 # llvm-project in ~100s, `--depth 1 --filter=blob:none` did not finish in 100
 # minutes. (Moot against file:///mirror, which is local, but this script also
 # runs against a real origin from .tune's worker container.)
-if [ ! -d "${SRC_DIR}/.git" ]; then
-  git init "${SRC_DIR}"
-  git -C "${SRC_DIR}" remote add origin "${LLVM_SOURCE}"
-else
-  git -C "${SRC_DIR}" remote set-url origin "${LLVM_SOURCE}"
-fi
-if ! git -C "${SRC_DIR}" cat-file -e "${COMMIT}^{commit}" 2>/dev/null; then
-  git -C "${SRC_DIR}" fetch --depth=1 origin "${COMMIT}"
-fi
+git init "${SRC_DIR}"
+git -C "${SRC_DIR}" remote add origin "${LLVM_SOURCE}"
+git -C "${SRC_DIR}" fetch --depth=1 origin "${COMMIT}"
 git -C "${SRC_DIR}" checkout -f "${COMMIT}"
 
 # --- Python build deps for the MLIR bindings ---
@@ -216,17 +209,17 @@ mkdir -p "${OUTPUT_DIR}"
 # "does this filename exist", so a half-written tarball from an interrupted run
 # must never answer to it.
 #
-# --warning=no-file-changed: the install tree can still gain __pycache__ entries
-# while tar reads it, which GNU tar reports as a fatal "file changed as we read
-# it". That is not a corrupt archive, just a race with bytecode caching.
-tar --warning=no-file-changed --warning=no-file-removed --ignore-failed-read \
-    -C "${INSTALL_ROOT}" -czf "${TARBALL}.tmp" "${TARBALL_NAME}"
-# --ignore-failed-read is what makes the pycache race non-fatal, and it is also
-# what makes a REAL read failure non-fatal: tar exits 0 either way, so a
-# truncated archive would be renamed into place and answer the caller's
-# "does this filename exist" cache check forever. Read the archive back before
-# the rename -- it decompresses the whole stream and checks every member
-# header, which is the cheapest thing that can tell the two apart.
+# The race this used to carry --ignore-failed-read for: the install tree gains
+# __pycache__ entries while tar reads it (anything importing the MLIR bindings
+# writes them), and GNU tar calls a file that changed underneath it fatal.
+# Deleting them first removes the race at its source. --ignore-failed-read
+# would have suppressed a REAL read failure just as well, leaving tar to exit 0
+# over a short archive that then answers the caller's "does this filename
+# exist" cache check forever.
+find "${INSTALL_ROOT}" -name __pycache__ -type d -prune -exec rm -rf {} +
+tar -C "${INSTALL_ROOT}" -czf "${TARBALL}.tmp" "${TARBALL_NAME}"
+# Structure check on top of that exit status: it decompresses the whole stream
+# and reads every member header.
 if ! tar -tzf "${TARBALL}.tmp" >/dev/null; then
   echo "Error: ${TARBALL}.tmp is not a readable archive; refusing to publish it." >&2
   rm -f "${TARBALL}.tmp"
