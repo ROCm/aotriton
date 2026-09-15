@@ -50,6 +50,15 @@ struct [[context_class_name]] {
     // Performance related arguments for current selection
     [[perf_fields]];
 
+    // The Gpu lookup_optimal(Gpu gpu) was called with -- flyc.h declares the
+    // same member, for a context helper that needs the arch (see there for the
+    // full rationale). Declared here too so the two templates cannot silently
+    // diverge on whether `gpu` was captured, and so a context helper on the
+    // Triton side would be a later addition rather than a template rewrite.
+    // Nothing on this path reads it today: the Triton shim has no
+    // context-helper mechanism at all.
+    Gpu current_gpu = GPU_ARCH_UNKNOWN;
+
     TritonKernel* kernel_on_device = nullptr;
     int pp_args_index = -1;
     pstring_view flatzip_path;

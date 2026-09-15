@@ -6,7 +6,7 @@ Operator description surface: `ati.operator` + `ati.backend`.
 
 An operator dispatches among interchangeable BACKENDS (a triton metro, a fused triton
 kernel, an affine asm kernel, ...). It is described declaratively with the stacked-@
-form, mirroring kernels but finalizing into an Operator rather than a KernelSpec:
+form, mirroring kernels but finalizing into an Operator rather than a KernelDecl:
 
     @ati.start                                        # ends the stack (finalizes)
     @ati.backend(1, fwd_aiter, 'aiter')               # explicit dispatch index

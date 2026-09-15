@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import numpy as np
 
 import aotriton.template_instantiation as ati
-from aotriton.template_instantiation.describe import describe, get_kernel_spec
+from aotriton.template_instantiation.describe import describe, get_kernel_decl
 from aotriton.template_instantiation.ir import TypedChoice, Axis, Interface
 
 
@@ -71,7 +71,7 @@ def _describe(k):
                               Max_seqlen_k=ati.tune.binning.le),
              ati.tune.fallback(PADDED_HEAD=False),
              _validate=False)
-    return get_kernel_spec(k)
+    return get_kernel_decl(k)
 
 
 def test_tune_spec_assembled():
@@ -144,7 +144,7 @@ def test_no_tune_decorators_leaves_none():
         pass
     T = ati.type_var('T', dtype=['*fp16:16'])
     describe(k, ati.tensor('Q', T, strides='stride_q?'), _validate=False)
-    assert get_kernel_spec(k).tune is None
+    assert get_kernel_decl(k).tune is None
 
 
 def main():

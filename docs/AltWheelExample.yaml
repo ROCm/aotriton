@@ -23,3 +23,46 @@ rules:
   - rmatches:  # Regex Matching
       arch: gfx110.
     venv: navi3x
+
+# NOT IMPLEMENTED. A `venvs` entry is a YAML scalar today (a wheel path, or
+# "python:<interpreter>"), so every venv gets the same third_party/flydsl-compiler.txt
+# pin -- a per-arch flydsl version is not expressible. Written down here, in full,
+# because the shape of the extension is what makes it safe to add later.
+# The extension below is backward compatible -- it only adds a new *sequence* form,
+# and every scalar entry above keeps parsing exactly as it does today:
+#
+#   scalar, "python:" prefix   -> use this interpreter, install nothing. Unchanged.
+#   scalar, otherwise          -> a wheel path, and ONLY a wheel path. Unchanged.
+#   sequence                   -> NEW. Several pip requirement lines, installed in
+#                                  order: wheel paths, version pins, and PEP 508
+#                                  direct references are all allowed.
+#
+# A plain version pin like "flydsl==0.3.1" is valid ONLY in the sequence form -- the
+# scalar form must keep meaning "wheel path" and nothing else, and
+# `_load_altwheel_config` must enforce that (reject a non-"python:" scalar that does
+# not end in ".whl") rather than merely document it, since CMake's verbatim
+# `pip install ${WHEEL}` would otherwise install a stray requirement string by
+# accident and let the two forms drift apart. Kept commented here for the same
+# reason: an unimplemented form must not be able to silently break a real config.
+#
+# venvs:
+#   vllm:
+#     - triton-3.4.0+git6b70e716-cp310-cp310-linux_x86_64.whl
+#     - flydsl==0.3.2
+#   gfx1201:
+#     - triton-3.3.0+git4280ed11-cp310-cp310-linux_x86_64.whl
+#     - flydsl @ git+https://github.com/ROCm/FlyDSL.git@f83759e953db4b9b0d1e0304f9c3634443a3bf3b
+#
+# Caveat on that last line: it illustrates the *mechanism* (a PEP 508 direct
+# reference), not a working FlyDSL install. FlyDSL's setup.py needs a prebuilt
+# bundled MLIR at build-fly/python_packages/flydsl/_mlir, so a plain `pip install`
+# from a git checkout will fail to build. For FlyDSL specifically the practical
+# sequence entries are a version pin from an index (as above, "flydsl==0.3.2") or a
+# path to a prebuilt wheel -- not a git reference.
+#
+# Two readers parse this file and must be updated together: `python/codegen/root.py`
+# (`_load_altwheel_config`, for the `rules` matcher and `_venvpython`) and
+# `CMakeLists.txt` (an inline Python one-liner that flattens `venvs` into
+# alternating name/wheel pairs for `list(POP_FRONT)` -- a sequence value breaks that
+# 2-periodic alternation and needs a different flattening, e.g. one venv per line
+# read with `file(STRINGS)`, or a small helper module instead of the one-liner).

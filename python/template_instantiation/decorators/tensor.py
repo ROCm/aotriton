@@ -50,6 +50,13 @@ class TensorSpec(StackedSpec):
             assert isinstance(arg_name, str), \
                 f'@ati.tensor first arg must be a name or list of names, got {arg_name!r}'
             self.arg_names = (arg_name,)
+        # A helper returns a scalar into `scratch_params`; there is no tensor
+        # form of that storage, and a tensor's wiring is dereferenced
+        # (`params.X->kparam_data_ptr()`), not CAST.
+        from ..ir.context_helper import ContextHelper
+        assert not isinstance(wires_to, ContextHelper), (
+            f'@ati.tensor {arg_name!r}: ati.context_helper() is scalar-only; '
+            f'a computed tensor has no representation in the params struct')
         self.dtype = dtype
         self.strides_pattern = strides
         self.rank = rank

@@ -4,7 +4,7 @@
 """
 Flash-family LUT sancheck + missing-entry diagnostic, called by the ATI kdesc
 (LutSancheck.method(self=kdesc, ...) via aotriton.tune.registry.load_family_tune) --
-see python/template_instantiation/ir/kdesc.py's sancheck_lut_tensor/_gen_missing_entries.
+see python/template_instantiation/ir/triton/kdesc.py's sancheck_lut_tensor/_gen_missing_entries.
 
 Moved out of modules/flash/aot/_common.py (modular-tune.md §3b/step 11) so the
 codegen back-edge into modules/flash/tune/ goes through the tune-side registry

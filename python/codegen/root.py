@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import subprocess
 from .linker import Linker
 from .kernel import KernelShimGenerator
+from .flyc import FlycShimGenerator
 from .slim_affine import SlimAffineGenerator
 from .operator import OperatorGenerator
 from ..utils import (
@@ -28,6 +29,38 @@ import yaml
 
 # DO NOT USE Path.absolute(), which does not resolve '..' in the path
 REL_PYTHON = Path(os.path.abspath(sys.executable)).relative_to(Path(sys.exec_prefix))
+
+# DEBUG ONLY. Omit every Triton image rule from the generated Bare.* files, so a build can
+# iterate on another backend without paying for tens of thousands of Triton compiles. The
+# C++ shims are still generated, so the library still builds -- it just cannot serve any
+# Triton-backed operator, which is why this must never be used for a shipped build.
+#
+# Set by v3src/CMakeLists.txt from -DAOTRITON_DEBUG_SKIP_TRITON_KERNELS, normalised there
+# to 1/0 for the bool(int(...)) idiom this codebase uses (see utils/log.py). It is read
+# from the environment rather than taken as a flag so that the worker subprocesses
+# launch_workers() spawns inherit it without threading it through argv.
+AOTRITON_DEBUG_SKIP_TRITON_KERNELS = bool(int(os.getenv('AOTRITON_DEBUG_SKIP_TRITON_KERNELS', default='0')))
+
+
+# Triton kernels that keep their image rules even under the flag above, because a
+# non-Triton backend cannot run without them and FlyDSL has no equivalent:
+#
+#   bwd_preprocess                          produces Delta = rowsum(dO * O), which
+#       both flyc backward kernels read and neither produces
+#   debug_simulate_encoded_softmax          the dropout-mask debug step a flyc
+#       forward metro deliberately keeps on Triton
+#
+# Skipping these does not give the "Triton operators do not work, everything else
+# does" the flag promises -- it gives a flyc metro with a missing step, i.e. an
+# empty .zip and a runtime failure.
+#
+# A hand-maintained list, matched by name: this is a debugging aid, not a
+# dependency solver. Add a name when a metro starts borrowing another Triton
+# kernel.
+AOTRITON_SKIP_TRITON_KEEP_KERNELS = frozenset({
+    'bwd_preprocess',
+    'debug_simulate_encoded_softmax',
+})
 
 def _shard_path(selective: str) -> Path:
     # --selective may be a glob pattern such as flash/affine/*; keep glob
@@ -79,7 +112,8 @@ class RootGenerator(object):
         # per generator; the lists are what the per-item generators iterate. The
         # descriptions live under <root_dir>/modules (passed explicitly, no guessing).
         (self._triton_kernels, self._dispatcher_operators,
-         self._affine_kernels) = Linker(self._args.root_dir / 'modules').link_all_families()
+         self._affine_kernels, self._flyc_kernels) = \
+            Linker(self._args.root_dir / 'modules').link_all_families()
 
     def generate(self):
         if self._args.selective:
@@ -104,6 +138,7 @@ class RootGenerator(object):
                     f"Use e.g. '{_sel_path.parent}/*'"
 
         hsaco_for_kernels = []
+        flyc_hsaco_for_kernels = []
         asms_for_kernels = []
         shims = []
         # (arch, op_name, lut_value) -> count
@@ -128,6 +163,7 @@ class RootGenerator(object):
                 d['trivial']     += ts['trivial']
                 d['non_trivial'] += ts['non_trivial']
         self._print_lut_stats(all_lut_stats, all_trivial_stats)
+        self._write_backend_constants()
 
         kerns = self._triton_kernels
         if sel is not None:
@@ -135,9 +171,14 @@ class RootGenerator(object):
         for k in kerns:
             ksg = KernelShimGenerator(self._args, k, parent_repo=None)
             ksg.generate()
+            shims += ksg.shim_files
+            # AOTRITON_DEBUG_SKIP_TRITON_KERNELS: emit the C++ shim but no image
+            # rules, except for the kernels another backend needs to run at all.
+            if (AOTRITON_DEBUG_SKIP_TRITON_KERNELS
+                    and k.NAME not in AOTRITON_SKIP_TRITON_KEEP_KERNELS):
+                continue
             hsacos = ksg.this_repo.get_data('hsaco')
             hsaco_for_kernels.append((k, hsacos))
-            shims += ksg.shim_files
 
         # TODO: Fix this for Windows
         # On Windows, you get "KeyError: 'validator_function'"
@@ -156,6 +197,27 @@ class RootGenerator(object):
                 asms_for_kernels.append((ak, asms))
             shims += aksg.shim_files
 
+        # flyc mirrors the Triton kerns loop above via FlycShimGenerator, so the
+        # generated flyc.<name>.{h,cc} shim -- and the flytune.<name>/ per-functional
+        # .cc files, written as a side effect of generate() through
+        # FlycTuneCodeGenerator -- participate in the same Bare.shim aggregation.
+        # Unlike Triton, flyc image rules are never gated by
+        # AOTRITON_DEBUG_SKIP_TRITON_KERNELS: that flag skips only the Triton image
+        # pipeline, and flyc rows are exactly what a skipping build exists to exercise.
+        flycs = self._flyc_kernels
+        if sel is not None:
+            flycs = [fk for fk in flycs if fk.unique_path.match(sel)]
+        for fk in flycs:
+            fsg = FlycShimGenerator(self._args, fk, parent_repo=None)
+            fsg.generate()
+            shims += fsg.shim_files
+            # return_none=True: an arch where every functional of this flyc kernel
+            # is disabled never registers the HsacoRegistry at all -- the same gap
+            # the affine loop above already guards against for 'asms'. Empty is the
+            # correct answer there, not a crash.
+            hsacos = fsg.this_repo.get_data('hsaco', return_none=True) or {}
+            flyc_hsaco_for_kernels.append((fk, hsacos))
+
         if args.build_for_tuning_second_pass:
             return
 
@@ -173,7 +235,8 @@ class RootGenerator(object):
         flatzip_dict: dict[Path, dict[str, str]] = {}
         aks2_dir   = args.build_dir / 'aks2'
         images_dir = args.build_dir / 'aotriton.images'
-        with LazyFile(out_dir / 'Bare.compile') as rulefile:
+        with LazyFile(out_dir / 'Bare.compile') as rulefile, \
+             LazyFile(out_dir / 'Fly.compile') as flyrulefile:
             for kdesc, hsacos in hsaco_for_kernels:
                 image_path = hsaco_dir(args.build_dir, kdesc)
                 image_path.mkdir(parents=True, exist_ok=True)
@@ -189,6 +252,37 @@ class RootGenerator(object):
                     fzp_stem = fodp.parent  # drop <sha256> leaf → <vendor-arch>/<family>/<kernel>
                     aks2_abs = (aks2_dir / fodp).with_suffix('.aks2').absolute().as_posix()
                     flatzip_dict.setdefault(fzp_stem, {})[aks2_abs] = functional.filepack_inzip_name
+
+            # flyc images are compiled during the build from a FlyDSL description,
+            # by a separate driver (`aotriton.flyc_compile`) whose command line is a
+            # different shape from Triton's -- hence a rule file of its own,
+            # Fly.compile. Deliberately NOT gated by
+            # AOTRITON_DEBUG_SKIP_TRITON_KERNELS above: that flag skips only the
+            # Triton image pipeline.
+            #
+            # `hsacos` here has the same shape as Triton's
+            # `ksg.this_repo.get_data('hsaco')` above ({functional: [ksig, ...]}),
+            # populated by FlycTuneCodeGenerator via HsacoRegistry -- flyc's
+            # KernelSignature already carries the knob-derived perf string, so there
+            # is no second signature construction to do here. Disabled functionals
+            # never reach this dict: FlycShimGenerator.create_sub_generator drops
+            # them, so no .cc and no hsaco entry is ever registered for them.
+            for fk, hsacos in flyc_hsaco_for_kernels:
+                image_path = hsaco_dir(args.build_dir, fk)
+                image_path.mkdir(parents=True, exist_ok=True)
+                for functional, signatures in hsacos.items():
+                    for ksig in signatures:
+                        self.write_flyc_hsaco(fk, image_path, functional, ksig, flyrulefile)
+                    # The SAME cluster_dict/flatzip_dict Triton and affine populate:
+                    # Fly.compile is the only new rule file, and Bare.cluster /
+                    # Bare.flatzip already cover both backends' rows.
+                    fodp = functional.filepack_ondisk_path  # meta_object = fk (flyc's own .zip)
+                    cluster_dict.setdefault(fodp, {}).update(
+                        {self._absobjfn(image_path, fk, ksig): hsaco_inaks2_name(fk, ksig)
+                         for ksig in signatures}
+                    )
+                    aks2_abs = (aks2_dir / fodp).with_suffix('.aks2').absolute().as_posix()
+                    flatzip_dict.setdefault(fodp.parent, {})[aks2_abs] = functional.filepack_inzip_name
         with LazyFile(out_dir / 'Bare.cluster') as clusterfile:
             for fodp, path_entry_map in cluster_dict.items():
                 self.write_cluster(aks2_dir, fodp, path_entry_map, clusterfile)
@@ -235,6 +329,7 @@ class RootGenerator(object):
         items: list[str] = []
         items += [op.unique_path.as_posix() for op in self._dispatcher_operators]
         items += [k.unique_path.as_posix()  for k in self._triton_kernels]
+        items += [fk.unique_path.as_posix() for fk in self._flyc_kernels]
 
         # Affine kernels sharing the same FAMILY produce entries in the same ZIP
         # (affine_kernels.zip), so they must run in one worker via a glob pattern
@@ -260,11 +355,15 @@ class RootGenerator(object):
         for f in futures:
             f.result()  # re-raise any worker exception
 
-        shard_names = ['Bare.shim', 'Bare.compile', 'Bare.cluster', 'Affine.cluster', 'Bare.flatzip']
+        shard_names = ['Bare.shim', 'Bare.compile', 'Bare.cluster', 'Affine.cluster', 'Bare.flatzip',
+                       'Fly.compile']
         out_files = {name: args.build_dir / name for name in shard_names}
-        # Truncate output files before appending
+        # Truncate output files before appending.
+        # AOTRITON_DEBUG_SKIP_TRITON_KERNELS=1 generates empty files, and touch ensures
+        # the file won't be missing in this case.
         for path in out_files.values():
             path.unlink(missing_ok=True)
+            path.touch()
         for item in items:
             shard_dir = args.build_dir / 'Bare.shards' / _shard_path(item)
             for name, out_path in out_files.items():
@@ -293,6 +392,54 @@ class RootGenerator(object):
               ksig.triton_signature_string,  # Functional is not Triton-specific
               sep=';', file=rulefile)
 
+    def write_flyc_hsaco(self, kdesc, path, functional, ksig, rulefile):
+        """One `Fly.compile` row:
+
+            VENVPYTHON;HSACO;DESC;KERNEL_NAME;TGTGPU;SIGNATURE;HINTS
+
+        VENVPYTHON is a SINGLE column here, unlike write_hsaco's two ('venv' and
+        'python'): `aotriton.flyc_compile` takes no venv-name argument, and the
+        CMake loop that consumes this file only `list(POP_FRONT)`s one field for
+        it.
+
+        SIGNATURE and HINTS must be space-separated `key=value`, never `;`.
+        `file(STRINGS)` keeps the whole line as one list element, but
+        `list(POP_FRONT)` re-splits it on `;`, so a semicolon inside a payload is
+        indistinguishable from a field boundary and silently truncates the row.
+        Asserted at write time rather than trusted: ATI functional values are
+        dtype strings, ints and bools, so none should ever contain a space, and a
+        truncated payload is far harder to debug than this assert firing.
+        """
+        log(lambda : f'{ksig=}')
+        # The DEFAULT venv, never a rule-matched alt venv. The altwheel rules
+        # (--alt_triton_wheel_config_file) key on arch/family, not on backend
+        # kind, so a flyc functional matches them exactly as a Triton one does --
+        # but an alt venv holds only requirements.txt plus a Triton wheel. It has
+        # neither `flydsl` (installed only into VENV_DIR by aotriton_venv_flydsl)
+        # nor `aotriton` itself, so `<altvenv>/bin/python -m aotriton.flyc_compile`
+        # dies with ModuleNotFoundError at ninja time for every flyc image.
+        # Choosing a Triton version is meaningless for a FlyDSL compile anyway.
+        python = self._venvpython['default']
+        def _kv(name, choice):
+            value = repr(choice.triton_compile_signature)
+            assert ' ' not in value, (
+                f'flyc SIGNATURE value for {name!r} contains a space: {value!r} -- '
+                f'a Fly.compile payload must be space-separated')
+            return f'{name}={value}'
+        signature = ' '.join(_kv(name, choice) for name, choice in functional.compact_choices.items())
+        # No hint tuning yet: every build uses the description's declared
+        # @ati.flyc.hints defaults, so HINTS is empty and the driver
+        # (flyc_compile._build_hints) applies no override.
+        hints = ''
+        print(python.as_posix(),
+              self._absobjfn(path, kdesc, ksig),
+              kdesc.desc_path.as_posix(),
+              kdesc.NAME,
+              functional.arch,
+              signature,
+              hints,
+              sep=';', file=rulefile)
+
     def write_cluster(self, base_dir, odp, path_entry_map, clusterfile):
         manifest_path = (base_dir / odp).with_suffix('.nsv')
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -313,6 +460,29 @@ class RootGenerator(object):
         rules = d.get("rules", [])
         self._altwheels = {}
         self._venvpython = {}
+        # NOT IMPLEMENTED, and deliberately recorded rather than left to be
+        # rediscovered: today `value` must be a YAML scalar -- either
+        # "python:<interpreter>" (use it, install nothing) or a wheel path, and
+        # either way `self._altwheels[name] = Path(value)`. A venv therefore maps
+        # to exactly one thing, so a per-arch flydsl pin (one arch wanting a
+        # different flydsl version from another) is not expressible; every venv
+        # gets the same third_party/flydsl-compiler.txt pin instead.
+        #
+        # A backward-compatible extension is specified in
+        # `docs/AltWheelExample.yaml`, which carries both forms side by side and
+        # the full rule. In outline: branch on the YAML node type. The scalar
+        # branch is unchanged and stays *wheels-only* -- a non-"python:" scalar
+        # must end in ".whl" and anything else must RAISE, pointing at the
+        # sequence form, because CMake's verbatim `pip install ${WHEEL}` would
+        # otherwise install a stray requirement string by accident and let the two
+        # forms drift. A *sequence* value is the new part: several pip requirement
+        # lines installed in order. `[value]` is not a safe stand-in, since the
+        # validation differs per branch.
+        #
+        # `CMakeLists.txt` parses this same file with an inline Python one-liner
+        # that assumes one wheel per venv (`list(POP_FRONT)` over alternating
+        # name/wheel pairs); it needs a matching update in lockstep, or a list
+        # value silently corrupts that 2-periodic alternation.
         for name, value in venvs.items():
             if value.startswith("python:"):
                 # Use the provided Python executable directly
@@ -348,6 +518,67 @@ class RootGenerator(object):
                 return matched
         # We can add an always-true matcher to self._altrules but let's be explicit
         return "default", self._venvpython["default"]
+
+    def _write_backend_constants(self):
+        """Write the public per-family backend-index header.
+
+        `<build>/include/aotriton/<family>/backends.h`, installed alongside the
+        hand-written headers. Public because the index it names is public: it is
+        what `attn_options::force_backend_index` takes.
+
+        Driven off `self._dispatcher_operators`, the full linked list, NOT the
+        `--selective` filtered one: a full build fans out per-operator workers,
+        each of which sees one operator, and a header listing only that one would
+        look valid while missing the rest. Every worker writes the same complete
+        file, and LazyFile makes the repeats free.
+        """
+        from .operator import (codegen_backend_constants,
+                               codegen_backend_constant_xmacro)
+        by_family = {}
+        for op in self._dispatcher_operators:
+            f = by_family.setdefault(op.FAMILY, {'structs': [], 'xmacros': []})
+            f['structs'].append(codegen_backend_constants(op))
+            f['xmacros'].append(codegen_backend_constant_xmacro(op))
+        for family, parts in by_family.items():
+            out = self._args.build_dir / 'include' / 'aotriton' / family
+            out.mkdir(parents=True, exist_ok=True)
+            guard = f'AOTRITON_GENERATED_{family.upper()}_BACKENDS_H'
+            xmacro = '\n\n'.join(parts['xmacros'])
+            body = '\n\n'.join(parts['structs'])
+            with LazyFile(out / 'backends.h') as fout:
+                print(f'''// GENERATED by aotriton.generate -- do not edit.
+//
+// One named constant per operator backend index. The index IS an ABI: it is what
+// `attn_options::force_backend_index` takes, so tests and tuning tools name it.
+// Generated from the same loop that assigns BackendEnum in the internal
+// iface.<op>.h (python/codegen/operator.py), so the two cannot disagree.
+//
+// Struct of `static constexpr int32_t` rather than `enum class`, matching
+// CausalType / VarlenType / WindowValue in include/aotriton/flash.h: an enum
+// class needs a cast to reach its underlying type, and force_backend_index is a
+// plain int.
+
+#ifndef {guard}
+#define {guard}
+
+#include <aotriton/config.h>
+
+#include <cstdint>
+
+namespace AOTRITON_NS::v3::{family} {{
+
+{body}
+
+// One X-macro per struct, for a binding or table that must not restate these
+// names. Expand with a TWO-argument X(constant_name, "declared_name") against
+// that struct: the C++ constant, and the name @ati.backend was written with.
+// Both, because a caller pinning a backend wants to name it in the
+// description's vocabulary, not in enum spelling.
+{xmacro}
+
+}}
+
+#endif''', file=fout)
 
     def _print_lut_stats(self, all_lut_stats: dict, all_trivial_stats: dict):
         def _table(title, header, rows):

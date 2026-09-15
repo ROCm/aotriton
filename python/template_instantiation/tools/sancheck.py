@@ -19,25 +19,25 @@ Returns a list of diagnostics keyed by kernel; exit non-zero if any.
 from graphlib import CycleError
 
 
-def sancheck_kernel_spec(kernel_spec):
-    """Validate one KernelSpec (from describe()). Returns a list of error strings
+def sancheck_kernel_decl(decl):
+    """Validate one KernelDecl (from describe()). Returns a list of error strings
     (empty == clean). Does not raise."""
     from ..specs.finalize import _validate_completeness
     from ..builder import build_kernel, DescriptionError
 
-    name = getattr(kernel_spec.kernel, '__name__', 'kernel')
+    name = getattr(decl.kernel, '__name__', 'kernel')
     errors = []
-    tune_records = _tune_specs(kernel_spec)
+    tune_records = _tune_specs(decl)
 
     # 1. completeness (orphans / double-claims / unknown names)
     errors += [f'{name}: {e}'
-               for e in _validate_completeness(kernel_spec.params,
-                                               kernel_spec.tensors,
-                                               kernel_spec.scalars, tune_records)]
+               for e in _validate_completeness(decl.params,
+                                               decl.tensors,
+                                               decl.scalars, tune_records)]
 
     # 2/3/4. build the IR (axes/overrides) and validate scope + resolution.
     try:
-        built = build_kernel(kernel_spec)
+        built = build_kernel(decl)
     except DescriptionError as e:
         errors.append(f'{name}: {e}')
         return errors
@@ -71,10 +71,10 @@ def sancheck_kernel_spec(kernel_spec):
     return errors
 
 
-def _tune_specs(kernel_spec):
+def _tune_specs(decl):
     """The tune spec-records affecting completeness — only the PerfSchema (its
     fields are claimable params); configs/binning/fallback/derived do not."""
-    ts = kernel_spec.tune
+    ts = decl.tune
     if ts is None or ts.schema is None:
         return []
     return [ts.schema]
@@ -82,7 +82,7 @@ def _tune_specs(kernel_spec):
 
 def sancheck_report(kernels=None, operators=None):
     """Run sancheck over the given ATI kernels/operators. Returns (ok, errors).
-    Only ATI-described items (an KernelDescription with a `kernel_spec`, or an
+    Only ATI-described items (an KernelDescription with a `kernel_decl`, or an
     Operator) are checked; legacy descriptions are skipped."""
     from ..ir.operator import Operator
 
@@ -90,10 +90,10 @@ def sancheck_report(kernels=None, operators=None):
     seen_specs = set()
 
     def _check(kdesc):
-        spec = getattr(kdesc, 'kernel_spec', None)
+        spec = getattr(kdesc, 'kernel_decl', None)
         if spec is not None and id(spec) not in seen_specs:
             seen_specs.add(id(spec))
-            errors.extend(sancheck_kernel_spec(spec))
+            errors.extend(sancheck_kernel_decl(spec))
 
     for k in (kernels or []):
         _check(k)

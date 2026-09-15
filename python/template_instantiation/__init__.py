@@ -22,6 +22,8 @@ Authoring surface:
 from .tune_facade import tune    # ati.tune.* namespace (decorators/tune + specs/tune)
 from .decorators import affine   # ati.affine.* decorator namespace (slim affine kernels)
 from .decorators import hints    # ati.hints.* author hints (union_precedence, ...)
+from .decorators import flyc     # ati.flyc.* decorator namespace (FlyDSL-compiled kernels)
+from .ir.context_helper import context_helper   # ati.context_helper (a wires_to= value)
 # The operator-build helpers live in the `.ir.ops` subpackage (ir/ops/cite.py,
 # infer.py, union.py) — under ir/ since they operate on the IR, and NOT named
 # `operator`, so it never shadows the @ati.operator DECORATOR exported below.
@@ -40,7 +42,7 @@ from .decorators import (
 )
 
 __all__ = [
-    'affine', 'hints',
+    'affine', 'hints', 'flyc', 'context_helper',
     'type_var', 'scalar_var', 'tensor', 'scalar',
     'derives', 'overrides', 'disable', 'no_disable', 'cite', 'source', 'eq', 'ne', 'lt', 'gt',
     'describe', 'start', 'operator', 'backend', 'union_params', 'metro_kernel',

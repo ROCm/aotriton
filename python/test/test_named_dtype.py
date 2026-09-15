@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import aotriton.template_instantiation as ati
-from aotriton.template_instantiation.describe import describe, get_kernel_spec
+from aotriton.template_instantiation.describe import describe, get_kernel_decl
 from aotriton.template_instantiation.builder import build_kernel, DescriptionError
 
 from fakekernels import fwd_kernel_stub
@@ -47,7 +47,7 @@ def _describe_object_form():
         ati.tensor('B', T_io, strides='stride_b?'),
     ] + _common_specs()
     describe(attn_fwd, *specs, _validate=False)
-    return build_kernel(get_kernel_spec(attn_fwd))
+    return build_kernel(get_kernel_decl(attn_fwd))
 
 
 def _describe_named_form():
@@ -62,7 +62,7 @@ def _describe_named_form():
         ati.tensor('B', 'T_io', strides='stride_b?'),
     ] + _common_specs()
     describe(attn_fwd, *specs, _validate=False)
-    return build_kernel(get_kernel_spec(attn_fwd))
+    return build_kernel(get_kernel_decl(attn_fwd))
 
 
 def _axis_fingerprint(bk):
@@ -102,7 +102,7 @@ def test_literal_string_dtype_still_works():
         ati.tensor('L', '*fp32:16', rank=2),     # literal type string
     ] + _common_specs()
     describe(attn_fwd, *specs, _validate=False)
-    bk = build_kernel(get_kernel_spec(attn_fwd))
+    bk = build_kernel(get_kernel_decl(attn_fwd))
     L = next(a for a in bk.axes if a.var_name == 'L')
     assert L.is_trivial                          # single literal choice
     assert L.choices[0].is_tensor
@@ -122,7 +122,7 @@ def test_signature_name_is_a_free_label():
         ati.tensor('B', 'T_io', strides='stride_b?'),
     ] + _common_specs()
     describe(attn_fwd, *specs, _validate=False)
-    bk = build_kernel(get_kernel_spec(attn_fwd))
+    bk = build_kernel(get_kernel_decl(attn_fwd))
     tio = next(a for a in bk.axes if a.var_name == 'T_io')
     assert tio.signature_name == 'dtype'         # the free label
     assert tio.repr_arg == 'Q'                   # the real arg for value lookup
@@ -135,7 +135,7 @@ def test_unknown_string_dtype_raises():
     ]
     describe(attn_fwd, *specs, _validate=False)
     try:
-        build_kernel(get_kernel_spec(attn_fwd))
+        build_kernel(get_kernel_decl(attn_fwd))
     except DescriptionError as e:
         assert 'T_nope' in str(e)
         return

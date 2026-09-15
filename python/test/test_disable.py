@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import aotriton.template_instantiation as ati
-from aotriton.template_instantiation.describe import describe, get_kernel_spec
+from aotriton.template_instantiation.describe import describe, get_kernel_decl
 from aotriton.template_instantiation.builder import build_kernel
 
 
@@ -22,7 +22,7 @@ def test_disable_spec_partitioned_and_built():
              ati.scalar('CAUSAL_TYPE', options=[0, 3]),
              ati.disable(when=lambda f: f.choices.CAUSAL_TYPE != 0),
              _validate=False)
-    bk = build_kernel(get_kernel_spec(k))
+    bk = build_kernel(get_kernel_decl(k))
     assert len(bk.disables) == 1
 
 

@@ -147,3 +147,19 @@ class Interface(ABC):
 
     def iter_kernel_slot_names(self):
         yield from ()
+
+    # --- context-helper-wired functional axes ------------------------------
+
+    def context_helper_for_functional(self, aname: str) -> str | None:
+        """The context-helper member-function name that stands in for functional
+        axis `aname` when computing `godel_number()`, instead of the default
+        `params->aname` read -- or None, meaning "read it off params like every
+        other axis".
+
+        None is the base default and is correct for everyone but flyc:
+        `ir/flyc/kdesc.py`'s KernelDescription is the only override, for its own
+        head-dimension-ladder wiring. The Triton KernelDescription inherits this
+        unchanged -- it has no context-helper mechanism at all -- so
+        `codegen_godel_number_calculation` (codegen/interface.py) keeps its
+        single `args.` path there rather than needing a second one."""
+        return None

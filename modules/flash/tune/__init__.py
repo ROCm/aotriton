@@ -22,7 +22,7 @@ outside needs metadata `TuneDesc` cannot supply, extend
 `TuningDescription`'s interface rather than adding a second handle.
 
 Everything below except `sancheck` (needed eagerly by the codegen back-edge in
-python/template_instantiation/ir/kdesc.py, and torch-free) stays lazily
+python/template_instantiation/ir/triton/kdesc.py, and torch-free) stays lazily
 resolved: importing this package must not pull in torch/pyaotriton (see
 desc.py's module docstring for why).
 """

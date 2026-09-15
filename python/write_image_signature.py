@@ -44,7 +44,7 @@ def hash_primary(args, vendor, arch, k):
 
 def main():
     args = parse()
-    kernels, _operators, _affine_kernels = \
+    kernels, _operators, _affine_kernels, _flyc_kernels = \
         Linker(args.root_dir / 'modules').link_all_families()
     sig = {}
     sig['AOTRITON_GIT_SHA1'] = args.git_sha1
