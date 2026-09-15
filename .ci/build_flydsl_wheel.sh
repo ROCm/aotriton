@@ -30,12 +30,11 @@ Options:
     --flydsl_commit <ref>   Required. Branch, tag or SHA in the FlyDSL
                             compiler repo. Resolved to a SHA before caching.
     --flydsl_origin <url>   Default https://github.com/ROCm/FlyDSL (public).
-     --llvm_tarball <path>  Use this prebuilt LLVM/MLIR tarball as-is. Without
-                            it, .ci/build_llvm_tarball.sh is invoked (reading
-                            third_party/flydsl-llvm.txt) into a sibling cache
-                            directory, and its output is used.
-      --llvm_origin <url>   Forwarded to build_llvm_tarball.sh.
-      --llvm_commit <ref>   Forwarded to build_llvm_tarball.sh.
+     --llvm_tarball <path>  Required. The LLVM/MLIR tarball to build against,
+                            named llvm-<sha12>-<...>.tar.gz so the wheel cache
+                            can be keyed on it. Produce one with
+                            .ci/build_llvm_tarball.sh, which reads
+                            third_party/flydsl-llvm.txt.
     --version_suffix <s>    Appended inside the wheel's local version segment,
                             after the git hash and before the LLVM tag:
                             <base>+git<sha8><s>.llvm<sha12>.
@@ -43,7 +42,11 @@ Options:
                             holding a GitHub PAT, for a private origin.
          --python <X.Y>     CPython to build for. Default 3.11. flydsl wheels
                             are ABI specific, so this is part of the cache key.
-           --rocm <ver>     ROCm version for the build image. Default 7.2.4.
+           --rocm <ver>     TheRock version for the build image. Default
+                            7.15.0a20260707, the newest in the release suite's
+                            list. FlyJitRuntime links HIP but AOTriton never
+                            launches through it, so this does not affect the
+                            kernels the wheel produces.
            --jobs <N>       Parallel build jobs for the LLVM build. FlyDSL's
                             own build.sh hardcodes -j$(nproc) and ignores it.
 EOF
@@ -54,12 +57,10 @@ WHEEL_OUTPUT_DIR=""
 FLYDSL_COMMIT=""
 FLYDSL_ORIGIN=""
 LLVM_TARBALL=""
-LLVM_ORIGIN=""
-LLVM_COMMIT=""
 VERSION_SUFFIX=""
 PAT_ENVIRON=""
 PYVER="3.11"
-ROCMVER="7.2.4"
+ROCMVER="7.15.0a20260707"
 JOBS=""
 while [[ "$1" == --* ]]; do
   # `shift 2` with one argument left FAILS WITHOUT SHIFTING, so $1 never changes
@@ -75,8 +76,6 @@ while [[ "$1" == --* ]]; do
     --flydsl_commit)    FLYDSL_COMMIT="$2"; shift 2 ;;
     --flydsl_origin)    FLYDSL_ORIGIN="$2"; shift 2 ;;
     --llvm_tarball)     LLVM_TARBALL="$2"; shift 2 ;;
-    --llvm_origin)      LLVM_ORIGIN="$2"; shift 2 ;;
-    --llvm_commit)      LLVM_COMMIT="$2"; shift 2 ;;
     --version_suffix)   VERSION_SUFFIX="$2"; shift 2 ;;
     --pat_environ)      PAT_ENVIRON="$2"; shift 2 ;;
     --python)           PYVER="$2"; shift 2 ;;
@@ -91,6 +90,12 @@ if [[ -z "${WHEEL_OUTPUT_DIR}" ]]; then
 fi
 if [[ -z "${FLYDSL_COMMIT}" ]]; then
   echo "Error: --flydsl_commit is required." >&2; usage
+fi
+if [[ -z "${LLVM_TARBALL}" ]]; then
+  echo "Error: --llvm_tarball is required. Build one with" >&2
+  echo "  .ci/build_llvm_tarball.sh --tarball_output_dir <dir>" >&2
+  echo "which reads third_party/flydsl-llvm.txt for the pin." >&2
+  usage
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -107,40 +112,17 @@ FLYDSL_ORIGIN="${FLYDSL_ORIGIN:-${FLYDSL_DEFAULT_ORIGIN}}"
 mkdir -p "${WHEEL_OUTPUT_DIR}"
 WHEEL_OUTPUT_DIR="$(realpath "${WHEEL_OUTPUT_DIR}")"
 
-# --- The LLVM half, BEFORE the wheel cache key ---
-# One flag, two modes, the same shape as build-test.sh's --flydsl_wheel versus
-# the pinned flydsl-compiler.txt: an explicit tarball is used as-is, and
-# without one we build the tarball third_party/flydsl-llvm.txt names. The
-# sibling directory keeps two caches with different lifetimes apart -- wheels
-# are per FlyDSL commit, per Python AND per LLVM; tarballs are per LLVM commit
-# only.
+# --- The LLVM half is the CALLER's ---
+# This script does not build LLVM. Its caller resolves the pin and hands the
+# tarball down, so the LLVM is a sibling input of the wheel rather than a
+# private dependency of it -- which is what lets a future Triton build be
+# pointed at the same tarball. .ci/releasesuite-git-head.sh calls
+# build_llvm_tarball.sh then this, in that order.
 #
-# THIS RUNS BEFORE EITHER WHEEL CACHE PROBE, and that ordering is the point.
-# The LLVM identity is part of what a flydsl wheel IS -- this file exists
-# because a wheel built against the wrong LLVM miscompiles register spills and
-# returns wrong numbers rather than failing -- so it has to be part of the
-# cache key, and a key cannot be computed after it has been used. The pin
-# normally names a MOVING branch (aotriton/0.14b/rc0 advances as the RC does),
-# so "same FlyDSL commit, same Python" genuinely does describe two different
-# wheels either side of an RC bump, and the old key served the older one
-# forever.
-#
-# It costs a cache hit the LLVM *resolution* (a mirror sync and a rev-parse,
-# seconds) that it used to skip. It does NOT cost an LLVM build: that has its
-# own cache, keyed on the resolved SHA, checked inside build_llvm_tarball.sh.
-if [[ -z "${LLVM_TARBALL}" ]]; then
-  LLVM_TARBALL_DIR="${LLVM_TARBALL_DIR:-$(dirname "${WHEEL_OUTPUT_DIR}")/llvm-tarballs}"
-  LLVM_ARGS=(--tarball_output_dir "${LLVM_TARBALL_DIR}" --python "${PYVER}")
-  [[ -n "${LLVM_ORIGIN}" ]] && LLVM_ARGS+=(--llvm_origin "${LLVM_ORIGIN}")
-  [[ -n "${LLVM_COMMIT}" ]] && LLVM_ARGS+=(--llvm_commit "${LLVM_COMMIT}")
-  [[ -n "${JOBS}" ]] && LLVM_ARGS+=(--jobs "${JOBS}")
-  # Forwarded like the rest: --pat_environ exists precisely for a private
-  # --llvm_origin, and the origin IS forwarded, so dropping the credential name
-  # leaves the inner sync_mirror to fetch unauthenticated and die -- an hour
-  # into a run the caller believed was credentialed.
-  [[ -n "${PAT_ENVIRON}" ]] && LLVM_ARGS+=(--pat_environ "${PAT_ENVIRON}")
-  LLVM_TARBALL="$(bash "${SCRIPT_DIR}/build_llvm_tarball.sh" "${LLVM_ARGS[@]}")" || exit 1
-fi
+# The tarball is still part of the wheel's cache KEY, and that has not moved:
+# a wheel built against the wrong LLVM miscompiles register spills and returns
+# wrong numbers rather than failing, so "same FlyDSL commit, same Python" does
+# not identify a wheel.
 if [[ ! -f "${LLVM_TARBALL}" ]]; then
   echo "Error: LLVM tarball not found: ${LLVM_TARBALL}" >&2
   exit 1
@@ -205,15 +187,21 @@ if [ -z "$(docker images -q "${BASE_DOCKER_IMAGE}" 2>/dev/null)" ]; then
     --build-arg "PYVER=${PYVER}" \
     -f base.Dockerfile .) >&2
 fi
-# FlyDSL needs ROCm to configure at all (see buildenv-flydsl.Dockerfile), so
-# the wheel is built in a ROCm-bearing derivative of the base image rather
-# than in the base image the Triton wheel uses. Same "build if missing" idiom.
-FLYDSL_DOCKER_IMAGE="aotriton:buildenv-flydsl-py${PYVER}-rocm${ROCMVER}"
+# FlyDSL needs ROCm to configure at all -- lib/Runtime/ROCm/CMakeLists.txt does
+# find_package(hip REQUIRED) under its only backend -- so the wheel is built in
+# a ROCm-bearing derivative of the base image. theRock.Dockerfile, the same one
+# the release suite uses, with BASE_TAG pointing at this Python: a wheel's cp
+# tag has to match the venv that will install it.
+#
+# ROCm comes from TheRock rather than dnf packages because that is what the
+# rest of AOTriton targets, and .ci/flydsl-patch/ teaches FlyDSL's CMake to
+# find it -- a TheRock root is a site-packages directory, not /opt/rocm.
+FLYDSL_DOCKER_IMAGE="aotriton:buildenv-rocm${ROCMVER}-py${PYVER}"
 if [ -z "$(docker images -q "${FLYDSL_DOCKER_IMAGE}" 2>/dev/null)" ]; then
   (cd "${SCRIPT_DIR}" && docker build --network=host -t "${FLYDSL_DOCKER_IMAGE}" \
-    --build-arg "PYVER=${PYVER}" \
-    --build-arg "ROCM_VERSION_IN_URL=${ROCMVER}" \
-    -f buildenv-flydsl.Dockerfile .) >&2
+    --build-arg "BASE_TAG=base-py${PYVER}" \
+    --build-arg "THEROCK_VERSION=${ROCMVER}" \
+    -f theRock.Dockerfile .) >&2
 fi
 
 # One mirror volume per distinct origin, mirror_volume_for_origin()'s shape.
@@ -274,6 +262,8 @@ docker run --network=host -i --rm \
   --mount "type=bind,source=${WHEEL_OUTPUT_DIR},target=/cache/wheels" \
   --mount "type=bind,source=${LLVM_TARBALL},target=/cache/llvm/$(basename "${LLVM_TARBALL}"),readonly" \
   --mount "type=bind,source=$(realpath "${SCRIPT_DIR}/runc-build-flydsl-wheel.sh"),target=/tmp/runc-build-flydsl-wheel.sh,readonly" \
+  --mount "type=bind,source=$(realpath "${SCRIPT_DIR}/flydsl-patch"),target=/tmp/flydsl-patch,readonly" \
+  -e AOTRITON_FLYDSL_PATCH_DIR=/tmp/flydsl-patch \
   "${PAT_ENV_ARG[@]}" \
   "${FLYDSL_DOCKER_IMAGE}" \
   bash -s "${RESOLVED}" "$(basename "${LLVM_TARBALL}")" "${WHEEL_VERSION_SUFFIX}" "${JOBS}" >&2 << 'EOF'

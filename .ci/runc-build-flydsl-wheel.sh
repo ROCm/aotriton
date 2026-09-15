@@ -92,6 +92,29 @@ git init "${SRC_DIR}"
 git -C "${SRC_DIR}" remote add origin "${FLYDSL_SOURCE}"
 git -C "${SRC_DIR}" fetch --depth=1 origin "${COMMIT}"
 git -C "${SRC_DIR}" checkout -f "${COMMIT}"
+
+# --- Patch: teach FlyDSL's ROCm runtime about ROCM_PATH ---
+# lib/Runtime/ROCm/CMakeLists.txt searches /opt/rocm* only, which a TheRock
+# (rocm-sdk) install is not. AOTRITON_FLYDSL_PATCH_DIR is mounted by the host
+# half; a run without it (a caller invoking this script directly against a
+# classical /opt/rocm) simply skips the patch.
+#
+# `git apply` and NOT `|| true`: a patch that stopped applying means FlyDSL
+# moved the code it edits, and silently building without it gives a
+# configure-time "hip not found" three minutes later, or worse a wheel linked
+# against the wrong ROCm.
+if [ -n "${AOTRITON_FLYDSL_PATCH_DIR:-}" ]; then
+  for patch in "${AOTRITON_FLYDSL_PATCH_DIR}"/*.patch; do
+    [ -e "${patch}" ] || continue
+    echo "Applying $(basename "${patch}")"
+    if ! git -C "${SRC_DIR}" apply "${patch}"; then
+      echo "Error: $(basename "${patch}") does not apply to FlyDSL ${SHORT}." >&2
+      echo "Rebase it onto that commit, or drop it if FlyDSL has taken the change." >&2
+      exit 1
+    fi
+  done
+fi
+
 # dlpack and tvm-ffi are submodules FlyDSL's CMake include()s headers from.
 # scripts/build.sh initialises them itself, but only by probing for one header;
 # do it here so the failure, if any, is a git failure rather than a compile one.

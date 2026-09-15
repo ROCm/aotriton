@@ -316,6 +316,28 @@ if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
   # the build venv is rejected by cmake anyway. One version, one place.
   if [[ -n "${SUITE_FLYDSL_COMMIT}" ]]; then
     FLYDSL_CACHE_DIR="${CACHE_DIR}/flydsl"
+    # The LLVM tarball first, as a step of this script rather than a side
+    # effect of the wheel build. It is an input both halves of a release can
+    # want -- a Triton wheel built against a custom LLVM is the next one -- so
+    # it is produced here and handed down, not owned by whoever happens to need
+    # it first. --llvm_tarball skips this and supplies one directly.
+    if [[ -n "${SUITE_LLVM_TARBALL}" ]]; then
+      LLVM_TARBALL_HOST="$(realpath "${SUITE_LLVM_TARBALL}")"
+      if [[ ! -f "${LLVM_TARBALL_HOST}" ]]; then
+        echo "Error: --llvm_tarball ${SUITE_LLVM_TARBALL} does not exist." >&2
+        exit 1
+      fi
+    else
+      LLVM_ARGS=(
+        --tarball_output_dir "${CACHE_DIR}/llvm-tarballs"
+        --python "${RELEASE_PYVER}"
+      )
+      LLVM_TARBALL_HOST=$(bash "${SCRIPT_DIR}/build_llvm_tarball.sh" "${LLVM_ARGS[@]}")
+      if [[ -z "${LLVM_TARBALL_HOST}" ]]; then
+        echo "Error: build_llvm_tarball.sh produced no tarball." >&2
+        exit 1
+      fi
+    fi
     FLYDSL_ARGS=(
       --wheel_output_dir "${FLYDSL_CACHE_DIR}"
       --flydsl_commit "${SUITE_FLYDSL_COMMIT}"
@@ -323,7 +345,7 @@ if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
       --version_suffix ".aotriton${aotriton_major}.${aotriton_minor}"
     )
     [[ -n "${SUITE_FLYDSL_ORIGIN}" ]] && FLYDSL_ARGS+=(--flydsl_origin "${SUITE_FLYDSL_ORIGIN}")
-    [[ -n "${SUITE_LLVM_TARBALL}" ]] && FLYDSL_ARGS+=(--llvm_tarball "$(realpath "${SUITE_LLVM_TARBALL}")")
+    FLYDSL_ARGS+=(--llvm_tarball "${LLVM_TARBALL_HOST}")
     FLYDSL_WHEEL_HOST=$(bash "${SCRIPT_DIR}/build_flydsl_wheel.sh" "${FLYDSL_ARGS[@]}")
     if [[ -z "${FLYDSL_WHEEL_HOST}" ]]; then
       echo "Error: build_flydsl_wheel.sh produced no wheel for ${SUITE_FLYDSL_COMMIT}." >&2

@@ -212,16 +212,18 @@ build_llvm_tarball.sh --tarball_output_dir <dir>
                       [--python <X.Y>] [--jobs <N>] [--pat_environ <VAR>]
 
 build_flydsl_wheel.sh --wheel_output_dir <dir> --flydsl_commit <ref>
-                      [--flydsl_origin <url>]
-                      [--llvm_tarball <path> | --llvm_origin <url> --llvm_commit <ref>]
+                      --llvm_tarball <path> [--flydsl_origin <url>]
                       [--python <X.Y>] [--version_suffix <s>]
                       [--rocm <ver>] [--jobs <N>] [--pat_environ <VAR>]
 ```
 
 Each prints the absolute path of its product on stdout and nothing else, so
-they chain with a plain command substitution. `build_flydsl_wheel.sh` calls
-`build_llvm_tarball.sh` itself when no `--llvm_tarball` is given, putting
-tarballs in a `llvm-tarballs/` directory beside the wheel cache.
+they chain with a plain command substitution. They are SIBLINGS: the wheel
+build does not call the tarball build, it is handed the result. An LLVM
+tarball is an input a release can want for more than one thing — a Triton
+wheel against a custom LLVM is the next one — so it is built once by the
+caller and passed down, rather than owned by whichever consumer needs it
+first.
 
 `--flydsl_commit` takes a **git ref** in the FlyDSL repository — a tag, branch
 or SHA — not a pip requirement. `third_party/flydsl-kernel.txt` holds one
@@ -232,9 +234,13 @@ one this script replaces.
 Typical use — the wheel that `build-test.sh --flydsl_wheel` wants:
 
 ```bash
+tarball=$(bash .ci/build_llvm_tarball.sh \
+  --tarball_output_dir ../llvm-tarballs \
+  --python 3.13)
 wheel=$(bash .ci/build_flydsl_wheel.sh \
   --wheel_output_dir ../flydsl-wheels \
   --flydsl_commit "$(cat third_party/flydsl-kernel.txt)" \
+  --llvm_tarball "${tarball}" \
   --python 3.13)
 bash .ci/build-test.sh gfx950 <triton wheel> --flydsl_wheel "${wheel}"
 ```
@@ -311,14 +317,23 @@ would take turns rewriting one checkout.
 ### Build environments
 
 The LLVM half builds in `aotriton:base-py<X.Y>`, built on demand like every
-other image here. The FlyDSL half needs more: FlyDSL's
-`lib/Runtime/ROCm/CMakeLists.txt` does an unconditional
-`find_package(hip REQUIRED CONFIG PATHS /opt/rocm*)` under its only backend, so
-it cannot configure without ROCm. `buildenv-flydsl.Dockerfile` adds the ROCm
-dev packages on top of the base image (`--rocm <ver>` selects the version,
-default 7.2.4). That is a *link* requirement for a HIP launcher AOTriton never
-uses — it compiles under `COMPILE_ONLY=1` — so the ROCm version has no bearing
-on the kernels the wheel produces, and **no GPU is needed** for any of this.
+other image here. The FlyDSL half needs ROCm as well: FlyDSL's
+`lib/Runtime/ROCm/CMakeLists.txt` does `find_package(hip REQUIRED)` under its
+only backend, so it cannot configure without it. It builds in
+`aotriton:buildenv-rocm<ver>-py<X.Y>`, the release suite's own
+`theRock.Dockerfile` with `BASE_TAG` pointing at the right Python (`--rocm
+<ver>` selects the TheRock version). That is a *link* requirement for a HIP
+launcher AOTriton never uses — it compiles under `COMPILE_ONLY=1` — so the ROCm
+version has no bearing on the kernels the wheel produces, and **no GPU is
+needed** for any of this.
+
+`.ci/flydsl-patch/*.patch` is applied to the FlyDSL checkout first, and today
+holds one patch: upstream searches `/opt/rocm*` for HIP, which a TheRock root
+is not — it is a site-packages directory named by `rocm-sdk path --root`. The
+patch prefers `ROCM_PATH` and keeps the glob as the fallback, the same
+precedence `CMakeLists.txt` in the repository root uses. A patch that stops
+applying is a hard error: FlyDSL having moved that code is something to look
+at, not to build through.
 
 Neither script requires a credential: the FlyDSL compiler repo
 (`https://github.com/ROCm/FlyDSL`) and `https://github.com/ROCm/llvm-project`

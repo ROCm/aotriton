@@ -1,4 +1,7 @@
-FROM aotriton:base
+# BASE_TAG selects the base image: "base" (PYVER 3.11, what the release suite
+# builds) or "base-py<X.Y>" for a wheel that has to carry a specific ABI tag.
+ARG BASE_TAG=base
+FROM aotriton:${BASE_TAG}
 
 ARG THEROCK_VERSION=7.14.0a20260624
 ARG THEROCK_PIP_INDEX_URL=https://rocm.nightlies.amd.com/whl-multi-arch/
