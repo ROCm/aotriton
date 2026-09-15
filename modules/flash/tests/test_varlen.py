@@ -22,7 +22,8 @@ from _common_test import (
     fmt_hdim,
 )
 # The dtype set, from the one place that decides it. This file used to spell the
-# list out and gate it on `BWD_IMPL == 2` alone, which is half the rule: fp32 is
+# list out and gate it on `BWD_IMPL == 'aiter'` alone, which is half the rule: fp32
+# is
 # also out when the FORWARD is pinned to flyc, and that half was added to
 # _core_test_backward.py only -- so every fp32 varlen case asked for a kernel
 # that was never built. Importing the name is what stops the two drifting again.
@@ -273,10 +274,10 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
     print(f'{adiff=} {grads_adiff=}')
 
 @pytest.mark.parametrize('N_HEADS', [3])
-@pytest.mark.parametrize('D_HEAD', [64, 128, 192] if BWD_IMPL == 2 else [8, 64, 184, (24, 152), (120, 8)], ids=fmt_hdim)
+@pytest.mark.parametrize('D_HEAD', [64, 128, 192] if BWD_IMPL == 'aiter' else [8, 64, 184, (24, 152), (120, 8)], ids=fmt_hdim)
 @pytest.mark.parametrize('n_seqlen', range(2, 24, 5))
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
-@pytest.mark.parametrize('dropout_p', [0.0] if BWD_IMPL == 2 else [0.0, 0.5])
+@pytest.mark.parametrize('dropout_p', [0.0] if BWD_IMPL == 'aiter' else [0.0, 0.5])
 @pytest.mark.parametrize('dtype', DTYPES)
 @pytest.mark.parametrize('sm_scale', ['l1', 'l2'] if FOR_RELEASE > 0 else ['l1'])
 @pytest.mark.parametrize('varlen_type', ['compact', 'padded', 'strided'])

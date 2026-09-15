@@ -12,11 +12,11 @@ from aotriton_flash import (
 )
 from attn_torch_function import (
     AttentionExtraArgs,
+    FWD_IMPL_IDX,
+    BWD_IMPL_IDX,
+    PROBE_UNSUPPORTED,
     FWD_IMPL,
     BWD_IMPL,
-    PROBE_UNSUPPORTED,
-    FORCE_FWD_BACKEND,
-    FORCE_BWD_BACKEND,
 )
 
 VERBOSE=False
@@ -160,9 +160,9 @@ class _attention_varlen(torch.autograd.Function):
         else:
             atomic = torch.empty([0], device=q.device, dtype=torch.int32)
 
-        if FORCE_FWD_BACKEND:
+        if FWD_IMPL is not None:
             extargs = attn_options()
-            extargs.force_backend_index = FWD_IMPL
+            extargs.force_backend_index = FWD_IMPL_IDX
         else:
             extargs = None
 
@@ -229,9 +229,9 @@ class _attention_varlen(torch.autograd.Function):
                 if t is not None:
                     t.fill_(float('nan'))
         delta = lazy_delta(L)
-        if FORCE_BWD_BACKEND:
+        if BWD_IMPL is not None:
             extargs = attn_options()
-            extargs.force_backend_index = BWD_IMPL
+            extargs.force_backend_index = BWD_IMPL_IDX
         else:
             extargs = None
         ret = attn_bwd_varlen(q, k, v,

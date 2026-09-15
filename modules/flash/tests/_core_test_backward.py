@@ -17,7 +17,7 @@ from attn_torch_function import (
     attention,
     AttentionExtraArgs,
     BWD_IMPL,
-    FORCE_FWD_BACKEND,
+    FWD_IMPL,
     PROBE_UNSUPPORTED,
     hipError_t,
     hipGetLastError,
@@ -67,7 +67,7 @@ SMALL_VRAM = bool(int(os.getenv('SMALL_VRAM', default='0')))
 # excluding .backward().
 #
 # This exists so a forward-only backend can be exercised by the same tests as
-# everything else. The flyc backend (FWD_IMPL=2) has no backward at all, so
+# everything else. The flyc backend (FWD_IMPL=flyc) has no backward at all, so
 # every backward case would fail for a reason that says nothing about the
 # forward kernel under test.
 #
@@ -78,7 +78,7 @@ SKIP_BWD = bool(int(os.getenv('SKIP_BWD', default='0')))
 
 DTYPES = [torch.float16, torch.bfloat16, torch.float32]
 
-if FORCE_FWD_BACKEND == 'flyc':
+if FWD_IMPL == 'flyc':
     # flyc is f16/bf16 WMMA only -- modules/flash/aot/flyc_attn_fwd.py's
     # _flyc_fwd_disabled rejects fp32 outright, so no hsaco exists for those
     # functionals. Forcing the backend bypasses that predicate (it is the
@@ -86,20 +86,20 @@ if FORCE_FWD_BACKEND == 'flyc':
     # without this every fp32 case asks for a kernel that was never built.
     DTYPES = [torch.float16, torch.bfloat16]
 
-if BWD_IMPL is None or BWD_IMPL == 0:
+if BWD_IMPL in (None, 'triton_split'):
     POT_HEADDIMS = [16, 32, 64, 128, 256, 512]
     NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
     M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216, 248, 408]
-elif BWD_IMPL == 1:
+elif BWD_IMPL == 'triton_fuse':
     POT_HEADDIMS = [16, 32, 64, 128, 256]
     NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
     M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216]
-elif BWD_IMPL == 2:
+elif BWD_IMPL == 'aiter':
     POT_HEADDIMS = [16, 32, 64, 128]
     NPOT_HEADDIMS = [48, 80, 96, 160, 192]
     M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184]
     DTYPES = [torch.float16, torch.bfloat16]
-elif BWD_IMPL == 3:
+elif BWD_IMPL == 'flyc':
     # flyc. Full head-dim coverage, same as the split path: both FlyDSL backward
     # tile ladders (fmha_tuning_bwd_{dkdv,dq}_gfx1201._BLOCK_DMODEL_LADDER) cover
     # every value of the operator's BLOCK_DMODEL axis, so an off-ladder test head
@@ -128,7 +128,10 @@ else:
 # AOTriton caller with a padded buffer hands over. The slack is filled with NaN,
 # so a mask that multiplies by zero instead of discarding is caught rather than
 # passing quietly. Multiples of 8 are unaffected.
-PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 83, 113, 149, 179, 211, 241] + ([401] if not BWD_IMPL else [])
+# 401 allocates at 408, which only the full-coverage backends have a kernel for.
+_FULL_HEADDIM_COVERAGE = (None, 'triton_split', 'flyc')
+PRIME_HEADDIMS = ([7, 23, 37, 53, 67, 73, 83, 113, 149, 179, 211, 241]
+                  + ([401] if BWD_IMPL in _FULL_HEADDIM_COVERAGE else []))
 REGULAR_SEQLEN = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
 REGULAR_SEQLEN_2K = [8, 16, 32, 64, 128, 256, 512, 1024, 2048]  # OOM when test with bias
 PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919]
@@ -219,20 +222,16 @@ Note: for now we cannot really test both fused and split kernel at the same
 '''
 #TODO: Let BWDOP determine the real backward op at runtime
 
-def _get_BWDOP_id():
-    if BWD_IMPL == 3:
-        return 'Flyc'
-    if BWD_IMPL == 2:
-        return 'AITERASM'
-    if BWD_IMPL == 1:
-        return 'Fused'
-    if BWD_IMPL == 0:
-        return 'Split'
-    if BWD_IMPL is None:
-        return 'V3'
-    assert False, f'Unsupported BWD_IMPL {BWD_IMPL}'
-
-BWDOP_ids = [_get_BWDOP_id()]
+# The pytest id for the pinned backward backend. Its own vocabulary, kept
+# because it is printed in every test name that has ever been reported.
+_BWDOP_ID = {
+    None            : 'V3',
+    'triton_split'  : 'Split',
+    'triton_fuse'   : 'Fused',
+    'aiter'         : 'AITERASM',
+    'flyc'          : 'Flyc',
+}
+BWDOP_ids = [_BWDOP_ID[BWD_IMPL]]
 
 def _make_block_eyes(q, base=1.0, inc=0.0):
     dhead = q.shape[-1]
@@ -272,7 +271,7 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
         sm_scale = 1.0 / HDIM_QK
     elif sm_scale == 'l2':
         sm_scale = 1.0 / math.sqrt(HDIM_QK)
-    if BWD_IMPL == 2:  # AITER ASM
+    if BWD_IMPL == 'aiter':  # AITER ASM
         if dropout_p > 0.0:
             pytest.skip("Dropout unsupported in AITER ASM backend for now. Need adjust FWD PRNG function")
         if HDIM_MAX < 64:

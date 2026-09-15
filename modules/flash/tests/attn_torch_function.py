@@ -32,57 +32,60 @@ from _common_test import (
 )
 from typing import Callable
 
-FWD_IMPL = int(os.getenv('FWD_IMPL', default='0'))
+# FWD_IMPL / BWD_IMPL name the backend to pin, in the vocabulary @ati.backend
+# declares and the library publishes through OpAttn{Fwd,Bwd}Backend.by_index:
+#
+#   op_attn_fwd : triton  aiter  flyc
+#   op_attn_bwd : triton_split  triton_fuse  aiter  flyc
+#
+# Unset means the operator selects. An explicit name is NOT the same as leaving
+# it unset even when it names the default: forcing sets disable_fallback in the
+# dispatcher (modules/flash/csrc/attn_fwd.cc), which suppresses the tuning-DB
+# lookup.
+#
+# Names, not indices, because the indices are internal and have moved once
+# already -- flyc took 2 on op_attn_fwd. The resolved index lives in
+# FWD_IMPL_IDX / BWD_IMPL_IDX and goes to attn_options.force_backend_index,
+# which is the one place an integer is the interface.
+#
+# Test parameter restrictions per BWD_IMPL (see _core_test_backward.py):
+#   unset, triton_split : full head-dim coverage; all dtypes
+#   triton_fuse         : POT up to 256, M8 up to 216; all dtypes
+#   aiter               : POT up to 128, NPOT up to 192, M8 up to 184;
+#                         fp16/bf16 only; no GQA; no dropout
+#   flyc                : full head-dim coverage; fp16/bf16 only
+def _resolve_impl(envvar, backend_struct, opname):
+    """(name, index) for `$envvar`, or (None, None) when it is unset."""
+    name = os.getenv(envvar, default=None)
+    if name is None:
+        return None, None
+    by_name = {v: k for k, v in backend_struct.by_index.items()}
+    if name in by_name:
+        return name, by_name[name]
+    # This runs at MODULE IMPORT, so raising anything vaguer here is a
+    # collection error on every test in every file that imports this module.
+    # The value comes from a human or from .ci/run-test.sh, and the valid set is
+    # a property of the library that was built, so say both.
+    published = sorted(by_name)
+    if name.lstrip('-').isdigit():
+        raise ValueError(
+            f'{envvar}={name} is an index; it now takes a backend NAME. '
+            f'{opname} publishes {published} in this build.')
+    raise ValueError(
+        f'{envvar}={name!r} is not a backend of {opname} in this build. '
+        f'Published: {published}.')
 
-# BWD_IMPL selects which backward kernel implementation to use:
-#   unset / None : V3 auto-selection (FORCE_BWD_BACKEND=False, extargs=None)
-#   0            : split bwd — separate dkdv + dq kernels (attn_bwd)
-#   1            : fused bwd — single fused kernel (attn_bwd_fused)
-#   2            : AITER ASM backend — restricts head dims, no dropout, no GQA, fp16/bf16 only
-#
-# Test parameter restrictions by BWD_IMPL value (see _core_test_backward.py):
-#   None/0 : full head-dim coverage (POT up to 512, NPOT up to 224, M8 up to 408); all dtypes
-#   1      : POT up to 256, M8 up to 216; all dtypes
-#   2      : POT up to 128, NPOT up to 192, M8 up to 184; fp16/bf16 only; no GQA; no dropout
-#
-# Note: triton_tester.py asserts BWD_IMPL is unset, then forces BWD_IMPL='0' before importing
-# test modules — so it always runs the split-bwd path.
-BWD_IMPL = os.getenv('BWD_IMPL', default=None)
-if BWD_IMPL is not None:
-    BWD_IMPL = int(BWD_IMPL)
+from pyaotriton.v3.flash import OpAttnFwdBackend, OpAttnBwdBackend
+
+FWD_IMPL, FWD_IMPL_IDX = _resolve_impl('FWD_IMPL', OpAttnFwdBackend, 'op_attn_fwd')
+BWD_IMPL, BWD_IMPL_IDX = _resolve_impl('BWD_IMPL', OpAttnBwdBackend, 'op_attn_bwd')
+
 # PROBE_UNSUPPORTED is independent of BWD_IMPL: enables NotImplementedError on
 # hipErrorPeerAccessUnsupported so callers can skip unsupported configurations.
 PROBE_UNSUPPORTED = bool(int(os.getenv('PROBE_UNSUPPORTED', default='0')))
 
 from aotriton_flash import lazy_dq_acc, lazy_delta
 
-# The NAME of the pinned forward backend ('triton' / 'flyc' / ...), or None when
-# FWD_IMPL is unset. A name rather than a flag: callers ask
-# `FORCE_FWD_BACKEND == 'flyc'`, which reads as what it means and needs no new
-# variable per backend. Still falsy when nothing is pinned, so the existing
-# `if FORCE_FWD_BACKEND:` guards are unchanged.
-#
-# The mapping comes from OpAttnFwdBackend.by_index, generated beside the
-# constants from the same @ati.backend list, so the index, the enum and the name
-# cannot disagree -- and this index already moved once, when flyc was added.
-FORCE_FWD_BACKEND = None
-if os.getenv('FWD_IMPL', default=None) is not None:
-    from pyaotriton.v3.flash import OpAttnFwdBackend
-    try:
-        FORCE_FWD_BACKEND = OpAttnFwdBackend.by_index[FWD_IMPL]
-    except KeyError:
-        # This runs at MODULE IMPORT, so a bare KeyError here is a collection
-        # error on every test in every file that imports this module, reported
-        # as `KeyError: 7` with no mention of FWD_IMPL. The index is supplied by
-        # a human or by .ci/run-test.sh, and the set of valid ones is a property
-        # of the library that was built, so say both.
-        raise ValueError(
-            f'FWD_IMPL={FWD_IMPL} is not a backend index of op_attn_fwd in this '
-            f'build. Valid indices: '
-            f'{ {k: v for k, v in sorted(OpAttnFwdBackend.by_index.items())} }'
-        ) from None
-# When FORCE_BWD_BACKEND is True, backward_v3 sets extargs.force_backend_index = BWD_IMPL
-FORCE_BWD_BACKEND = os.getenv('BWD_IMPL', default=None) is not None
 
 def empty_handler():
     pass
@@ -278,9 +281,9 @@ class _attention(torch.autograd.Function):
         if attn_extra_args.force_fwd_backend_index is not None:
             extargs = attn_options()
             extargs.force_backend_index = attn_extra_args.force_fwd_backend_index
-        elif FORCE_FWD_BACKEND:
+        elif FWD_IMPL is not None:
             extargs = attn_options()
-            extargs.force_backend_index = FWD_IMPL
+            extargs.force_backend_index = FWD_IMPL_IDX
         else:
             extargs = None
 
@@ -369,9 +372,9 @@ class _attention(torch.autograd.Function):
         if attn_extra_args.force_bwd_backend_index is not None:
             extargs = attn_options()
             extargs.force_backend_index = attn_extra_args.force_bwd_backend_index
-        elif FORCE_BWD_BACKEND:
+        elif BWD_IMPL is not None:
             extargs = attn_options()
-            extargs.force_backend_index = BWD_IMPL
+            extargs.force_backend_index = BWD_IMPL_IDX
         else:
             extargs = None
 

@@ -9,7 +9,7 @@ import torch
 import triton
 from _perf_report import run_report
 from collections import defaultdict
-from attn_torch_function import attention, AttentionExtraArgs, BWD_IMPL
+from attn_torch_function import attention, AttentionExtraArgs
 
 try:
     from flash_attn.flash_attn_interface import \

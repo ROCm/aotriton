@@ -35,21 +35,21 @@ from _common_test import ALL_LAYOUTS, StorageLayout
 
 if FOR_RELEASE >= 0:
     @pytest.mark.parametrize('BATCH', [3])
-    @pytest.mark.parametrize('N_HEADS', [5, (10, 2)] if BWD_IMPL != 2 else [5], ids=fmt_nheads)
+    @pytest.mark.parametrize('N_HEADS', [5, (10, 2)] if BWD_IMPL != 'aiter' else [5], ids=fmt_nheads)
     @pytest.mark.parametrize('D_HEAD', [8, 64, 184, (24, 152), (120, 8), (64, 32)], ids=fmt_hdim)
     @pytest.mark.parametrize('seqlen_q', [11, 523, 2048])
     @pytest.mark.parametrize('seqlen_k', [31, 337, 1063])
     # pairing causal and bias_type to eliminate programmatic skips.
-    # Gated on BWD_IMPL != 2 for the same reason line 71 below is: AITER ASM
+    # Gated on BWD_IMPL != 'aiter' for the same reason line 71 below is: AITER ASM
     # does not support bias, so the matrix-bias pair has to come out of the
     # list rather than be skipped inside the test -- the point of pairing is
     # that there is no programmatic skip left here.
     @pytest.mark.parametrize('causal,bias_type',
                              [(False, None), (False, 'matrix'), (True, None)]
-                             if BWD_IMPL != 2 else [(False, None), (True, None)],
+                             if BWD_IMPL != 'aiter' else [(False, None), (True, None)],
                              ids=['CausalOff-BiasOff', 'CausalOff-BiasOn', 'CausalOn-BiasOff']
-                             if BWD_IMPL != 2 else ['CausalOff-BiasOff', 'CausalOn-BiasOff'])
-    @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
+                             if BWD_IMPL != 'aiter' else ['CausalOff-BiasOff', 'CausalOn-BiasOff'])
+    @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 'aiter' else [0.0])
     @pytest.mark.parametrize('dtype', DTYPES)
     @pytest.mark.parametrize('sm_scale', ['l1'])
     @pytest.mark.parametrize('storage_flip', [True])
@@ -65,7 +65,7 @@ if FOR_RELEASE > 0:
     @pytest.mark.parametrize('seqlen_q', REGULAR_SEQLEN)
     @pytest.mark.parametrize('seqlen_k', REGULAR_SEQLEN)
     @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
-    @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
+    @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 'aiter' else [0.0])
     @pytest.mark.parametrize('dtype', DTYPES)
     @pytest.mark.parametrize('sm_scale', ['l1', 'l2'])
     @pytest.mark.parametrize('storage_flip', [False, True])
@@ -75,13 +75,13 @@ if FOR_RELEASE > 0:
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
         core_test_op_bwd(request, args, device=gpu_id)
 
-if FOR_RELEASE > 0 and BWD_IMPL != 2:  # AITER ASM does not support bias ATM
+if FOR_RELEASE > 0 and BWD_IMPL != 'aiter':  # AITER ASM does not support bias ATM
     @pytest.mark.parametrize('BATCH', [3])
     @pytest.mark.parametrize('N_HEADS', [5])
     @pytest.mark.parametrize('D_HEAD', ALL_INT_HEADDIMS, ids=fmt_hdim)
     @pytest.mark.parametrize('seqlen_q', REGULAR_SEQLEN_2K)
     @pytest.mark.parametrize('seqlen_k', REGULAR_SEQLEN_2K)
-    @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
+    @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 'aiter' else [0.0])
     @pytest.mark.parametrize('dtype', DTYPES)
     @pytest.mark.parametrize('sm_scale', ['l1'])
     @pytest.mark.parametrize('storage_flip', [False, True])
@@ -95,7 +95,7 @@ if FOR_RELEASE > 0 and BWD_IMPL != 2:  # AITER ASM does not support bias ATM
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
         core_test_op_bwd(request, args, device=gpu_id)
 
-if FOR_RELEASE > 0 and BWD_IMPL != 2:  # AITER ASM does not expose GQA
+if FOR_RELEASE > 0 and BWD_IMPL != 'aiter':  # AITER ASM does not expose GQA
     @pytest.mark.parametrize('BATCH', [3])
     @pytest.mark.parametrize('N_HEADS', [(16, 8), (10, 2)])
     @pytest.mark.parametrize('D_HEAD', ALL_INT_HEADDIMS, ids=fmt_hdim)
@@ -174,9 +174,9 @@ if FOR_RELEASE >= 0:
     # and an innermost axis that is the KV sequence rather than a head dim.
     @pytest.mark.parametrize('causal,bias_type',
                              [(False, None), (False, 'matrix'), (True, None)]
-                             if BWD_IMPL != 2 else [(False, None), (True, None)],
+                             if BWD_IMPL != 'aiter' else [(False, None), (True, None)],
                              ids=['CausalOff-BiasOff', 'CausalOff-BiasOn', 'CausalOn-BiasOff']
-                             if BWD_IMPL != 2 else ['CausalOff-BiasOff', 'CausalOn-BiasOff'])
+                             if BWD_IMPL != 'aiter' else ['CausalOff-BiasOff', 'CausalOn-BiasOff'])
     @pytest.mark.parametrize('dropout_p', [0.0])
     @pytest.mark.parametrize('dtype', DTYPES)
     @pytest.mark.parametrize('sm_scale', ['l1'])
@@ -203,7 +203,7 @@ if FOR_RELEASE > 1:  # Make the loading faster
     @pytest.mark.parametrize('bias_type', [None, 'matrix'], ids=['BiasOff', 'BiasOn'])
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)
     def test_irregulars(request, gpu_id, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
-        if bias_type is not None and BWD_IMPL == 2:
+        if bias_type is not None and BWD_IMPL == 'aiter':
             pytest.skip("Bias is not supported in AITER ASM backend")
         if bias_type is not None and (seqlen_q > 2048 or seqlen_k > 2048):
             pytest.skip("Skip large UT with bias to avoid OOM")

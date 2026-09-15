@@ -13,28 +13,6 @@ fi
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
 
-# The dispatch index a backend NAME resolves to, or exit 3 if this build has
-# no such backend on that operator. $1 is OpAttnFwdBackend / OpAttnBwdBackend,
-# $2 the @ati.backend name. Reads PYTHONPATH at call time, so it must be called
-# after that is exported.
-#
-# ONLY the "no such backend" answer is quiet, and it has its own exit code. A
-# broken import (wrong PYTHONPATH, a library that will not load) must not be
-# indistinguishable from it: the caller below treats "no backward backend" as
-# "run the forward half and report green", so swallowing an import failure here
-# would produce a passing CI run that tested nothing at all. Anything other
-# than the missing key keeps its traceback and exits 1.
-backend_index_of() {
-  python -c "
-import sys
-import torch, pyaotriton
-from pyaotriton.v3.flash import $1 as B
-try:
-    print({v: k for k, v in B.by_index.items()}['$2'])
-except KeyError:
-    sys.exit(3)
-"
-}
 add_torch_ldconfig
 add_rocm_sdk_ldconfig
 
@@ -149,18 +127,30 @@ fi
   export COLUMNS=400;
   export FOR_RELEASE=${test_level};
   if [[ "$backend" == "split" ]]; then
-    export BWD_IMPL=0
+    export BWD_IMPL=triton_split
     fnprefix="ut_pass"
   fi
   if [[ "$backend" == "fused" ]]; then
-    export BWD_IMPL=1
+    export BWD_IMPL=triton_fuse
     fnprefix="fused_pass"
   fi
   if [[ "$backend" == "aiter" ]]; then
-    export BWD_IMPL=2
+    export BWD_IMPL=aiter
     fnprefix="aiter_pass"
   fi
+  # flyc pins BOTH directions, unlike the three above which pin the backward one
+  # only. A name this script never resolves: attn_torch_function.py turns it into
+  # an index and raises there, naming the published set, if the library has no
+  # such backend. SKIP_BWD=1 is how a caller asks for the forward half alone --
+  # the script never decides that for itself, because a silently forward-only
+  # pass reads as a green backward one.
   if [[ "$backend" == "flyc" ]]; then
+    export FWD_IMPL=flyc
+    if [ -n "${SKIP_BWD:-}" ]; then
+      echo "run-test.sh: flyc forward only, SKIP_BWD=${SKIP_BWD} as asked"
+    else
+      export BWD_IMPL=flyc
+    fi
     fnprefix="flyc_pass"
   fi
   if [[ "$backend" == "v3" ]]; then
@@ -168,49 +158,6 @@ fi
   fi
   set -v
   export PYTHONPATH="${AOTRITON_TEST_LIBDIR:-${bdir}/install_dir/lib}"
-  # flyc pins BOTH directions, unlike the three above which pin the backward one
-  # only. Indices are looked up rather than written down: they are internal
-  # numbers that already moved once (flyc taking 2 on op_attn_fwd), whereas
-  # 'flyc' is the name @ati.backend declares and the library publishes. Sits here
-  # rather than beside the other backends because it needs PYTHONPATH.
-  #
-  # Both lookups should always succeed: backends.h is generated from the full
-  # operator list (codegen/root.py's _write_backend_constants), and the flyc
-  # backends are declared unconditionally, so no build option drops either name.
-  # The checks stay as defence in depth, and both are fatal. Setting SKIP_BWD=1
-  # here instead was invisible from this script's interface and would turn a
-  # library missing a backend into a green run; only the caller may ask for the
-  # forward half alone.
-  if [[ "$backend" == "flyc" ]]; then
-    # `|| _rc=$?` both captures the status and keeps `set -e` (common-vars.sh)
-    # from killing the script before the case below can tell the two failure
-    # kinds apart.
-    _rc=0; FWD_IMPL=$(backend_index_of OpAttnFwdBackend flyc) || _rc=$?
-    case "${_rc}" in
-      0) ;;
-      3) echo "run-test.sh: this library publishes no 'flyc' forward backend," \
-              "which should be impossible; the build is broken" >&2; exit 1 ;;
-      *) echo "run-test.sh: the OpAttnFwdBackend lookup itself failed" >&2; exit 1 ;;
-    esac
-    export FWD_IMPL
-    # Exit code 3 is backend_index_of's "the library published no such name";
-    # anything else is the lookup itself being broken. Neither may be reported
-    # as a green forward-only pass unless the caller asked for one.
-    _rc=0; BWD_IMPL=$(backend_index_of OpAttnBwdBackend flyc) || _rc=$?
-    case "${_rc}" in
-      0) export BWD_IMPL
-         echo "run-test.sh: flyc FWD_IMPL=${FWD_IMPL} BWD_IMPL=${BWD_IMPL} (forward and backward)" ;;
-      3) if [ -z "${SKIP_BWD:-}" ]; then
-           echo "run-test.sh: this library publishes no 'flyc' backward backend," \
-                "which should be impossible; the build is broken. Re-run with" \
-                "SKIP_BWD=1 to test the forward half anyway" >&2
-           exit 1
-         fi
-         echo "run-test.sh: flyc FWD_IMPL=${FWD_IMPL}; no flyc backward backend in this library, SKIP_BWD=${SKIP_BWD} as asked" ;;
-      *) echo "run-test.sh: the OpAttnBwdBackend lookup itself failed" >&2
-         exit 1 ;;
-    esac
-  fi
   _sig=$(ls "$PYTHONPATH/aotriton.images/"*"/__signature__" 2>/dev/null | head -n 1)
   {
     [ -n "$_sig" ] && cat "$_sig" \
