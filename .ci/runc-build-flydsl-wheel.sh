@@ -160,8 +160,15 @@ echo "Building against LLVM: ${LLVM_NAME}"
 # here too. nanobind is pinned to the version the LLVM tarball's MLIR bindings
 # were built with -- they share the "mlir" nanobind domain, so the two must
 # agree; bump both together or not at all.
+#
+# patchelf is a BINARY the build shells out to by name -- FlyDSL's CMake sets
+# the RPATH of the MLIR runtime libraries it copies into the wheel -- so it has
+# to be on PATH, not importable. The PyPI package ships the executable, which
+# is how auditwheel gets it too, and keeps the base image free of an EPEL
+# dependency for one tool.
 NANOBIND_VERSION="${NANOBIND_VERSION:-2.12.0}"
-python -m pip install "nanobind==${NANOBIND_VERSION}" numpy pybind11
+python -m pip install "nanobind==${NANOBIND_VERSION}" numpy pybind11 patchelf
+command -v patchelf >/dev/null || { echo "Error: patchelf is not on PATH after install." >&2; exit 1; }
 
 # --- Version ---
 # FlyDSL's default version for a non-release build is <base>.dev<commit count>,
