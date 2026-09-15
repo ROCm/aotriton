@@ -176,33 +176,23 @@ bash .ci/build_triton_wheels.sh \
 
 ### Why this exists
 
-FlyDSL bundles its own LLVM/MLIR rather than linking a system one, which is why
-`third_party/flydsl-compiler.txt` pins a *wheel* and not a submodule: its
-`setup.py` needs a prebuilt bundled MLIR to build against. A FlyDSL carrying a
-different LLVM therefore has to be rebuilt, not reconfigured.
-
-`third_party/flydsl-llvm.txt` is where AOTriton says which LLVM that is. It is
-a third pin, independent of the compiler and kernel pins, and **it is expected
-to be empty almost always**:
+FlyDSL bundles its own LLVM/MLIR, so `third_party/flydsl-compiler.txt` pins a
+*wheel* rather than a submodule: a FlyDSL carrying a different LLVM must be
+rebuilt, not reconfigured. `third_party/flydsl-llvm.txt` names that LLVM -- a
+third pin, independent of the other two, **expected to be empty almost always**
+("empty" = no non-comment, non-blank line, so the explanatory comment survives).
 
 | `flydsl-llvm.txt` | what a build does |
 |---|---|
-| empty (just its own comment line) | normal. Install the wheel `flydsl-compiler.txt` pins and proceed. This is the steady state |
-| non-empty, and a local wheel is supplied | proceed with the supplied wheel |
-| non-empty, and no local wheel supplied | **fail at configure time** |
+| empty | steady state: install the wheel `flydsl-compiler.txt` pins |
+| non-empty, local wheel supplied (`-DAOTRITON_USE_LOCAL_FLYDSL_WHEEL`) | proceed with that wheel |
+| non-empty, no local wheel | **fail at configure time** (`CMakeLists.txt`); a runtime-only build (`AOTRITON_NOIMAGE_MODE`) is exempt, it compiles no kernels |
 
-"Empty" means no non-comment, non-blank line, so emptying the file at release
-time still leaves the comment that explains what it is for. Emptying it is the
-task that pairs with bumping `flydsl-compiler.txt` once upstream LLVM is fixed.
-
-The third row is deliberate. A wheel built against a spill-miscompiling LLVM
-produces kernels that are *wrong rather than absent*, at exactly the head
-dimensions that spill, and no build-time check would notice — only numerical
-test failures much later would. Failing at configure time turns a silent
-miscompile into a message, and the message names `build_flydsl_wheel.sh`.
-
-So for a release whose `flydsl-llvm.txt` is non-empty, the sequence below is
-not a convenience. It is the only supported way to build.
+Row three is deliberate: the bad LLVM miscompiles register spills, so kernels come
+back *wrong rather than absent* and only numerical tests would notice. For a release
+whose `flydsl-llvm.txt` is non-empty the sequence below is the only supported way to
+build; emptying it pairs with bumping `flydsl-compiler.txt` once upstream LLVM is
+fixed.
 
 ### The two scripts
 
@@ -217,139 +207,89 @@ build_flydsl_wheel.sh --wheel_output_dir <dir> --flydsl_commit <ref>
                       [--rocm <ver>] [--jobs <N>] [--pat_environ <VAR>]
 ```
 
-Each prints the absolute path of its product on stdout and nothing else, so
-they chain with a plain command substitution. They are SIBLINGS: the wheel
-build does not call the tarball build, it is handed the result. An LLVM
-tarball is an input a release can want for more than one thing — a Triton
-wheel against a custom LLVM is the next one — so it is built once by the
-caller and passed down, rather than owned by whichever consumer needs it
-first.
-
-`--flydsl_commit` takes a **git ref** in the FlyDSL repository — a tag, branch
-or SHA — not a pip requirement. `third_party/flydsl-kernel.txt` holds one
-(`v0.3.1`); `third_party/flydsl-compiler.txt` holds a pip requirement
-(`flydsl==0.3.1`) and is the pin for the *released wheel* path, which is the
-one this script replaces.
-
-Typical use — the wheel that `build-test.sh --flydsl_wheel` wants:
+Siblings, not caller and callee: the wheel build never builds LLVM, it is handed one
+(`--llvm_tarball` is required), so a tarball can serve other consumers. Each prints
+only its product's absolute path on stdout. `build_llvm_tarball.sh` defaults origin
+and ref from `flydsl-llvm.txt`, and errors when that file is empty unless both
+`--llvm_origin` and `--llvm_commit` are given. `--flydsl_commit` is a **git
+ref** (`flydsl-kernel.txt` holds one, `v0.3.1`), not a pip requirement
+(`flydsl-compiler.txt`, `flydsl==0.3.1`).
 
 ```bash
 tarball=$(bash .ci/build_llvm_tarball.sh \
-  --tarball_output_dir ../llvm-tarballs \
-  --python 3.13)
+  --tarball_output_dir ../llvm-tarballs --python 3.13)
 wheel=$(bash .ci/build_flydsl_wheel.sh \
   --wheel_output_dir ../flydsl-wheels \
   --flydsl_commit "$(cat third_party/flydsl-kernel.txt)" \
-  --llvm_tarball "${tarball}" \
-  --python 3.13)
+  --llvm_tarball "${tarball}" --python 3.13)
 bash .ci/build-test.sh gfx950 <triton wheel> --flydsl_wheel "${wheel}"
 ```
 
-For a release, do not run them by hand — `releasesuite-git-head.sh` does it:
+For a release, `releasesuite-git-head.sh` runs both, in that order:
 
 ```bash
-bash .ci/releasesuite-git-head.sh --image \
-  --flydsl_commit v0.3.1 \
+bash .ci/releasesuite-git-head.sh --image --flydsl_commit v0.3.1 \
   $HOME/aotriton-gh-release/release/0.14b/hashed
 ```
 
-`--flydsl_origin <url>` overrides the FlyDSL origin (a fork, or a local
-checkout via `file:///abs/path`), exactly like `--triton_origin`.
-`--llvm_tarball <path>` reuses a tarball you already have. Both are errors
-without `--flydsl_commit`, which is the switch that turns the whole path on;
-a release with no FlyDSL flags installs the pinned wheel and never builds
-anything here.
+`--flydsl_commit` is optional there: a non-empty `flydsl-llvm.txt` selects the
+source build anyway, taking the ref from `flydsl-compiler.txt` (`flydsl==0.3.1`
+-> `v0.3.1`; any other shape is an error, not a guess). `--flydsl_origin` (fork,
+or `file:///abs/path`, like `--triton_origin`) and `--llvm_tarball` (reuse a
+tarball) are errors without an explicit `--flydsl_commit`, and `--flydsl_commit`
+is an error on `--runtime`.
 
 ### Cost, caching and what the caches are keyed on
 
-**The LLVM build takes about an hour.** Everything about these scripts is
-arranged so that a cache miss is the only thing that costs anything:
+**The LLVM build takes about an hour**, so only a cache miss costs anything.
 
-* The tarball is `llvm-<sha12>-<distro>-x64.tar.gz`, the same filename shape
-  `.ci/triton-patch/docker-script-build.sh` already consumes, so one built here
-  drops into `$HOME/.triton/llvm` unchanged. It is keyed on the LLVM commit
-  only — **not** on the Python version, because FlyDSL rebuilds MLIR's Python
-  bindings from this tarball's sources for each target interpreter.
-* The pin normally names a *branch* (`aotriton/0.14b/rc0` advances as the RC
-  does), so the ref is resolved to a SHA against the git mirror before the
-  cache is consulted. Naming a tarball after a branch would let two different
-  builds collide under one filename.
-* The wheel cache **is** keyed on the CPython ABI tag, because flydsl wheels
-  are ABI specific (`flydsl-…-cp313-cp313-linux_x86_64.whl`) and CMake rejects
-  one whose tag does not match the build venv. A wheel cached for a different
-  Python is not a cache hit. The wheel's version carries the FlyDSL commit as
-  `+git<sha8>`, the same way Triton's does.
-* The LLVM tarball is resolved (and built, on a miss) *before* either wheel
-  cache probe, because the resolved LLVM identity is part of the wheel's key —
-  a wheel built against the wrong LLVM miscompiles register spills and returns
-  wrong numbers rather than failing. So a warm wheel still costs a mirror sync
-  and a `rev-parse`, seconds against an existing tarball cache; it does not
-  cost an LLVM build.
-* `--llvm_tarball` must be named `llvm-<sha12>-<...>.tar.gz`. A name that
-  carries no commit is refused rather than keyed on a digest of itself, which
-  would make `custom.tar.gz` mean whatever it meant last time.
+| artifact | name | keyed on |
+|---|---|---|
+| tarball | `llvm-<sha12>-<distro>-x64.tar.gz` | the LLVM commit only -- **not** Python: FlyDSL rebuilds MLIR's bindings from the tarball's sources per interpreter |
+| wheel | `flydsl-<base>+git<sha8><version_suffix>.llvm<sha12>.p<patches>-cp<XY>-...whl` | FlyDSL commit, `--version_suffix`, LLVM commit, patch count, CPython ABI tag |
 
-**The filename shape changed, and that is not a broken cache.** A wheel built
-by hand — `bash scripts/build_wheels.sh` in a FlyDSL checkout — is named from
-FlyDSL's own default version scheme, `<base>.dev<commit count>`, giving e.g.
-`flydsl-0.3.1.dev1129-cp313-cp313-linux_x86_64.whl`. `build_flydsl_wheel.sh`
-does not use that scheme, because a `--depth=1` checkout has a commit count of
-1 and renders every commit as `.dev1`. It sets FlyDSL's own
-`FLYDSL_PACKAGE_VERSION_OVERRIDE` instead, producing
-`flydsl-0.3.1+git421935cc.aotriton0.14-cp313-cp313-linux_x86_64.whl`. Both are
-the same kind of artifact and either is accepted by `--flydsl_wheel`; only the
-second identifies which FlyDSL commit is inside it, which is what makes it
-cacheable. A hand-built wheel already sitting in the output directory will
-therefore *not* be seen as a cache hit.
+* That tarball name is the shape `.ci/triton-patch/docker-script-build.sh` already
+  consumes, so one built here drops into `$HOME/.triton/llvm` unchanged.
+* Both pins can name a moving ref (`aotriton/0.14b/rc0`, `v0.3.1`), so each is
+  resolved to a SHA against the git mirror before the cache is consulted.
+* The ABI tag is in the wheel key because flydsl wheels are ABI specific and CMake
+  rejects a mismatched one; the LLVM commit is, because the wrong LLVM miscompiles
+  rather than fails. Hence `--llvm_tarball` must be named `llvm-<sha12>-<...>.tar.gz`
+  -- a name carrying no commit is refused rather than keyed on something invented.
+* A hand-built wheel (`scripts/build_wheels.sh`) uses FlyDSL's
+  `<base>.dev<commit count>` scheme, which a `--depth=1` checkout renders `.dev1` for
+  every commit; these scripts set `FLYDSL_PACKAGE_VERSION_OVERRIDE` instead. Both work
+  with `--flydsl_wheel`, but only ours can be a cache hit.
 
-Docker volumes maintained automatically, all of them harmless local caches
-that are never wiped (see `.ci/CLAUDE.md`):
-
-| volume | holds |
-|---|---|
-| `llvm-mirror`, `flydsl-mirror` | bare git mirrors; a per-origin `-<md5>` slug is used for a non-default origin |
-
-Mirrors are the only volumes. Both builds run in `--tmpfs /scratch:exec` and
-keep nothing, exactly as the Triton wheel build does: a shared mutable build
-tree is not a cache but a race, since two invocations of different commits
-would take turns rewriting one checkout.
+The only Docker volumes are the bare git mirrors `llvm-mirror` and `flydsl-mirror`
+(`-<md5>` slug per non-default origin), never wiped, see `.ci/CLAUDE.md`. Both builds
+run in `--tmpfs /scratch:exec` and keep nothing.
 
 ### Build environments
 
-The LLVM half builds in `aotriton:base-py<X.Y>`, built on demand like every
-other image here. The FlyDSL half needs ROCm as well: FlyDSL's
-`lib/Runtime/ROCm/CMakeLists.txt` does `find_package(hip REQUIRED)` under its
-only backend, so it cannot configure without it. It builds in
-`aotriton:buildenv-rocm<ver>-py<X.Y>`, the release suite's own
-`theRock.Dockerfile` with `BASE_TAG` pointing at the right Python (`--rocm
-<ver>` selects the TheRock version). That is a *link* requirement for a HIP
-launcher AOTriton never uses — it compiles under `COMPILE_ONLY=1` — so the ROCm
-version has no bearing on the kernels the wheel produces, and **no GPU is
-needed** for any of this.
+The LLVM half builds in `aotriton:base-py<X.Y>`, the FlyDSL half in
+`aotriton:buildenv-rocm<ver>-py<X.Y>` (the release suite's `theRock.Dockerfile`,
+`--rocm <ver>` selecting the TheRock version); both are built on demand. FlyDSL needs
+ROCm only to link -- `lib/Runtime/ROCm/CMakeLists.txt` does `find_package(hip
+REQUIRED)` under its only backend -- for a HIP launcher AOTriton never uses
+(`COMPILE_ONLY=1`), so the ROCm version does not affect the kernels and **no GPU is
+needed**.
 
-`.ci/flydsl-patch/*.patch` is applied to the FlyDSL checkout first. Two today:
+`.ci/flydsl-patch/*.patch` is applied to the checkout first. Two today:
 
-* `lib/Runtime/ROCm/CMakeLists.txt` searches `/opt/rocm*` for HIP, which a
-  TheRock root is not — it is a site-packages directory named by `rocm-sdk
-  path --root`. The patch prefers `ROCM_PATH` and keeps the glob as the
-  fallback, the same precedence the repository root's `CMakeLists.txt` uses.
-* `pyproject.toml` asks for `nanobind>=2.0`, which resolves to 3.0.1, while
-  MLIR's `MLIRDetectPythonEnv.cmake` does `find_package(nanobind 2.9)` and
-  nanobind treats a major bump as incompatible. The bound has to be in
-  `pyproject.toml` because pip's build isolation installs build requirements
-  into its own overlay, where a `pip install nanobind==...` in the surrounding
-  interpreter does not reach.
+* `lib/Runtime/ROCm/CMakeLists.txt` searches `/opt/rocm*` for HIP, which a TheRock
+  root is not (a site-packages directory named by `rocm-sdk path --root`); the
+  patch prefers `ROCM_PATH`, keeping the glob as fallback.
+* `pyproject.toml` asks for `nanobind>=2.0`, resolving to 3.0.1, while MLIR's
+  `MLIRDetectPythonEnv.cmake` does `find_package(nanobind 2.9)` and nanobind treats
+  a major bump as incompatible. The bound must live in `pyproject.toml`: pip's
+  build isolation installs build requirements into its own overlay.
 
-The count appears in the wheel's version (`.p<n>`), so adding a patch is a
-cache miss. A patch that stops applying is a hard error: FlyDSL having moved
-the code underneath it is something to look at, not to build through.
-
-Neither script requires a credential: the FlyDSL compiler repo
-(`https://github.com/ROCm/FlyDSL`) and `https://github.com/ROCm/llvm-project`
-are both public. `--pat_environ <VAR>` names — by name, never by value — an
-environment variable holding a token if you point one at a private origin;
-it reuses `common-git-cache.sh`'s existing plumbing rather than a second
-mechanism.
+A patch that stops applying is a hard error, as is a FlyDSL whose
+`scripts/build_llvm.sh` patches LLVM itself (added after v0.3.1) -- the tarball
+here is built without it. Neither script needs a credential; both origins are
+public. `--pat_environ <VAR>` names -- by name, never by value -- an environment
+variable holding a token for a private origin.
 
 ## Release the Package
 
