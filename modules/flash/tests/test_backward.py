@@ -26,25 +26,35 @@ from _core_test_backward import (
     BWDOP_ids,
     fmt_nheads,
     fmt_hdim,
+    PRIME_HEADDIMS,
     core_test_logsumexp_scaling,
     core_test_op_bwd,
     core_test_large_bf16_nan_values,
 )
+from _common_test import ALL_LAYOUTS, StorageLayout
 
 if FOR_RELEASE >= 0:
     @pytest.mark.parametrize('BATCH', [3])
-    @pytest.mark.parametrize('N_HEADS', [5, (10, 2)] if BWD_IMPL != 2 else [5], ids=fmt_nheads)
-    @pytest.mark.parametrize('D_HEAD', [8, 64, 184, (24, 152), (120, 8)], ids=fmt_hdim)
+    @pytest.mark.parametrize('N_HEADS', [5, (10, 2)] if BWD_IMPL != 'aiter' else [5], ids=fmt_nheads)
+    @pytest.mark.parametrize('D_HEAD', [8, 64, 184, (24, 152), (120, 8), (64, 32)], ids=fmt_hdim)
     @pytest.mark.parametrize('seqlen_q', [11, 523, 2048])
     @pytest.mark.parametrize('seqlen_k', [31, 337, 1063])
-    @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
-    @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
+    # pairing causal and bias_type to eliminate programmatic skips.
+    # Gated on BWD_IMPL != 'aiter' for the same reason line 71 below is: AITER ASM
+    # does not support bias, so the matrix-bias pair has to come out of the
+    # list rather than be skipped inside the test -- the point of pairing is
+    # that there is no programmatic skip left here.
+    @pytest.mark.parametrize('causal,bias_type',
+                             [(False, None), (False, 'matrix'), (True, None)]
+                             if BWD_IMPL != 'aiter' else [(False, None), (True, None)],
+                             ids=['CausalOff-BiasOff', 'CausalOff-BiasOn', 'CausalOn-BiasOff']
+                             if BWD_IMPL != 'aiter' else ['CausalOff-BiasOff', 'CausalOn-BiasOff'])
+    @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 'aiter' else [0.0])
     @pytest.mark.parametrize('dtype', DTYPES)
     @pytest.mark.parametrize('sm_scale', ['l1'])
     @pytest.mark.parametrize('storage_flip', [True])
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)
-    def test_fast(request, gpu_id, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
-        bias_type = None
+    def test_fast(request, gpu_id, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
         core_test_op_bwd(request, args, device=gpu_id)
 
@@ -55,7 +65,7 @@ if FOR_RELEASE > 0:
     @pytest.mark.parametrize('seqlen_q', REGULAR_SEQLEN)
     @pytest.mark.parametrize('seqlen_k', REGULAR_SEQLEN)
     @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
-    @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
+    @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 'aiter' else [0.0])
     @pytest.mark.parametrize('dtype', DTYPES)
     @pytest.mark.parametrize('sm_scale', ['l1', 'l2'])
     @pytest.mark.parametrize('storage_flip', [False, True])
@@ -65,13 +75,13 @@ if FOR_RELEASE > 0:
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
         core_test_op_bwd(request, args, device=gpu_id)
 
-if FOR_RELEASE > 0 and BWD_IMPL != 2:  # AITER ASM does not support bias ATM
+if FOR_RELEASE > 0 and BWD_IMPL != 'aiter':  # AITER ASM does not support bias ATM
     @pytest.mark.parametrize('BATCH', [3])
     @pytest.mark.parametrize('N_HEADS', [5])
     @pytest.mark.parametrize('D_HEAD', ALL_INT_HEADDIMS, ids=fmt_hdim)
     @pytest.mark.parametrize('seqlen_q', REGULAR_SEQLEN_2K)
     @pytest.mark.parametrize('seqlen_k', REGULAR_SEQLEN_2K)
-    @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
+    @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 'aiter' else [0.0])
     @pytest.mark.parametrize('dtype', DTYPES)
     @pytest.mark.parametrize('sm_scale', ['l1'])
     @pytest.mark.parametrize('storage_flip', [False, True])
@@ -85,7 +95,7 @@ if FOR_RELEASE > 0 and BWD_IMPL != 2:  # AITER ASM does not support bias ATM
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
         core_test_op_bwd(request, args, device=gpu_id)
 
-if FOR_RELEASE > 0 and BWD_IMPL != 2:  # AITER ASM does not expose GQA
+if FOR_RELEASE > 0 and BWD_IMPL != 'aiter':  # AITER ASM does not expose GQA
     @pytest.mark.parametrize('BATCH', [3])
     @pytest.mark.parametrize('N_HEADS', [(16, 8), (10, 2)])
     @pytest.mark.parametrize('D_HEAD', ALL_INT_HEADDIMS, ids=fmt_hdim)
@@ -99,6 +109,83 @@ if FOR_RELEASE > 0 and BWD_IMPL != 2:  # AITER ASM does not expose GQA
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)
     def test_gqa(request, gpu_id, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
         bias_type = None
+        args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+        core_test_op_bwd(request, args, device=gpu_id)
+
+if FOR_RELEASE >= 0:
+    # The 8xD input contract, exercised. See PRIME_HEADDIMS in
+    # _core_test_backward.py for why these were disabled and what changed.
+    @pytest.mark.parametrize('BATCH', [3])
+    @pytest.mark.parametrize('N_HEADS', [5])
+    @pytest.mark.parametrize('D_HEAD', PRIME_HEADDIMS, ids=fmt_hdim)
+    @pytest.mark.parametrize('seqlen_q', [257])
+    @pytest.mark.parametrize('seqlen_k', [571])
+    @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
+    @pytest.mark.parametrize('dropout_p', [0.0])
+    @pytest.mark.parametrize('dtype', DTYPES)
+    @pytest.mark.parametrize('sm_scale', ['l1'])
+    @pytest.mark.parametrize('storage_flip', [False, True])
+    @pytest.mark.parametrize('bias_type', [None], ids=['BiasOff'])
+    @pytest.mark.parametrize('BWDOP', BWDOP_ids)
+    def test_prime_hdim(request, gpu_id, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
+        args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+        core_test_op_bwd(request, args, device=gpu_id)
+
+if FOR_RELEASE >= 0:
+    # **Every tensor in a different memory layout, with the head dim off the
+    # 8-multiple grid.** test_prime_hdim above proves the 8xD contract holds;
+    # this proves the descriptor that implements it is derived from the right
+    # tensor's stride, which is a question only a permuted layout can ask.
+    #
+    # `_slab_span_elems` spans a `(batch, head)` slab as
+    # `(rows-1)*stride_seq + ceil8(hdim)`, built per tensor from THAT tensor's
+    # own stride. Under BHSD every tensor agrees, so reading the wrong one is
+    # invisible -- and BHSD plus the single transposition `storage_flip` reaches
+    # were the only layouts anything exercised.
+    #
+    # Sensitivity: end a slab at `hdim` instead and the hardware drops the dword
+    # holding columns `hdim-1` and `hdim`, taking the real column with it on the
+    # last row of every slab. Measured at these shapes: `O[.., seqlen_q-1,
+    # hdim-1]` never stored, `dQ[.., seqlen_q-1, hdim-1]` and `dK/dV[..,
+    # seqlen_kv-1, hdim-1]` garbage, and the NaN left in O reaches every element
+    # of dK through delta.
+    LAYOUT_CASES = [StorageLayout.round_robin(case) for case in range(len(ALL_LAYOUTS))]
+
+    # BATCH and N_HEADS must BOTH be > 1. At 1 the corresponding stride is
+    # arbitrary and unconstrained, so the six permutations collapse into fewer
+    # than six distinct stride patterns and the test stops asking its question.
+    @pytest.mark.parametrize('BATCH', [3])
+    @pytest.mark.parametrize('N_HEADS', [5], ids=fmt_nheads)
+    # One prime on each side of the point where the D axis stops being a single
+    # tile: 53 rides one block, 179 is loaded as a composed 128+64 pair, so both
+    # the simple and the composed store path meet a row whose last dword straddles
+    # the slab bound. Both are odd, which is what puts the last real column in the
+    # same dword as the first pad column.
+    @pytest.mark.parametrize('D_HEAD', [53, 179], ids=fmt_hdim)
+    # Off the block grid in both directions, as test_prime_hdim uses them: the
+    # defect is on the LAST row of a slab, so a seqlen that divides the block size
+    # evenly would never produce a ragged one.
+    @pytest.mark.parametrize('seqlen_q', [257])
+    @pytest.mark.parametrize('seqlen_k', [571])
+    # Paired rather than crossed, the way test_fast pairs them, so there is no
+    # programmatic skip: `causal and bias_type is not None` is rejected by
+    # _scaled_dot_product_attention, and AITER ASM has no bias at all. Bias is in
+    # here because it has a descriptor of its own (`_bias_slab_num_records_bytes`)
+    # and an innermost axis that is the KV sequence rather than a head dim.
+    @pytest.mark.parametrize('causal,bias_type',
+                             [(False, None), (False, 'matrix'), (True, None)]
+                             if BWD_IMPL != 'aiter' else [(False, None), (True, None)],
+                             ids=['CausalOff-BiasOff', 'CausalOff-BiasOn', 'CausalOn-BiasOff']
+                             if BWD_IMPL != 'aiter' else ['CausalOff-BiasOff', 'CausalOn-BiasOff'])
+    @pytest.mark.parametrize('dropout_p', [0.0])
+    @pytest.mark.parametrize('dtype', DTYPES)
+    @pytest.mark.parametrize('sm_scale', ['l1'])
+    # The `storage_flip` slot takes either spelling; _do_test_op_bwd dispatches on
+    # the type. See _common_test.StorageLayout for the round robin these are.
+    @pytest.mark.parametrize('storage_flip', LAYOUT_CASES,
+                             ids=[f'Layouts{case}' for case in range(len(ALL_LAYOUTS))])
+    @pytest.mark.parametrize('BWDOP', BWDOP_ids)
+    def test_memory_layouts(request, gpu_id, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
         core_test_op_bwd(request, args, device=gpu_id)
 
@@ -116,7 +203,7 @@ if FOR_RELEASE > 1:  # Make the loading faster
     @pytest.mark.parametrize('bias_type', [None, 'matrix'], ids=['BiasOff', 'BiasOn'])
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)
     def test_irregulars(request, gpu_id, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
-        if bias_type is not None and BWD_IMPL == 2:
+        if bias_type is not None and BWD_IMPL == 'aiter':
             pytest.skip("Bias is not supported in AITER ASM backend")
         if bias_type is not None and (seqlen_q > 2048 or seqlen_k > 2048):
             pytest.skip("Skip large UT with bias to avoid OOM")

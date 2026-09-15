@@ -73,6 +73,40 @@ with slack: the kernel rounds each row up to `ceil8(head_dim)`, so those extra
 columns must belong to the caller. `_args` checks this and refuses otherwise
 rather than corrupting the neighbouring row.
 
+**The contract grants the D axis and nothing else.** Stated as a promise the
+caller makes, it is: `tensor[b, h, s, :]` is `ceil8(head_dim)` contiguous
+elements, for every `(b, h, s)`, the last one included. It is not a promise
+that anything *else* is contiguous, on any axis. A caller may legitimately put
+a guard page -- or an unmapped hole, or another tensor -- between
+`tensor[b, h, s, :]` and `tensor[b, h, s+1, :]`, between one head and the next,
+or between one batch and the next; the strides say where the next row starts,
+never that the bytes in between are readable. Only `stride(3) == 1` and the
+`ceil8` slack behind it are ours to touch.
+
+That cuts both ways and both ways are load-bearing:
+
+- **Round the D axis up, always.** The `ceil8` columns are granted on *every*
+  row, so a buffer descriptor must cover the last row's tail chunk too. One
+  that stops at `head_dim` does not merely decline the pad: gfx950 range-checks
+  a multi-dword buffer op per dword and drops any dword not wholly inside
+  `num_records`, so it takes the real column `head_dim - 1` with it.
+  `_slab_span_elems` in `fmha_dualwave_gfx950.py` is where that is spent, and
+  carries the measurement of what the mistake cost.
+- **Round no other axis, ever, by any amount.** There is no slack on the
+  sequence, head or batch axes to rely on, so a bound may only ever end on an
+  element the D grant covers. `_bias_slab_num_records_bytes` holds the same
+  line on a bias's KV axis and buys its last column back by narrowing the
+  *load* instead (`narrow_tail`), which is the shape any future fix of this
+  kind should take.
+
+Note what this does *not* buy, so it is not mistaken for a guarantee: a linear
+`num_records` cannot express a per-row extent, so it cannot stop the pad access
+on an interior row either way. A caller who puts a guard page immediately after
+column `head_dim - 1` is outside the contract and faults regardless of how the
+descriptor is bounded -- before this rule at row 0, after it at the last row.
+What the bound does protect is the region past the end of the slab, which for
+the last `(batch, head)` slab is past the end of the tensor.
+
 --- Phase status -----------------------------------------------------------
 
 P0 (this ABI, runtime scale/head counts/strides, LSE), P1 (runtime
@@ -1276,6 +1310,14 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         # every row. An 8-aligned pitch puts that inside the row's own slack;
         # a tightly-packed odd width -- contiguous (B, H, S, 100), pitch 100 --
         # has no slack, and the chunk at column 96 runs into the *next row*.
+        #
+        # The grant is the D axis and only the D axis: `t[b, h, s, :]` is
+        # `ceil8(hdim)` contiguous elements for every `(b, h, s)` including the
+        # last, and nothing is assumed contiguous on any other axis -- a guard
+        # page between two rows, two heads or two batches is the caller's right.
+        # See the module docstring; that is why this checks the strides for
+        # *slack* rather than for a packed layout, and why no bound anywhere in
+        # these kernels rounds an axis other than D.
         #
         # Every head_dim that is a multiple of 8 satisfies this contiguously,
         # which is what makes 8xD the natural input contract even though the

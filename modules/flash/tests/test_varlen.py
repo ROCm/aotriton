@@ -21,6 +21,13 @@ from _common_test import (
     SdpaParams,
     fmt_hdim,
 )
+# The dtype set, from the one place that decides it. This file used to spell the
+# list out and gate it on `BWD_IMPL == 'aiter'` alone, which is half the rule: fp32
+# is
+# also out when the FORWARD is pinned to flyc, and that half was added to
+# _core_test_backward.py only -- so every fp32 varlen case asked for a kernel
+# that was never built. Importing the name is what stops the two drifting again.
+from _core_test_backward import DTYPES, SKIP_BWD
 
 FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
 
@@ -202,6 +209,17 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
 
+    if SKIP_BWD:
+        # Forward-only, the same contract `_core_test_backward` honours: a
+        # backward-less backend must not be judged on a backward this harness
+        # launched for it. `no_backward=True` keeps the forward assertion below
+        # exactly the one the full path makes.
+        is_allclose, adiff, _ga, _gd, tfts = ctx.validate_with_reference(
+            tri_out, [], no_backward=True, return_target_fudge_factors=True)
+        assert is_allclose, f'Forward pass {is_allclose=} {tfts=}'
+        print(f'{adiff=} (SKIP_BWD=1, backward not run)')
+        return
+
     # # Backward
     dout = torch.rand_like(tri_out)
     if PROBE_UNSUPPORTED:
@@ -267,11 +285,11 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
     print(f'{adiff=} {grads_adiff=}')
 
 @pytest.mark.parametrize('N_HEADS', [3])
-@pytest.mark.parametrize('D_HEAD', [64, 128, 192] if BWD_IMPL == 2 else [8, 64, 184, (24, 152), (120, 8)], ids=fmt_hdim)
+@pytest.mark.parametrize('D_HEAD', [64, 128, 192] if BWD_IMPL == 'aiter' else [8, 64, 184, (24, 152), (120, 8)], ids=fmt_hdim)
 @pytest.mark.parametrize('n_seqlen', range(2, 24, 5))
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
-@pytest.mark.parametrize('dropout_p', [0.0] if BWD_IMPL == 2 else [0.0, 0.5])
-@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16] if BWD_IMPL == 2 else [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize('dropout_p', [0.0] if BWD_IMPL == 'aiter' else [0.0, 0.5])
+@pytest.mark.parametrize('dtype', DTYPES)
 @pytest.mark.parametrize('sm_scale', ['l1', 'l2'] if FOR_RELEASE > 0 else ['l1'])
 @pytest.mark.parametrize('varlen_type', ['compact', 'padded', 'strided'])
 @pytest.mark.parametrize('lse_layout', ['HT', 'TH'] if FOR_RELEASE > 0 else ['HT'])

@@ -17,18 +17,24 @@ from attn_torch_function import (
     attention,
     AttentionExtraArgs,
     BWD_IMPL,
-    V3_API,
+    FWD_IMPL,
     PROBE_UNSUPPORTED,
     hipError_t,
     hipGetLastError,
 )
 from _common_test import (
+    BHSD,
     SdpaContext,
     SdpaParams,
     SdpaContextFromNPZ,
+    StorageLayout,
     AOTRITON_TORCH_ONLY_USE_CPU,
+    alloc_with_layout,
+    assert_layout,
     fmt_hdim,
     fmt_nheads,
+    narrow_to_prime,
+    cdiv,
 )
 
 RECORD_ADIFFS_TO = os.getenv('RECORD_ADIFFS_TO', default=None)
@@ -56,31 +62,76 @@ def exit_pytest():
 
 FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
 SMALL_VRAM = bool(int(os.getenv('SMALL_VRAM', default='0')))
+# SKIP_BWD=1 runs the forward half of these tests only: the forward launch, the
+# reference comparison, and the dropout-mask path -- everything up to and
+# excluding .backward().
+#
+# This exists so a forward-only backend can be exercised by the same tests as
+# everything else. The flyc backend (FWD_IMPL=flyc) has no backward at all, so
+# every backward case would fail for a reason that says nothing about the
+# forward kernel under test.
+#
+# It also makes test_forward.py retirable: with SKIP_BWD=1 these tests cover
+# the same ground, over a wider parameter set, and there is then one file
+# describing a forward rather than two that must agree.
+SKIP_BWD = bool(int(os.getenv('SKIP_BWD', default='0')))
 
 DTYPES = [torch.float16, torch.bfloat16, torch.float32]
 
-if BWD_IMPL is None or BWD_IMPL == 0:
+if FWD_IMPL == 'flyc':
+    # flyc is f16/bf16 WMMA only -- modules/flash/aot/flyc_attn_fwd.py's
+    # _flyc_fwd_disabled rejects fp32 outright, so no hsaco exists for those
+    # functionals. Forcing the backend bypasses that predicate (it is the
+    # operator's selection it overrides, not the kernel's own support), so
+    # without this every fp32 case asks for a kernel that was never built.
+    DTYPES = [torch.float16, torch.bfloat16]
+
+if BWD_IMPL in (None, 'triton_split'):
     POT_HEADDIMS = [16, 32, 64, 128, 256, 512]
     NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
     M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216, 248, 408]
-elif BWD_IMPL == 1:
+elif BWD_IMPL == 'triton_fuse':
     POT_HEADDIMS = [16, 32, 64, 128, 256]
     NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
     M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216]
-elif BWD_IMPL == 2:
+elif BWD_IMPL == 'aiter':
     POT_HEADDIMS = [16, 32, 64, 128]
     NPOT_HEADDIMS = [48, 80, 96, 160, 192]
     M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184]
     DTYPES = [torch.float16, torch.bfloat16]
+elif BWD_IMPL == 'flyc':
+    # flyc. Full head-dim coverage, same as the split path: both FlyDSL backward
+    # tile ladders (fmha_tuning_bwd_{dkdv,dq}_gfx1201._BLOCK_DMODEL_LADDER) cover
+    # every value of the operator's BLOCK_DMODEL axis, so an off-ladder test head
+    # dim rounds up to a compiled tile and rides the PADDED_HEAD axis exactly as
+    # it does for Triton.
+    #
+    # f16/bf16 only, and this is the BACKWARD's own exclusion, not an echo of
+    # the forward's above: _flyc_common.py's predicate rejects fp32 too, so a
+    # mixed Triton-forward run still has no fp32 backward kernel to call.
+    DTYPES = [torch.float16, torch.bfloat16]
+    POT_HEADDIMS = [16, 32, 64, 128, 256, 512]
+    NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
+    M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216, 248, 408]
 else:
     assert False, f'Unsupported BWD_IMPL {BWD_IMPL}'
-# Prime head dimensions must be disabled
-# PyTorch allocate tensors compactly by default. For example:
-#   print(torch.rand((3,5,1033, 57), dtype=torch.float16, device='cuda').stride())
-#   (294405, 58881, 57, 1)
-# GPU kernels are unable to support unaligned memory access in any performant way
-# PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 83, 113, 149, 179, 211, 241] + ([401] if not BWD_IMPL else [])
-# Multiple of 8 head dimensions are tested instead
+# **Prime head dimensions, re-enabled with the allocation the contract wants.**
+# They were disabled because PyTorch allocates compactly by default --
+#   torch.rand((3, 5, 1033, 57)).stride() == (294405, 58881, 57, 1)
+# -- and the kernel's input contract is 8xD: loads and stores are 8 columns
+# wide, so it touches `ceil8(hdim)` columns of every row and needs the caller to
+# own them. A compact 57 has no slack, so such a tensor is outside the contract
+# and testing one measures the harness rather than the kernel.
+#
+# `_do_test_op_bwd` now allocates an off-grid D_HEAD at `ceil8(D_HEAD)` and
+# passes a `[..., :D_HEAD]` view: extent odd, pitch on the grid, exactly what an
+# AOTriton caller with a padded buffer hands over. The slack is filled with NaN,
+# so a mask that multiplies by zero instead of discarding is caught rather than
+# passing quietly. Multiples of 8 are unaffected.
+# 401 allocates at 408, which only the full-coverage backends have a kernel for.
+_FULL_HEADDIM_COVERAGE = (None, 'triton_split', 'flyc')
+PRIME_HEADDIMS = ([7, 23, 37, 53, 67, 73, 83, 113, 149, 179, 211, 241]
+                  + ([401] if BWD_IMPL in _FULL_HEADDIM_COVERAGE else []))
 REGULAR_SEQLEN = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
 REGULAR_SEQLEN_2K = [8, 16, 32, 64, 128, 256, 512, 1024, 2048]  # OOM when test with bias
 PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919]
@@ -106,13 +157,17 @@ def round_list_to_8x(data_list):
 if SMALL_HEADDIM_ONLY:
     POT_HEADDIMS = remove_larger_than(POT_HEADDIMS, 192)
     NPOT_HEADDIMS = remove_larger_than(NPOT_HEADDIMS, 192)
-    # PRIME_HEADDIMS = remove_larger_than(PRIME_HEADDIMS, 192)
+    # Re-enabled with PRIME_HEADDIMS itself: while that list was dead the filter
+    # was pointless, but test_prime_hdim parametrises over it again. Unfiltered,
+    # the two shards BOTH run the whole prime matrix, and 401 (allocated at 408)
+    # lands on the shard that exists to avoid exactly that memory pressure.
+    PRIME_HEADDIMS = remove_larger_than(PRIME_HEADDIMS, 192)
     M8_HEADDIMS = remove_larger_than(M8_HEADDIMS, 192)
 
 if LARGE_HEADDIM_ONLY:
     POT_HEADDIMS = remove_not_larger_than(POT_HEADDIMS, 192)
     NPOT_HEADDIMS = remove_not_larger_than(NPOT_HEADDIMS, 192)
-    # PRIME_HEADDIMS = remove_not_larger_than(PRIME_HEADDIMS, 192)
+    PRIME_HEADDIMS = remove_not_larger_than(PRIME_HEADDIMS, 192)
     M8_HEADDIMS = remove_not_larger_than(M8_HEADDIMS, 192)
 
 ALL_INT_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS + M8_HEADDIMS
@@ -167,18 +222,16 @@ Note: for now we cannot really test both fused and split kernel at the same
 '''
 #TODO: Let BWDOP determine the real backward op at runtime
 
-def _get_BWDOP_id():
-    if BWD_IMPL == 2:
-        return 'AITERASM'
-    if BWD_IMPL == 1:
-        return 'Fused'
-    if BWD_IMPL == 0:
-        return 'Split'
-    if V3_API and BWD_IMPL is None:
-        return 'V3'
-    assert False, f'Unsupported BWD_IMPL {BWD_IMPL}'
-
-BWDOP_ids = [_get_BWDOP_id()]
+# The pytest id for the pinned backward backend. Its own vocabulary, kept
+# because it is printed in every test name that has ever been reported.
+_BWDOP_ID = {
+    None            : 'V3',
+    'triton_split'  : 'Split',
+    'triton_fuse'   : 'Fused',
+    'aiter'         : 'AITERASM',
+    'flyc'          : 'Flyc',
+}
+BWDOP_ids = [_BWDOP_ID[BWD_IMPL]]
 
 def _make_block_eyes(q, base=1.0, inc=0.0):
     dhead = q.shape[-1]
@@ -218,7 +271,7 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
         sm_scale = 1.0 / HDIM_QK
     elif sm_scale == 'l2':
         sm_scale = 1.0 / math.sqrt(HDIM_QK)
-    if BWD_IMPL == 2:  # AITER ASM
+    if BWD_IMPL == 'aiter':  # AITER ASM
         if dropout_p > 0.0:
             pytest.skip("Dropout unsupported in AITER ASM backend for now. Need adjust FWD PRNG function")
         if HDIM_MAX < 64:
@@ -254,15 +307,57 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
     SKIP_DB = True if bias_type is None else False
     USE_AUTOTUNE = True
     torch.manual_seed(20)
-    if isinstance(storage_flip, tuple):
+    # The `storage_flip` slot carries either spelling. A `StorageLayout` names a
+    # layout per tensor, including the ones the kernel writes; a bool or an
+    # `(x, y)` pair is the old single transposition of q/k/v/b. See
+    # `_common_test.StorageLayout` for why both exist.
+    if isinstance(storage_flip, StorageLayout):
+        transpose = None
+        storage_layout = storage_flip
+    elif isinstance(storage_flip, tuple):
         transpose = storage_flip
+        storage_layout = None
     else:
         transpose = (1, 2) if storage_flip else None
-    ctx = SdpaContext(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
-                      bias_type=bias_type, storage_flip=transpose, device=device_str, fillnan=True)
+        storage_layout = None
+    # **A head dim off the 8-multiple grid is allocated on it and narrowed.**
+    # The kernel's input contract is 8xD -- loads and stores are 8 columns wide,
+    # so it touches `ceil8(hdim)` columns of every row and the caller must own
+    # them. `torch.rand(3, 5, 1033, 57)` does not: PyTorch packs it compactly,
+    # there is no slack, and the kernel walks into the next row. That is why
+    # `PRIME_HEADDIMS` above was disabled, and it was the right call for a
+    # compact tensor.
+    #
+    # It is the wrong call for the kernel. Allocating at `ceil8(D_HEAD)` and
+    # handing over a `[..., :D_HEAD]` view gives the extent and the pitch the
+    # contract actually describes -- and `narrow_to_prime` poisons the slack
+    # with NaN, so a masking bug shows up rather than passing quietly. Nothing
+    # changes for a D_HEAD already on the grid.
+    _prime_hdim = D_HEAD if (HDIM_QK % 8 or HDIM_VO % 8) else None
+    _alloc_hdim = D_HEAD if _prime_hdim is None else (
+        8 * cdiv(HDIM_QK, 8) if isinstance(D_HEAD, int)
+        else (8 * cdiv(HDIM_QK, 8), 8 * cdiv(HDIM_VO, 8)))
+    ctx = SdpaContext(BATCH, N_HEADS, _alloc_hdim, seqlen_q, seqlen_k, dtype,
+                      bias_type=bias_type, storage_flip=transpose, device=device_str, fillnan=True,
+                      prime_hdim=_prime_hdim, storage_layout=storage_layout)
     ctx.create_ref_inputs()
     ctx.set_require_grads(skip_dq=SKIP_DQ, skip_dk_dv=SKIP_DK_DV, skip_db=SKIP_DB)
     q, k, v, b = ctx.dev_tensors
+    # The row pitch each tensor's INNERMOST axis requires. For everything but a
+    # bias that is the 8xD contract, restated: the kernel accesses `ceil8(hdim)`
+    # columns of every row, and the gfx950 descriptors cap their D round-up at
+    # the true row pitch -- so a pitch below the grid turns that cap into a clip
+    # of the last real column. A bias's innermost axis is the KV sequence, which
+    # carries no such contract (`_bias_slab_num_records_bytes`), so `seqlen_k`
+    # is all it owes.
+    _row_pitch = {'q': 8 * cdiv(HDIM_QK, 8), 'k': 8 * cdiv(HDIM_QK, 8),
+                  'v': 8 * cdiv(HDIM_VO, 8), 'b': seqlen_k,
+                  'dout': 8 * cdiv(HDIM_VO, 8), 'o': 8 * cdiv(HDIM_VO, 8)}
+    def _check_layout(t, tname):
+        if storage_layout is not None:
+            assert_layout(t, storage_layout[tname], _row_pitch[tname], tname)
+    for _tname, _t in zip(('q', 'k', 'v', 'b'), ctx.dev_tensors):
+        _check_layout(_t, _tname)
     # autotune = True
     # # triton implementation
     ext = AttentionExtraArgs(return_encoded_softmax=False if dropout_p == 0 else True,
@@ -270,13 +365,59 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
                              return_autotune=False,
                              fillnan=True,
                              illaddr_handler=exit_pytest,
+                             # O and every gradient carry the same slack the
+                             # inputs do; `torch.empty_like` on a narrowed view
+                             # would compact it away.
+                             prime_hdim=_prime_hdim,
+                             # O and the gradients get their own layouts; the
+                             # kernel gives each of O, dK and dV a buffer
+                             # descriptor of its own, so leaving them BHSD would
+                             # leave that arithmetic untested.
+                             output_layouts=None if storage_layout is None else storage_layout.outputs(),
                              )
     tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
+    _check_layout(tri_out, 'o')
     dropout_mask = encoded_softmax >= 0 if encoded_softmax is not None else None
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
 
-    dout = torch.rand_like(tri_out)
+    if SKIP_BWD:
+        # Forward-only: validate the forward output against the reference and
+        # stop. Uses validate_with_reference's existing no_backward= rather than
+        # a separate path, so the forward assertion below is exactly the one the
+        # full path makes.
+        is_allclose, adiff, _grads_allclose, _grads_adiff, tfts = ctx.validate_with_reference(
+            tri_out, [], no_backward=True,
+            return_target_fudge_factors=True, use_adiff_entry=use_adiff_entry)
+        ctx.display_validation_results(tri_out, is_allclose, adiff, [], [])
+        # RECORD_ADIFFS_TO before the assert, exactly as the full path below has
+        # it. A tolerance-calibration pass exists to COLLECT the mismatches, so
+        # asserting first would hard-fail the very run whose job is to record
+        # them -- and the only builds that set SKIP_BWD=1 are the flyc ones
+        # whose tolerances are least well known.
+        if RECORD_ADIFFS_TO is not None and not is_allclose:
+            with open(RECORD_ADIFFS_TO, 'a') as f:
+                # grads_adiff is [] rather than absent: the consumer reads a
+                # fixed pair of keys, and "no backward was run" is honestly an
+                # empty list of gradient diffs.
+                dj = { "adiff" : adiff, "grads_adiff" : [] }
+                print(utname, "\t", json.dumps(dj), file=f, flush=True, sep='')
+            pytest.xfail(f"RECORD ADIFFS {adiff=} (SKIP_BWD=1)")
+        assert is_allclose, f'Forward pass {is_allclose=} {tfts=}'
+        print(f'{tri_out=}')
+        print(f'{adiff=} (SKIP_BWD=1, backward not run)')
+        return seqlen_q * seqlen_k * HDIM_MAX
+
+    # dO is read column-wise by the backward, so it needs the slack too --
+    # `rand_like` on the narrowed `tri_out` would hand over a compact row. It
+    # carries a layout for the same reason O does: dO reaches the kernel through
+    # its own descriptor, riding the forward's V slot.
+    _dout_width = tri_out.shape[-1] if _prime_hdim is None else 8 * cdiv(HDIM_VO, 8)
+    dout = narrow_to_prime(alloc_with_layout(tuple(tri_out.shape[:-1]) + (_dout_width,),
+                                             BHSD if storage_layout is None else storage_layout['dout'],
+                                             dtype=tri_out.dtype, device=tri_out.device, rand=True),
+                           None if _prime_hdim is None else HDIM_VO)
+    _check_layout(dout, 'dout')
     if PROBE_UNSUPPORTED:
         try:
             ctx.compute_backward(tri_out, dout)
@@ -336,6 +477,10 @@ def core_test_op_bwd(request, args, device : int | None = None):
 # DEFINED in (Item.location[0] resolves the function's own code object), not the file
 # it was collected from -- so conftest.py's _FILE_ORDER never matched it and it sorted
 # behind every varlen test instead of running with the rest of test_backward.py.
+#
+# The dtype axis lives on the test_* wrapper in test_backward.py and is DTYPES,
+# not a third hardcoded copy of the list: this runs the forward, so the flyc
+# fp32 exclusion applies to it exactly as it does to every other forward here.
 def core_test_logsumexp_scaling(dtype):
     REF_VALUE = 2.79018449783325195
     device = 'cuda'
@@ -353,7 +498,15 @@ def core_test_logsumexp_scaling(dtype):
                              return_logsumexp=True)
     tri_out, _, L = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
     ref_tensor = torch.full_like(L, REF_VALUE)
-    assert torch.allclose(L, ref_tensor)
+    # allclose's default rtol of 1e-5 is fp32's tolerance, but L is the log of a
+    # sum of exponentials of bf16/fp16 inputs, and the exp2 and the accumulation
+    # order differ between backends. Measured relative error against REF_VALUE:
+    # 1.5e-06 for fp16 and 1.3e-05 for bf16, identically on the Triton reference
+    # and on both flyc backends, so bf16 fails the default by a hair on all of
+    # them. 1e-4 covers that with room to spare and is still three orders of
+    # magnitude tighter than what this test is here to catch, which is a base-2
+    # versus base-e mixup in the LSE scaling -- an error of a factor of 1.44.
+    assert torch.allclose(L, ref_tensor, rtol=1e-4)
 
 def core_test_large_bf16_nan_values(hdim):
     real_device = "cuda" if not AOTRITON_TORCH_ONLY_USE_CPU else "cpu"

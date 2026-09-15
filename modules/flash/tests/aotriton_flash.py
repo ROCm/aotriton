@@ -177,7 +177,7 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
              dropout_p, philox_seed, philox_offset1, philox_offset2,
              philox_seed_output, philox_offset_output,
              encoded_softmax, causal, atomic,
-             extargs=None, call_operator=True):
+             extargs=None):
     extargs = attn_options() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
@@ -191,10 +191,9 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
     offsetoutview, offsetoutdevm = mk_aotensor(philox_offset_output)
     esmview, esmdevm = mk_aotensor(encoded_softmax, if_empty_then_like=q)
     atomicview, atomicdevm = mk_aotensor(atomic)
-    causal_type, window_left, window_right = translate_causal(causal, v3_api=call_operator)
+    causal_type, window_left, window_right = translate_causal(causal, v3_api=True)
     if AOTRITON_TORCH_ONLY_USE_CPU:
         hipDeviceSynchronize()
-    assert call_operator
     params = fa_forward_op_params()
     params.Q = qview
     params.K = kview
@@ -231,8 +230,7 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
 
 def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
              dropout_p, philox_seed, philox_offset1, philox_offset2, causal,
-             extargs=None, call_operator=True):
-    assert call_operator
+             extargs=None):
     extargs = attn_options() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
@@ -250,7 +248,7 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
     offset1view, offset1devm = mk_aotensor(philox_offset1)
     if AOTRITON_TORCH_ONLY_USE_CPU:
         hipDeviceSynchronize()
-    causal_type, window_left, window_right = translate_causal(causal, v3_api=call_operator)
+    causal_type, window_left, window_right = translate_causal(causal, v3_api=True)
     params = fa_backward_op_params()
     params.Q = qview;
     params.K = kview;

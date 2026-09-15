@@ -2344,6 +2344,19 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         kernel touches `ceil8(hdim)` columns per row, so those extra elements
         must belong to the caller.
 
+        **The grant covers the D axis and no other.** What the caller promises
+        is that `t[b, h, s, :]` is `ceil8(hdim)` contiguous elements, for every
+        `(b, h, s)` and not merely for the interior ones. What the caller does
+        *not* promise is that anything else is contiguous: a guard page, an
+        unmapped hole or another tensor may sit between two rows, between two
+        heads or between two batches, since a stride says where the next row
+        begins and never that the bytes in between are readable. So a buffer
+        bound may round the D axis up -- it must, or the hardware's per-dword
+        range check drops the tail chunk and takes the real column `hdim - 1`
+        with it -- and may round no other axis by any amount. `_slab_span_elems`
+        in `fmha_dualwave_gfx950.py` is where both halves are spent, and
+        `flash_attn_func_gfx950`'s module docstring states the contract in full.
+
         Two separate requirements, and the pitch is only the first. *Alignment*:
         a row starts at `sum(index * stride)`, so every non-D stride must be a
         multiple of 8 for the 16-byte access to land aligned. *Slack*: the gap

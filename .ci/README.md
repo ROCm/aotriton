@@ -13,7 +13,6 @@ NOTE: ALL SCRIPTS REQUIRE **BASH**.
 | releasesuite-git-head.sh   | Build AOTriton release tarballs (calls build_triton_wheels.sh first) |
 | build_triton_wheels.sh     | Build and cache Triton wheels from commit hashes          |
 | triton-tester-build.sh     | (Under redesign) Build AOTriton with a Triton mainline wheel   |
-| triton-tester-run.sh       | Run tests to check correctness of Triton mainline         |
 
 ## Naming Scheme
 
@@ -186,33 +185,10 @@ Case 3: Build Runtime Only
 bash .ci/releasesuite-git-head.sh --runtime
 ```
 
-# Example Usages of AOTrtion Tester for Triton Mainline
+# AOTriton Tester for Triton Mainline
 
-> **Under redesign.** `triton-wheel-build.sh` has been removed and
-> `triton-tester-build.sh` is a placeholder while this flow is reworked to use
-> the git mirror caching in `common-git-cache.sh`. The
-> `triton-tester-run.sh` step below still applies to an already-built tester
-> package.
+> **Retired.** `triton-tester-run.sh` and `modules/flash/tests/triton_tester.py`
+> have been removed: the tester pinned the V2 API, which no longer exists.
+> `run-test.sh` covers the same ground against a build made with a mainline
+> Triton wheel.
 
-## Run Triton Tester in Target System
-
-Example
-```
-# Inside GPU-enabled docker container from image
-# rocm/pytorch:rocm6.4.3_ubuntu24.04_py3.12_pytorch_release_2.6.0
-git clone https://github.com/ROCm/aotriton.git
-cd aotriton
-# Must run from the repo root: requirements-dev.txt installs pytest-gpu-lease
-# from a path (./python/pytest-gpu-lease) resolved against the current
-# working directory, not the requirements file's location.
-pip install -r requirements-dev.txt
-# Suppose the tester package is put under /
-tar xf /aotriton-triton_tester-103aae3ca9da15039785b24070bfeee79bb1fc54-gfx1100.tar.gz
-bash .ci/triton-tester-run.sh 0
-tail triton_tester_pass0.out  # Check pytest output
-```
-
-Syntax:
-```bash
-bash .ci/triton-tester-run.sh <Pass Number>
-```

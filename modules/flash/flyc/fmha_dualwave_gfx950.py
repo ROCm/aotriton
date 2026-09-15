@@ -54,6 +54,8 @@ from dataclasses import replace
 
 import fmha_common_gfx1201 as fmha
 from fmha_common_gfx1201 import MaskedAxis
+from fmha_traits_gfx950 import BF16_BYTES as _ELEM_BYTES
+from fmha_traits_gfx950 import DMA_BYTES as _ACCESS_BYTES
 from gfx950_standalone import buffer_ops, dualwave
 from philox import Philox
 
@@ -63,6 +65,12 @@ from flydsl.expr import arith, const_expr, gpu, range_constexpr, rocdl
 from flydsl.expr.typing import T
 from flydsl.expr.typing import Vector as Vec
 from flydsl.expr.utils.arith import _to_raw as as_mlir_value
+
+# Elements touched by one D-axis access. Every load and store on that axis is
+# `DMA_BYTES` wide, which is the whole content of the 8xD input contract
+# (`_check_8x_d_contract` states it in the same two numbers); `_slab_span_elems`
+# is the one place that has to agree with it.
+_D_ACCESS_ELEMS = _ACCESS_BYTES // _ELEM_BYTES
 
 __all__ = [
     "ParityGemmHelper",
@@ -483,10 +491,12 @@ def _bias_slab_num_records_bytes(seqlen_q, seqlen_kv, stride_b_seq_q, elem_bytes
     untightened span pins that case back to 0 and is a no-op everywhere else,
     since `seqlen_k <= stride_b_seq_q` always holds.
 
-    **Do not round this up, and do not widen it back to `loose`.**
-    `_slab_span_elems` holds the same line on the D axis, for the same reason
-    and against upstream, which rounds there; that docstring carries the
-    evidence. Neither descriptor covers a byte the caller did not hand us.
+    **Do not round this up, and do not widen it back to `loose`.** The KV axis
+    of a bias carries no padding contract at all -- `seqlen_k` is the width the
+    caller allocated, full stop -- so there is no slack here to spend, and this
+    is where `_slab_span_elems` and this function part company. That one rounds
+    its D axis to `_D_ACCESS_ELEMS` because the 8xD contract makes those columns
+    the caller's; nothing says the same of bias column `seqlen_k`.
 
     Ending on the last valid element costs the *readers* something: gfx950 range-checks a
     multi-dword buffer op per dword and drops any dword not wholly inside
@@ -505,12 +515,12 @@ def _bias_slab_num_records_bytes(seqlen_q, seqlen_kv, stride_b_seq_q, elem_bytes
 
 
 def _slab_span_elems(rows, stride_seq, hdim):
-    """Elements in a `(batch, head)` slab, ending on its last **real** element.
+    """Elements in a `(batch, head)` slab, ending on its last **accessed** element.
 
     `_bias_slab_num_records_bytes`'s problem, on the Q/K/V/O/DO/DK/DV slabs,
-    with the same answer: `stride_seq` is the distance between rows, `hdim` is
-    the width of one, and the two coincide only when the tensor is contiguous
-    in `(.., seqlen, hdim)` order. A BSHD caller hands us
+    with the same answer: `stride_seq` is the distance between rows, the row
+    itself is `ceil8(hdim)` wide, and the two coincide only when the
+    tensor is contiguous in `(.., seqlen, hdim)` order. A BSHD caller hands us
     `(batch, seqlen, head, hdim)`, where the row stride is `num_heads * hdim`
     and the rest of it belongs to the *other heads* of that row -- so the
     obvious `rows * stride_seq` overshoots the slab by `stride_seq - hdim`.
@@ -526,57 +536,91 @@ def _slab_span_elems(rows, stride_seq, hdim):
     inside a `num_records` that should never have covered them. Whether that
     faults is up to the page mapping, which is why it surfaced as intermittent
     `pytest-xdist` worker deaths on the padded head dims rather than as a
-    reproducible failure. Ending on the last row's last real element clamps
+    reproducible failure. Ending on the last row's last accessed element clamps
     exactly those accesses, and clamped is what they always assumed they were.
 
-    **Under BHSD this changes nothing, by construction.** There
-    `stride_seq == hdim`, so `(rows - 1) * stride_seq + hdim` *is*
-    `rows * stride_seq` -- the same descriptor, down to the
-    `oob_off == num_records` equality the D-tail store suppression relies on.
-    Elsewhere the bound only shrinks, so an `oob_off` of `rows * stride_seq`
-    stays at or past it and keeps being dropped.
+    **The row is `ceil8(hdim)` wide, not `hdim`; no axis but D rounds.** That is
+    not a softening of the bound above, it is what the bound above is measuring.
+    Every D-axis load and store is one `DMA_BYTES` chunk, and the 8xD input
+    contract is the promise that makes that legal: `t[b, h, s, :]` is
+    `ceil8(hdim)` contiguous elements for *every* `(b, h, s)`, the last one
+    included, and nothing else is contiguous on any axis -- a caller may put a
+    guard page between two rows, two heads or two batches. The D grant is why
+    this rounds; the absence of any other grant is why nothing else does.
+    `flash_attn_func_gfx950`'s module docstring states the contract in full.
 
-    **Do not round `hdim` up to the load's 8-element chunk**, and this is a
-    deliberate departure from upstream, which does. Their argument is a good
-    one: the D pitch is the one axis carrying an 8-element alignment contract
-    (`flash_attn_func_gfx950`'s module docstring -- "the kernel rounds each row
-    up to `ceil8(head_dim)`, so those extra columns must belong to the caller"
-    -- enforced by `_check_8x_d_contract`), so `ceil8(hdim)` is inside the
-    caller's allocation by agreement rather than by luck. They measured the
-    exact bound clipping a real column, 36 failures at `hdim % 8 == 1`: gfx950
-    range-checks a multi-dword buffer op per dword, so at `hdim = 73` the dword
-    holding columns 72 and 73 straddles a bound ending at 73 and takes the real
-    column 72 with it.
+    **Bounding at `hdim` stops in the middle of a real column, which is the bug
+    this shape fixes.** gfx950 range-checks a multi-dword buffer op per dword
+    and drops any dword not wholly inside `num_records`, so a bound ending at
+    `hdim` takes the dword holding columns `hdim-1` and `hdim` with it -- the
+    real column `hdim-1` included -- on the last row of *every* slab, which is
+    the only row whose chunk the bound can reach. Measured on `test_prime_hdim`
+    at `(3, 5, 257, 571)`, allocation and NaN-poisoned slack exactly as the
+    contract asks: every one of 7/23/37/53/67/73/83/113/149/179/211/241 lost
+    `O[.., seqlen_q-1, hdim-1]` (never stored, so it read back as the fill NaN),
+    and with that repaired still lost `dQ[.., seqlen_q-1, hdim-1]` and
+    `dK/dV[.., seqlen_kv-1, hdim-1]`. An earlier probe of this concluded the two
+    forms were indistinguishable and it was wrong: it read the divergence as
+    confined to the final slab, when the bound is per-slab and clips all of
+    them, and a NaN in `O` then reaches every element of `dK` through `delta`.
 
-    **That does not happen here, and it was checked rather than assumed.**
-    `test_prime_hdim` -- 73/89/113/241 with the allocation the contract asks
-    for, slack filled with NaN -- passes identically on both forms, and a probe
-    of the only place the two can differ (the final row of the final
-    `(batch, head)` slab; the exact bound clips nothing else) finds its error
-    indistinguishable from the bulk either way. There is no column to buy back.
+    **Under a contiguous `(.., seqlen, ceil8(hdim))` layout this changes
+    nothing, by construction.** There `stride_seq == ceil8(hdim)`, so
+    `(rows - 1) * stride_seq + ceil8(hdim)` *is* `rows * stride_seq` -- the same
+    descriptor, down to the `oob_off == num_records` equality the D-tail store
+    suppression relies on.
 
-    So the tie is broken by what the two forms cost when they are wrong. The
-    exact bound cannot read a byte the caller did not hand us. The round-up can,
-    the moment an input arrives without the slack the contract asks for -- and
-    `_args`, which is where that contract is enforced, is a host-side wrapper
-    AOTriton's C++ launcher never calls. A descriptor is the last line of
-    defence for an input nothing else checks, so it ends on the last real
-    element.
+    **`stride_seq` is not clamped against, and must not be.** That equality is
+    the one thing tempting you to: `q_row_slab`'s `oob_off` is
+    `rows * stride_seq`, and `ParityStoreHelper._final_o_global` suppresses the
+    D-tail chunks by redirecting their store to it and relying on the hardware
+    to drop anything at or past `num_records`, so a span *above* `oob_off` would
+    put the sentinel back inside the buffer and make every suppressed tail store
+    live. But the ordering already holds, and holds for the right reason: the
+    contract grants `ceil8(hdim)` contiguous elements per row, so row `s + 1`
+    cannot begin nearer than that and `stride_seq >= ceil8(hdim)` is guaranteed,
+    which is exactly `span <= rows * stride_seq`. A `minui` on top of that is
+    unreachable on every legal input and actively wrong on the rest -- where
+    `stride_seq < ceil8(hdim)` it silently reinstates the clipping bug above,
+    trading a diagnosable fault for wrong numbers.
 
-    **No axis rounds, here or anywhere.** `_bias_slab_num_records_bytes` bounds
-    the bias slab by `seqlen_k` on the same principle, and the last bias column
-    at odd `seqlen_k` is bought back by narrowing the *load* -- see
-    `narrow_tail`. If the D axis ever needs its column back, that is the shape
-    the fix should take.
+    That is the same verdict a clamp against the true row pitch
+    `min(s0, s1, s2)` got, for the same reason and with a second bill attached:
+    reading `stride_batch` and `stride_head` here grew the live ranges
+    `BwdDkDvKernelContext._init_q_head_invariants` hoists to shrink, and
+    perturbed the register allocator into an `LiveIntervalUnion::extract`
+    assertion failure at `BLOCK_DMODEL=224 ENABLE_DROPOUT=True BIAS_TYPE=1`, the
+    highest-pressure dK/dV configuration built. **`stride_seq` is the distance
+    to the next row and never the extent of one**; neither it nor any other
+    stride belongs in a row width. Refusing a layout that cannot hold
+    `ceil8(hdim)` belongs in `_check_8x_d_contract`, where it can say so out
+    loud and costs no registers.
 
-    The subtraction wraps at `rows == 0` -- a varlen empty sequence -- and an
-    index that wraps becomes a `num_records` covering all of memory, which is a
-    bigger version of this bug rather than a smaller one. The `rows > 0` select
-    pins that case back to the untightened 0.
+    The `rows > 0` select is not a clamp of that kind and stays: at `rows == 0`
+    -- a varlen empty sequence -- the subtraction wraps, and an index that wraps
+    becomes a `num_records` covering all of memory, which is a bigger version of
+    the bug above rather than a smaller one.
+
+    **What this bound does not do, and never did, is protect the gap between two
+    rows.** Nothing about a stride promises the bytes from `hdim` to
+    `stride_seq` are mapped -- a caller may legitimately have a guard page there
+    -- but a single linear `num_records` cannot express a per-row extent. Even
+    ending at `hdim`, the pad access on row `s` sits at `s * stride_seq + hdim`,
+    which is below the bound for every `s < rows - 1`: the old form clipped the
+    pad on the **last row only**, and permitted it on all the others. So a
+    caller with a guard page after column `hdim - 1` faulted before this change
+    too, at row 0 rather than at row `rows - 1`. The only shape that would buy
+    that case is narrowing the tail *access* the way `narrow_tail` does on the
+    bias KV axis; the D axis cannot, because Q/K/V staging goes through LDS DMA
+    copy atoms that move whole `DMA_BYTES` chunks. What the bound does protect
+    is the region past the end of the slab, which for the last `(batch, head)`
+    slab is past the end of the tensor -- that is the fault it was written for.
     """
     rows_v = fx.Index(rows)
-    trim = fx.Index((rows_v > fx.Index(0)).select(fx.Index(stride_seq) - fx.Index(hdim), fx.Index(0)))
-    return rows_v * fx.Index(stride_seq) - trim
+    width = fx.Index(_D_ACCESS_ELEMS)
+    row_elems = ((fx.Index(hdim) + width - fx.Index(1)) // width) * width
+    span = rows_v * fx.Index(stride_seq) - fx.Index(stride_seq) + row_elems
+    return fx.Index((rows_v > fx.Index(0)).select(span, fx.Index(0)))
 
 
 def _score_column_runs(kv_vectorized):
@@ -1268,8 +1312,12 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         redirected there is dropped by the hardware bound -- which is how
         `ParityStoreHelper` suppresses the D-tail chunks without branching.
         `_slab_span_elems` can only shrink the descriptor below this, never
-        grow it past, so the two stay in the order the suppression needs;
-        under BHSD they are equal, which is out of range and always has been.
+        grow it past. No clamp enforces that; the 8xD contract does, by
+        guaranteeing `stride_seq >= ceil8(hdim)` -- see that docstring, which
+        rejects a clamp outright -- so the two stay in the order the
+        suppression needs even when the D axis rounds up.
+        On a contiguous `(.., seqlen, ceil8(hdim))` layout they are equal, which
+        is out of range and always has been.
         """
         view = self._slab_view(tensor, s0, s1, s2, self.q_row_off, self.q_head_idx, self.seqlen_q_v, hdim)
         return view, self.seqlen_q_v * fx.Index(s2)
