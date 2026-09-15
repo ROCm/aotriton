@@ -613,10 +613,11 @@ causing known-failing tests to be skipped or marked `xfail` instead of
 
 | Value | What it tests |
 |-------|--------------|
-| `split` | Split-kernel backward (primary release target, `BWD_IMPL=0`) |
-| `fused` | Fused backward kernel (`BWD_IMPL=1`) |
-| `aiter` | AITER ASM backend (`BWD_IMPL=2`; bias/GQA tests skipped) |
-| `v3` | V3 API output correctness (`V3_API=1`) |
+| `split` | Split-kernel backward (primary release target, `BWD_IMPL=triton_split`) |
+| `fused` | Fused backward kernel (`BWD_IMPL=triton_fuse`) |
+| `aiter` | AITER ASM backend (`BWD_IMPL=aiter`; bias/GQA tests skipped) |
+| `flyc` | FlyDSL backends, both directions (`FWD_IMPL=BWD_IMPL=flyc`) |
+| `v3` | Operator-selected backends (nothing pinned) |
 
 ### Full Test Run
 

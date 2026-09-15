@@ -25,7 +25,6 @@ DEFAULT_PHILOX_OFFSET_1 = 0x1D4000
 DEFAULT_PHILOX_OFFSET_2 = 0x000B42
 DEFAULT_PHILOX_OFFSET = DEFAULT_PHILOX_OFFSET_1 + DEFAULT_PHILOX_OFFSET_2
 
-# Varlen now always use V3_API for full feature coverage
 from aotriton_flash import lazy_dq_acc, lazy_delta
 
 def is_power_of_two(n: int) -> bool:
