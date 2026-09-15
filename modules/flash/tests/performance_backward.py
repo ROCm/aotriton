@@ -9,7 +9,7 @@ import torch
 import triton
 from _perf_report import run_report
 from collections import defaultdict
-from attn_torch_function import attention, AttentionExtraArgs, BWD_IMPL, V3_API
+from attn_torch_function import attention, AttentionExtraArgs, BWD_IMPL
 
 try:
     from flash_attn.flash_attn_interface import \
@@ -38,14 +38,10 @@ if x_vals is not None:
 print(f'{X_VALS=}')
 
 def _get_modename():
-    if V3_API:
-        return 'V3'
-    if BWD_IMPL == 2:
-        return 'AITERASM'
-    if BWD_IMPL == 1:
-        return 'Fused'
-    if BWD_IMPL == 0:
-        return 'Split'
+    # Always 'V3', and has been since the V2 path went away. The per-backend
+    # label belongs on the LINE (see BACKEND_INDEX below), not on the run;
+    # perfmon supersedes this file rather than fixing it.
+    return 'V3'
 
 # One line per AOTriton backward BACKEND. See performance_forward.py for the
 # rationale; the only difference here is that there are three or four of them
@@ -55,15 +51,10 @@ def _get_modename():
 # Only the BACKWARD backend varies. The forward runs once, outside do_bench's
 # timed region, on whichever backend the operator selects -- held constant
 # across lines on purpose, so a difference here is the backward's.
-if V3_API:
-    from pyaotriton.v3.flash import OpAttnBwdBackend
-    BACKEND_INDEX = {name: i for i, name in OpAttnBwdBackend.by_index.items()}
-else:
-    BACKEND_INDEX = {}
+from pyaotriton.v3.flash import OpAttnBwdBackend
+BACKEND_INDEX = {name: i for i, name in OpAttnBwdBackend.by_index.items()}
 
 def _aotriton_backends():
-    if not V3_API:
-        return ['triton']   # no operator API, so no backend to select
     published = list(BACKEND_INDEX)
     want = os.getenv('BACKENDS', default=None)
     if want is None:

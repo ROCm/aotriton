@@ -14,7 +14,6 @@ from attn_torch_function import (
     AttentionExtraArgs,
     FWD_IMPL,
     BWD_IMPL,
-    V3_API,
     PROBE_UNSUPPORTED,
     FORCE_FWD_BACKEND,
     FORCE_BWD_BACKEND,

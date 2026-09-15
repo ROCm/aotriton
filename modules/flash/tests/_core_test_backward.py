@@ -18,7 +18,6 @@ from attn_torch_function import (
     AttentionExtraArgs,
     BWD_IMPL,
     FORCE_FWD_BACKEND,
-    V3_API,
     PROBE_UNSUPPORTED,
     hipError_t,
     hipGetLastError,
@@ -229,7 +228,7 @@ def _get_BWDOP_id():
         return 'Fused'
     if BWD_IMPL == 0:
         return 'Split'
-    if V3_API and BWD_IMPL is None:
+    if BWD_IMPL is None:
         return 'V3'
     assert False, f'Unsupported BWD_IMPL {BWD_IMPL}'
 

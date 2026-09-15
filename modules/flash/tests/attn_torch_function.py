@@ -50,18 +50,11 @@ FWD_IMPL = int(os.getenv('FWD_IMPL', default='0'))
 BWD_IMPL = os.getenv('BWD_IMPL', default=None)
 if BWD_IMPL is not None:
     BWD_IMPL = int(BWD_IMPL)
-V3_API = bool(int(os.getenv('V3_API', default='1')))
 # PROBE_UNSUPPORTED is independent of BWD_IMPL: enables NotImplementedError on
 # hipErrorPeerAccessUnsupported so callers can skip unsupported configurations.
 PROBE_UNSUPPORTED = bool(int(os.getenv('PROBE_UNSUPPORTED', default='0')))
 
-if BWD_IMPL == 2 or V3_API:
-    from aotriton_flash import lazy_dq_acc, lazy_delta
-else:
-    def lazy_dq_acc(dq):
-        return None
-    def lazy_delta(L):
-        return torch.empty_like(L)
+from aotriton_flash import lazy_dq_acc, lazy_delta
 
 # The NAME of the pinned forward backend ('triton' / 'flyc' / ...), or None when
 # FWD_IMPL is unset. A name rather than a flag: callers ask
@@ -73,7 +66,7 @@ else:
 # constants from the same @ati.backend list, so the index, the enum and the name
 # cannot disagree -- and this index already moved once, when flyc was added.
 FORCE_FWD_BACKEND = None
-if V3_API and os.getenv('FWD_IMPL', default=None) is not None:
+if os.getenv('FWD_IMPL', default=None) is not None:
     from pyaotriton.v3.flash import OpAttnFwdBackend
     try:
         FORCE_FWD_BACKEND = OpAttnFwdBackend.by_index[FWD_IMPL]
@@ -89,7 +82,7 @@ if V3_API and os.getenv('FWD_IMPL', default=None) is not None:
             f'{ {k: v for k, v in sorted(OpAttnFwdBackend.by_index.items())} }'
         ) from None
 # When FORCE_BWD_BACKEND is True, backward_v3 sets extargs.force_backend_index = BWD_IMPL
-FORCE_BWD_BACKEND = V3_API and (os.getenv('BWD_IMPL', default=None) is not None)
+FORCE_BWD_BACKEND = os.getenv('BWD_IMPL', default=None) is not None
 
 def empty_handler():
     pass
@@ -297,7 +290,7 @@ class _attention(torch.autograd.Function):
             ret = attn_fwd(q, k, v, b, sm_scale, M, o,
                            dropout_p, philox_seed, philox_offset1, philox_offset2,
                            philox_null, philox_null,
-                           encoded_softmax, causal, atomic, extargs=extargs, call_operator=V3_API)
+                           encoded_softmax, causal, atomic, extargs=extargs)
             if PROBE_UNSUPPORTED and ret == hipError_t.hipErrorPeerAccessUnsupported:
                 raise NotImplementedError()
             assert ret == hipError_t.hipSuccess, ret
@@ -313,7 +306,7 @@ class _attention(torch.autograd.Function):
         ret = attn_fwd(q, k, v, b, sm_scale, M, o,
                        dropout_p, philox_seed, philox_offset1, philox_offset2,
                        philox_seed_output, philox_offset_output,
-                       encoded_softmax, causal, atomic, extargs=extargs, call_operator=V3_API)
+                       encoded_softmax, causal, atomic, extargs=extargs)
         if PROBE_UNSUPPORTED and ret == hipError_t.hipErrorPeerAccessUnsupported:
             raise NotImplementedError()
         if attn_extra_args.is_testing:
@@ -384,7 +377,7 @@ class _attention(torch.autograd.Function):
 
         ret = attn_bwd(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, dq_acc, L, delta,
                        dropout_p, philox_seed, philox_offset, 0, causal,
-                       extargs=extargs, call_operator=V3_API)
+                       extargs=extargs)
         if PROBE_UNSUPPORTED and ret == hipError_t.hipErrorPeerAccessUnsupported:
             raise NotImplementedError()
         assert ret == hipError_t.hipSuccess, ret
@@ -393,10 +386,6 @@ class _attention(torch.autograd.Function):
         if tuning_result is not None:
             ctx.tuning_result += tuning_result
 
-        # fused bwd does not need delta
-        # TODO: Make delta lazy tensor
-        if not V3_API and attn_extra_args.is_testing:
-            assert not torch.isnan(delta).any(), f'{delta=}'
         return dq, dk, dv, db, None, None, None, None, None
 
     backward = backward_v3

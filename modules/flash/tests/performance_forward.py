@@ -8,7 +8,7 @@ import torch
 import os
 import triton
 from _perf_report import run_report
-from attn_torch_function import attention, AttentionExtraArgs, V3_API
+from attn_torch_function import attention, AttentionExtraArgs
 
 try:
     from flash_attn.flash_attn_interface import \
@@ -40,15 +40,10 @@ print(f'{X_VALS=}')
 #
 # BACKENDS=triton,flyc narrows the set; the default is everything published.
 # 'flash' stays what it always was -- the EXTERNAL flash-attn, not a backend.
-if V3_API:
-    from pyaotriton.v3.flash import OpAttnFwdBackend
-    BACKEND_INDEX = {name: i for i, name in OpAttnFwdBackend.by_index.items()}
-else:
-    BACKEND_INDEX = {}
+from pyaotriton.v3.flash import OpAttnFwdBackend
+BACKEND_INDEX = {name: i for i, name in OpAttnFwdBackend.by_index.items()}
 
 def _aotriton_backends():
-    if not V3_API:
-        return ['triton']   # no operator API, so no backend to select
     published = list(BACKEND_INDEX)
     want = os.getenv('BACKENDS', default=None)
     if want is None:
