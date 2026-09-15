@@ -431,9 +431,9 @@ Every `@ati.start` block produces one **AtiNode** subclass instance stored as
 ```
 AtiNode (specs/node.py)
   ├── BuildableDecl (specs/node.py)    — every field the builder pipeline reads
-  │     └── KernelDecl   (specs/kernel.py)   — @ati.source + all specs
+  │     ├── KernelDecl   (specs/kernel.py)   — @ati.source + all specs
+  │     └── FlycDecl     (specs/flyc.py)     — @ati.flyc.* + desc_path, hints_cls, fn
   ├── AffineDecl   (specs/affine.py)   — a prebuilt affine kernel: marker, metadata, disable
-  ├── FlycDecl     (specs/flyc.py)     — a FlyDSL kernel: vendored dir, hints, kernarg list
   ├── OperatorDecl (specs/operator.py) — an operator: its index-sorted backends and optune
   └── MetroSpec    (specs/metro.py)    — a metro body transpiled to ordered Call/Cond steps
 ```
@@ -443,12 +443,13 @@ finalized per-stack collection** attached as `fn.__ati_node__`. `MetroSpec` is
 both — the transpiled body is itself the innermost marker — which is why it
 keeps the `*Spec` name.
 
-**`KernelDecl`** is the kernel's passive "object file", and the only record the
-builder pipeline lowers — which is why `BuildableDecl` sits above it alone. It
-must be **cloned and mutated during linking** (cite resolution appends gap
-tensors/scalars/overrides onto a per-link copy). The other four derive straight
-from `AtiNode`: they have no `clone()` and no builder fields, and the linker
-reads them verbatim.
+**`KernelDecl`** and **`FlycDecl`** are the buildable records — the two the
+builder pipeline lowers, which is what `BuildableDecl` collects. They are
+SIBLINGS: `FlycDecl` adds `desc_path`/`hints_cls`/`fn` and is never cast into a
+`KernelDecl`. Both are **cloned and mutated during linking** (cite resolution
+appends gap tensors/scalars/overrides onto a per-link copy). The other three
+derive straight from `AtiNode`: they have no `clone()` and no builder fields,
+and the linker reads them verbatim.
 
 `BuildableDecl.clone()` is reflective over `dataclasses.fields()` and returns
 `type(self)`, so a field added to a record is copied for free. There is no
