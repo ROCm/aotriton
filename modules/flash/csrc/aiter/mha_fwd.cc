@@ -182,9 +182,18 @@ std::tuple<int, int, int> get_grid_dim(const mha_fwd_args& a, int ts_qo, std::st
 
 float fmha_fwd_v3(mha_fwd_args a, const ck_tile::stream_config& s)
 {
+    if(!a.use_asm_v3)
+        return -1;
+
     auto [gpu, arch_id] = get_gpu_arch(s);
 
-    if((!a.use_asm_v3) || (a.hdim_q != 192 && a.hdim_q != 128) || (a.hdim_v != 128) ||
+    // AITER also accepts hdim_q == hdim_v == 256 together with data_type
+    // "fp8bf16"; AOTriton does not carry the fp8 descale tail of
+    // fmha_fwd_v3_args, so those kernels stay unreachable here even though
+    // cfg_fmha_fwd lists them.
+    bool hdim_ok = (a.hdim_q == 128 && a.hdim_v == 128) ||
+                   (a.hdim_q == 192 && a.hdim_v == 128);
+    if(!hdim_ok ||
        (a.data_type != "bf16") || (a.bias_type != 0) || (a.p_drop > 0.f) ||
        ((arch_id != "gfx942") && (arch_id != "gfx950")))
     {
