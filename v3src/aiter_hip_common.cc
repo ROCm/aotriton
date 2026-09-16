@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include <aotriton/_internal/aiter_hip_common.h>
+#include <aotriton/_internal/log.h>
 #include <aotriton/_internal/util.h>
 #include <aotriton/runtime.h>
 #include <aotriton/util.h>
@@ -25,6 +26,22 @@ AITER_KERNEL_MODULE_TO_STORAGE = {
   {"fmha_v3_fwd", "flash"},
 };
 
+// Thread-local: two threads may dispatch different kernels at once, and a
+// refused launch belongs to the thread that hit it.
+thread_local hipError_t tls_launch_error = hipSuccess;
+
+}
+
+void
+record_launch_error(hipError_t err) {
+  tls_launch_error = err;
+}
+
+hipError_t
+take_launch_error() {
+  auto err = tls_launch_error;
+  tls_launch_error = hipSuccess;
+  return err;
 }
 
 AiterAsmKernel::AiterAsmKernel(const char* name, const char* hsaco)
@@ -52,7 +69,17 @@ AiterAsmKernel::launch_kernel(const AiterAsmKernelArgs& kargs) {
              hsaco_,
              mangled_kernel_function_name_ };
   };
-  auto [kernel_func, essentials] = get_kernel(device_id, lazy);
+  auto [kernel_func, essentials, err] = get_kernel(device_id, lazy);
+  if (err != hipSuccess) {
+    // kernel_func is null. Launching it would fail with hipErrorInvalidValue
+    // and latch that on the HIP context, so the next unrelated HIP call in the
+    // process -- typically a torch op, long after this point -- reports it.
+    AOTRITON_LOG(LOG_ERROR,
+                 "AiterAsmKernel: no kernel image for '%s' in '%s' -- refusing to launch",
+                 mangled_kernel_function_name_, hsaco_.c_str());
+    record_launch_error(err);
+    return;
+  }
 
   AOTRITON_HIP_CHECK_RETURN(hipModuleLaunchKernel(kernel_func,
                                                   kargs.gdx,

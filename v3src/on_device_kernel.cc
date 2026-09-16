@@ -17,7 +17,7 @@ OnDeviceKernel::~OnDeviceKernel() {
   clear_decompressed_image();
 }
 
-std::tuple<hipFunction_t, OnDeviceKernel::Essentials>
+std::tuple<hipFunction_t, OnDeviceKernel::Essentials, hipError_t>
 OnDeviceKernel::get_kernel(int device_id,
                            std::function<OnDiskKernelInfo()> lazy) {
   // Use reader lock to peek the state
@@ -25,19 +25,20 @@ OnDeviceKernel::get_kernel(int device_id,
     std::shared_lock lock(funcache_mutex_);
     auto func = cfind_function(device_id);
     if (func)
-      return {func, essentials_};
+      return {func, essentials_, hipSuccess};
   }
 
   // Use writer lock to initialize the module for device
   std::unique_lock lock(funcache_mutex_);
   // Check again, in case another waiter has initialized the device
   auto func = cfind_function(device_id);
-  if (!func) {
-    hipError_t err;
-    std::tie(func, err) = load_for_device(device_id,
-                                          lazy());
-  }
-  return {func, essentials_};
+  if (func)
+    return {func, essentials_, hipSuccess};
+  // load_for_device's error is returned rather than dropped: it is the only
+  // signal that this kernel has no image, and a caller that launches the null
+  // hipFunction_t anyway poisons the HIP context for the rest of the process.
+  auto [loaded, err] = load_for_device(device_id, lazy());
+  return {loaded, essentials_, err};
 }
 
 
