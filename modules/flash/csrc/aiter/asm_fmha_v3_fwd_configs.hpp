@@ -53,6 +53,10 @@ static CFG cfg_fmha_fwd = {
     ADD_CFG("bf16",  192,  128,    2,    1,    0,  128,   32, "gfx942", "fmha_v3_fwd/", "_ZN5aiter41fmha_fwd_hd192x128_bf16_causal_rtne_groupE", "fwd_hd192x128_bf16_causal_rtne_group.co"),
     ADD_CFG("bf16",  192,  128,    2,    1,    1,  128,   32, "gfx942", "fmha_v3_fwd/", "_ZN5aiter41fmha_fwd_hd192x128_bf16_causal_rtna_groupE", "fwd_hd192x128_bf16_causal_rtna_group.co"),
     ADD_CFG("bf16",  192,  128,    2,    1,    2,  128,   32, "gfx942", "fmha_v3_fwd/", "_ZN5aiter40fmha_fwd_hd192x128_bf16_causal_rtz_groupE", "fwd_hd192x128_bf16_causal_rtz_group.co"),
+    ADD_CFG("fp8bf16",  128,  128,    0,    0,    1,  256,   64, "gfx942", "fmha_v3_fwd/", "_ZN5aiter18fmha_fwd_hd128_fp8E", "fwd_hd128_fp8.co"),
+    ADD_CFG("fp8bf16",  128,  128,    2,    0,    1,  256,   64, "gfx942", "fmha_v3_fwd/", "_ZN5aiter25fmha_fwd_hd128_fp8_causalE", "fwd_hd128_fp8_causal.co"),
+    ADD_CFG("fp8bf16",  128,  128,    0,    1,    1,  256,   64, "gfx942", "fmha_v3_fwd/", "_ZN5aiter24fmha_fwd_hd128_fp8_groupE", "fwd_hd128_fp8_group.co"),
+    ADD_CFG("fp8bf16",  128,  128,    2,    1,    1,  256,   64, "gfx942", "fmha_v3_fwd/", "_ZN5aiter31fmha_fwd_hd128_fp8_causal_groupE", "fwd_hd128_fp8_causal_group.co"),
     ADD_CFG("bf16",  128,  128,    0,    0,    0,  256,   64, "gfx950", "fmha_v3_fwd/", "_ZN5aiter19fmha_fwd_hd128_bf16E", "fwd_hd128_bf16.co"),
     ADD_CFG("bf16",  128,  128,    2,    0,    0,  256,   64, "gfx950", "fmha_v3_fwd/", "_ZN5aiter26fmha_fwd_hd128_bf16_causalE", "fwd_hd128_bf16_causal.co"),
     ADD_CFG("bf16",  128,  128,    0,    1,    0,  256,   64, "gfx950", "fmha_v3_fwd/", "_ZN5aiter25fmha_fwd_hd128_bf16_groupE", "fwd_hd128_bf16_group.co"),
@@ -61,6 +65,14 @@ static CFG cfg_fmha_fwd = {
     ADD_CFG("bf16",  192,  128,    2,    0,    0,  128,  128, "gfx950", "fmha_v3_fwd/", "_ZN5aiter32fmha_fwd_hd192_hd128_bf16_causalE", "fwd_hd192_hd128_bf16_causal.co"),
     ADD_CFG("bf16",  192,  128,    0,    1,    0,  128,  128, "gfx950", "fmha_v3_fwd/", "_ZN5aiter31fmha_fwd_hd192_hd128_bf16_groupE", "fwd_hd192_hd128_bf16_group.co"),
     ADD_CFG("bf16",  192,  128,    2,    1,    0,  128,  128, "gfx950", "fmha_v3_fwd/", "_ZN5aiter38fmha_fwd_hd192_hd128_bf16_causal_groupE", "fwd_hd192_hd128_bf16_causal_group.co"),
+    ADD_CFG("fp8bf16",  128,  128,    0,    0,    0,  256,  128, "gfx950", "fmha_v3_fwd/", "_ZN5aiter24fmha_fwd_hd128_fp8_gfx950E", "fwd_hd128_fp8.co"),
+    ADD_CFG("fp8bf16",  128,  128,    2,    0,    0,  256,  128, "gfx950", "fmha_v3_fwd/", "_ZN5aiter31fmha_fwd_hd128_fp8_causal_gfx950E", "fwd_hd128_fp8_causal.co"),
+    ADD_CFG("fp8bf16",  128,  128,    0,    1,    0,  256,  128, "gfx950", "fmha_v3_fwd/", "_ZN5aiter30fmha_fwd_hd128_fp8_group_gfx950E", "fwd_hd128_fp8_group.co"),
+    ADD_CFG("fp8bf16",  128,  128,    2,    1,    0,  256,  128, "gfx950", "fmha_v3_fwd/", "_ZN5aiter37fmha_fwd_hd128_fp8_causal_group_gfx950E", "fwd_hd128_fp8_causal_group.co"),
+    ADD_CFG("fp8bf16",  256,  256,    0,    0,    0,  256,   64, "gfx950", "fmha_v3_fwd/", "_ZN5aiter25fmha_fwd_hd256_fp8_gfx950E", "fwd_hd256_fp8.co"),
+    ADD_CFG("fp8bf16",  256,  256,    2,    0,    0,  256,   64, "gfx950", "fmha_v3_fwd/", "_ZN5aiter32fmha_fwd_hd256_fp8_causal_gfx950E", "fwd_hd256_fp8_causal.co"),
+    ADD_CFG("fp8bf16",  256,  256,    0,    1,    0,  256,   64, "gfx950", "fmha_v3_fwd/", "_ZN5aiter31fmha_fwd_hd256_fp8_group_gfx950E", "fwd_hd256_fp8_group.co"),
+    ADD_CFG("fp8bf16",  256,  256,    2,    1,    0,  256,   64, "gfx950", "fmha_v3_fwd/", "_ZN5aiter38fmha_fwd_hd256_fp8_causal_group_gfx950E", "fwd_hd256_fp8_causal_group.co"),
 };
 
 } // namespace AOTRITON_NS::v3::flash::aiter
