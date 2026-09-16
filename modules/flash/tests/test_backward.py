@@ -28,6 +28,7 @@ from _core_test_backward import (
     fmt_hdim,
     PRIME_HEADDIMS,
     core_test_logsumexp_scaling,
+    core_test_matrix_bias_fwd_bwd_symmetry,
     core_test_op_bwd,
     core_test_large_bf16_nan_values,
 )
@@ -242,6 +243,13 @@ def test_large_bf16_nan_values(BWDOP, D_HEAD):
 def test_logsumexp_scaling(gpu_id, dtype):
     with torch.cuda.device(gpu_id):
         core_test_logsumexp_scaling(dtype)
+
+# Defined here for the same two reasons as test_logsumexp_scaling above.
+@pytest.mark.parametrize('bias_val', [0.0, 4.0, 16.0, -16.0, 64.0])
+@pytest.mark.parametrize('dtype', DTYPES)
+def test_matrix_bias_fwd_bwd_symmetry(gpu_id, dtype, bias_val):
+    with torch.cuda.device(gpu_id):
+        core_test_matrix_bias_fwd_bwd_symmetry(dtype, bias_val)
 
 def main2():
     # Memo: False-0.0-dtype0-0.0-False-4-256-8-4-1
