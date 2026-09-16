@@ -97,7 +97,11 @@ if [ "$USE_REMOTE" -eq 1 ]; then
     "$TUNE_ROOT/single/sync_workdir.sh" "$ABSWORKDIR" "$BUILD_NODE_HOST" --buildnode
   fi
 
-  echo "Pre-building Triton wheel on $BUILD_NODE_HOST via tsp"
+  # Triton wheel, and the FlyDSL LLVM tarball + wheel when this tree needs a
+  # locally built one -- prebuild_wheel.sh defaults to --select all. Worth
+  # knowing before you watch it: the LLVM half is ~1h on a cold cache, which is
+  # why it is inside the tsp job rather than in front of it.
+  echo "Pre-building compiler artifacts on $BUILD_NODE_HOST via tsp"
   # shellcheck disable=SC2029
   ssh "$BUILD_NODE_HOST" bash -s "$REMOTE_WORKDIR" <<'EOF'
 REMOTE_WORKDIR="$1"
@@ -178,7 +182,7 @@ else
     exit 1
   fi
 
-  echo "Pre-building Triton wheel locally"
+  echo "Pre-building compiler artifacts locally (Triton, and FlyDSL if pinned)"
   "$TUNE_ROOT/single/prebuild_wheel.sh" "$ABSWORKDIR"
 
   if [ "$MODE" = "test" ]; then
