@@ -56,6 +56,16 @@ struct AiterAsmKernelArgs
     const hipStream_t stream;
 };
 
+// AiterAsmKernel::launch_kernel returns void -- the vendored AITER dispatchers
+// call it as a bare statement from inside void lambdas -- so a launch it REFUSES
+// (no .co for this kernel in aotriton.images) has no return value to report
+// itself with, and leaves the HIP error state untouched. Without this channel
+// ck_tile::launch_kernel below reads the refusal as success, and a kernel that
+// never ran looks exactly like one that completed.
+void record_launch_error(hipError_t err);
+// Reads the pending refusal and clears it; hipSuccess when there was none.
+hipError_t take_launch_error();
+
 namespace ck_tile {
   using index_t = int32_t;
 
@@ -88,7 +98,19 @@ namespace ck_tile {
   template <typename... Callables>
   float launch_kernel(const stream_config& sc, Callables&&... callables)
   {
-    if (!((static_cast<void>(callables(sc)), hipPeekAtLastError() == hipSuccess) && ...)) {
+    // Drop anything an earlier call left behind. Discarded on purpose: this is
+    // the reset, not a check (hipError_t is [[nodiscard]]).
+    static_cast<void>(take_launch_error());
+    auto ran_ok = [](auto&& callable, const stream_config& s) {
+      callable(s);
+      // Two distinct failures: hipPeekAtLastError catches a launch that ran and
+      // failed, take_launch_error catches one that never ran at all. Both are
+      // evaluated -- take_launch_error must clear even when HIP already failed.
+      bool hip_ok = hipPeekAtLastError() == hipSuccess;
+      bool ran    = take_launch_error() == hipSuccess;
+      return hip_ok && ran;
+    };
+    if (!((ran_ok(callables, sc)) && ...)) {
       return -1.0;
     }
     return 0;

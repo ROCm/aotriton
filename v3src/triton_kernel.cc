@@ -63,11 +63,21 @@ TritonKernel::invoke(std::string_view kernel_name,
     stem_name = construct_stem_name(kernel_name, func_name, ksig_psel_, ksig_copt_, arch_name);
     return { flatzip_path, aks2_entry, stem_name, kernel_name };
   };
-  auto [func, essentials] = get_kernel(device_id, lazy);
+  auto [func, essentials, err] = get_kernel(device_id, lazy);
 #if AOTRITON_BUILD_FOR_TUNING
   if (peek_kernel_image)
     return hipSuccess;
 #endif
+  if (err != hipSuccess) {
+    AOTRITON_LOG(LOG_ERROR,
+                 "TritonKernel: no kernel image for \"%.*s\" (entry %.*s) in %s -- "
+                 "refusing to launch, returning %d",
+                 int(kernel_name.size()), kernel_name.data(),
+                 int(aks2_entry.size()), aks2_entry.data(),
+                 pstring_to_utf8(flatzip_path).data(),
+                 static_cast<int>(err));
+    return err;
+  }
   return hipModuleLaunchKernel(func,
                                grid.x,
                                grid.y,
@@ -107,7 +117,16 @@ TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
              ksig_copt_,  // Affine use ksig_psel_ as arch, ksig_copt_ as file name
              mangled_kernel_function_name };
   };
-  auto [func, essentials] = get_kernel(device_id, lazy);
+  auto [func, essentials, err] = get_kernel(device_id, lazy);
+  if (err != hipSuccess) {
+    AOTRITON_LOG(LOG_ERROR,
+                 "TritonKernel::direct_invoke: no kernel image for \"%.*s\" in %s -- "
+                 "refusing to launch, returning %d",
+                 int(mangled_kernel_function_name.size()), mangled_kernel_function_name.data(),
+                 pstring_to_utf8(package_path).data(),
+                 static_cast<int>(err));
+    return err;
+  }
   void* config[] = {HIP_LAUNCH_PARAM_BUFFER_POINTER,
                     struct_of_args,
                     HIP_LAUNCH_PARAM_BUFFER_SIZE,

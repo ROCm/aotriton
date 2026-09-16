@@ -62,8 +62,17 @@ public:
   // TODO: Make it const and add mutable to members
   // CAVEAT: calling clear_decompressed_image will also invalidate Essentials.image.
   //         clear_decompressed_image/clear_device_kernel route is not well-tested and should be avoided in production.
-  std::tuple<hipFunction_t, Essentials> get_kernel(int device_id,
-                                                   std::function<OnDiskKernelInfo()> lazy);
+  // Returns {func, essentials, error}. `func` is nullptr if and only if `error`
+  // is not hipSuccess -- the kernel has no image in aotriton.images (a partial
+  // build such as AOTRITON_DEBUG_SKIP_TRITON_KERNELS, or a kernel that failed to
+  // compile), or the module would not load.
+  //
+  // CAVEAT: callers MUST check `error` and MUST NOT launch a null `func`.
+  // hipModuleLaunchKernel rejects it with hipErrorInvalidValue and latches that
+  // on the HIP context, so the failure resurfaces in whatever unrelated HIP call
+  // runs next -- typically a torch op in the following test, far from the cause.
+  std::tuple<hipFunction_t, Essentials, hipError_t>
+  get_kernel(int device_id, std::function<OnDiskKernelInfo()> lazy);
   void clear_device_kernel();
   void clear_decompressed_image();
 #if AOTRITON_BUILD_FOR_TUNING
