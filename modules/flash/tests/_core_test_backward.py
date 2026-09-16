@@ -22,6 +22,9 @@ from attn_torch_function import (
     hipError_t,
     hipGetLastError,
 )
+# Bottom-right causal cannot be spelled with a bool: translate_causal() maps
+# True onto TOP_LEFT_ALIGNED. Used by core_test_bottom_right_fully_masked_rows.
+from aotriton_flash import CausalType
 from _common_test import (
     BHSD,
     SdpaContext,
@@ -481,6 +484,78 @@ def core_test_op_bwd(request, args, device : int | None = None):
 # The dtype axis lives on the test_* wrapper in test_backward.py and is DTYPES,
 # not a third hardcoded copy of the list: this runs the forward, so the flyc
 # fp32 exclusion applies to it exactly as it does to every other forward here.
+def core_test_bottom_right_fully_masked_rows(device_str='cuda'):
+    '''ROCm/aotriton#235: the persistent loop must not skip tiles after a
+    fully-masked early exit.
+
+    attn_fwd initialised `continue_condition` once per program rather than once
+    per tile. The fully-masked causal early exit cleared it and nothing restored
+    it, so every later tile the same workgroup claimed from
+    persistent_atomic_counter was silently skipped -- neither Out nor LSE
+    written, leaving those rows with stale buffer contents.
+
+    Two conditions arm it, and both are load-bearing here:
+
+      * bottom-right causal with seqlen_q > seqlen_k, so the leading rows are
+        fully masked and some tile takes the early exit at all;
+      * more tiles than workgroups (Num_CU * GRID_CU_MULTIP), so a workgroup is
+        handed a further tile after the one that cleared the flag. Sized from
+        the device's CU count rather than hardcoded -- a fixed size would
+        quietly stop covering the bug on a larger GPU.
+
+    Whether a workgroup wins the next atomic_add before a fresh one starts is a
+    scheduling question, so the failure is not perfectly deterministic; hence
+    the repeats. At this tile count it reproduced on every attempt.
+
+    Kept cheap enough for level 0: this is a control-flow defect, so one dtype
+    and one head dim cover it.
+    '''
+    seqlen_q, seqlen_k, d_head = 192, 64, 64
+    n_masked = seqlen_q - seqlen_k        # leading rows that attend nothing
+    n_heads = 16
+    dtype = torch.float16
+    REPEATS = 4
+
+    num_cu = torch.cuda.get_device_properties(device_str).multi_processor_count
+    # seqlen_q=192 is >= 2 tiles for any BLOCK_M <= 128, and GRID_CU_MULTIP is
+    # 2, so this lands the tile count at roughly 4x the workgroup count.
+    batch = max(1, (num_cu * 4) // n_heads)
+
+    sm_scale = 1.0 / math.sqrt(d_head)
+    # is_testing=False: the wrapper's own NaN check on L would fire first and
+    # report 'L tensor has NaN' instead of the diagnostics below. fillnan makes
+    # an unwritten element unambiguous rather than whatever the allocator left.
+    ext = AttentionExtraArgs(return_encoded_softmax=False,
+                             autotune=False,
+                             return_autotune=False,
+                             is_testing=False,
+                             fillnan=True,
+                             return_logsumexp=True)
+    for i in range(REPEATS):
+        torch.manual_seed(i)
+        q = torch.randn((batch, n_heads, seqlen_q, d_head), device=device_str, dtype=dtype)
+        k = torch.randn((batch, n_heads, seqlen_k, d_head), device=device_str, dtype=dtype)
+        v = torch.randn_like(k)
+        tri_out, _, L = attention(q, k, v, None, CausalType.BOTTOM_RIGHT,
+                                  sm_scale, 0.0, ext)
+        torch.cuda.synchronize()
+
+        ctx = (f'iter {i}: batch={batch} n_heads={n_heads} num_cu={num_cu} '
+               f'seqlen_q={seqlen_q} seqlen_k={seqlen_k}')
+        # LSE is (B * H_Q, S_Q). Fully-masked rows must be +inf: the backward
+        # subtracts it from qk so exp(qk - inf) == 0 for those blocks.
+        masked_lse = L.view(batch, n_heads, seqlen_q)[:, :, :n_masked]
+        n_inf = int(torch.isinf(masked_lse).sum())
+        expect_inf = batch * n_heads * n_masked
+        assert n_inf == expect_inf, \
+            f'{ctx}: only {n_inf}/{expect_inf} fully-masked LSE rows were written'
+        assert not torch.isnan(L).any(), f'{ctx}: LSE contains unwritten (NaN) rows'
+        assert not torch.isnan(tri_out).any(), f'{ctx}: Out contains unwritten (NaN) rows'
+        n_nonzero = int((tri_out[:, :, :n_masked] != 0).sum())
+        assert n_nonzero == 0, \
+            f'{ctx}: {n_nonzero} nonzero elements in fully-masked Out rows'
+
+
 def core_test_logsumexp_scaling(dtype):
     REF_VALUE = 2.79018449783325195
     device = 'cuda'

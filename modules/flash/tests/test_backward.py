@@ -31,6 +31,7 @@ from _core_test_backward import (
     core_test_matrix_bias_fwd_bwd_symmetry,
     core_test_op_bwd,
     core_test_large_bf16_nan_values,
+    core_test_bottom_right_fully_masked_rows,
 )
 from _common_test import ALL_LAYOUTS, StorageLayout
 
@@ -250,6 +251,19 @@ def test_logsumexp_scaling(gpu_id, dtype):
 def test_matrix_bias_fwd_bwd_symmetry(gpu_id, dtype, bias_val):
     with torch.cuda.device(gpu_id):
         core_test_matrix_bias_fwd_bwd_symmetry(dtype, bias_val)
+
+# ROCm/aotriton#235. Ungated (level 0) on purpose: it guards a silent
+# wrong-answer path -- bottom-right causal with seqlen_q > seqlen_k returned
+# unwritten Out/LSE rows once the tile count exceeded the workgroup count --
+# and it costs one small forward per repeat. This is the shape PyTorch's
+# memory-efficient attention takes for causal_lower_right, where the
+# corresponding upstream test is currently skipped on ROCm.
+#
+# Not parametrized over BWDOP: the defect is in attn_fwd, and the backward
+# backend is irrelevant to it.
+def test_bottom_right_fully_masked_rows(gpu_id):
+    with torch.cuda.device(gpu_id):
+        core_test_bottom_right_fully_masked_rows(f'cuda:{gpu_id}')
 
 def main2():
     # Memo: False-0.0-dtype0-0.0-False-4-256-8-4-1
