@@ -474,18 +474,7 @@ def core_test_op_bwd(request, args, device : int | None = None):
             exit_pytest()
         raise e
 
-# Named core_* rather than test_*, matching core_test_large_bf16_nan_values below.
-# A test_*-prefixed function in this shared module is collectable from every module
-# that imports it, and pytest reports such an item's location as the file it is
-# DEFINED in (Item.location[0] resolves the function's own code object), not the file
-# it was collected from -- so conftest.py's _FILE_ORDER never matched it and it sorted
-# behind every varlen test instead of running with the rest of test_backward.py.
-#
-# Deliberately unparametrized: one dtype and one head dim, chosen below rather
-# than taken from DTYPES. The defect is in attn_fwd's tile loop, which is
-# control flow and carries no dtype or head-dim dependence, so a second dtype
-# would buy no coverage at level 0's cost. The shape, by contrast, IS
-# load-bearing -- see the docstring.
+# Deliberately unparametrized: only need one dtype+hdim to detect the defect
 def core_test_bottom_right_fully_masked_rows(device_str='cuda'):
     '''ROCm/aotriton#235: the persistent loop must not skip tiles after a
     fully-masked early exit.
