@@ -31,10 +31,18 @@
 # pin means the released wheel was built against an LLVM known to miscompile
 # register spills, so the pinned wheel must not be used and a local build is
 # the only thing that can finish.
+#
+# A malformed pin file ABORTS the caller rather than returning an answer. There
+# are three outcomes here, not two, and the third has no sensible recovery: a
+# second non-comment line means nobody knows which LLVM is wanted, and every
+# caller would have to stop anyway. Reading it as "not required" would turn a
+# typo into a skipped FlyDSL build and then, minutes later, a cmake FATAL_ERROR
+# naming the tripwire instead of the typo. pin_line has already said what is
+# wrong with the file.
 flydsl_required() {
   local aotriton_root="$1"
   local pin
-  pin="$(pin_line "$aotriton_root/third_party/flydsl-llvm.txt")" || return 2
+  pin="$(pin_line "$aotriton_root/third_party/flydsl-llvm.txt")" || exit 1
   [ -n "$pin" ]
 }
 

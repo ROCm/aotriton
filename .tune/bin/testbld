@@ -87,6 +87,9 @@ AOTRITON_ROOT="$(realpath "$SCRIPT_DIR/../..")"
 # sqlite3 CLI may not be present inside CELERY_WORKER_IMAGE; use Python fallback
 . "$TUNE_ROOT/lib/sqlite3_compat.sh"
 . "$TUNE_ROOT/lib/aotriton_version.sh"
+# pin_line first -- find_flydsl.sh's helpers are written against it.
+. "$AOTRITON_ROOT/.ci/common-pin.sh"
+. "$TUNE_ROOT/lib/find_flydsl.sh"
 
 # Collect architectures to build
 if [ -n "$SINGLE_ARCH" ]; then
@@ -118,6 +121,33 @@ echo "Step 1: Building Triton wheel..."
 TRITON_WHEEL=$("$TUNE_ROOT/single/build_triton_wheel.sh" --no_build_fallback "$WORKDIR")
 echo "Using Triton wheel: $TRITON_WHEEL"
 
+# Step 1b: locate the FlyDSL wheel, if this tree needs a locally built one.
+#
+# Resolved once, outside the per-arch loop, for the same reason the Triton wheel
+# is: it is the same wheel for every arch. Found rather than built -- the .ci/
+# builders need Docker and this script runs inside CELERY_WORKER_IMAGE, so the
+# host-side prebuild (remotebld's sibling step) is what produces it.
+#
+# ABI tag comes from the venv activated at the top of this script, which is the
+# venv cmake will install the wheel into; CMakeLists.txt:451-452 rejects a
+# mismatch outright.
+FLYDSL_WHEEL=""
+if flydsl_required "$AOTRITON_ROOT"; then
+  PYVER=$(python --version 2>&1 | cut -d' ' -f2 | cut -d. -f1,2)
+  if ! FLYDSL_WHEEL=$(find_flydsl_wheel "$WORKDIR" "$PYVER"); then
+    echo "Error: third_party/flydsl-llvm.txt is non-empty, so this build needs a" >&2
+    echo "locally built FlyDSL wheel, but none for python ${PYVER} is cached in" >&2
+    echo "$WORKDIR/scratch/flydsl/." >&2
+    echo "" >&2
+    echo "Without it cmake fails at configure (CMakeLists.txt's flydsl-llvm.txt" >&2
+    echo "tripwire). Run remotebld, which pre-builds it via a sibling container," >&2
+    echo "or build it directly with:" >&2
+    echo "  .tune/single/prebuild_wheel.sh --select all <workdir>" >&2
+    exit 1
+  fi
+  echo "Using FlyDSL wheel: $FLYDSL_WHEEL"
+fi
+
 # Step 2: per-arch build via .ci/build-test.sh. test123 avoids clashing with
 # both the tuning "123" suffix and PyTorch's bundled AOTriton.
 for ARCH in "${ARCH_LIST[@]}"; do
@@ -135,6 +165,8 @@ for ARCH in "${ARCH_LIST[@]}"; do
 
   ALTWHEEL_CONFIG="$(get_resolved_altwheel_yaml "$AOTRITON_ROOT" "$WORKDIR")"
   [ -n "$ALTWHEEL_CONFIG" ] && BUILD_TEST_ARGS+=(--altwheel_config "$ALTWHEEL_CONFIG")
+
+  [ -n "$FLYDSL_WHEEL" ] && BUILD_TEST_ARGS+=(--flydsl_wheel "$FLYDSL_WHEEL")
 
   # PYTORCH_ROCM_ARCH for the same reason build_arch.sh sets it: this build
   # also reaches find_package(Torch) -- AOTRITON_USE_TORCH defaults ON and

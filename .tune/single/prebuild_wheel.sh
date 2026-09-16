@@ -183,20 +183,10 @@ stage_flydsl_wheel() {
 # flydsl_required is consulted once, here, so an empty pin makes both FlyDSL
 # stages vanish -- including when they were asked for by name, which is the
 # honest answer to "build me a wheel this tree does not need".
-#
-# Three outcomes, not two: rc 2 is "the pin file is malformed", which pin_line
-# has already explained on stderr. Folding that into "not required" would turn
-# a typo in flydsl-llvm.txt into a skipped FlyDSL build and, an hour later, a
-# cmake FATAL_ERROR that names the tripwire rather than the typo.
-set +e
-flydsl_required "$AOTRITON_ROOT"
-_flydsl_rc=$?
-set -e
-case "$_flydsl_rc" in
-  0) FLYDSL_NEEDED=1 ;;
-  1) FLYDSL_NEEDED=0 ;;
-  *) exit 1 ;;
-esac
+FLYDSL_NEEDED=0
+if flydsl_required "$AOTRITON_ROOT"; then
+  FLYDSL_NEEDED=1
+fi
 
 run_flydsl_stage() {
   if [ "$FLYDSL_NEEDED" -eq 0 ]; then
