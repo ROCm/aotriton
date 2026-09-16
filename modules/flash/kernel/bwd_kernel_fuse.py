@@ -499,8 +499,18 @@ def bwd_kernel_fuse(
                                                       batch_index, off_h_q, q_row_off + offs_q,
                                                       BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
+            # DO must be indexed with its own strides, not Out's. attn_bwd_params
+            # takes Out and DO as separate TensorViews, so a caller is entitled
+            # to hand them different layouts -- PyTorch does exactly that when
+            # `out` is (B, H, S, D)-contiguous while `dO` is (B, S, H, D)-
+            # contiguous. Using stride_o* here read dO at the wrong addresses:
+            # silently wrong dK/dV when the misread stayed inside the
+            # allocation, a memory fault when it did not. The dQ phase above
+            # already uses stride_do*, and so does the advance this loop passes
+            # to bwd_inner_fuse (stride_dom), which is what made the base
+            # pointer stand out. See ROCm/aotriton#236.
             do_ptrs0, do_ptrs1, do_ptrs2 = composed_ptrs(DO,
-                                                         stride_oz, stride_oh, stride_om, stride_ok,
+                                                         stride_doz, stride_doh, stride_dom, stride_dok,
                                                          batch_index, off_h_q, q_row_off + offs_q,
                                                          BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
             o_ptrs0, o_ptrs1, o_ptrs2 = composed_ptrs(Out,

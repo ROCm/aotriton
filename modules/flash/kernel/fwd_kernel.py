@@ -236,6 +236,17 @@ def attn_fwd(
     continue_condition : tl.int1 = True  # as we can't have return statements inside while loop in Triton
 
     while tile_id < num_tiles_total:  # loops more than once only if PERSISTENT
+        # Reset per tile, not once per program. Both early exits below clear
+        # this flag (start_M past seqlen_q, and the fully-masked causal tile),
+        # and under PERSISTENT_DYNAMIC the same workgroup goes on to claim
+        # further tiles from persistent_atomic_counter. Initialising it only
+        # above the loop let the first cleared tile poison every later tile the
+        # workgroup pulled: neither Out nor L was written for them, so those
+        # rows kept stale buffer contents. Fires whenever the tile count
+        # exceeds the workgroup count (Num_CU * GRID_CU_MULTIP), which is the
+        # common case for bottom-right causal with seqlen_q > seqlen_k.
+        # See ROCm/aotriton#235.
+        continue_condition = True
         if PERSISTENT_DYNAMIC and not unsupported_by_persistent:
             # tile id basically tells us the Q block we are handling
             off_z = tile_id // num_tiles_per_sample  # at which batch sample are we

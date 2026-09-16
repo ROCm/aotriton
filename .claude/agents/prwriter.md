@@ -217,6 +217,7 @@ bullets.
 | `[gpu_targets]` | `gpu_targets.py` arch matrix |
 | `[gfx90a]` / `[gfx942]` / `[gfx950]` / `[gfx1100]` / `[gfx1201]` / `[gfx1250]` | Arch-specific workaround or limitation |
 | `[internal]` | Architectural debt not exposed through any API |
+| `[agent]` | Anything AI-agent related — subagents, skills, their prompts |
 | `[CLAUDE.md]` | Updates to `CLAUDE.md` conventions |
 
 Add a new tag if no existing one fits — keep it lowercase and short. Prefer
