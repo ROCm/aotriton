@@ -481,9 +481,11 @@ def core_test_op_bwd(request, args, device : int | None = None):
 # it was collected from -- so conftest.py's _FILE_ORDER never matched it and it sorted
 # behind every varlen test instead of running with the rest of test_backward.py.
 #
-# The dtype axis lives on the test_* wrapper in test_backward.py and is DTYPES,
-# not a third hardcoded copy of the list: this runs the forward, so the flyc
-# fp32 exclusion applies to it exactly as it does to every other forward here.
+# Deliberately unparametrized: one dtype and one head dim, chosen below rather
+# than taken from DTYPES. The defect is in attn_fwd's tile loop, which is
+# control flow and carries no dtype or head-dim dependence, so a second dtype
+# would buy no coverage at level 0's cost. The shape, by contrast, IS
+# load-bearing -- see the docstring.
 def core_test_bottom_right_fully_masked_rows(device_str='cuda'):
     '''ROCm/aotriton#235: the persistent loop must not skip tiles after a
     fully-masked early exit.
@@ -496,8 +498,13 @@ def core_test_bottom_right_fully_masked_rows(device_str='cuda'):
 
     Two conditions arm it, and both are load-bearing here:
 
-      * bottom-right causal with seqlen_q > seqlen_k, so the leading rows are
-        fully masked and some tile takes the early exit at all;
+      * bottom-right causal with seqlen_q - seqlen_k >= BLOCK_M, so that an
+        ENTIRE tile falls inside the masked prefix and the early exit is taken
+        at all. A partially-masked tile does not arm it -- that row block still
+        attends, so the kernel runs it normally. The largest BLOCK_M attn_fwd
+        builds is 256 (gfx950, modules/flash/aot/attn_fwd.py), hence a masked
+        prefix of 256 here; 128 would arm only the tile sizes the tuning
+        database happens to pick today.
       * more tiles than workgroups (Num_CU * GRID_CU_MULTIP), so a workgroup is
         handed a further tile after the one that cleared the flag. Sized from
         the device's CU count rather than hardcoded -- a fixed size would
@@ -506,19 +513,16 @@ def core_test_bottom_right_fully_masked_rows(device_str='cuda'):
     Whether a workgroup wins the next atomic_add before a fresh one starts is a
     scheduling question, so the failure is not perfectly deterministic; hence
     the repeats. At this tile count it reproduced on every attempt.
-
-    Kept cheap enough for level 0: this is a control-flow defect, so one dtype
-    and one head dim cover it.
     '''
-    seqlen_q, seqlen_k, d_head = 192, 64, 64
+    seqlen_q, seqlen_k, d_head = 320, 64, 64
     n_masked = seqlen_q - seqlen_k        # leading rows that attend nothing
     n_heads = 16
     dtype = torch.float16
     REPEATS = 4
 
     num_cu = torch.cuda.get_device_properties(device_str).multi_processor_count
-    # seqlen_q=192 is >= 2 tiles for any BLOCK_M <= 128, and GRID_CU_MULTIP is
-    # 2, so this lands the tile count at roughly 4x the workgroup count.
+    # seqlen_q=320 is >= 2 tiles for any BLOCK_M <= 256, and GRID_CU_MULTIP is
+    # 2, so this lands the tile count at 4x the workgroup count or better.
     batch = max(1, (num_cu * 4) // n_heads)
 
     sm_scale = 1.0 / math.sqrt(d_head)
