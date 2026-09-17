@@ -512,6 +512,21 @@ def export_op(conn_params: dict, output_path: Path, arch: str | None = None) -> 
             task_config = row['task_config']
             impl_index  = row['impl_index']
 
+            # The LUT column is a BACKEND INDEX, and impl_index is a position
+            # in the tuner's per-arch variant list. Those agree only while the
+            # runnable backends form a contiguous prefix of the operator's
+            # backend list -- they do not on gfx1201, whose runnable forward
+            # set is {triton=0, flyc=2}, so flyc sits at position 1 and writing
+            # the position would tell the LUT to select aiter on an arch that
+            # has no aiter images.
+            #
+            # level_op.impl_desc() records the index actually passed to
+            # force_backend_index, so take it from there. The fallback covers
+            # rows written before impl_desc carried it; for those the two were
+            # equal by construction, which is exactly why this went unnoticed.
+            impl_desc = row['impl_desc'] or {}
+            op_backend = impl_desc.get('backend_index', impl_index)
+
             table_name = op_table_name(iface_name)
             if table_name not in OP_SCHEMAS:
                 logger.warning('Skipping unknown op %s (task_id=%s)', iface_name, task_id)
@@ -527,7 +542,7 @@ def export_op(conn_params: dict, output_path: Path, arch: str | None = None) -> 
                 for col_def in cols:
                     source = col_def[2]
                     if source == 'op_backend':
-                        values.append(impl_index)
+                        values.append(op_backend)
                     elif source == 'op_tflops':
                         values.append(0.0)
                     else:
