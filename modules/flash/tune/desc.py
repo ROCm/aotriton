@@ -8,6 +8,7 @@ from dataclasses import asdict
 import dataclasses
 from pathlib import Path
 import gc
+import sys
 
 '''
 CAVEAT about imports
@@ -147,35 +148,61 @@ class FlashTune(TuningDescription):
         d_head = im.hdim if isinstance(im.hdim, int) else im.hdim[0]
         seqlen_q = im.seqlen_q
         seqlen_k = im.seqlen_k
-        causal = im.causal
         dropout_p = im.dropout_p
         dtype = im.dtype
         bias_type = im.bias_type
 
-        # Empirical for FWD+BWD (assuming all kernels are tuned)
-        # Forward-only would use different formula, but we assume backward is enabled
+        # FWD+BWD, dominated by what the REFERENCE materialises rather than by
+        # the kernel under test.
+        #
+        # Two terms, because they scale differently and mixing them was the old
+        # formula's mistake: it multiplied everything by d_head. Only q/k/v/o/do
+        # and the three gradients are O(B*H*S*D); every attention-shaped tensor
+        # is O(B*H*Sq*Sk) with no d_head at all, and at long sequence that is
+        # essentially the whole bill. For bf16 hdim=80 8192x8192 with bias the
+        # d_head-scaled tensors are 0.15 GB against 30 GB of attention-shaped
+        # ones -- 0.5% -- so the old cost tracked the negligible half and
+        # predicted 21.9 GB for a ~30 GB entry, which cleared a 24 GB cap and
+        # clamped nothing.
+        #
+        # `causal` is deliberately absent: sdpa_math masks a full Sq x Sk score
+        # matrix rather than skipping blocks, so causal saves no reference
+        # memory. The old code bound it and never used it.
         def current_cost():
-            base_cost = 0.11 * batch * n_heads * d_head * seqlen_q * seqlen_k / (1024 ** 3)
-            factor = 1.0
-            if dropout_p > 0.0:
-                factor += 0.25
+            elem = 4 if dtype == 'float32' else 2
+            hp = 8 if dtype == 'float32' else 4   # reference's high-precision dtype
+            # reference.py runs sdpa_math twice (input dtype and hp) plus
+            # sdpa_logsumexp in hp; each retains scores+probs for backward.
+            bytes_per_elem = 2 * elem + 4 * hp
             if bias_type != 0:
-                factor += 0.33
-            if dtype == 'float32':
-                factor *= 2.0
-            return 2.0 * factor * base_cost  # Mul by 2 to ensure only use 50% of VRAM
+                bytes_per_elem += 2 * elem + 2 * hp   # bias/db, and their hp copies
+            if dropout_p > 0.0:
+                bytes_per_elem += elem + 1            # encoded_softmax + bool mask
+            attn_gb = (bytes_per_elem * batch * n_heads * seqlen_q * seqlen_k
+                       / (1024 ** 3))
+            qkvo_gb = (8 * elem * batch * n_heads * max(seqlen_q, seqlen_k) * d_head
+                       / (1024 ** 3))
+            return 2.0 * (attn_gb + qkvo_gb)  # x2: aim to use at most 50% of VRAM
+
+        # Halve rather than step through fixed rungs. The old ladder's first
+        # three rungs were min(n_heads, 24/12/6), no-ops against the default
+        # N_HEADS=5, and it bottomed out at batch=2/n_heads=2 with no way to go
+        # lower however far over the cap it still was.
+        #
+        # GQA cannot go below 2 query heads: the map below needs a (q, k) pair,
+        # and at n_heads=1 none of its branches fire, which would silently turn
+        # a GQA case into a non-GQA one.
+        min_heads = 2 if is_gqa else 1
+        while current_cost() > vram_cap_gb and n_heads > min_heads:
+            n_heads = max(min_heads, n_heads // 2)
+        while current_cost() > vram_cap_gb and batch > 1:
+            batch = max(1, batch // 2)
         if current_cost() > vram_cap_gb:
-            n_heads = min(n_heads, 24)
-        if current_cost() > vram_cap_gb:
-            n_heads = min(n_heads, 12)
-        if current_cost() > vram_cap_gb:
-            n_heads = min(n_heads, 6)
-        if current_cost() > vram_cap_gb:
-            n_heads = min(n_heads, 3)
-        if current_cost() > vram_cap_gb:
-            n_heads = min(n_heads, 2)
-        if current_cost() > vram_cap_gb:
-            batch = min(batch, 2)
+            # Nothing left to shrink; seqlen and hdim are the entry's identity.
+            print(f'[aotriton] WARNING: {im.as_posix()} still needs about '
+                  f'{current_cost() / 2.0:.1f} GB at batch={batch} '
+                  f'n_heads={n_heads}, against {vram_cap_gb:.1f} GB of VRAM. '
+                  f'Expect an out-of-memory failure.', file=sys.stderr)
         if is_gqa:
             if n_heads >= 24:
                 n_heads = (24, 8)
