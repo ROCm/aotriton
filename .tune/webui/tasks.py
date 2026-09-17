@@ -457,16 +457,26 @@ class ComputeBestResultsCommand(CommandBuilder):
         return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
 
+# The op database the "incremental over existing db" checkbox seeds from. Repo
+# relative because _run() executes with cwd=AOTRITON_ROOT. Read-only: the export
+# writes to scratch/op_database.sqlite3, never back to this file.
+INCREMENTAL_OP_BASE_DB = 'modules/flash/database/op_database.sqlite3.tar.xz'
+
+
 class ExportBestResultsCommand(CommandBuilder):
     """Export best results to centralized SQLite database"""
     RELATIVE = '.tune/bin/export_best_results'
 
     def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
-             dry_run: bool = False):
+             incremental: bool = False, dry_run: bool = False):
         args = [workdir, '--tuning_mode', tuning_mode]
         if arch:
             args += ['--arch', arch]
+        if incremental:
+            args += ['--base_db', INCREMENTAL_OP_BASE_DB]
         label = 'Export best results to centraldb' + (f' ({arch})' if arch else '')
+        if incremental:
+            label += ' (incremental)'
         return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
 
@@ -744,9 +754,11 @@ def compute_best_results(workdir, tuning_mode: str = 'kernel', arch: str | None 
     return _compute_best_results.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
 
 
-def export_best_results(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):
+def export_best_results(workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+                        incremental: bool = False, dry_run: bool = False):
     """Export best results to centralized SQLite database"""
-    return _export_best_results.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
+    return _export_best_results.exec(workdir, tuning_mode=tuning_mode, arch=arch,
+                                     incremental=incremental, dry_run=dry_run)
 
 
 def recreate_materialized_view(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):

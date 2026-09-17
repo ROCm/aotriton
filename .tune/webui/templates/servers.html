@@ -88,7 +88,11 @@
 
     <p style="font-size: 0.9em; color: gray; margin-top: 1rem; margin-bottom: 0.25rem;">Individual steps:</p>
 
-    <div id="bake-lut-step-arch-inputs" style="display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;">
+    {# Initial visibility is rendered from the saved mode so the correct control
+       is present in the first paint; updateStepScope() then owns it as the radio
+       changes. Leaving both to JS would flash the arch selector on an op-mode
+       page load. #}
+    <div id="bake-lut-step-arch-inputs" style="display: {% if tuning_mode == 'op' %}none{% else %}inline-flex{% endif %}; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;">
         <label for="bake-lut-step-arch" style="font-size: 0.9em; color: gray;">Architecture:</label>
         <select id="bake-lut-step-arch" onchange="updateStepArchWarning()">
             <option value="__all__">(all arches)</option>
@@ -97,6 +101,23 @@
             {% endfor %}
         </select>
         <span id="step-arch-warning" style="display: none; font-size: 0.85em; color: #b8860b;"></span>
+    </div>
+
+    {# Op mode's counterpart to the arch selector. Exactly one of the two is
+       visible, swapped by updateStepScope() below: op mode has no per-arch
+       shards -- op_database.sqlite3.tar.xz is installed wholesale -- so
+       filtering by arch there was never sound, and seeding from the existing
+       database is the partial-update axis that is. #}
+    <div id="bake-lut-incremental-inputs" style="display: {% if tuning_mode == 'op' %}inline-flex{% else %}none{% endif %}; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;">
+        <label style="font-size: 0.9em; color: gray;">
+            <input type="checkbox" id="bake-lut-incremental">
+            Incremental over existing db
+        </label>
+        <span style="font-size: 0.85em; color: gray;">
+            Export Best Results seeds <code>scratch/op_database.sqlite3</code> from
+            <code>modules/flash/database/op_database.sqlite3.tar.xz</code> (read-only)
+            and overwrites only the entries this run measured.
+        </span>
     </div>
 
     <div style="display: flex; flex-wrap: nowrap; align-items: center;">
@@ -117,7 +138,7 @@
                 hx-confirm="Compute best_tuning_results from raw tuning results? This may take several minutes.">Compute Best Results</button>
 
         <button hx-post="/api/servers/export-best-results"
-                hx-vals='js:{mode: getTuningMode(), arch: getStepArch()}'
+                hx-vals='js:{mode: getTuningMode(), arch: getStepArch(), base_db: getUseBaseDb()}'
                 hx-swap="none"
                 hx-confirm="Export best results to {% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}? Existing file will be deleted.">Export Best Results</button>
 
@@ -138,7 +159,8 @@
         <strong>Compute Best Results:</strong> Aggregates raw tuning results into <code>best_tuning_results</code> table (tuning_level = {{ tuning_mode }}).<br>
         <strong>Export Best Results:</strong> Exports <code>best_tuning_results</code> (tuning_level = {{ tuning_mode }}) to <code>scratch/{% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}</code>.<br>
         <strong>Sancheck:</strong> Runs LUT sanity check against <code>scratch/{% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}</code> without triggering code generation.<br>
-        <strong>Architecture:</strong> restricts the six steps above to one arch. Each step narrows both what it reads and what it deletes, so other arches' rows and their <code>installed/database/amd/&lt;arch&gt;/</code> shards are left intact &mdash; baking gfx942 and later gfx950 accumulates. Note <code>scratch/centraldb.sqlite3</code> is rewritten, not merged, so it holds only the last arch exported. In <strong>op</strong> mode there are no per-arch shards: <code>op_database.sqlite3.tar.xz</code> is installed wholesale, so an arch-filtered op run installs an incomplete op database.<br>
+        <strong>Architecture:</strong> (kernel mode) restricts the six steps above to one arch. Each step narrows both what it reads and what it deletes, so other arches' rows and their <code>installed/database/amd/&lt;arch&gt;/</code> shards are left intact &mdash; baking gfx942 and later gfx950 accumulates. Note <code>scratch/centraldb.sqlite3</code> is rewritten, not merged, so it holds only the last arch exported.<br>
+        <strong>Incremental over existing db:</strong> (op mode) the op counterpart, and it replaces the arch selector because op mode has no per-arch shards &mdash; <code>op_database.sqlite3.tar.xz</code> is installed wholesale, so filtering an op run by arch would install an incomplete database. Instead, Export Best Results seeds the output from <code>modules/flash/database/op_database.sqlite3.tar.xz</code> and overwrites only the entries this run measured, letting a partial op run ship without discarding everything it did not re-tune. That file is opened read-only and is never modified; 0.13b's <code>op$backend</code> column is upgraded to <code>op$best1st</code>/<code>op$best2nd</code> on the way in.<br>
         <strong>Decompose DB:</strong> {% if tuning_mode == 'op' %}Compresses <code>scratch/op_database.sqlite3</code> into <code>installed/database/op_database.sqlite3.tar.xz</code>.{% else %}Partitions <code>scratch/centraldb.sqlite3</code> into <code>installed/database/amd/&lt;arch&gt;/&lt;family&gt;/&lt;kernel&gt;.sqlite3.tar.xz</code>.{% endif %}
     </p>
 
@@ -192,9 +214,38 @@
 // reason partials/tuning_mode_section.html gives for getTuningMode(): read the
 // value at call time, and keep a single DOM query to maintain. (The fix-host
 // select above still inlines its read -- it has exactly one consumer.)
+// Returns the sentinel while the selector is hidden (op mode), so the five
+// steps that take an arch keep behaving exactly as they did before the
+// selector existed rather than inheriting a stale kernel-mode selection.
 function getStepArch() {
     const el = document.getElementById('bake-lut-step-arch');
-    return el ? el.value : '__all__';
+    const box = document.getElementById('bake-lut-step-arch-inputs');
+    if (!el || (box && box.style.display === 'none')) return '__all__';
+    return el.value;
+}
+
+// Named for the flag it becomes (--base_db), NOT for the checkbox's label:
+// /api/servers/bake-lut already posts an `incremental` field meaning an
+// incremental ACCURACY TABLE update (--incremental), which is a different thing
+// entirely. Different routes, so nothing collides today -- but one word with two
+// meanings in one page is a trap worth not setting.
+//
+// Only ever true in op mode: the checkbox is hidden otherwise, and
+// export_best_results rejects --base_db in kernel mode.
+function getUseBaseDb() {
+    const box = document.getElementById('bake-lut-incremental-inputs');
+    if (!box || box.style.display === 'none') return false;
+    const el = document.getElementById('bake-lut-incremental');
+    return !!(el && el.checked);
+}
+
+// Arch selector for kernel, incremental checkbox for op -- never both.
+function updateStepScope() {
+    const op = getTuningMode() === 'op';
+    const archBox = document.getElementById('bake-lut-step-arch-inputs');
+    const incBox = document.getElementById('bake-lut-incremental-inputs');
+    if (archBox) archBox.style.display = op ? 'none' : 'inline-flex';
+    if (incBox) incBox.style.display = op ? 'inline-flex' : 'none';
 }
 
 // Fires at the moment the dangerous combination is created, which a static
@@ -213,9 +264,10 @@ function updateStepArchWarning() {
 }
 
 document.addEventListener('DOMContentLoaded', function () {
+    function onModeChange() { updateStepScope(); updateStepArchWarning(); }
     document.querySelectorAll('#tuning-mode-inputs input[name="mode"]')
-            .forEach(function (r) { r.addEventListener('change', updateStepArchWarning); });
-    updateStepArchWarning();
+            .forEach(function (r) { r.addEventListener('change', onModeChange); });
+    onModeChange();
 });
 </script>
 

@@ -62,6 +62,23 @@ def step_arch() -> str | None:
     return None if not value or value == '__all__' else value
 
 
+def step_use_base_db() -> bool:
+    """The op-mode "incremental over existing db" checkbox.
+
+    Reads `base_db`, not `incremental`: /api/servers/bake-lut already takes an
+    `incremental` field meaning an incremental ACCURACY TABLE update, which is a
+    different operation. Naming this after the flag it becomes keeps the two
+    apart.
+
+    Normalized here for the same reason step_arch() is: absent means the request
+    is byte-for-byte what it was before the checkbox existed. htmx serialises the
+    JS boolean as 'true'; '1' is also accepted because every other flag on this
+    page is spelled that way (bake-lut's incremental/fix), and a hand-rolled curl
+    that follows the neighbouring convention should not silently do nothing.
+    """
+    return (request.form.get('base_db') or '').strip().lower() in ('true', '1')
+
+
 @bp.route('/')
 def dashboard():
     """Dashboard overview page"""
@@ -337,7 +354,8 @@ def api_export_best_results():
     """Export best results to centralized SQLite database"""
     workdir = current_app.config['WORKDIR']
     tuning_mode = request.form.get('mode', 'kernel')
-    result = tasks.export_best_results(workdir, tuning_mode=tuning_mode, arch=step_arch(), dry_run=should_dryrun())
+    result = tasks.export_best_results(workdir, tuning_mode=tuning_mode, arch=step_arch(),
+                                       incremental=step_use_base_db(), dry_run=should_dryrun())
     return jsonify(result)
 
 
