@@ -126,7 +126,9 @@ def _build_kernel_dict():
         EXT_CLASS = AttnOptionsWrapper
         BACKEND_INDEX = None  # Must define in subclass
 
-        def create_extargs(self, *, which_impl=None, probe=False):
+        # dtype accepted and ignored: one call site in desc.py serves every
+        # level, and only the op level filters on it.
+        def create_extargs(self, *, which_impl=None, probe=False, dtype=None):
             hsaco_index = which_impl.impl_index if which_impl is not None else None
             ext = self.EXT_CLASS(self.BACKEND_INDEX, self.KERNEL_SLOT)
             ext.set_hsaco(hsaco=hsaco_index, probe=probe)

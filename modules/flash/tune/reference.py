@@ -85,7 +85,9 @@ class SdpaReference(KFTDesc):
     PT_INPUT_CLASS = SdpaBidiInputs
     PT_REF_CLASS = SdpaGoldenOutputs
 
-    def create_extargs(self, *, which_impl=None, probe=False):
+    # dtype accepted and ignored, as in level_kernel.py: one call site in
+    # desc.py serves every level, and only the op level filters on it.
+    def create_extargs(self, *, which_impl=None, probe=False, dtype=None):
         return None
 
     def generate_inputs(self, im: 'FlashInputMetadata'):

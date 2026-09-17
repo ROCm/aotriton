@@ -37,25 +37,11 @@ def _gpu_arch() -> str:
     return _cached_arch
 
 
-# Which arches each backend can actually run on, keyed by the name
-# `@ati.backend` declared for it in modules/flash/aot/__init__.py.
-#
-# A backend absent from this table runs everywhere; only the restricted ones
-# are listed. The restrictions are not this module's to invent -- each mirrors
-# the description layer, and the citation is the point, because these will move:
-#
-#   aiter : @ati.affine.arch(['gfx942', 'gfx950']) in modules/flash/aot/
-#           aiter_fwd.py:31 and aiter_bwd.py:33.
-#   flyc  : the `f.arch not in <ladder>` disable predicates in
-#           modules/flash/aot/flyc_attn_fwd.py:120-140, flyc_bwd_dkdv.py:45-48
-#           and flyc_bwd_dq.py:47-50, all keyed on {gfx950, gfx1201}.
-#
-# This is a duplicate of knowledge that lives elsewhere, and duplicating it is
-# a compromise rather than a design: the authoritative predicates are evaluated
-# at CODEGEN time against a Functional, while the tuner needs the answer at RUN
-# time from a GPU and an installed library. There is no probe for "does this
-# library carry images for backend B on this arch" -- see the note in attn_fwd
-# below.
+# Arch restrictions, keyed by the name @ati.backend declared. Absent = runs
+# everywhere. Mirrors the description layer, which decides this at codegen time
+# against a Functional while the tuner needs it at run time:
+#   aiter : @ati.affine.arch in aot/aiter_fwd.py:31, aiter_bwd.py:33
+#   flyc  : the f.arch disable predicates in aot/flyc_*.py
 _BACKEND_ARCHS = {
     'aiter': frozenset({'gfx942', 'gfx950'}),
     'flyc': frozenset({'gfx950', 'gfx1201'}),
@@ -63,15 +49,11 @@ _BACKEND_ARCHS = {
 
 
 def _backend_table(enum_struct_name: str):
-    """(names in library-index order, {name: index}) read from pyaotriton.
+    """(names in library-index order, {name: index}), from <Struct>.by_index.
 
-    Both come from `<Struct>.by_index`, the dict the binding builds out of the
-    generator's X-macro (modules/flash/bindings/v3.cc:118-121), whose values
-    are verbatim the strings `@ati.backend` declared. So this module never
-    spells a backend index, and never has to reproduce the generator's
-    kCamelCase constant-naming rule to find one: the declared name IS the key.
-    A backend added, removed or reordered in the description shows up here
-    without an edit.
+    by_index is built from the generator's X-macro (bindings/v3.cc:118-121) and
+    keyed by the names @ati.backend declared, so reordering a backend in the
+    description needs no edit here.
     """
     from pyaotriton.v3 import flash
     struct = getattr(flash, enum_struct_name)
@@ -134,60 +116,48 @@ def _build_op_dict():
         EXT_CLASS = AttnOptionsWrapperOp
         BACKEND_ENUM = None  # 'OpAttnFwdBackend' / 'OpAttnBwdBackend'; set in subclass
 
-        def available_backends(self) -> list[str]:
-            """Declared names of the backends this arch can run, in library
-            index order. This list defines the op-level variant space: its
-            LENGTH is how many variants get benchmarked and its ORDER fixes
-            which impl_index means which backend."""
+        def available_backends(self, dtype: str) -> list[str]:
+            """Declared names of the backends that can run this arch and dtype,
+            in library index order. This list defines the op-level variant
+            space: its LENGTH is how many variants get benchmarked and its
+            ORDER fixes which impl_index means which backend."""
             names, _ = _backend_table(self.BACKEND_ENUM)
             arch = _gpu_arch()
-            return [n for n in names
-                    if arch in _BACKEND_ARCHS.get(n, frozenset({arch}))]
+            out = []
+            for n in names:
+                if arch not in _BACKEND_ARCHS.get(n, frozenset({arch})):
+                    continue
+                if n == 'flyc' and dtype == 'float32':
+                    continue
+                out.append(n)
+            return out
 
         def backend_index_of(self, name: str) -> int:
             _, index_of = _backend_table(self.BACKEND_ENUM)
             return index_of[name]
 
-        def create_extargs(self, *, which_impl=None, probe=False):
-            # which_impl.impl_index is a POSITION in enumerate_variants()'s
-            # list, not a backend index, and the two are only equal while the
-            # available backends happen to form a contiguous prefix of the
-            # library's list. They do not on gfx1201, which has flyc (index 2
-            # for fwd) but no aiter (index 1): position 1 there is flyc, and
-            # feeding 1 to force_backend_index would run aiter -- a backend
-            # with no images on that arch. Resolve through the name instead,
-            # against the same ordered list enumerate_variants() published.
-            names = self.available_backends()
+        def create_extargs(self, *, which_impl=None, probe=False, dtype=None):
+            # impl_index is a POSITION in enumerate_variants()'s list, not a
+            # backend index; on gfx1201 position 1 is flyc=2, not aiter=1.
+            # `dtype` must match what enumerate_variants saw or this indexes a
+            # differently-filtered list.
+            names = self.available_backends(dtype)
             position = which_impl.impl_index if which_impl is not None else 0
             name = names[position]
             return self.EXT_CLASS.for_op_backend(self.backend_index_of(name), name)
 
     class attn_fwd(SdpaOpCommon, _attn_fwd):
         # The vocabulary is pyaotriton.v3.flash.OpAttnFwdBackend, generated
-        # from the same list that assigns BackendEnum -- read it rather than
-        # any comment here. Today: triton=0, aiter=1, flyc=2.
+        # from the same list that assigns BackendEnum. triton=0, aiter=1, flyc=2.
         #
-        # The swept set is neither `Max` nor a count. Max is how many backends
-        # the LIBRARY was generated with, and the enum is identical on every
-        # arch, so sweeping Max would probe backends that cannot run here. A
-        # count cannot express the set either: on gfx1201 the runnable
-        # backends are triton and flyc, indices 0 and 2, which is not
-        # `range(n)` of anything. Hence `available_backends()` returning names.
-        #
-        # ONE CAVEAT SURVIVES from when flyc was excluded outright: whether a
-        # library carries flyc IMAGES is, strictly, a build-time property
-        # rather than an arch property, and the tuner still has no probe for
-        # it. Enabling flyc here therefore assumes a library built normally for
-        # gfx950/gfx1201 -- which is now the only kind that configures at all,
-        # since CMakeLists.txt's flydsl-llvm tripwire fails any image-mode
-        # build without a FlyDSL wheel. A NOIMAGE or otherwise flyc-less build
-        # of those two arches will fail the flyc entries of the sweep rather
-        # than skip them.
+        # Caveat: whether a library carries flyc IMAGES is a build-time
+        # property, not an arch one, and there is still no probe for it. A
+        # NOIMAGE or otherwise flyc-less build of gfx950/gfx1201 will fail the
+        # flyc entries of the sweep rather than skip them.
         BACKEND_ENUM = 'OpAttnFwdBackend'
 
     class attn_bwd(SdpaOpCommon, _bwd_kernel_dk_dv):
-        # See attn_fwd above. Today: triton_split=0, triton_fuse=1, aiter=2,
-        # flyc=3.
+        # triton_split=0, triton_fuse=1, aiter=2, flyc=3.
         BACKEND_ENUM = 'OpAttnBwdBackend'
 
         OUTPUT_TNAMES = ["dk", "dv", "dq", "db"]
@@ -197,12 +167,8 @@ def _build_op_dict():
             import torch
             from aotriton.tune.gpu_utils import zero_devm
             # The aiter backend accumulates into dq_acc; clear before each
-            # call. Compared by declared name rather than by index: the index
-            # was already once a bare 2 that silently became wrong when flyc
-            # was inserted, and OpAttnBwdBackend.kAiter only fixed half of
-            # that -- it is still an integer whose meaning is positional. The
-            # name is the backend's identity and cannot be shifted by a
-            # neighbour.
+            # call. By name, not index: this was once a bare 2 that went wrong
+            # when flyc was inserted ahead of it.
             if extargs.backend_name == 'aiter':
                 zero_devm(devm.dq_acc)
             err = self._direct_call(direct_inputs, extargs)
@@ -241,29 +207,20 @@ def get_impl(name: str):
 
 
 def enumerate_variants(entry, im, which_impl: str, pt) -> list[dict]:
-    """One dict per runnable backend, in library index order.
+    """One dict per backend runnable for this entry's arch and dtype, in
+    library index order.
 
-    Carries `backend_name`, not `backend_index`. The consumer
-    (localq/handlers.py `_build_fanout`) reads only each dict's POSITION, which
-    becomes the impl_index on the wire and in the database -- so whatever is
-    inside has to be something that can be resolved back to a backend without
-    assuming position and index agree. On gfx1201 they do not: the runnable set
-    is {triton=0, flyc=2}, so position 1 is flyc. A name survives that; an
-    index copied from a position does not.
+    Carries a NAME because the consumer keeps only each dict's position, and
+    position != backend index wherever the runnable set is not a contiguous
+    prefix (gfx1201: triton=0, flyc=2).
     """
     kernel = get_impl(which_impl)
-    return [{'backend_name': name} for name in kernel.available_backends()]
+    return [{'backend_name': name} for name in kernel.available_backends(entry.dtype)]
 
 
 def impl_desc(kernel, args) -> dict:
-    """Both spellings, deliberately.
-
-    `backend_name` is the identity -- stable across builds, and the thing worth
-    reading in a report. `backend_index` is what was actually written to
-    force_backend_index for this run, and it is what the optune LUT stores, so
-    it has to be recoverable from the record rather than re-derived later from
-    an impl_index that is only a position (see
-    pq/export_best_results.py's op path, which reads it from here).
-    """
+    """Both spellings: the name as identity, the index because the optune LUT
+    stores it and export_best_results.py reads it back from here (impl_index
+    is only a position)."""
     return {'backend_name': args.backend_name,
             'backend_index': args.backend_index}

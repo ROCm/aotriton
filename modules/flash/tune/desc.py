@@ -283,7 +283,7 @@ class FlashTune(TuningDescription):
         from aotriton.tune.gpu_utils import device_ctx, default_device_string
         with device_ctx():
             kernel = self.get_impl(which_impl.dsl_name)
-            args = kernel.create_extargs(which_impl=which_impl)
+            args = kernel.create_extargs(which_impl=which_impl, dtype=im.dtype)
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
             direct_inputs = kernel.prepare_directs(im, inputs)
@@ -309,7 +309,7 @@ class FlashTune(TuningDescription):
         from aotriton.tune.gpu_utils import do_bench, device_ctx, default_device_string
         with device_ctx():
             kernel = self.get_impl(which_impl.dsl_name)
-            args = kernel.create_extargs(which_impl=which_impl, probe=True)
+            args = kernel.create_extargs(which_impl=which_impl, probe=True, dtype=im.dtype)
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
             direct_inputs = kernel.prepare_directs(im, inputs)

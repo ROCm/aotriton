@@ -512,18 +512,11 @@ def export_op(conn_params: dict, output_path: Path, arch: str | None = None) -> 
             task_config = row['task_config']
             impl_index  = row['impl_index']
 
-            # The LUT column is a BACKEND INDEX, and impl_index is a position
-            # in the tuner's per-arch variant list. Those agree only while the
-            # runnable backends form a contiguous prefix of the operator's
-            # backend list -- they do not on gfx1201, whose runnable forward
-            # set is {triton=0, flyc=2}, so flyc sits at position 1 and writing
-            # the position would tell the LUT to select aiter on an arch that
-            # has no aiter images.
-            #
-            # level_op.impl_desc() records the index actually passed to
-            # force_backend_index, so take it from there. The fallback covers
-            # rows written before impl_desc carried it; for those the two were
-            # equal by construction, which is exactly why this went unnoticed.
+            # This column is a BACKEND INDEX; impl_index is a position in the
+            # tuner's per-arch variant list. They differ wherever the runnable
+            # backends are not a contiguous prefix (gfx1201: triton=0, flyc=2).
+            # impl_desc carries the index actually forced; the fallback covers
+            # rows written before it did.
             impl_desc = row['impl_desc'] or {}
             op_backend = impl_desc.get('backend_index', impl_index)
 
