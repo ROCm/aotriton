@@ -154,30 +154,4 @@
             {% if not build_node_config.hostname %}disabled title="Configure a remote build node hostname first"{% endif %}>Fetch from Remote Build Node{% if build_node_config.hostname %} ({{ build_node_config.hostname }}){% endif %}</button>
     <span id="fetch-test-spinner" class="htmx-indicator">⏳ Fetching...</span>
 </section>
-
-<section>
-    <h3>Build Information</h3>
-    <table>
-        <tr>
-            <th>Item</th>
-            <th>Value</th>
-        </tr>
-        <tr>
-            <td>Architectures</td>
-            <td><strong>{{ archs|length }}</strong> ({{ archs|join(', ') }})</td>
-        </tr>
-        <tr>
-            <td>Build Hosts</td>
-            <td><strong>{{ hostnames|length }}</strong> ({{ hostnames|join(', ') }})</td>
-        </tr>
-        <tr>
-            <td>Worker Image</td>
-            <td><code>{{ config.CELERY_WORKER_IMAGE }}</code></td>
-        </tr>
-        <tr>
-            <td>Workdir</td>
-            <td><code>{{ config.WORKDIR }}</code></td>
-        </tr>
-    </table>
-</section>
 {% endblock %}

@@ -116,12 +116,11 @@ def builds():
     """Build management page"""
     workdir = current_app.config['WORKDIR']
     archs = tasks.get_architectures(workdir)
-    hostnames = tasks.get_hostnames(workdir)
     build_node_config = tasks.get_build_node_config(workdir)
     default_workdir = tasks.get_default_workdir(workdir) or '(not set)'
     git_status = tasks.get_git_status(workdir)
     use_installed_db = tasks.get_test_build_use_installed_db(workdir)
-    return render_template('builds.html', archs=archs, hostnames=hostnames,
+    return render_template('builds.html', archs=archs,
                            build_node_config=build_node_config,
                            default_workdir=default_workdir,
                            git_status=git_status,
