@@ -174,9 +174,13 @@ KERNEL_SCHEMAS = {
 }
 
 # Op-mode schemas — same input columns as the kernel tables (minus tuned_kernel$/
-# compiler_options$ columns) plus op$backend and op$tflops.
+# compiler_options$ columns) plus the op$ columns below.
 _OP_EXTRA_COLS = [
-    ('op$backend', 'INTEGER', 'op_backend', None),
+    # FIXME: Flyc duct tape -- this was one ('op$backend', ...) column. Split so
+    # the generator can drop a flyc winner on an arch without flyc images.
+    # Integers, not names, to keep the shipped db small.
+    ('op$best1st', 'INTEGER', 'op_best1st', None),
+    ('op$best2nd', 'INTEGER', 'op_best2nd', None),
     ('op$tflops',  'REAL',    'op_tflops',  None),
 ]
 
@@ -519,6 +523,12 @@ def export_op(conn_params: dict, output_path: Path, arch: str | None = None) -> 
             # rows written before it did.
             impl_desc = row['impl_desc'] or {}
             op_backend = impl_desc.get('backend_index', impl_index)
+            if True:  # FIXME: Flyc duct tape
+                # compute_best_results.py puts the runner-up here. Absent (older
+                # rows, or a single passing backend) means there is no second
+                # choice, so best2nd repeats best1st and the generator's
+                # substitution becomes a no-op rather than a wrong index.
+                op_backend_2nd = impl_desc.get('backend_2nd_index', op_backend)
 
             table_name = op_table_name(iface_name)
             if table_name not in OP_SCHEMAS:
@@ -534,8 +544,10 @@ def export_op(conn_params: dict, output_path: Path, arch: str | None = None) -> 
                 values = []
                 for col_def in cols:
                     source = col_def[2]
-                    if source == 'op_backend':
+                    if source == 'op_best1st':
                         values.append(op_backend)
+                    elif source == 'op_best2nd':
+                        values.append(op_backend_2nd)
                     elif source == 'op_tflops':
                         values.append(0.0)
                     else:

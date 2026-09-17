@@ -166,6 +166,8 @@ def _find_best_candidate(task_id: int, key_name: str,
             return passes
 
     best = None
+    if True:  # FIXME: Flyc duct tape
+        gated = []  # (median_time, backend_index) for every candidate that passed
 
     for index, rd in group_rows:
         times = rd.get('times')
@@ -226,10 +228,22 @@ def _find_best_candidate(task_id: int, key_name: str,
                       ' NEW_BEST' if gate and (best is None or median_time < best[1]) else '')
         if gate and (best is None or median_time < best[1]):
             best = (index, median_time, impl_desc)
+        if True:  # FIXME: Flyc duct tape
+            if gate and tuning_mode == 'op':
+                gated.append((median_time, (impl_desc or {}).get('backend_index', index)))
 
     if best is None:
         return None
     index, median_time, impl_desc = best
+    if True:  # FIXME: Flyc duct tape
+        # Runner-up backend, behind the same accuracy gate as the winner.
+        # Stashed in the existing impl_desc JSONB so best_tuning_results needs
+        # no new column; export_best_results.py reads it back as op$best2nd.
+        if tuning_mode == 'op':
+            won = (impl_desc or {}).get('backend_index', index)
+            alt = [b for _, b in sorted(gated) if b != won]
+            impl_desc = dict(impl_desc or {})
+            impl_desc['backend_2nd_index'] = alt[0] if alt else won
     return (task_id, key_name, index, median_time, impl_desc)
 
 
