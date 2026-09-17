@@ -17,12 +17,26 @@ WORKDIR="$1"
 HOSTNAME="$2"
 shift 2
 
-# Collect extra args after '--'
+# Collect extra args. The '--' separator is OPTIONAL and may appear more than
+# once, because callers disagree about it and always have:
+#
+#   wkctl:90,111          emits TWO   (MULTI_GPU_ARGS already starts with one)
+#   stopstart_worker.sh   emits NONE  (it strips the one it was given)
+#   webui tasks.py:341    emits one only when it also has --multi_gpu
+#
+# The old rule -- take the extras only if $1 is exactly '--' -- had no else
+# branch, so a caller that omitted it had every extra SILENTLY DISCARDED. That
+# is how `-- --multi_gpu -1 --tuning_mode op` reached the remote as plain
+# defaults and a worker logged tuning_mode=kernel with no error anywhere. The
+# doubled form failed differently: the surviving '--' travelled all the way to
+# worker_service.sh's arg loop, which rejects it as an unknown option.
+#
+# So separators are accepted anywhere and dropped; no extra arg is ever a bare
+# '--' (they are --multi_gpu/--tuning_mode and their values).
 EXTRA_ARGS=()
-if [ "$1" = "--" ]; then
-  shift
-  EXTRA_ARGS=("$@")
-fi
+for _arg in "$@"; do
+  [ "$_arg" = "--" ] || EXTRA_ARGS+=("$_arg")
+done
 
 if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
   echo "Usage: $0 <workdir> <hostname> [-- <extra args>]" >&2

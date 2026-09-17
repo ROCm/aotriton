@@ -13,12 +13,11 @@ WORKDIR="$1"
 HOSTNAME="$2"
 shift 2
 
-# Collect extra args after '--'
+# Optional, repeatable '--' separator -- see start_worker.sh.
 EXTRA_ARGS=()
-if [ "$1" = "--" ]; then
-  shift
-  EXTRA_ARGS=("$@")
-fi
+for _arg in "$@"; do
+  [ "$_arg" = "--" ] || EXTRA_ARGS+=("$_arg")
+done
 
 if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
   echo "Usage: $0 <workdir> <hostname> [-- <extra args>]" >&2
