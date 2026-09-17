@@ -51,7 +51,10 @@ Usage:
 import argparse
 import logging
 import sqlite3
+import tarfile
+import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import psycopg
@@ -481,7 +484,153 @@ def export(conn_params: dict, output_path: Path, arch: str | None = None) -> Non
     logger.info('Next step: .tune/bin/sancheck <workdir>')
 
 
-def export_op(conn_params: dict, output_path: Path, arch: str | None = None) -> None:
+def _open_base_db(base_db: Path) -> sqlite3.Connection:
+    """Open --base_db READ ONLY, decompressing a .tar.xz to a temp file first.
+
+    mode=ro is the point, not a precaution: the usual --base_db is the in-tree
+    modules/flash/database/op_database.sqlite3.tar.xz, and a run must leave it
+    untouched -- the export's only output is --output. A plain .sqlite3 base
+    would otherwise be opened read-write, so the guarantee rests on the URI
+    rather than on every caller remembering to only SELECT.
+
+    decomposedb writes a single flat `op_database.sqlite3` member (see its
+    `tar -cJf ... -C $(dirname) $(basename)`), and the in-tree archive has the
+    same shape, so the member is located by suffix rather than a hardcoded name.
+    """
+    if base_db.suffix != '.xz':
+        return sqlite3.connect(f'file:{base_db}?mode=ro', uri=True)
+    with tarfile.open(base_db) as tar:
+        members = [m for m in tar.getmembers() if m.name.endswith('.sqlite3')]
+        if len(members) != 1:
+            raise ValueError(
+                f'{base_db} holds {len(members)} .sqlite3 members, expected exactly one')
+        tmpdir = tempfile.mkdtemp(prefix='aotriton-base-db.')
+        tar.extract(members[0], tmpdir)
+        return sqlite3.connect(Path(tmpdir) / members[0].name)
+
+
+def load_base_into(db: sqlite3.Connection, base_db: Path) -> int:
+    """Copy --base_db into `db`, upgrading 0.13b's schema on the way.
+
+    The only difference between the two formats is the backend column: 0.13b has
+    a single op$backend, 0.14b the ranked pair op$best1st/op$best2nd. Every input
+    column and both UNIQUE keys are identical, so the upgrade is one
+    INSERT .. SELECT per table with op$backend copied into both ranked columns.
+    0.13b recorded no runner-up and none can be invented, and best2nd == best1st
+    is the honest encoding of that -- it makes the generator's flyc substitution
+    a no-op on baseline rows rather than a guess.
+    """
+    total = 0
+    src = _open_base_db(base_db)
+    try:
+        for table_name, (cols, unique) in OP_SCHEMAS.items():
+            ensure_table(db, table_name, cols, unique)
+            table = f'FLASH${table_name}'
+            have = {r[1] for r in src.execute(f'PRAGMA table_info("{table}")')}
+            if not have:
+                logger.warning('--base_db has no table %s, skipping', table)
+                continue
+            names = _col_names(cols)
+            upgraded = 'op$best1st' not in have
+            if upgraded:
+                missing = [c for c in names
+                           if c not in have and not c.startswith('op$best')]
+                if missing or 'op$backend' not in have:
+                    raise ValueError(
+                        f'{base_db}: {table} is neither the 0.13b nor the 0.14b '
+                        f'op schema (missing {missing or ["op$backend"]})')
+                # op$backend -> both ranked columns; every other column by name.
+                select = ', '.join(
+                    '"op$backend"' if c.startswith('op$best') else f'"{c}"'
+                    for c in names)
+            else:
+                select = ', '.join(f'"{c}"' for c in names)
+            insert_cols = ', '.join(f'"{c}"' for c in names)
+            placeholders = ', '.join('?' * len(names))
+            rows = src.execute(f'SELECT {select} FROM "{table}"').fetchall()
+            db.executemany(
+                f'INSERT OR REPLACE INTO "{table}" ({insert_cols}) '
+                f'VALUES ({placeholders})', rows)
+            logger.info('  %-20s: %d base rows%s', table_name, len(rows),
+                        ' (upgraded from op$backend)' if upgraded else '')
+            total += len(rows)
+    finally:
+        src.close()
+    db.commit()
+    return total
+
+
+def merge_into(dst: sqlite3.Connection, src: sqlite3.Connection) -> tuple[int, int]:
+    """Overwrite dst's entries with src's. Returns (replaced, added).
+
+    insert_row's INSERT OR REPLACE plus the tables' UNIQUE(<input columns>)
+    constraint is what makes this an overwrite of exactly the colliding entries
+    rather than an append; the split of replaced vs added is counted here because
+    it is the number that says what an incremental run actually did.
+    """
+    replaced = added = 0
+    for table_name, (cols, _unique) in OP_SCHEMAS.items():
+        table = f'FLASH${table_name}'
+        names = _col_names(cols)
+        col_str = ', '.join(f'"{c}"' for c in names)
+        placeholders = ', '.join('?' * len(names))
+        before = dst.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        rows = src.execute(f'SELECT {col_str} FROM "{table}"').fetchall()
+        dst.executemany(
+            f'INSERT OR REPLACE INTO "{table}" ({col_str}) VALUES ({placeholders})',
+            rows)
+        after = dst.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        added += after - before
+        replaced += len(rows) - (after - before)
+    dst.commit()
+    return replaced, added
+
+
+def export_op_incremental(conn_params: dict, output_path: Path, base_db: Path,
+                          arch: str | None = None) -> None:
+    """Write output_path = converted base_db, overwritten by this run's pg rows.
+
+    base_db is an INPUT and is never written to; both halves are staged in
+    memory and only output_path is created.
+
+    The two halves are independent -- one reads a tar.xz off disk, the other
+    queries PostgreSQL -- so they run concurrently into separate in-memory
+    databases and are merged afterwards. check_same_thread=False because each
+    connection is created in one thread and read back in another; they are never
+    used by two threads at once.
+    """
+    t0 = time.monotonic()
+    base = sqlite3.connect(':memory:', check_same_thread=False)
+    fresh = sqlite3.connect(':memory:', check_same_thread=False)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f_base = pool.submit(load_base_into, base, base_db)
+            f_new = pool.submit(export_op_into, fresh, conn_params, arch)
+            n_base = f_base.result()
+            n_new = f_new.result()
+
+        replaced, added = merge_into(base, fresh)
+        logger.info('Incremental: %d base rows + %d new rows -> %d replaced, %d added',
+                    n_base, n_new, replaced, added)
+        with sqlite3.connect(output_path) as out:
+            base.backup(out)
+    finally:
+        base.close()
+        fresh.close()
+
+    logger.info('Done: %d rows written to %s in %.1fs',
+                n_base + added, output_path, time.monotonic() - t0)
+    logger.info('Next step: .tune/bin/sancheck <workdir> --tuning_mode op')
+
+
+def export_op_into(db: sqlite3.Connection, conn_params: dict,
+                   arch: str | None = None) -> int:
+    """Fill `db` with the op slice of best_tuning_results. Returns the row count.
+
+    Takes an open connection rather than a path so the same body serves both the
+    plain export (a file) and --base_db (an in-memory staging db merged into the
+    converted baseline).
+    """
     t0 = time.monotonic()
 
     logger.info('Querying best_tuning_results (tuning_level=op)...')
@@ -505,68 +654,70 @@ def export_op(conn_params: dict, output_path: Path, arch: str | None = None) -> 
     counts: dict[str, int] = {}
     skipped = 0
 
-    with sqlite3.connect(output_path) as db:
-        for table_name, (cols, unique) in OP_SCHEMAS.items():
-            ensure_table(db, table_name, cols, unique)
+    for table_name, (cols, unique) in OP_SCHEMAS.items():
+        ensure_table(db, table_name, cols, unique)
 
-        for row in rows:
-            task_id     = row['task_id']
-            arch        = row['arch']
-            iface_name  = row['iface_name']
-            task_config = row['task_config']
-            impl_index  = row['impl_index']
+    for row in rows:
+        task_id     = row['task_id']
+        arch        = row['arch']
+        iface_name  = row['iface_name']
+        task_config = row['task_config']
+        impl_index  = row['impl_index']
 
-            # This column is a BACKEND INDEX; impl_index is a position in the
-            # tuner's per-arch variant list. They differ wherever the runnable
-            # backends are not a contiguous prefix (gfx1201: triton=0, flyc=2).
-            # impl_desc carries the index actually forced; the fallback covers
-            # rows written before it did.
-            impl_desc = row['impl_desc'] or {}
-            op_backend = impl_desc.get('backend_index', impl_index)
-            if True:  # FIXME: Flyc duct tape
-                # compute_best_results.py puts the runner-up here. Absent (older
-                # rows, or a single passing backend) means there is no second
-                # choice, so best2nd repeats best1st and the generator's
-                # substitution becomes a no-op rather than a wrong index.
-                op_backend_2nd = impl_desc.get('backend_2nd_index', op_backend)
+        # This column is a BACKEND INDEX; impl_index is a position in the
+        # tuner's per-arch variant list. They differ wherever the runnable
+        # backends are not a contiguous prefix (gfx1201: triton=0, flyc=2).
+        # impl_desc carries the index actually forced; the fallback covers
+        # rows written before it did.
+        impl_desc = row['impl_desc'] or {}
+        op_backend = impl_desc.get('backend_index', impl_index)
+        if True:  # FIXME: Flyc duct tape
+            # compute_best_results.py puts the runner-up here. Absent (older
+            # rows, or a single passing backend) means there is no second
+            # choice, so best2nd repeats best1st and the generator's
+            # substitution becomes a no-op rather than a wrong index.
+            op_backend_2nd = impl_desc.get('backend_2nd_index', op_backend)
 
-            table_name = op_table_name(iface_name)
-            if table_name not in OP_SCHEMAS:
-                logger.warning('Skipping unknown op %s (task_id=%s)', iface_name, task_id)
-                skipped += 1
-                continue
+        table_name = op_table_name(iface_name)
+        if table_name not in OP_SCHEMAS:
+            logger.warning('Skipping unknown op %s (task_id=%s)', iface_name, task_id)
+            skipped += 1
+            continue
 
-            cols, _ = OP_SCHEMAS[table_name]
-            entry = task_config['entry']
-            gpu   = f'{arch}_mod0'
+        cols, _ = OP_SCHEMAS[table_name]
+        entry = task_config['entry']
+        gpu   = f'{arch}_mod0'
 
-            try:
-                values = []
-                for col_def in cols:
-                    source = col_def[2]
-                    if source == 'op_best1st':
-                        values.append(op_backend)
-                    elif source == 'op_best2nd':
-                        values.append(op_backend_2nd)
-                    elif source == 'op_tflops':
-                        values.append(0.0)
-                    else:
-                        values.append(extract_value(col_def, gpu, entry, {}, {}))
-            except Exception as exc:
-                logger.warning(
-                    'Skipping task_id=%s arch=%s op=%s entry=%s: %s',
-                    task_id, arch, iface_name, entry, exc,
-                )
-                skipped += 1
-                continue
+        try:
+            values = []
+            for col_def in cols:
+                source = col_def[2]
+                if source == 'op_best1st':
+                    values.append(op_backend)
+                elif source == 'op_best2nd':
+                    values.append(op_backend_2nd)
+                elif source == 'op_tflops':
+                    values.append(0.0)
+                else:
+                    values.append(extract_value(col_def, gpu, entry, {}, {}))
+        except Exception as exc:
+            logger.warning(
+                'Skipping task_id=%s arch=%s op=%s entry=%s: %s',
+                task_id, arch, iface_name, entry, exc,
+            )
+            skipped += 1
+            continue
 
-            insert_row(db, table_name, cols, values)
-            counts[table_name] = counts.get(table_name, 0) + 1
+        insert_row(db, table_name, cols, values)
+        counts[table_name] = counts.get(table_name, 0) + 1
 
-        patched = sum(patch_missing_dtypes(db, table_name, cols, arch=arch)
-                      for table_name, (cols, _unique) in OP_SCHEMAS.items())
+    # Before any --base_db merge, deliberately: applied afterwards this would
+    # invent cross-patched rows against the BASELINE's dtype coverage. Here the
+    # new rows get exactly the treatment a non-incremental export gives them.
+    patched = sum(patch_missing_dtypes(db, table_name, cols, arch=arch)
+                  for table_name, (cols, _unique) in OP_SCHEMAS.items())
 
-        db.commit()
+    db.commit()
 
     for table_name, n in sorted(counts.items()):
         logger.info('  %-20s: %d rows', table_name, n)
@@ -575,11 +726,20 @@ def export_op(conn_params: dict, output_path: Path, arch: str | None = None) -> 
     if patched:
         logger.warning('  %d row(s) were CROSS-PATCHED between float16 and '
                        'bfloat16 and are not measured data', patched)
-    logger.info(
-        'Done: %d rows exported to %s (%d cross-patched), %d skipped in %.1fs',
-        total, output_path, patched, skipped, time.monotonic() - t0,
-    )
-    logger.info('Next step: .tune/bin/sancheck <workdir> --tuning_mode op')
+    logger.info('Collected %d op rows (%d cross-patched), %d skipped in %.1fs',
+                total, patched, skipped, time.monotonic() - t0)
+    return total
+
+
+def export_op(conn_params: dict, output_path: Path, arch: str | None = None,
+              base_db: Path | None = None) -> None:
+    if base_db is None:
+        with sqlite3.connect(output_path) as db:
+            total = export_op_into(db, conn_params, arch=arch)
+        logger.info('Done: %d rows exported to %s', total, output_path)
+        logger.info('Next step: .tune/bin/sancheck <workdir> --tuning_mode op')
+        return
+    export_op_incremental(conn_params, output_path, base_db, arch=arch)
 
 
 # ---------------------------------------------------------------------------
@@ -609,7 +769,25 @@ def main() -> None:
                         help='Export only this architecture. The output file is '
                              'REPLACED, not merged into, so it will then contain '
                              'only this architecture. Default: all.')
+    parser.add_argument('--base_db', default=None, type=Path,
+                        help='op mode only. Seed --output with this existing op '
+                             'database, then overwrite only the entries this run '
+                             'measured. READ ONLY: it is opened mode=ro and is '
+                             'never modified; everything is written to --output. '
+                             'Accepts a .sqlite3 or a .tar.xz, and upgrades '
+                             "0.13b's single op$backend column to the ranked "
+                             'op$best1st/op$best2nd pair on the way in.')
     args = parser.parse_args()
+
+    if args.base_db is not None:
+        # op-only because the kernel path already has a partial-update story --
+        # per-arch shards that accumulate under installed/database/amd/<arch>/ --
+        # whereas the op database is installed wholesale and has no accumulator.
+        if args.tuning_mode != 'op':
+            parser.error('--base_db requires --tuning_mode op '
+                         '(kernel mode accumulates through per-arch shards instead)')
+        if not args.base_db.is_file():
+            parser.error(f'--base_db does not exist: {args.base_db}')
 
     if args.workdir:
         conn_params = get_db_connection_params(Path(args.workdir))
@@ -629,14 +807,16 @@ def main() -> None:
         # accumulator, so say plainly what the caller is about to install.
         logger.warning('Exporting arch=%s ONLY. %s is replaced, not merged.',
                        args.arch, args.output)
-        if args.tuning_mode == 'op':
+        if args.tuning_mode == 'op' and args.base_db is None:
             logger.warning('op mode: the resulting database is INCOMPLETE. '
                            'decomposedb --tuning_mode op installs it wholesale, '
                            'with no per-architecture shards, so the installed op '
-                           'database will hold only arch=%s.', args.arch)
+                           'database will hold only arch=%s. Pass --base_db to '
+                           'seed the output from an existing database first.',
+                           args.arch)
 
     if args.tuning_mode == 'op':
-        export_op(conn_params, args.output, arch=args.arch)
+        export_op(conn_params, args.output, arch=args.arch, base_db=args.base_db)
     else:
         export(conn_params, args.output, arch=args.arch)
 
