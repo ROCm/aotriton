@@ -481,15 +481,32 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
     return seqlen_q * seqlen_k * HDIM_MAX
 
 def core_test_op_bwd(request, args, device : int | None = None):
+    # The reclaim is in a `finally` because it used to sit inside the `try`,
+    # right after the call, and so ran ONLY when the test returned normally.
+    # Every other exit skipped it -- and the one that matters most is
+    # torch.OutOfMemoryError, a RuntimeError, which the handler below re-raises:
+    # a test that ran out of memory left its partial allocations in the caching
+    # allocator and made the next large test likelier to OOM too. That cascades,
+    # is order-dependent, and evaporates when the test is re-run alone. An
+    # assertion failure and an xfail leaked the same way, just less visibly.
+    qkh = 0
+    completed = False
+    skipped = False
     try:
         if device is None:
             qkh = _do_test_op_bwd(request, args, device_str='cuda')
         else:
             with torch.cuda.device(device):
                 qkh = _do_test_op_bwd(request, args, device_str=f'cuda:{device}')
-        if qkh > 2048 * 2048 * 64:
-            gc.collect()
-            torch.cuda.empty_cache()
+        completed = True
+    except pytest.skip.Exception:
+        # Skipped before anything was allocated: every skip guard in
+        # _do_test_op_bwd runs before the SdpaContext is built, so there is
+        # nothing to reclaim and empty_cache() would only buy a device sync.
+        # Listed first because Skipped derives from BaseException, not from the
+        # exceptions below.
+        skipped = True
+        raise
     except torch.AcceleratorError as e:
         print(f'AcceleratorError: {e}')
         exit_pytest()
@@ -497,6 +514,14 @@ def core_test_op_bwd(request, args, device : int | None = None):
         if hipGetLastError() == hipError_t.hipErrorIllegalAddress:
             exit_pytest()
         raise e
+    finally:
+        # On a clean run keep the size guard -- empty_cache() synchronises, and
+        # a small test has nothing worth reclaiming. After a FAILURE reclaim
+        # unconditionally: the test may have died part-way through allocating,
+        # so its footprint has no relation to the shape it was asked for.
+        if not skipped and (not completed or qkh > 2048 * 2048 * 64):
+            gc.collect()
+            torch.cuda.empty_cache()
 
 # Deliberately unparametrized: only need one dtype+hdim to detect the defect
 def core_test_bottom_right_fully_masked_rows(device_str='cuda'):
