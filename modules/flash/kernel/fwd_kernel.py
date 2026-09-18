@@ -612,6 +612,16 @@ def attn_fwd(
                     LN2: tl.constexpr = 0.6931471824645996
                     logsumexp = m_i + tl.math.log2(l_i)
                     logsumexp *= 0.6931471824645996
+                    # KNOWN DIVERGENCE, not urgent: a fully-masked row inside an
+                    # otherwise live block reaches this store untouched, so what
+                    # lands is (-FLT_MAX + log2(1.0)) * LN2 ~= -2.36e38 -- the
+                    # m_i/l_i inits leaking out as an LSE. acc is fixed up for
+                    # those rows above; LSE is not. Nothing reads it today (the
+                    # backward re-masks those elements), and the wholly-masked
+                    # blocks the early exit catches do get the contractual +inf.
+                    # The FlyDSL kernels write +inf for every fully-masked row, so
+                    # flyc-vs-Triton LSE differs on exactly these rows; that is
+                    # flyc being stricter, not flyc being wrong.
                     # If seqlen_q not multiple of BLOCK_M, we need to mask out the last few rows.
                     # This is only true for the last M block. For others, overflow_size will be -ve
                     if overflow_size > 0:
