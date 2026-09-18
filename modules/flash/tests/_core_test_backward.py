@@ -43,19 +43,44 @@ from _common_test import (
 RECORD_ADIFFS_TO = os.getenv('RECORD_ADIFFS_TO', default=None)
 USE_ADIFFS_TXT = os.getenv('USE_ADIFFS_TXT', default=None)
 
+# <utname> TAB <value>, where <value> is OOM, NAN, CPUREF, or a JSON adiff.
+#
+# CPUREF takes a THIRD tab-separated field and it is mandatory: it says validate
+# this test against the CPU reference instead of the GPU one, which is a claim
+# about the GPU reference being untrustworthy for that shape, and nothing checks
+# it. Neither writer can produce a CPUREF line -- the recorder below prints
+# `utname TAB json` and .tune/bin/append_oom_to_adiffs.sh prints
+# `utname (call) TAB OOM`, two fields each -- so every one is hand-added, and
+# requiring the reason is what keeps an unexplained GPU-reference bypass from
+# being a one-word edit.
+#
+# Comments and blank lines are allowed because the file is now hand-edited.
+adiffs = {}
+adiff_reasons = {}
 if USE_ADIFFS_TXT is not None:
-    adiffs = {}
     with open(USE_ADIFFS_TXT) as f:
-        for line in f:
-            utname, adiff_str = line.rstrip().split('\t')
-            if adiff_str == "OOM":
-                adiffs[utname] = "OOM"
-            elif adiff_str == "NAN":
-                adiffs[utname] = "NAN"
+        for lineno, line in enumerate(f, start=1):
+            line = line.rstrip('\n')
+            if not line.strip() or line.lstrip().startswith('#'):
+                continue
+            fields = line.rstrip().split('\t', 2)
+            if len(fields) < 2:
+                raise ValueError(f'{USE_ADIFFS_TXT}:{lineno}: expected '
+                                 f'<utname> TAB <value>, got {line!r}')
+            utname, adiff_str = fields[0], fields[1]
+            if adiff_str == "CPUREF":
+                reason = fields[2].strip() if len(fields) > 2 else ''
+                if not reason:
+                    raise ValueError(
+                        f'{USE_ADIFFS_TXT}:{lineno}: CPUREF requires a third '
+                        f'tab-separated field justifying why this test cannot '
+                        f'use the GPU reference. Got {line!r}')
+                adiffs[utname] = "CPUREF"
+                adiff_reasons[utname] = reason
+            elif adiff_str in ("OOM", "NAN"):
+                adiffs[utname] = adiff_str
             else:
                 adiffs[utname] = json.loads(adiff_str)
-else:
-    adiffs = {}
 
 # SIGSEGV_ERROR_CODE = signal.SIGSEGV
 
@@ -303,6 +328,18 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
         mark = pytest.mark.xfail(reason="[Adiffs] XPASS due to known NAN.")
         request.node.add_marker(mark)
         return 0
+    # CPUREF does NOT return -- the test still runs, just against the CPU
+    # reference -- so unlike OOM/NAN the sentinel has to be cleared here.
+    # validate_with_reference() subscripts this entry as a dict
+    # (_common_test.py's use_adiff_entry["adiff"] / ["grads_adiff"]) and it is
+    # passed straight through below, so leaving the string in place would raise
+    # TypeError: string indices must be integers. None is also the honest value:
+    # a CPUREF line carries no recorded adiff.
+    adiff_ref_device_policy = None
+    if use_adiff_entry == "CPUREF":
+        adiff_ref_device_policy = 'cpu'
+        use_adiff_entry = None
+        print(f"[Adiffs] CPU reference forced: {adiff_reasons.get(utname, '')}")
     print(f"{use_adiff_entry=}")
     torch.cuda.empty_cache()
     SKIP_DK_DV = False
@@ -343,7 +380,7 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
     ctx = SdpaContext(BATCH, N_HEADS, _alloc_hdim, seqlen_q, seqlen_k, dtype,
                       bias_type=bias_type, storage_flip=transpose, device=device_str, fillnan=True,
                       prime_hdim=_prime_hdim, storage_layout=storage_layout)
-    ctx.create_ref_inputs()
+    ctx.create_ref_inputs(target_device_policy=adiff_ref_device_policy)
     ctx.set_require_grads(skip_dq=SKIP_DQ, skip_dk_dv=SKIP_DK_DV, skip_db=SKIP_DB)
     q, k, v, b = ctx.dev_tensors
     # The row pitch each tensor's INNERMOST axis requires. For everything but a
