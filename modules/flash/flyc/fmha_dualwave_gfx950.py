@@ -2149,6 +2149,45 @@ class ParityStoreHelper(dualwave.DualwaveStoreHelper):
             dualwave.fmath.log(as_mlir_value(l_row), fastmath=self.fm_fast),
             self.fm_fast,
         )
+        # A Q block that attends nothing gets **+inf**, and the formula above
+        # does not produce it. Two separate things are wrong without this
+        # select.
+        #
+        # *The sign.* The backward pass subtracts LSE from `qk`, so `+inf` is
+        # what makes `exp(qk - lse)` zero for exactly the rows that must
+        # contribute nothing. `-inf` would make it `+inf` instead. This is the
+        # convention `fwd_kernel.py` writes at its fully-masked early exit,
+        # naming that reason, and gfx1201's FlyDSL kernel writes at its LSE
+        # store; gfx950 was the only forward with neither.
+        #
+        # *The value.* `l == 0` makes the `log` above `-inf`, but `fm_fast` is
+        # `fastmath<fast>`, which carries `ninf`, so InstSimplify folds an
+        # infinite operand of the `fadd` to **poison** -- and a store of poison
+        # is one InstCombine may delete. Measured: the fully-masked rows came
+        # back holding the harness's own NaN fill, so the defect reads as "LSE
+        # was never written" rather than as a sign error.
+        #
+        # `l` is bit-exact 0 there and at least 1 on any live row -- the running
+        # max contributes `exp2(0)` -- so test the bit pattern; integer compares
+        # lower predictably under fast math, where a float compare against a
+        # value the flags promise cannot exist does not.
+        #
+        # **This is wider than Triton's rule, deliberately, and it matches
+        # gfx1201.** Triton writes `+inf` only for a whole masked *block*; a
+        # masked row inside a live block falls through its ordinary epilogue,
+        # which starts `l_i` at 1.0 and `m_i` at `-FLT_MAX` and so writes about
+        # -2.36e38 -- Triton fixes up `Out` for those rows and leaves their LSE
+        # alone. The predicate below cannot separate the two cases and does not
+        # try, exactly as gfx1201's does not. `l` starting at 0 here rather than
+        # at 1.0 is what makes the predicate meaningful at all.
+        #
+        # Both LSE writers come through here. The other is
+        # `zero_o_block_if_needed`, the whole-block early exit taken when
+        # `causal_end_raw <= 0`, which passes a literal `l = 0.0`: the compare
+        # folds and this costs that path nothing.
+        lse_val = (fmha.bitcast_i32(fx.Float32(l_row)) != fx.Int32(0)).select(
+            fx.Float32(lse_val), fx.Float32(float("inf"))
+        )
         base, pitch = fmha.lse_row_addressing(
             self.varlen_bits_arg,
             fx.Index(0),
