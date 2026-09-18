@@ -67,9 +67,20 @@ INSERT_BATCH_SIZE = 1_000   # rows per bulk INSERT
 
 # Test cases excluded from accuracy gating (known kernel bugs whose results
 # cannot be used as a correctness criterion for hsaco selection).
-SKIP_TEST_CASES: frozenset[str] = frozenset({
-    '01_gqa',  # GQA bias indexing bug in bwd dk/dv kernels (fixed, pending re-tune)
-})
+#
+# Empty, and adding to it should be rare and temporary. '01_gqa' lived here
+# from 2fea3d9f (2026-04-29) because results measured against the pre-cff45c39
+# bwd dk/dv bias-indexing bug were already in the database -- the entry was
+# always about stale DATA, not an unfixed kernel, and it said "pending
+# re-tune". That re-tune has happened: gfx950's kernel results were produced
+# 2026-09-09..12, months after the fix, which is in this branch via #170
+# (bwd_kernel_dk_dv.py's B_ptr is indexed by off_h_q inside the Q-head loop).
+#
+# An entry here is never scoped to an interface, so '01_gqa' also ungated
+# attn_fwd, which the bwd-only rationale never covered. That is what let task
+# 20988 pick an attn_fwd hsaco 452x off the best GQA error purely because it
+# was 9% faster.
+SKIP_TEST_CASES: frozenset[str] = frozenset()
 
 
 # ---------------------------------------------------------------------------
