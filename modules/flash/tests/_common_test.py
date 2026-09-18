@@ -366,8 +366,7 @@ class SdpaContext(object):
                  prime_hdim=None,
                  storage_layout=None,
                  ):
-        real_device = 'cpu' if AOTRITON_TORCH_ONLY_USE_CPU else device
-        self._real_device = real_device
+        self._set_real_device(device)
         self._prng_seed = prng_seed
         self._target_device = device
         # `int` or `(qk, vo)`; see `narrow_to_prime`. `D_HEAD` stays the
@@ -528,6 +527,15 @@ class SdpaContext(object):
     @property
     def ref_device(self):
         return self.ref_tensors[0].device
+
+    def _set_real_device(self, device):
+        '''
+        The device the dev tensors actually live on, which is where a 'cuda'
+        reference goes. EVERY __init__ must call this: the subclasses do not
+        chain to SdpaContext.__init__, so anything set only there is missing on
+        a VarlenSdpaContext, and create_ref_inputs' policy reads it.
+        '''
+        self._real_device = 'cpu' if AOTRITON_TORCH_ONLY_USE_CPU else device
 
     @staticmethod
     def clone_tensor(t, dtype, device=None):
@@ -960,6 +968,7 @@ class VarlenSdpaContext(SdpaContext):
         '''
 
     def __init__(self, N_HEADS, D_HEAD, seqlens_q, seqlens_k, dtype, device='cuda'):
+        self._set_real_device(device)
         if isinstance(D_HEAD, int):
             HDIM_QK = HDIM_VO = D_HEAD
         else:
@@ -1148,6 +1157,7 @@ class StridedVarlenSdpaContext(VarlenSdpaContext):
 
 class SdpaContextFromNPZ(SdpaContext):
     def __init__(self, fn, dtype, device='cuda'):
+        self._set_real_device(device)
         d = np.load(fn)
         def real_dtype():
             if d['is_fp16']:
