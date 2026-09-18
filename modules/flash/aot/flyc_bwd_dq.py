@@ -246,9 +246,9 @@ def flyc_bwd_dq(arch, choices, hints):
             # dB store whenever bias is present. Whether it executes is the
             # separate, runtime question `bwd_kernel_dq.py` answers by clearing
             # `store_db` on an all-zero dB stride triple, which is how a bias
-            # that does not require grad asks for the store to be skipped:
-            # gfx1201 implements that (`_store_db` in
-            # fmha_bwd_dq_gfx1201_kernel.py), gfx950 still does not.
+            # that does not require grad asks for the store to be skipped. Both
+            # arches implement it: `_store_db` in fmha_bwd_dq_gfx1201_kernel.py,
+            # `db_store_enabled` in fmha_bwd_dq_gfx950.py.
             store_db=bool(choices.BIAS_TYPE),
         ).resolve(meta)
         assert knobs.store_db == bool(choices.BIAS_TYPE), (

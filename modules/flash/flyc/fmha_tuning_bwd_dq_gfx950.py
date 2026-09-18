@@ -11,11 +11,15 @@ number here can only make a build slow, never wrong.
 
 Three things, and all of them are *build* axes rather than tuning ones:
 
-- `STORE_DB` -- whether the kernel writes `dB = dS`. AOTriton's `bwd_kernel_dq`
-  emits `DQ, DB` because `dS` is materialised per (q, k) element only there;
-  our gfx1201 port dropped it. A build without it emits no store at all, which
-  matters because the store is per element (see the kernel's
+- `STORE_DB` -- whether the kernel *can* write `dB = dS`. AOTriton's
+  `bwd_kernel_dq` emits `DQ, DB` because `dS` is materialised per (q, k) element
+  only there; our gfx1201 port dropped it. A build without it emits no store at
+  all, which matters because the store is per element (see the kernel's
   `BwdDbStoreHelper` for why it cannot be a vector store).
+  Whether the store *runs* is a separate, runtime question -- a caller who wants
+  no dB passes an all-zero dB stride triple, which `db_store_enabled` in the
+  kernel reads. So this axis buys the instructions back for a build that has no
+  bias at all; it does not decide anything for a build that does.
 - `HDIM_VO_FLOOR` -- the `hdim_vo` counterpart of `HDIM_QK_FLOOR`. This kernel
   reads *two* tiles through the K register path, one whose D axis is the qk
   extent and one whose is the vo extent, so a single floor cannot serve both.
