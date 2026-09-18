@@ -931,7 +931,7 @@ def api_run_test(hostname):
     # it gets its own parameter rather than a variant per combination.
     ref_device_policy = (request.form.get('ref_device_policy')
                          or request.args.get('ref_device_policy') or None)
-    if backend not in ('split', 'fused', 'aiter', 'v3'):
+    if backend not in ('split', 'fused', 'aiter', 'flyc', 'v3'):
         return jsonify({'status': 'error', 'message': f'Invalid backend: {backend}'}), 400
     if variant and variant not in ('partial', 'partial_adiffs'):
         return jsonify({'status': 'error', 'message': f'Invalid variant: {variant}'}), 400

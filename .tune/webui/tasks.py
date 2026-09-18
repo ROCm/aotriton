@@ -1340,6 +1340,18 @@ def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=N
     return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=desc, dry_run=dry_run)
 
 
+# Keyed by the --backend value, valued with the fnprefix .ci/run-test.sh writes
+# for it. One copy, because two drifting copies are how flyc came to be read out
+# of ut_pass<N>.out.
+_BACKEND_OUT_PREFIX = {
+    'split': 'ut_pass',
+    'fused': 'fused_pass',
+    'aiter': 'aiter_pass',
+    'flyc':  'flyc_pass',
+    'v3':    'oput_pass',
+}
+
+
 def get_failed_tests(workdir, hostname, pass_num, backend, variant=None):
     """Grep '^FAILED' lines (excluding OutOfMemoryError) from the test output file on a tester host."""
     worker = get_worker_by_hostname(workdir, hostname)
@@ -1348,8 +1360,7 @@ def get_failed_tests(workdir, hostname, pass_num, backend, variant=None):
     _, _, workdir_override = worker
     default_wd = get_default_workdir(workdir) or workdir
     remote_wd = workdir_override or default_wd
-    prefix_map = {'split': 'ut_pass', 'fused': 'fused_pass', 'aiter': 'aiter_pass', 'v3': 'oput_pass'}
-    prefix = prefix_map.get(backend, 'ut_pass')
+    prefix = _BACKEND_OUT_PREFIX.get(backend, 'ut_pass')
     output_dir = f'{remote_wd}/run/tests'
     if variant == 'partial':
         output_dir += '/partial'
@@ -1379,8 +1390,7 @@ def get_tail_output(workdir, hostname, pass_num, backend, variant=None):
     _, _, workdir_override = worker
     default_wd = get_default_workdir(workdir) or workdir
     remote_wd = workdir_override or default_wd
-    prefix_map = {'split': 'ut_pass', 'fused': 'fused_pass', 'aiter': 'aiter_pass', 'v3': 'oput_pass'}
-    prefix = prefix_map.get(backend, 'ut_pass')
+    prefix = _BACKEND_OUT_PREFIX.get(backend, 'ut_pass')
     output_dir = f'{remote_wd}/run/tests'
     if variant == 'partial':
         output_dir += '/partial'

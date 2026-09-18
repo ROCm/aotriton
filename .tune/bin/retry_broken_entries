@@ -59,7 +59,7 @@ echo "Host:          $HOSTNAME ($ARCH)"
 echo "Remote outdir: $REMOTE_OUTDIR"
 echo "Pass:          $PASS_NUM"
 
-PREFIXES=(ut_pass fused_pass aiter_pass oput_pass)
+PREFIXES=(ut_pass fused_pass aiter_pass flyc_pass oput_pass)
 FOUND=0
 
 for prefix in "${PREFIXES[@]}"; do

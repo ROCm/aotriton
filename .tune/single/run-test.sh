@@ -6,7 +6,7 @@
 #
 # Usage:
 #   run-test.sh --workdir <workdir> --hostname <host> --arch <arch>
-#               --pass <pass#> --test_level <level> --backend <split|fused|aiter|v3>
+#               --pass <pass#> --test_level <level> --backend <split|fused|aiter|flyc|v3>
 #               [--workdir_override <path>] [--variant partial] [--follow]
 #
 #   --workdir_override  Remote workdir override (empty = use DEFAULT_WORKDIR from config.rc)
@@ -64,15 +64,15 @@ if [ "${#_missing[@]}" -gt 0 ]; then
   echo "Error: missing required arguments: ${_missing[*]}" >&2
   cat >&2 <<EOF
 Usage: $0 --workdir <workdir> --hostname <host> --arch <arch>
-          --pass <pass#> --test_level <level> --backend <split|fused|aiter|v3>
+          --pass <pass#> --test_level <level> --backend <split|fused|aiter|flyc|v3>
           [--workdir_override <path>] [--variant partial] [--follow]
 EOF
   exit 1
 fi
 
 case "$BACKEND" in
-  split|fused|aiter|v3) ;;
-  *) echo "Error: backend must be one of split/fused/aiter/v3, got: $BACKEND" >&2; exit 1 ;;
+  split|fused|aiter|flyc|v3) ;;
+  *) echo "Error: backend must be one of split/fused/aiter/flyc/v3, got: $BACKEND" >&2; exit 1 ;;
 esac
 
 case "${VARIANT:-}" in

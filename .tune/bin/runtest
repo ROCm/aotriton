@@ -5,7 +5,7 @@
 # Run tests on all Tester-role hosts (or a filtered subset).
 #
 # Usage:
-#   runtest <workdir> <pass#> <test_level> <split|fused|aiter|v3> [--hostname <h>...] [--follow]
+#   runtest <workdir> <pass#> <test_level> <split|fused|aiter|flyc|v3> [--hostname <h>...] [--follow]
 #
 #   --hostname <h>  Restrict to specific hosts (repeatable); default: all Tester-role hosts.
 #   --follow        Wait for each tsp job to finish before moving to the next host.
@@ -45,7 +45,7 @@ done
 
 if [ "${#POSITIONAL[@]}" -lt 4 ]; then
   cat >&2 <<EOF
-Usage: $0 <workdir> <pass#> <test_level> <split|fused|aiter|v3> [--hostname <h>...] [--follow]
+Usage: $0 <workdir> <pass#> <test_level> <split|fused|aiter|flyc|v3> [--hostname <h>...] [--follow]
 
   --hostname <h>  Restrict to specific Tester-role hosts (repeatable).
   --follow        Wait for each remote tsp job to complete (tsp -t).
