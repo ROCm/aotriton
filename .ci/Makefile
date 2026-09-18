@@ -44,12 +44,12 @@ ORIGIN ?= auto
 STABLE_ROCM ?= 7.2.4
 # Latest TheRock build. These are pre-release/nightlies, so use the long
 # version string. gfx1250 (Tech Preview) needs a gfx1250-capable TheRock ROCm.
-THEROCK_ROCM ?= 7.15.0a20260707
+THEROCK_ROCM ?= 10.2.0a20260918
 
 # ASAN is supported only on gfx942 and gfx950, and only on TheRock ROCm
 # (needs TheRock clang). Its runtime ships for both 7.14 and 7.15.
 ASAN_ARCH ?= gfx942;gfx950
-ASAN_ROCM ?= 7.14.0a20260624 7.15.0a20260707
+ASAN_ROCM ?= 7.14.1 10.2.0a20260918
 ASAN_RFLAGS := $(addprefix -r ,$(ASAN_ROCM))
 
 .PHONY: check-self-test check-runtime check-gpu release-gpu release-runtime \

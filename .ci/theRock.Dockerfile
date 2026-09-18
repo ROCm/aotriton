@@ -3,8 +3,12 @@
 ARG BASE_TAG=base
 FROM aotriton:${BASE_TAG}
 
-ARG THEROCK_VERSION=7.14.0a20260624
-ARG THEROCK_PIP_INDEX_URL=https://rocm.nightlies.amd.com/whl-multi-arch/
+# Defaults are the RELEASE pair and must stay consistent: a nightly version needs
+# the nightly index and vice versa, and pip does not fall back between them.
+# Callers that may pass either derive the index with
+# common-therock.sh's therock_pip_index_url.
+ARG THEROCK_VERSION=7.14.1
+ARG THEROCK_PIP_INDEX_URL=https://repo.amd.com/rocm/whl-multi-arch/
 
 # Create the venv at /opt/therock, install rocm wheels into it, then let
 # rocm-sdk init copy/link the actual ROCm tree into place. ROCM_PATH is

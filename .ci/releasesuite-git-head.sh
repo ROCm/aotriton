@@ -27,7 +27,7 @@ Options:
                 --asan: build with AddressSanitizer (clang). Requires TheRock
                         clang, which ships only with ROCm >= 7.10, so every -r
                         must be a TheRock version given as a long pre-release
-                        string (e.g. 7.14.0a20260624). With no -r it defaults
+                        string (e.g. 10.2.0a20260918). With no -r it defaults
                         to THEROCK_ASAN_VERSION. Tarball gets a +asan suffix.
        --arch <list>: ';'-separated GPU arch list (e.g. 'gfx942;gfx950'),
                         forwarded to cmake as AOTRITON_TARGET_ARCH. Defaults
@@ -80,10 +80,11 @@ eval set -- "$TEMP"
 
 SUITE_SELECT_IMAGE=-1
 SUITE_SELECT_RUNTIME=-1
-# TheRock runtimes are pre-release/nightlies and must use the long version
-# string (e.g. 7.15.0a20260707). The last entry is also the default GPU image
-# ROCm (IMAGE_ROCMVER), so keep a gfx1250-capable TheRock build last.
-SUITE_RUNTIME_LIST=(6.4.4 7.0.3 7.1.1 7.2.4 7.14.0a20260624 7.15.0a20260707)
+# TheRock runtimes are either a release (7.14.1) or a nightly, which must be the
+# long version string (e.g. 10.2.0a20260918). The last entry is also the default
+# GPU image ROCm (IMAGE_ROCMVER), so keep a gfx1250-capable TheRock build last.
+# 7.15 is gone: it was renamed to 10 and its nightlies retired.
+SUITE_RUNTIME_LIST=(6.4.4 7.0.3 7.1.1 7.2.4 7.14.1 10.2.0a20260918)
 CMDLIST=()
 SUITE_DEFAULT_SELECTION=1
 SUITE_YAML=""
@@ -97,7 +98,7 @@ SUITE_ASAN=0
 SUITE_ARCH="ALL"
 # Default TheRock version used for ASAN builds when no -r overrides are provided.
 # (If -r is specified, those versions are used instead.)
-THEROCK_ASAN_VERSION="7.14.0a20260624"
+THEROCK_ASAN_VERSION="7.14.1"
 
 while true; do
   case "$1" in
@@ -232,6 +233,7 @@ echo "SUITE_RUNTIME_LIST ${SUITE_RUNTIME_LIST[@]}"
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
+. "${SCRIPT_DIR}/common-therock.sh"
 . "${SCRIPT_DIR}/common-git-cache.sh"
 . "${SCRIPT_DIR}/common-pin.sh"
 . "${SCRIPT_DIR}/common-git-https-origin.sh"
@@ -388,17 +390,8 @@ function build_inside() {
     if printf '%s\n%s\n' "7.10" "${rocmver}" | sort -V -C; then
       DOCKERFILE="theRock.Dockerfile"
       BUILD_ARG=(--build-arg "THEROCK_VERSION=${rocmver}")
-      # A PEP 440 pre-release suffix -- 'a' plus an 8-digit date, as in
-      # 7.15.0a20260707 -- is a nightly and only exists on the nightlies index.
-      # Anything else is a release (7.14.1) and only exists on repo.amd.com.
-      # theRock.Dockerfile defaults to the nightlies index, so a release version
-      # left to that default resolves no wheel at all.
-      if [[ "${rocmver}" =~ a[0-9]{8} ]]; then
-        THEROCK_PIP_INDEX_URL="https://rocm.nightlies.amd.com/whl-multi-arch/"
-      else
-        THEROCK_PIP_INDEX_URL="https://repo.amd.com/rocm/whl-multi-arch/"
-      fi
-      BUILD_ARG+=(--build-arg "THEROCK_PIP_INDEX_URL=${THEROCK_PIP_INDEX_URL}")
+      BUILD_ARG+=(--build-arg \
+        "THEROCK_PIP_INDEX_URL=$(therock_pip_index_url "${rocmver}")")
     else
       DOCKERFILE="rocm.Dockerfile"
       BUILD_ARG=(--build-arg "ROCM_VERSION_IN_URL=${rocmver}")

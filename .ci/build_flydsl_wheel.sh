@@ -43,7 +43,7 @@ Options:
          --python <X.Y>     CPython to build for. Default 3.11. flydsl wheels
                             are ABI specific, so this is part of the cache key.
            --rocm <ver>     TheRock version for the build image. Default
-                            7.15.0a20260707, the newest in the release suite's
+                            10.2.0a20260918, the newest in the release suite's
                             list. FlyJitRuntime links HIP but AOTriton never
                             launches through it, so this does not affect the
                             kernels the wheel produces.
@@ -62,7 +62,7 @@ LLVM_TARBALL=""
 VERSION_SUFFIX=""
 PAT_ENVIRON=""
 PYVER="3.11"
-ROCMVER="7.15.0a20260707"
+ROCMVER="10.2.0a20260918"
 JOBS=""
 while [[ "$1" == --* ]]; do
   # `shift 2` with one argument left FAILS WITHOUT SHIFTING, so $1 never changes
@@ -103,6 +103,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/common-git-cache.sh"
 . "${SCRIPT_DIR}/common-altwheel.sh"
+. "${SCRIPT_DIR}/common-therock.sh"
 
 # The *compiler* repo, and it is public, so nothing here needs a credential by
 # default. The kernel-development fork is a different repository and is not a
@@ -207,9 +208,12 @@ fi
 # find it -- a TheRock root is a site-packages directory, not /opt/rocm.
 FLYDSL_DOCKER_IMAGE="aotriton:buildenv-rocm${ROCMVER}-py${PYVER}"
 if [ -z "$(docker images -q "${FLYDSL_DOCKER_IMAGE}" 2>/dev/null)" ]; then
+  # The index has to follow the version: theRock.Dockerfile's own default is a
+  # RELEASE index, so a nightly --rocm left to that default resolves no wheel.
   (cd "${SCRIPT_DIR}" && docker build --network=host -t "${FLYDSL_DOCKER_IMAGE}" \
     --build-arg "BASE_TAG=base-py${PYVER}" \
     --build-arg "THEROCK_VERSION=${ROCMVER}" \
+    --build-arg "THEROCK_PIP_INDEX_URL=$(therock_pip_index_url "${ROCMVER}")" \
     -f theRock.Dockerfile .) >&2
 fi
 
