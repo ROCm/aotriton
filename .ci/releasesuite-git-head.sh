@@ -388,6 +388,17 @@ function build_inside() {
     if printf '%s\n%s\n' "7.10" "${rocmver}" | sort -V -C; then
       DOCKERFILE="theRock.Dockerfile"
       BUILD_ARG=(--build-arg "THEROCK_VERSION=${rocmver}")
+      # A PEP 440 pre-release suffix -- 'a' plus an 8-digit date, as in
+      # 7.15.0a20260707 -- is a nightly and only exists on the nightlies index.
+      # Anything else is a release (7.14.1) and only exists on repo.amd.com.
+      # theRock.Dockerfile defaults to the nightlies index, so a release version
+      # left to that default resolves no wheel at all.
+      if [[ "${rocmver}" =~ a[0-9]{8} ]]; then
+        THEROCK_PIP_INDEX_URL="https://rocm.nightlies.amd.com/whl-multi-arch/"
+      else
+        THEROCK_PIP_INDEX_URL="https://repo.amd.com/rocm/whl-multi-arch/"
+      fi
+      BUILD_ARG+=(--build-arg "THEROCK_PIP_INDEX_URL=${THEROCK_PIP_INDEX_URL}")
     else
       DOCKERFILE="rocm.Dockerfile"
       BUILD_ARG=(--build-arg "ROCM_VERSION_IN_URL=${rocmver}")
