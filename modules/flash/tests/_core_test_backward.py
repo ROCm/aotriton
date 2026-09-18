@@ -331,7 +331,29 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
     torch.cuda.empty_cache()
     SKIP_DK_DV = False
     SKIP_DQ = False
-    SKIP_DB = True if bias_type is None else False
+    # `bias_type` is a comma-separated token set: the bias kind, plus any
+    # modifiers, in any order. Split rather than matched, so nothing here has to
+    # know the kind names -- 'vector,nograd' works the day a vector bias does,
+    # and so does 'nograd,vector'.
+    #
+    # `nograd` is the only modifier so far: the caller supplies a bias but does
+    # not want its gradient. AOTriton spells that as an all-zero dB stride triple
+    # over a null DB, and PyTorch takes it on every bool-masked SDPA -- the mask
+    # becomes an additive bias that is not a leaf and carries no grad, so
+    # attention_backward.cu passes `empty_t4` for DB. Without a case here that
+    # path has no coverage at all: a bias otherwise always requires grad (the
+    # SKIP_DB line below), and attn_torch_function's backward used to allocate dB
+    # from `b` unconditionally, so even a non-grad bias got a real, writable one.
+    if isinstance(bias_type, str):
+        _bias_tokens = bias_type.split(',')
+        BIAS_NOGRAD = 'nograd' in _bias_tokens
+        _bias_kinds = [t for t in _bias_tokens if t != 'nograd']
+        assert len(_bias_kinds) == 1, \
+            f'bias_type {bias_type!r} must name exactly one bias kind, got {_bias_kinds}'
+        bias_type = _bias_kinds[0]
+    else:
+        BIAS_NOGRAD = False
+    SKIP_DB = True if bias_type is None else BIAS_NOGRAD
     USE_AUTOTUNE = True
     torch.manual_seed(20)
     # The `storage_flip` slot carries either spelling. A `StorageLayout` names a
