@@ -926,11 +926,22 @@ def api_run_test(hostname):
     backend = request.form.get('backend', 'split')
     variant = request.form.get('variant') or request.args.get('variant') or None
     adiff = bool(request.form.get('adiff') or request.args.get('adiff'))
+    # Orthogonal to `variant`, which selects what to run and where the output
+    # goes. Which device the REFERENCE is computed on is an independent axis, so
+    # it gets its own parameter rather than a variant per combination.
+    ref_device_policy = (request.form.get('ref_device_policy')
+                         or request.args.get('ref_device_policy') or None)
     if backend not in ('split', 'fused', 'aiter', 'v3'):
         return jsonify({'status': 'error', 'message': f'Invalid backend: {backend}'}), 400
     if variant and variant not in ('partial', 'partial_adiffs'):
         return jsonify({'status': 'error', 'message': f'Invalid variant: {variant}'}), 400
-    result = tasks.run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=variant, adiff=adiff, dry_run=should_dryrun())
+    if ref_device_policy and ref_device_policy not in ('cpu', 'cuda', 'default'):
+        return jsonify({'status': 'error',
+                        'message': f'Invalid ref_device_policy: {ref_device_policy}'}), 400
+    result = tasks.run_test_on_host(workdir, hostname, pass_num, test_level, backend,
+                                    variant=variant, adiff=adiff,
+                                    ref_device_policy=ref_device_policy,
+                                    dry_run=should_dryrun())
     return jsonify(result)
 
 

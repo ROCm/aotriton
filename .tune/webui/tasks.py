@@ -1299,11 +1299,18 @@ def get_tester_signature(workdir, hostname):
 
 
 
-def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=None, adiff: bool = False, dry_run: bool = False):
+def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=None,
+                     adiff: bool = False, ref_device_policy: str | None = None,
+                     dry_run: bool = False):
     """Queue run-test on a remote tester host via .tune/single/run-test.sh (tsp-backed).
 
     When adiff is True the remote script is switched to .ci/run-ci-test.sh via
     the --adiff flag, which reads adiff.txt to select the tests to run.
+
+    ref_device_policy ('cpu'/'cuda'/'default') becomes AOTRITON_REF_DEVICE_OPTION
+    in the remote container. It is separate from `variant` on purpose: variant
+    picks what runs and where the output lands, this picks where the REFERENCE is
+    computed, and folding the two together would need a variant per combination.
     """
     worker = get_worker_by_hostname(workdir, hostname)
     if not worker:
@@ -1327,6 +1334,9 @@ def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=N
     if adiff:
         cmd += ['--adiff']
         desc += ' adiff=1'
+    if ref_device_policy:
+        cmd += ['--ref_device_policy', ref_device_policy]
+        desc += f' ref_device_policy={ref_device_policy}'
     return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=desc, dry_run=dry_run)
 
 

@@ -11,6 +11,10 @@
 #
 #   --workdir_override  Remote workdir override (empty = use DEFAULT_WORKDIR from config.rc)
 #   --variant partial   Sets PARTIAL_INFO_DIR and routes output to partial/
+#   --variant partial_adiffs  As partial, plus RECORD_ADIFFS_TO
+#   --ref_device_policy <p>   cpu|cuda|default -> AOTRITON_REF_DEVICE_OPTION.
+#                             Orthogonal to --variant: it selects the device the
+#                             REFERENCE is computed on, not what is run.
 #   --follow            Wait for the tsp job to complete; default is fire-and-forget.
 
 set -euo pipefail
@@ -28,6 +32,7 @@ PASS_NUM=""
 TEST_LEVEL=""
 BACKEND=""
 VARIANT=""
+REF_DEVICE_POLICY=""
 ADIFF=0
 FOLLOW=0
 
@@ -41,6 +46,7 @@ while [[ $# -gt 0 ]]; do
     --test_level)       TEST_LEVEL="$2";       shift 2 ;;
     --backend)          BACKEND="$2";          shift 2 ;;
     --variant)          VARIANT="$2";          shift 2 ;;
+    --ref_device_policy) REF_DEVICE_POLICY="$2"; shift 2 ;;
     --adiff)            ADIFF=1;               shift ;;
     --follow)           FOLLOW=1;              shift ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
@@ -86,26 +92,38 @@ else
   REMOTE_SCRIPT="/wkdir/aotriton.src/.ci/run-test.sh"
 fi
 BASE_OUTPUT_DIR="/wkdir/run/tests"
-if [ "${VARIANT:-}" = "partial" ] || [ "${VARIANT:-}" = "partial_adiffs" ]; then
-  OUTPUT_DIR="$BASE_OUTPUT_DIR/partial"
-  PARTIAL_INFO_DIR="$BASE_OUTPUT_DIR"
-else
-  OUTPUT_DIR="$BASE_OUTPUT_DIR"
+case "${VARIANT:-}" in
+  partial|partial_adiffs) OUTPUT_DIR="$BASE_OUTPUT_DIR/partial" ;;
+  *)                      OUTPUT_DIR="$BASE_OUTPUT_DIR" ;;
+esac
+if [ "$OUTPUT_DIR" = "$BASE_OUTPUT_DIR" ]; then
   PARTIAL_INFO_DIR=""
+else
+  PARTIAL_INFO_DIR="$BASE_OUTPUT_DIR"
 fi
 if [ "${VARIANT:-}" = "partial_adiffs" ]; then
   RECORD_ADIFFS_TO="$OUTPUT_DIR/adiffs.txt"
 else
   RECORD_ADIFFS_TO=""
 fi
+# Forwarded as AOTRITON_REF_DEVICE_OPTION, which tops the device-policy
+# precedence in SdpaContext.create_ref_inputs. 'cpu' is the way round a GPU-side
+# reference that cannot be trusted -- gfx1201's torch math_sdp segfaults on some
+# shapes and hands the test a bad oracle, so the failure says nothing about the
+# kernel under test.
+case "${REF_DEVICE_POLICY:-}" in
+  cpu|cuda|default|"") REF_DEVICE_OPTION="$REF_DEVICE_POLICY" ;;
+  *) echo "Error: --ref_device_policy must be 'cpu', 'cuda', 'default', or empty, got: $REF_DEVICE_POLICY" >&2; exit 1 ;;
+esac
 
-echo "[$HOSTNAME] Queuing run-test pass=$PASS_NUM level=$TEST_LEVEL backend=$BACKEND arch=$ARCH variant=${VARIANT:-normal}"
+echo "[$HOSTNAME] Queuing run-test pass=$PASS_NUM level=$TEST_LEVEL backend=$BACKEND arch=$ARCH variant=${VARIANT:-normal} ref_device_policy=${REF_DEVICE_POLICY:-default}"
 echo "[$HOSTNAME] output -> $REMOTE_WORKDIR/${OUTPUT_DIR#/wkdir/}/"
 
 # shellcheck disable=SC2029
 JOBID=$(ssh "$HOSTNAME" bash -s "$REMOTE_WORKDIR" "$CELERY_WORKER_IMAGE" \
         "$LIBDIR" "$REMOTE_SCRIPT" "$OUTPUT_DIR" \
-        "$PASS_NUM" "$TEST_LEVEL" "$BACKEND" "$PARTIAL_INFO_DIR" "$RECORD_ADIFFS_TO" <<'ENDSSH'
+        "$PASS_NUM" "$TEST_LEVEL" "$BACKEND" "$PARTIAL_INFO_DIR" "$RECORD_ADIFFS_TO" \
+        "$REF_DEVICE_OPTION" <<'ENDSSH'
 REMOTE_WORKDIR="$1"
 CELERY_WORKER_IMAGE="$2"
 LIBDIR="$3"
@@ -116,6 +134,7 @@ TEST_LEVEL="$7"
 BACKEND="$8"
 PARTIAL_INFO_DIR="$9"
 RECORD_ADIFFS_TO="${10}"
+REF_DEVICE_OPTION="${11}"
 
 mkdir -p "$REMOTE_WORKDIR/run/tests"
 [ -n "$PARTIAL_INFO_DIR" ] && mkdir -p "$REMOTE_WORKDIR/${OUTPUT_DIR#/wkdir/}"
@@ -135,6 +154,7 @@ jobid=$(tsp docker run --rm \
   -e OUTPUT_DIR="$OUTPUT_DIR" \
   ${PARTIAL_INFO_DIR:+-e PARTIAL_INFO_DIR="$PARTIAL_INFO_DIR"} \
   ${RECORD_ADIFFS_TO:+-e RECORD_ADIFFS_TO="$RECORD_ADIFFS_TO"} \
+  ${REF_DEVICE_OPTION:+-e AOTRITON_REF_DEVICE_OPTION="$REF_DEVICE_OPTION"} \
   --mount type=bind,source="$(realpath "$REMOTE_WORKDIR")",target=/wkdir \
   "$CELERY_WORKER_IMAGE" \
   bash -l -c '
