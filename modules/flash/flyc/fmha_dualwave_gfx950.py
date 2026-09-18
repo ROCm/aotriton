@@ -2054,6 +2054,56 @@ class ParityStoreHelper(dualwave.DualwaveStoreHelper):
     def _final_o_base(self, q_row):
         return q_row * self.stride_o_seq_v + self.lane_div_32 * 8
 
+    def zero_o_block_if_needed(self, causal_end_raw_i32=None):
+        """The inherited O zeroing, plus the LSE those same rows need.
+
+        A Q block whose every row attends nothing never enters the kernel body
+        -- `active` is `causal_end_raw > 0` -- so this method is the *only*
+        writer for it. At the pinned FlyDSL (`third_party/flydsl-kernel.txt`) it
+        writes O and stops, which leaves LSE holding whatever the caller
+        allocated. That is a wrong answer for any caller who will run a
+        backward, and an unreadable one for a test harness: AOTriton's fills L
+        with NaN, so the rows come back NaN and read as a store that faulted.
+
+        `l = 0` is the whole of the addition, because `_store_lse_row_unguarded`
+        already turns a zero `l` into the `+inf` those rows are contractually
+        owed -- see there. Passing it rather than the value keeps one expression
+        of "this row attended nothing" in the kernel instead of two.
+
+        Not folded into the inherited `scf.if`: `super()` owns that region and
+        is imported, never edited. Two regions on the same wave-uniform scalar
+        compare is what an override can spell, and the second is entered only by
+        blocks that took the early exit, which do no other work at all.
+
+        **Deletable on the next flydsl bump.** Upstream has since grown the same
+        store inside its own `zero_o_block_if_needed`, passing exactly this
+        `m = 0, l = 0` pair (plus a `sink_log2` this build has no knob for), so
+        when the pin moves past it this override becomes a duplicate store and
+        should go. The `+inf` select it depends on must stay either way: upstream
+        spells the value `m * ln2 + log(l)`, which is `-inf` at best.
+        """
+        super().zero_o_block_if_needed(causal_end_raw_i32)
+        if const_expr(not self.traits.RETURN_LSE):
+            return
+        if causal_end_raw_i32 is None:
+            causal_end_raw_i32 = self.causal_end_raw_i32
+        # Rebuilt here rather than captured, so the address arithmetic stays
+        # inside the branch for the blocks that skip it. This is `self.q_row`'s
+        # own definition, and the inherited O store above uses it too: one row
+        # mapping for both tensors and for both the early exit and the body.
+        q_start = self.q_start
+        wave_q_offset = self.wave_q_offset
+        lane_mod_32 = self.lane_mod_32
+        zero = self.c_zero_f
+        store = self._store_lse_row
+
+        @flyc.jit
+        def _store_masked_lse_block():
+            if causal_end_raw_i32 <= fx.Int32(0):
+                store(zero, zero, q_start + wave_q_offset + lane_mod_32)
+
+        _store_masked_lse_block()
+
     def _store_lse_row(self, m_row, l_row, q_row):
         """`_store_lse_row_unguarded`, skipped entirely when `LSE` is null.
 
