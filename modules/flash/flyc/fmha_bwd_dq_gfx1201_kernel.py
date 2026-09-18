@@ -328,8 +328,9 @@ def build_bwd_dq_module_primary(meta, knobs):
     PHILOX = Philox.for_arch() if philox_width is None else Philox(width=philox_width)
 
     # Attention bias. One build axis, not two: dB is `dS`, which this kernel
-    # already forms for GEMM3, so a bias build emits it unconditionally. A
-    # second knob would buy a store nobody has asked to skip.
+    # already forms for GEMM3, so a bias build emits the store unconditionally.
+    # A second *build* knob would buy nothing -- whether the caller wants dB is
+    # a runtime fact, carried by the dB strides; see `_store_db` in the kernel.
     BIAS_TYPE = 1 if meta.bias else 0
     assert not (BIAS_TYPE and CAUSAL), "bias and causal are mutually exclusive, as in the forward"
 
@@ -730,6 +731,21 @@ def build_bwd_dq_module_primary(meta, knobs):
                 + (_q_row_off_v + _bq) * fx.Index(stride_db_seq_q)
             )
             _db_ptr = fmha.pointer_to_llvm_ptr(DB)
+            # Does the caller want dB at all? A bias that does not require a
+            # gradient is spelled as an all-zero dB stride triple over a null
+            # DB -- AOTriton's ABI, and `bwd_kernel_dq.py`'s `store_db`, which
+            # this kernel had no counterpart to. PyTorch takes exactly that
+            # path (`attention_backward.cu` hands `empty_t4` for DB unless
+            # `bias_requires_grad`), so without this the store dereferences
+            # null and the whole backward faults.
+            #
+            # A runtime predicate rather than a build axis: the compiled
+            # BIAS_TYPE=1 kernel has to serve both callers.
+            _store_db = (
+                (fx.Int64(stride_db_batch) != fx.Int64(0))
+                | (fx.Int64(stride_db_head) != fx.Int64(0))
+                | (fx.Int64(stride_db_seq_q) != fx.Int64(0))
+            )
         q_packs = []
         do_packs = []
         for ks in range_constexpr(K_STEPS_QK):
@@ -1132,8 +1148,9 @@ def build_bwd_dq_module_primary(meta, knobs):
                 #
                 # The row guard is the same point: a lane past `seqlen_q` has
                 # a clamped `_q_safe`, so an unguarded store would write real
-                # row 0's gradient.
-                if _q_in:
+                # row 0's gradient. `_store_db` is the third guard: a caller
+                # that did not ask for dB passes a null DB.
+                if _q_in & _store_db:
                     for _st in range_constexpr(NUM_S_ACCS):
                         _c0 = fx.Int32(kv_block_start) + fx.Int32(_st * WMMA_N) + fx.Int32(klane) * fx.Int32(8)
                         for _j in range_constexpr(8):
