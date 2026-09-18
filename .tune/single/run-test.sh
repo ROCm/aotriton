@@ -119,22 +119,57 @@ esac
 echo "[$HOSTNAME] Queuing run-test pass=$PASS_NUM level=$TEST_LEVEL backend=$BACKEND arch=$ARCH variant=${VARIANT:-normal} ref_device_policy=${REF_DEVICE_POLICY:-default}"
 echo "[$HOSTNAME] output -> $REMOTE_WORKDIR/${OUTPUT_DIR#/wkdir/}/"
 
+# Passed by NAME, not by position. ssh does not preserve argument boundaries: it
+# joins the remote argv into one string that the remote shell re-splits, so a
+# bare empty argument VANISHES rather than arriving as an empty $n, and
+# everything after it shifts down a slot. Positionally that made every optional
+# value a trap -- `--ref_device_policy cpu` landed in RECORD_ADIFFS_TO with
+# --variant partial, and in PARTIAL_INFO_DIR with no variant at all. A `name=`
+# token is never empty, so nothing collapses, order stops mattering, and a
+# mistyped name is rejected instead of silently filling the wrong variable.
+#
+# Values must not contain whitespace; the re-split would break them apart. These
+# are paths, an image tag and small enumerated words, as they were before.
 # shellcheck disable=SC2029
-JOBID=$(ssh "$HOSTNAME" bash -s "$REMOTE_WORKDIR" "$CELERY_WORKER_IMAGE" \
-        "$LIBDIR" "$REMOTE_SCRIPT" "$OUTPUT_DIR" \
-        "$PASS_NUM" "$TEST_LEVEL" "$BACKEND" "$PARTIAL_INFO_DIR" "$RECORD_ADIFFS_TO" \
-        "$REF_DEVICE_OPTION" <<'ENDSSH'
-REMOTE_WORKDIR="$1"
-CELERY_WORKER_IMAGE="$2"
-LIBDIR="$3"
-REMOTE_SCRIPT="$4"
-OUTPUT_DIR="$5"
-PASS_NUM="$6"
-TEST_LEVEL="$7"
-BACKEND="$8"
-PARTIAL_INFO_DIR="$9"
-RECORD_ADIFFS_TO="${10}"
-REF_DEVICE_OPTION="${11}"
+JOBID=$(ssh "$HOSTNAME" bash -s \
+        "remote_workdir=$REMOTE_WORKDIR" \
+        "worker_image=$CELERY_WORKER_IMAGE" \
+        "libdir=$LIBDIR" \
+        "remote_script=$REMOTE_SCRIPT" \
+        "output_dir=$OUTPUT_DIR" \
+        "pass_num=$PASS_NUM" \
+        "test_level=$TEST_LEVEL" \
+        "backend=$BACKEND" \
+        "partial_info_dir=$PARTIAL_INFO_DIR" \
+        "record_adiffs_to=$RECORD_ADIFFS_TO" \
+        "ref_device_option=$REF_DEVICE_OPTION" <<'ENDSSH'
+REMOTE_WORKDIR=""
+CELERY_WORKER_IMAGE=""
+LIBDIR=""
+REMOTE_SCRIPT=""
+OUTPUT_DIR=""
+PASS_NUM=""
+TEST_LEVEL=""
+BACKEND=""
+PARTIAL_INFO_DIR=""
+RECORD_ADIFFS_TO=""
+REF_DEVICE_OPTION=""
+for _kv in "$@"; do
+  case "$_kv" in
+    remote_workdir=*)    REMOTE_WORKDIR="${_kv#*=}" ;;
+    worker_image=*)      CELERY_WORKER_IMAGE="${_kv#*=}" ;;
+    libdir=*)            LIBDIR="${_kv#*=}" ;;
+    remote_script=*)     REMOTE_SCRIPT="${_kv#*=}" ;;
+    output_dir=*)        OUTPUT_DIR="${_kv#*=}" ;;
+    pass_num=*)          PASS_NUM="${_kv#*=}" ;;
+    test_level=*)        TEST_LEVEL="${_kv#*=}" ;;
+    backend=*)           BACKEND="${_kv#*=}" ;;
+    partial_info_dir=*)  PARTIAL_INFO_DIR="${_kv#*=}" ;;
+    record_adiffs_to=*)  RECORD_ADIFFS_TO="${_kv#*=}" ;;
+    ref_device_option=*) REF_DEVICE_OPTION="${_kv#*=}" ;;
+    *) echo "run-test.sh (remote): unknown argument: $_kv" >&2; exit 1 ;;
+  esac
+done
 
 mkdir -p "$REMOTE_WORKDIR/run/tests"
 [ -n "$PARTIAL_INFO_DIR" ] && mkdir -p "$REMOTE_WORKDIR/${OUTPUT_DIR#/wkdir/}"
