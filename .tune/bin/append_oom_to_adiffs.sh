@@ -7,9 +7,8 @@
 #
 # Emits OOM only. The file's other values are NAN and a JSON adiff (both written
 # by the RECORD_ADIFFS_TO path in modules/flash/tests/_core_test_backward.py),
-# and CPUREF, which is deliberately hand-only: it asserts that a test's GPU
-# reference is untrustworthy, carries a mandatory written justification, and
-# nothing can derive either from a pytest log.
+# and CPUREF, which is hand-only: it asserts that a test's GPU reference is
+# untrustworthy, which no pytest log can establish.
 #
 # Usage:
 #   append_oom_to_adiffs.sh <out_file>

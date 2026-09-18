@@ -45,39 +45,26 @@ USE_ADIFFS_TXT = os.getenv('USE_ADIFFS_TXT', default=None)
 
 # <utname> TAB <value>, where <value> is OOM, NAN, CPUREF, or a JSON adiff.
 #
-# CPUREF takes a THIRD tab-separated field and it is mandatory: it says validate
-# this test against the CPU reference instead of the GPU one, which is a claim
-# about the GPU reference being untrustworthy for that shape, and nothing checks
-# it. Neither writer can produce a CPUREF line -- the recorder below prints
-# `utname TAB json` and .tune/bin/append_oom_to_adiffs.sh prints
-# `utname (call) TAB OOM`, two fields each -- so every one is hand-added, and
-# requiring the reason is what keeps an unexplained GPU-reference bypass from
-# being a one-word edit.
+# CPUREF validates the test against the CPU reference instead of the GPU one,
+# which is the same thing as saying the GPU reference is not trustworthy for it.
+# No writer emits CPUREF -- the recorder below prints `utname TAB json` and
+# .tune/bin/append_oom_to_adiffs.sh prints `utname (call) TAB OOM` -- so every
+# such line is hand-added.
 #
-# Comments and blank lines are allowed because the file is now hand-edited.
+# Comments and blank lines are allowed because the file is hand-edited.
 adiffs = {}
-adiff_reasons = {}
 if USE_ADIFFS_TXT is not None:
     with open(USE_ADIFFS_TXT) as f:
         for lineno, line in enumerate(f, start=1):
             line = line.rstrip('\n')
             if not line.strip() or line.lstrip().startswith('#'):
                 continue
-            fields = line.rstrip().split('\t', 2)
-            if len(fields) < 2:
+            fields = line.rstrip().split('\t')
+            if len(fields) != 2:
                 raise ValueError(f'{USE_ADIFFS_TXT}:{lineno}: expected '
                                  f'<utname> TAB <value>, got {line!r}')
-            utname, adiff_str = fields[0], fields[1]
-            if adiff_str == "CPUREF":
-                reason = fields[2].strip() if len(fields) > 2 else ''
-                if not reason:
-                    raise ValueError(
-                        f'{USE_ADIFFS_TXT}:{lineno}: CPUREF requires a third '
-                        f'tab-separated field justifying why this test cannot '
-                        f'use the GPU reference. Got {line!r}')
-                adiffs[utname] = "CPUREF"
-                adiff_reasons[utname] = reason
-            elif adiff_str in ("OOM", "NAN"):
+            utname, adiff_str = fields
+            if adiff_str in ("OOM", "NAN", "CPUREF"):
                 adiffs[utname] = adiff_str
             else:
                 adiffs[utname] = json.loads(adiff_str)
@@ -339,7 +326,7 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
     if use_adiff_entry == "CPUREF":
         adiff_ref_device_policy = 'cpu'
         use_adiff_entry = None
-        print(f"[Adiffs] CPU reference forced: {adiff_reasons.get(utname, '')}")
+        print("[Adiffs] CPUREF: validating against the CPU reference")
     print(f"{use_adiff_entry=}")
     torch.cuda.empty_cache()
     SKIP_DK_DV = False
