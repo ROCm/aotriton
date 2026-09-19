@@ -1,1 +1,2 @@
-flydsl==0.3.1
+# commit of v0.3.1
+flydsl @ git+https://github.com/ROCm/FlyDSL@421935cc6f09fd9b27d5d5ae52e0960e18834bd5

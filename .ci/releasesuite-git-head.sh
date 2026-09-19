@@ -317,22 +317,20 @@ if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
   # die there. pin_line is build_llvm_tarball.sh's reader, which also rejects a
   # file that has grown a second pin.
   #
-  # TODO: PEP 508 compatible parser
   FLYDSL_LLVM_PIN="$(pin_line "${SCRIPT_DIR}/../third_party/flydsl-llvm.txt")" || exit 1
   if [[ -z "${SUITE_FLYDSL_COMMIT}" && -n "${FLYDSL_LLVM_PIN}" ]]; then
-    # The ref to build is the one flydsl-compiler.txt names, spelled as a tag.
-    # FlyDSL releases are tagged vX.Y.Z, so `flydsl==0.3.1` is `v0.3.1`. Any
-    # other requirement shape is not something to guess at.
-    FLYDSL_REQ="$(pin_line "${SCRIPT_DIR}/../third_party/flydsl-compiler.txt")" || exit 1
-    if [[ "${FLYDSL_REQ}" =~ ^flydsl[[:space:]]*==[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-      SUITE_FLYDSL_COMMIT="v${BASH_REMATCH[1]}"
-    else
+    # The commit to build is the one flydsl-compiler.txt pins, read by the
+    # shared parser rather than a second regex -- the two used to disagree
+    # about what that file may contain, which is how a pin move breaks a
+    # release build in the one branch nobody exercises until release day.
+    FLYDSL_PIN_TEXT="$(parse_flydsl_pin "${SCRIPT_DIR}/../third_party/flydsl-compiler.txt")" || {
       echo "Error: third_party/flydsl-llvm.txt pins ${FLYDSL_LLVM_PIN}, so this" >&2
-      echo "release must build FlyDSL from source, but the ref to build cannot be" >&2
-      echo "derived from third_party/flydsl-compiler.txt ('${FLYDSL_REQ}')." >&2
+      echo "release must build FlyDSL from source, but the commit to build cannot" >&2
+      echo "be read from third_party/flydsl-compiler.txt." >&2
       echo "Pass --flydsl_commit <ref> explicitly." >&2
       exit 1
-    fi
+    }
+    SUITE_FLYDSL_COMMIT="$(printf '%s' "${FLYDSL_PIN_TEXT}" | tail -n 1)"
     echo "third_party/flydsl-llvm.txt is non-empty (${FLYDSL_LLVM_PIN})."
     echo "Building FlyDSL ${SUITE_FLYDSL_COMMIT} from source; the pinned wheel cannot be used."
   fi
