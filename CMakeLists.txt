@@ -216,6 +216,19 @@ if(FLYDSL_LLVM_PIN AND NOT AOTRITON_NOIMAGE_MODE AND NOT AOTRITON_USE_LOCAL_FLYD
     "flydsl-compiler.txt moves to a wheel built against it, empty this file.")
 endif()
 
+# The compiler pin itself, read the same way, for the checks beside the
+# `pip install -r` that consumes it. Read here rather than there so both pins
+# are parsed in one place and by identical rules.
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/third_party/flydsl-compiler.txt" FLYDSL_COMPILER_LINES ENCODING UTF-8)
+set(FLYDSL_COMPILER_PIN "")
+foreach(_line IN LISTS FLYDSL_COMPILER_LINES)
+  string(STRIP "${_line}" _line)
+  if(_line AND NOT _line MATCHES "^#")
+    set(FLYDSL_COMPILER_PIN "${_line}")
+    break()
+  endif()
+endforeach()
+
 # Early failure for python binding
 if(NOT AOTRITON_NO_PYTHON)
   cmake_policy(SET CMP0148 NEW)  # Disable outdated FindPythonInterp/FindPythonLibs
@@ -419,48 +432,26 @@ if(ALL_TRITON_SOS)
   add_custom_target(aotriton_venv_triton ALL DEPENDS "${ALL_TRITON_SOS}")
 endif(ALL_TRITON_SOS)
 
-# The FlyDSL COMPILER is a pinned wheel, not a submodule: its setup.py needs a prebuilt
-# bundled MLIR, so `pip install third_party/flydsl` would not be self-contained the way
-# `pip install third_party/triton` is.
-#
-# The FlyDSL SOURCE TREE is pinned separately by third_party/flydsl-kernel.txt and
-# shallow-cloned like aiter, because the wheel does not ship `kernels/common`, which the
-# vendored kernels in modules/flash/flyc/ import. Two pins, deliberately independent: the
-# compiler is a released artifact and the kernel sources are a source checkout, and they
-# are allowed to name different versions.
-#
-# Two ways to move off the pinned wheel, for two different situations. Edit
-# third_party/flydsl-compiler.txt once a build is published and every build should
-# use it. Set AOTRITON_USE_LOCAL_FLYDSL_WHEEL (.ci: --flydsl_wheel) for a wheel that
-# exists only on local disk -- an unreleased build carrying a compiler patch, say.
-# Neither touches third_party/flydsl-kernel.txt: a patched compiler wheel may or may
-# not want a matching --flydsl_kernel_root, and that stays a separate decision.
+# Two independent pins: the COMPILER wheel (flydsl-compiler.txt, overridden by
+# AOTRITON_USE_LOCAL_FLYDSL_WHEEL) and the kernel SOURCE TREE (flydsl-kernel.txt).
 if(NOT AOTRITON_NOIMAGE_MODE)
-  # Sentinel is flydsl/__init__.py, not the bundled-MLIR extension -- that
-  # filename carries an LLVM version and would break on the next flydsl bump.
+  # Not the bundled-MLIR extension: its filename carries an LLVM version.
   set(AOTRITON_FLYDSL_STAMP "${VENV_SITE}/flydsl/__init__.py")
   if(AOTRITON_USE_LOCAL_FLYDSL_WHEEL)
-    # flydsl wheels are CPython-ABI specific (flydsl-<ver>-cp313-cp313-linux_x86_64.whl).
-    # pip would reject a mismatch, but only once ninja gets here; check up front.
+    # flydsl wheels are CPython-ABI specific; pip would reject a mismatch, but
+    # only once ninja gets here. Check up front.
     execute_process(COMMAND "${VENV_BIN_PYTHON}" -c
       "import sysconfig; print('cp' + sysconfig.get_config_var('py_version_nodot'), end='')"
       OUTPUT_VARIABLE VENV_ABI_TAG)
     cmake_path(GET AOTRITON_USE_LOCAL_FLYDSL_WHEEL FILENAME FLYDSL_WHEEL_NAME)
-    # Only checked when the name actually carries one -- a pure-Python wheel tagged
-    # py3-none-any has no cp tag and is not a mismatch.
+    # py3-none-any carries no cp tag and is not a mismatch.
     if(FLYDSL_WHEEL_NAME MATCHES "-(cp[0-9]+)-" AND NOT CMAKE_MATCH_1 STREQUAL "${VENV_ABI_TAG}")
       message(FATAL_ERROR "AOTRITON_USE_LOCAL_FLYDSL_WHEEL is built for ${CMAKE_MATCH_1} but the build venv is ${VENV_ABI_TAG}: ${AOTRITON_USE_LOCAL_FLYDSL_WHEEL}")
     endif()
     message(STATUS "[AOTriton] Using local FlyDSL wheel ${AOTRITON_USE_LOCAL_FLYDSL_WHEEL} "
                    "instead of third_party/flydsl-compiler.txt")
-    # --force-reinstall because a rebuilt wheel normally keeps its version string:
-    # plain `pip install <wheel>` would call the requirement already satisfied and
-    # silently leave the previous build in the venv. The wheel declares no
-    # dependencies, so this reinstalls flydsl and nothing else.
-    #
-    # DEPENDS on the wheel because switching to a different path re-runs this
-    # command on its own (ninja hashes command lines) but overwriting the same path
-    # with a fresh build does not.
+    # --force-reinstall: a rebuilt wheel keeps its version, so pip would call it
+    # already satisfied. DEPENDS catches an overwrite of the same path.
     add_custom_command(OUTPUT "${AOTRITON_FLYDSL_STAMP}"
       COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
       "${VENV_BIN_PYTHON}" -m pip install --force-reinstall
@@ -468,8 +459,23 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       DEPENDS "${AOTRITON_USE_LOCAL_FLYDSL_WHEEL}"
       VERBATIM)
   else()
-    # DEPENDS on the pin: without it the stamp stays newer than an edited pin
-    # and ninja keeps the old compiler version installed.
+    # Unreachable while the tripwire beside the pin holds; asserted here so a
+    # drift in its conditions fails loudly instead of installing a bad wheel.
+    if(FLYDSL_LLVM_PIN)
+      message(FATAL_ERROR
+        "third_party/flydsl-llvm.txt pins ${FLYDSL_LLVM_PIN}, so the wheel "
+        "third_party/flydsl-compiler.txt names must not be installed: it must be "
+        "built against an unmainlined LLVM to fix known bugs. Use "
+        "-DAOTRITON_USE_LOCAL_FLYDSL_WHEEL=<abs path to .whl> instead.")
+    endif()
+    # A VCS direct reference makes pip build from source
+    if(FLYDSL_COMPILER_PIN MATCHES "git\\+" AND NOT FLYDSL_COMPILER_PIN MATCHES "\\.whl$")
+      message(WARNING
+        "third_party/flydsl-compiler.txt is a VCS direct reference "
+        "(${FLYDSL_COMPILER_PIN}), so pip will build FlyDSL FROM SOURCE, which takes time. "
+        "Consider prebuilding the wheel and using -DAOTRITON_USE_LOCAL_FLYDSL_WHEEL=<abs path to .whl>.")
+    endif()
+    # DEPENDS on the pin, or an edit leaves the old version installed.
     add_custom_command(OUTPUT "${AOTRITON_FLYDSL_STAMP}"
       COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
       "${VENV_BIN_PYTHON}" -m pip install -r
@@ -479,14 +485,8 @@ if(NOT AOTRITON_NOIMAGE_MODE)
   endif()
   add_custom_target(aotriton_venv_flydsl ALL DEPENDS "${AOTRITON_FLYDSL_STAMP}")
 
-  ## Handle flydsl-kernel.txt -- same shape as third_party/aiter.txt, see
-  ## v3src/CMakeLists.txt. The vendored attention kernel *bodies* live in
-  ## modules/flash/flyc/ and are NOT taken from here, but two libraries they are
-  ## written against still are: kernels/common (buffer_ops, kernels_common) and
-  ## kernels/attention/flash_attn_utils.py -- the `dualwave` module supplying the
-  ## base classes and emitter helpers every gfx950 kernel derives from. The pip
-  ## wheel from flydsl-compiler.txt ships the compiler and no kernels/ at all,
-  ## which is why this second, independent pin exists.
+  ## flydsl-kernel.txt, same shape as third_party/aiter.txt. Supplies kernels/common
+  ## and kernels/attention, which modules/flash/flyc/ imports and the wheel omits.
   find_package(Git REQUIRED)
   file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/third_party/flydsl-kernel.txt" FLYDSL_GIT_TAG
        LIMIT_COUNT 1 ENCODING UTF-8)
