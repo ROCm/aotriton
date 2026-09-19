@@ -484,10 +484,15 @@ def write_results(conn, sql: SqlStatements, arch_results: list, incremental: boo
     rows_to_insert = []
     for task_id, key_name, index, median_time, impl_desc in arch_results:
         task_config = task_config_map.get(task_id)
-        arch = arch_map.get(task_id)
-        if task_config is None or arch is None:
+        # NOT `arch`: that name is this function's requested filter, and the
+        # DELETE below is scoped by it. Rebinding it here would leave an
+        # unfiltered run deleting only the last row's architecture while the
+        # INSERT repopulates every one of them -- the exact predicate
+        # imbalance that leaves stale rows behind for all the others.
+        row_arch = arch_map.get(task_id)
+        if task_config is None or row_arch is None:
             continue
-        rows_to_insert.append((task_id, arch, sql.tuning_level, Jsonb(task_config), key_name,
+        rows_to_insert.append((task_id, row_arch, sql.tuning_level, Jsonb(task_config), key_name,
                                index, median_time,
                                Jsonb(impl_desc) if impl_desc is not None else None))
 
