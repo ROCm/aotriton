@@ -91,17 +91,29 @@ def write_script(args, dbc, out):
     db_base = args.decompose_output
     print(TARXZ, file=out)
     print(f'''export -f tarxz''', file=out)
-    # Deliberately NOT scoped to <arch> even under --arch. tarxz() removes each
-    # .sqlite3 once it is archived, so a completed earlier run leaves none
-    # behind for this find to pick up -- it only ever sees what the INSERTs
-    # above just created. Narrowing it would add a path that does not exist yet
-    # on a first run, for no gain.
-    # `-path '*/database/<vendor>/*'` and not a bare `-name`: tarxz() DELETES
-    # each .sqlite3 once it is archived, and decompose_output defaults to the
-    # directory that also holds --database_file, so an unrestricted find would
-    # archive and then remove the central database this script reads from.
-    # Still not scoped to <arch> even under --arch, deliberately -- see above.
-    print(f'''find {db_base.as_posix()} -path '*/database/{VENDOR}/*' -name '*.sqlite3' | "$GNU_PARALLEL" tarxz''',
+    # Matched by -path, never a bare -name, and under --arch the architecture
+    # is part of the pattern. tarxz() DELETES each .sqlite3 once it has
+    # archived it, so whatever this find selects, it also consumes.
+    #
+    #   */database/<vendor>/*  keeps it off the central database, which
+    #   decompose_output defaults to sitting alongside -- an unrestricted find
+    #   would archive and then remove the very file the INSERTs above read.
+    #
+    #   .../<arch>/*           keeps an --arch run off every OTHER
+    #   architecture's shards. "A completed earlier run leaves none behind" is
+    #   true and not enough: an INTERRUPTED one does, and this run would then
+    #   archive a half-written shard for an architecture it was told not to
+    #   touch -- turning a visibly incomplete .sqlite3 into a .tar.xz that
+    #   looks finished, which is worse than leaving it alone. eca39ab6's
+    #   accumulation guarantee says other architectures survive an --arch run;
+    #   this is the part of it that was missing.
+    #
+    # A pattern, not a narrower root: -path never has to exist, so scoping this
+    # way still works on a first run, where <arch>/ is created seconds earlier
+    # by the INSERTs above.
+    arch_glob = f'*/database/{VENDOR}/*' if args.arch is None \
+        else f'*/database/{VENDOR}/{args.arch}/*'
+    print(f'''find {db_base.as_posix()} -path '{arch_glob}' -name '*.sqlite3' | "$GNU_PARALLEL" tarxz''',
           file=out)
 
 
