@@ -57,9 +57,29 @@ def step_arch() -> str | None:
     than in the template. Returning None means no --arch reaches the script, so
     an unfiltered request is byte-for-byte the request it was before the
     selector existed.
+
+    The value is checked against this workdir's own architectures before it
+    goes anywhere. It reaches .tune/bin/decomposedb, which interpolates it into
+
+        rm -rf "$DECOMPOSE_OUTPUT"/*/database/amd/"$ARCH"
+
+    so a value carrying '..' walks out of the architecture directory and
+    deletes unrelated workdir content. A form field is not a promise about its
+    own contents: the select offers exactly these options, but nothing stops a
+    request that did not come from the select.
+
+    Membership, not a pattern. The set is already known -- it is what populates
+    the selector -- and accepting only what this workdir actually has is both
+    the tighter rule and the one that stays correct when architecture names
+    take a shape no pattern here anticipated.
     """
     value = (request.form.get('arch') or '').strip()
-    return None if not value or value == '__all__' else value
+    if not value or value == '__all__':
+        return None
+    known = tasks.get_architectures(current_app.config['WORKDIR'])
+    if value not in known:
+        abort(400, description=f'Unknown architecture: {value!r}')
+    return value
 
 
 def step_use_base_db() -> bool:
