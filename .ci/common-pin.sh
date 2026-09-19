@@ -27,13 +27,19 @@ pin_line() {
   printf '%s' "${pin}"
 }
 
-# One PEP 508 direct reference, with an optional `<name> @ ` prefix and an
-# optional `#<sha1>` fragment:
+# One git URL pin, `[<name> @ ]git+<scheme>://<url>@<ref>[#<sha1>]`:
 #
 #   git+https://github.com/ROCm/llvm-project@aotriton/0.14b/rc0#<sha1>
 #   flydsl @ git+https://github.com/ROCm/FlyDSL@<sha1>
 #
 # Prints two lines: the origin (git+ prefix intact) and the COMMIT TO BUILD.
+#
+# Deliberately NOT called a PEP 508 parser. The flydsl-compiler.txt form is one
+# -- fragment included, PEP 508 URLs carry RFC 3986 fragments -- but
+# flydsl-llvm.txt has no requirement name, and giving it one would buy the
+# shape and nothing else: there is no `llvm` distribution for pip to install,
+# so `llvm @ ...` would be PEP 508 that can never be a pip requirement.
+# Unifying both files is deferred to the next cycle.
 #
 # The fragment is what makes a moving ref safe. `aotriton/0.14b/rc0` advances
 # as the RC does, and every artifact cache downstream is keyed on the resolved
@@ -46,16 +52,16 @@ pin_line() {
 # stays unambiguous for git+ssh://git@host/org/repo@ref. The scp-style
 # git@github.com:org/repo is the one spelling the rule cannot disambiguate, so
 # it is rejected rather than guessed at.
-parse_pep508_pin() {
+parse_git_pin() {
   local pin="$1" src="$2" url ref sha=""
-  # Optional `<name> @ ` requirement prefix. Matched with a space on both
-  # sides, per PEP 508's own grammar, so it cannot eat the URL's user@host.
+  # Optional `<name> @ ` prefix. Requires a space on either side, so it cannot
+  # eat the URL's own user@host.
   if [[ "${pin}" == *" @ "* ]]; then
     pin="${pin#* @ }"
   fi
   if [[ "${pin}" != git+*://*@* ]]; then
     echo "Error: cannot parse '${pin}' in ${src}." >&2
-    echo "Expected one PEP 508 direct reference, e.g." >&2
+    echo "Expected a git URL pin, e.g." >&2
     echo "  git+https://github.com/ROCm/llvm-project@aotriton/0.14b/rc0#<sha1>" >&2
     echo "  flydsl @ git+https://github.com/ROCm/FlyDSL@<sha1>" >&2
     echo "scp-style URLs (git@github.com:org/repo) are not accepted: the ref" >&2
@@ -81,7 +87,7 @@ parse_llvm_pin() {
   local pin
   pin="$(pin_line "$1")" || return 1
   [[ -z "${pin}" ]] && return 0
-  parse_pep508_pin "${pin}" "$1"
+  parse_git_pin "${pin}" "$1"
 }
 
 # The FlyDSL compiler pin, same shape. Sole reader of
@@ -94,5 +100,5 @@ parse_flydsl_pin() {
     echo "Error: ${1} is empty; it must name the FlyDSL compiler to install." >&2
     return 1
   fi
-  parse_pep508_pin "${pin}" "$1"
+  parse_git_pin "${pin}" "$1"
 }

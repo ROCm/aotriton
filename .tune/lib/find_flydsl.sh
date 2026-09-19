@@ -46,7 +46,7 @@ flydsl_required() {
   [ -n "$pin" ]
 }
 
-# The FlyDSL commit to build, read from the PEP 508 direct reference in
+# The FlyDSL commit to build, read from the git URL pin in
 # third_party/flydsl-compiler.txt by .ci/common-pin.sh's parser. One reader for
 # that file, shared with .ci/releasesuite-git-head.sh, so the two cannot
 # disagree about which FlyDSL a build means.
