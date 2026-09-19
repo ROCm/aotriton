@@ -49,7 +49,9 @@ Usage:
 """
 
 import argparse
+import atexit
 import logging
+import shutil
 import sqlite3
 import tarfile
 import tempfile
@@ -420,7 +422,11 @@ def export(conn_params: dict, output_path: Path, arch: str | None = None) -> Non
 
         for row in rows:
             task_id     = row['task_id']
-            arch        = row['arch']
+            # NOT `arch`: that name is this function's --arch parameter, read
+            # again after this loop by patch_missing_dtypes. Rebinding it here
+            # would leave the patch scoped to whichever arch happened to come
+            # last instead of to the one the caller asked for (or to all).
+            row_arch    = row['arch']
             iface_name  = row['iface_name']
             task_config = row['task_config']
             impl_desc   = row['impl_desc']
@@ -429,7 +435,7 @@ def export(conn_params: dict, output_path: Path, arch: str | None = None) -> Non
                 logger.warning(
                     'Skipping task_id=%s arch=%s kernel=%s: impl_desc is NULL '
                     '(compute_best_results may not have run for this entry)',
-                    task_id, arch, iface_name,
+                    task_id, row_arch, iface_name,
                 )
                 skipped += 1
                 continue
@@ -442,7 +448,7 @@ def export(conn_params: dict, output_path: Path, arch: str | None = None) -> Non
             entry  = task_config['entry']
             psels  = impl_desc.get('psels') or {}
             copts  = impl_desc.get('copts') or {}
-            gpu    = f'{arch}_mod0'
+            gpu    = f'{row_arch}_mod0'
 
             cols, unique = KERNEL_SCHEMAS[iface_name]
 
@@ -454,7 +460,7 @@ def export(conn_params: dict, output_path: Path, arch: str | None = None) -> Non
             except Exception as exc:
                 logger.warning(
                     'Skipping task_id=%s arch=%s kernel=%s entry=%s: %s',
-                    task_id, arch, iface_name, entry, exc,
+                    task_id, row_arch, iface_name, entry, exc,
                 )
                 skipped += 1
                 continue
@@ -505,6 +511,11 @@ def _open_base_db(base_db: Path) -> sqlite3.Connection:
             raise ValueError(
                 f'{base_db} holds {len(members)} .sqlite3 members, expected exactly one')
         tmpdir = tempfile.mkdtemp(prefix='aotriton-base-db.')
+        # Deleted at exit rather than here: sqlite needs the file (and room for
+        # its journal) for as long as the connection lives, and the connection
+        # outlives this function. Without this every run leaves a copy of the
+        # baseline database behind in /tmp.
+        atexit.register(shutil.rmtree, tmpdir, ignore_errors=True)
         tar.extract(members[0], tmpdir)
         return sqlite3.connect(Path(tmpdir) / members[0].name)
 
@@ -659,7 +670,10 @@ def export_op_into(db: sqlite3.Connection, conn_params: dict,
 
     for row in rows:
         task_id     = row['task_id']
-        arch        = row['arch']
+        # NOT `arch`: that name is this function's --arch parameter, read again
+        # after this loop by patch_missing_dtypes. See export() for the same
+        # rule.
+        row_arch    = row['arch']
         iface_name  = row['iface_name']
         task_config = row['task_config']
         impl_index  = row['impl_index']
@@ -686,7 +700,7 @@ def export_op_into(db: sqlite3.Connection, conn_params: dict,
 
         cols, _ = OP_SCHEMAS[table_name]
         entry = task_config['entry']
-        gpu   = f'{arch}_mod0'
+        gpu   = f'{row_arch}_mod0'
 
         try:
             values = []
@@ -703,7 +717,7 @@ def export_op_into(db: sqlite3.Connection, conn_params: dict,
         except Exception as exc:
             logger.warning(
                 'Skipping task_id=%s arch=%s op=%s entry=%s: %s',
-                task_id, arch, iface_name, entry, exc,
+                task_id, row_arch, iface_name, entry, exc,
             )
             skipped += 1
             continue
