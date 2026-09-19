@@ -39,7 +39,13 @@ pin_line() {
 # flydsl-llvm.txt has no requirement name, and giving it one would buy the
 # shape and nothing else: there is no `llvm` distribution for pip to install,
 # so `llvm @ ...` would be PEP 508 that can never be a pip requirement.
-# Unifying both files is deferred to the next cycle.
+#
+# DIRECTION: every pin under third_party/ -- aiter.txt, flydsl-compiler.txt,
+# flydsl-kernel.txt, flydsl-llvm.txt -- moves to PEP 508 eventually, for the
+# expressiveness: extras, environment markers, and one grammar across four
+# files instead of a per-file shape each reader has to know. Not this cycle,
+# and not by bolting a fake requirement name onto the pins that name no
+# distribution -- that buys the syntax and none of the benefit.
 #
 # The fragment is what makes a moving ref safe. `aotriton/0.14b/rc0` advances
 # as the RC does, and every artifact cache downstream is keyed on the resolved
