@@ -46,41 +46,73 @@ flydsl_required() {
   [ -n "$pin" ]
 }
 
-# The FlyDSL ref to build, spelled as a git tag. FlyDSL releases are tagged
-# vX.Y.Z, so `flydsl==0.3.1` is `v0.3.1`. Any other requirement shape is not
-# something to guess at -- same rule, and the same refusal to guess, as
-# .ci/releasesuite-git-head.sh:325-333.
+# The FlyDSL commit to build, read from the PEP 508 direct reference in
+# third_party/flydsl-compiler.txt by .ci/common-pin.sh's parser. One reader for
+# that file, shared with .ci/releasesuite-git-head.sh, so the two cannot
+# disagree about which FlyDSL a build means.
 flydsl_ref_from_pin() {
   local aotriton_root="$1"
-  local req
-  req="$(pin_line "$aotriton_root/third_party/flydsl-compiler.txt")" || return 1
-  if [[ "$req" =~ ^flydsl[[:space:]]*==[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-    printf 'v%s' "${BASH_REMATCH[1]}"
-    return 0
-  fi
-  echo "Error: cannot derive a FlyDSL ref from third_party/flydsl-compiler.txt ('$req')." >&2
-  echo "  Expected 'flydsl==X.Y.Z'. Build the wheel by hand with" >&2
-  echo "  .ci/build_flydsl_wheel.sh --flydsl_commit <ref> if the pin has moved to" >&2
-  echo "  a requirement shape this cannot read." >&2
-  return 1
+  local pin_text
+  pin_text="$(parse_flydsl_pin "$aotriton_root/third_party/flydsl-compiler.txt")" || return 1
+  # Second line is the commit; the origin on the first is not ours to pick,
+  # .ci/build_flydsl_wheel.sh reads the same pin for it.
+  printf '%s' "$(printf '%s' "$pin_text" | tail -n 1)"
+}
+
+# The LLVM commit this tree is pinned to, as the 12 hex digits every artifact
+# name is keyed on.
+flydsl_llvm_sha12() {
+  local aotriton_root="$1"
+  local pin_text sha
+  pin_text="$(parse_llvm_pin "$aotriton_root/third_party/flydsl-llvm.txt")" || return 1
+  sha="$(printf '%s' "$pin_text" | tail -n 1)"
+  [ -n "$sha" ] || return 1
+  printf '%s' "${sha:0:12}"
+}
+
+# Where each prebuild stage records the artifact it produced.
+#
+# A STAMP, not a glob. Both .ci build scripts print the exact path of the
+# artifact -- cache hit or fresh build, diagnostics go to stderr -- so the
+# identity is already known at the only moment it is unambiguous. Recomputing
+# it later means re-deriving a cache key that lives in
+# .ci/build_flydsl_wheel.sh (FlyDSL sha8, the --version_suffix, the LLVM sha12,
+# the patch count, the ABI tag), and a second copy of that key is a second
+# thing to get wrong.
+#
+# The wheel stamp is per Python ABI because the wheels are: CMakeLists.txt
+# makes a cp-tag mismatch a FATAL_ERROR, so one stamp per workdir would let two
+# images overwrite each other's answer and move the failure an hour downstream.
+flydsl_llvm_stamp()  { printf '%s/.current-tarball' "$1"; }
+flydsl_wheel_stamp() { printf '%s/.current-wheel-cp%s' "$1" "${2/./}"; }
+
+# Print the LLVM tarball the CURRENT pin names, or return 1.
+#
+# The stamp is checked against the pinned SHA rather than trusted: it survives
+# in the workdir across pin moves, and `--select flydsl-wheel` on its own would
+# otherwise hand an artifact from the previous pin to a wheel build that claims
+# to be this one. The llvm-<sha12> prefix is the same identity
+# .ci/build_flydsl_wheel.sh already regexes out of the name for its cache key.
+find_flydsl_llvm_tarball() {
+  local aotriton_root="$1" tarball_dir="$2"
+  local stamp tarball sha12
+  sha12="$(flydsl_llvm_sha12 "$aotriton_root")" || return 1
+  stamp="$(flydsl_llvm_stamp "$tarball_dir")"
+  [ -f "$stamp" ] || return 1
+  tarball="$(cat "$stamp")"
+  [ -n "$tarball" ] && [ -f "$tarball" ] || return 1
+  [[ "$(basename "$tarball")" == llvm-"$sha12"-* ]] || return 1
+  printf '%s' "$tarball"
 }
 
 # Print the cached FlyDSL wheel for this workdir and Python ABI, or return 1.
-#
-# The ABI tag is part of the match, not a detail: flydsl wheels are CPython-ABI
-# specific and CMakeLists.txt:451-452 makes a cp-tag mismatch a FATAL_ERROR, so
-# a wheel built for another Python is not a hit -- finding it here would only
-# move the failure an hour downstream. Same reasoning as
-# .ci/build_flydsl_wheel.sh's own cache key.
 find_flydsl_wheel() {
   local workdir="$1"
   local pyver="$2"       # X.Y, as `python --version` reports it
-  local wheel
-  # `|| true`: callers run under `set -euo pipefail` (testbld, build_arch.sh),
-  # where a missing cache dir makes ls exit 2, pipefail carries it through
-  # `| head`, and the assignment kills the CALLER instead of returning 1 here.
-  # A miss has to be reportable -- it is how "run the prebuild first" gets said.
-  wheel=$(ls "$workdir/scratch/flydsl"/flydsl-*"cp${pyver/./}"*.whl 2>/dev/null | head -n 1) || true
+  local stamp wheel
+  stamp="$(flydsl_wheel_stamp "$workdir/scratch/flydsl" "$pyver")"
+  [ -f "$stamp" ] || return 1
+  wheel="$(cat "$stamp")"
   [ -n "$wheel" ] && [ -f "$wheel" ] || return 1
-  echo "$wheel"
+  printf '%s' "$wheel"
 }

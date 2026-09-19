@@ -140,9 +140,20 @@ stage_triton() {
 # commit and returns early on a hit, so calling this every time is cheap.
 stage_flydsl_llvm() {
   echo "Pre-building the LLVM/MLIR tarball for FlyDSL (python ${PYVER})"
-  bash "$AOTRITON_ROOT/.ci/build_llvm_tarball.sh" \
+  # stdout is the artifact path -- the script sends every diagnostic to stderr
+  # precisely so it can be captured -- and it is recorded rather than
+  # rediscovered. The wheel stage below runs against the tarball THIS pin
+  # names, which a directory listing cannot identify: a cache hit does not
+  # refresh an mtime, so the newest file on disk can easily belong to another
+  # pin or another checkout, and a FlyDSL wheel built against the wrong LLVM
+  # miscompiles register spills and returns wrong numbers rather than failing.
+  local tarball
+  tarball="$(bash "$AOTRITON_ROOT/.ci/build_llvm_tarball.sh" \
     --tarball_output_dir "$LLVM_TARBALL_DIR" \
-    --python "$PYVER"
+    --python "$PYVER")"
+  mkdir -p "$LLVM_TARBALL_DIR"
+  printf '%s' "$tarball" > "$(flydsl_llvm_stamp "$LLVM_TARBALL_DIR")"
+  echo "LLVM tarball: $tarball"
 }
 
 # The FlyDSL compiler wheel itself. The tarball is read from the cache rather
@@ -152,32 +163,37 @@ stage_flydsl_llvm() {
 # tarball as a required input for the same reason -- it is a sibling input, not
 # a private dependency (see its "The LLVM half is the CALLER's" note).
 stage_flydsl_wheel() {
-  local ref tarball
+  local ref tarball wheel
   ref="$(flydsl_ref_from_pin "$AOTRITON_ROOT")" || exit 1
 
-  # Newest by mtime: the name carries the commit, so any tarball here is
-  # legitimate, and build_flydsl_wheel.sh re-derives the LLVM identity from the
-  # filename for its own cache key -- picking the freshest is right when a pin
-  # has moved and both are still on disk.
-  # `|| true` is load-bearing under `set -euo pipefail`: with no tarball dir at
-  # all, ls exits 2, pipefail propagates it through `| head`, and the script
-  # dies on the assignment -- taking the explanatory error below with it and
-  # leaving the caller a bare exit 2.
-  tarball=$(ls -t "$LLVM_TARBALL_DIR"/llvm-*.tar.gz 2>/dev/null | head -n 1) || true
-  if [ -z "$tarball" ]; then
-    echo "Error: no LLVM tarball in $LLVM_TARBALL_DIR, and this stage does not build one." >&2
+  # The tarball THIS pin names, from the stamp the LLVM stage wrote, validated
+  # against third_party/flydsl-llvm.txt's SHA. Not the newest on disk: a cache
+  # hit leaves the mtime alone, so "freshest" routinely means "from whichever
+  # pin or checkout happened to build last", and the wheel would be linked
+  # against an LLVM nobody asked for -- silently, since the failure mode is
+  # wrong numbers rather than a build error.
+  if ! tarball="$(find_flydsl_llvm_tarball "$AOTRITON_ROOT" "$LLVM_TARBALL_DIR")"; then
+    echo "Error: no LLVM tarball in $LLVM_TARBALL_DIR for the pinned commit," >&2
+    echo "  and this stage does not build one." >&2
     echo "  Run: $0 --select flydsl-llvm $WORKDIR" >&2
     echo "  (or --select all, which runs both stages in order)" >&2
     exit 1
   fi
 
   echo "Pre-building the FlyDSL wheel ${ref} for python ${PYVER} against $(basename "$tarball")"
-  bash "$AOTRITON_ROOT/.ci/build_flydsl_wheel.sh" \
+  wheel="$(bash "$AOTRITON_ROOT/.ci/build_flydsl_wheel.sh" \
     --wheel_output_dir "$FLYDSL_WHEEL_DIR" \
     --flydsl_commit "$ref" \
     --llvm_tarball "$tarball" \
     --python "$PYVER" \
-    --version_suffix ".aotriton${aotriton_major}.${aotriton_minor}"
+    --version_suffix ".aotriton${aotriton_major}.${aotriton_minor}")"
+  # Same reason as the LLVM stamp: testbld and build_arch.sh must install the
+  # wheel this run produced, and the cache holds wheels from every FlyDSL and
+  # LLVM pin this workdir has ever seen. Matching on the ABI tag alone would
+  # pick any of them.
+  mkdir -p "$FLYDSL_WHEEL_DIR"
+  printf '%s' "$wheel" > "$(flydsl_wheel_stamp "$FLYDSL_WHEEL_DIR" "$PYVER")"
+  echo "FlyDSL wheel: $wheel"
 }
 
 # flydsl_required is consulted once, here, so an empty pin makes both FlyDSL
