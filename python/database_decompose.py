@@ -96,7 +96,13 @@ def write_script(args, dbc, out):
     # behind for this find to pick up -- it only ever sees what the INSERTs
     # above just created. Narrowing it would add a path that does not exist yet
     # on a first run, for no gain.
-    print(f'''find {db_base.as_posix()} -name '*.sqlite3' | "$GNU_PARALLEL" tarxz''', file=out)
+    # `-path '*/database/<vendor>/*'` and not a bare `-name`: tarxz() DELETES
+    # each .sqlite3 once it is archived, and decompose_output defaults to the
+    # directory that also holds --database_file, so an unrestricted find would
+    # archive and then remove the central database this script reads from.
+    # Still not scoped to <arch> even under --arch, deliberately -- see above.
+    print(f'''find {db_base.as_posix()} -path '*/database/{VENDOR}/*' -name '*.sqlite3' | "$GNU_PARALLEL" tarxz''',
+          file=out)
 
 
 def main():
