@@ -214,8 +214,9 @@ class ProbeHandler(MessageHandler):
         # impl_dict: {dsl_name: [variant_dict, ...], ...} -- keys are
         # DSL-spelled (e.g. 'attn_fwd' or 'op.attn_fwd', as returned by
         # exaid.probe()); variant_dict's contents are level-specific
-        # (psels/copts for kernel, backend_index for op) but unused here,
-        # only its position (impl_index) matters. Storage stays bare
+        # (psels/copts for kernel, backend_name for op) but unused here,
+        # only its position (impl_index) matters -- which is why the op level
+        # carries a name, not an index. Storage stays bare
         # iface_name + tuning_level (no schema change), so the DSL prefix
         # (surface syntax only) is stripped back off here via
         # ImplSelector.split_dsl_name() before it reaches tune_impl messages.

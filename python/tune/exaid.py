@@ -172,7 +172,8 @@ class ExaidWorker(object):
         """
         logger.info(f"probe: workdir={workdir} arch={arch} tuning_level={tuning_level}")
         self.proxy.write('probe', workdir.as_posix(), arch or '', tuning_level or '')
-        result = json.loads(self.proxy.readinfo())
+        # TODO: Add 'PARTIAL:' to wire protocol for long outputs.
+        result = json.loads(self.proxy.readinfo(timeout=30))
         logger.info(f"probe completed: found {len(result)} kernels")
         return result
 
@@ -187,7 +188,8 @@ class ExaidWorker(object):
         """
         logger.info(f"benchmark: workdir={workdir}, impl_selector={impl_selector.as_text()}")
         self.proxy.write('benchmark', workdir.as_posix(), impl_selector.as_text())
-        result = json.loads(self.proxy.readinfo(timeout=30))
+        # TODO: Need a keep alive protocol for long experiments
+        result = json.loads(self.proxy.readinfo(timeout=300))
         logger.info(f"benchmark completed: {impl_selector.as_text()} "
                    f"result={result.get('result', 'unknown')}")
         return result

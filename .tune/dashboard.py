@@ -14,6 +14,54 @@ import os
 # Add .tune to path so we can import webui
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+
+def _bind_checkout_aotriton():
+    """Bind this checkout's python/ to the name `aotriton`, ahead of any install.
+
+    python/ IS the aotriton package -- setup.py maps it with
+    package_dir={'aotriton': 'python'} -- so the directory name and the package
+    name differ and no amount of sys.path manipulation makes `import aotriton`
+    find it. That is why webui/tasks.py otherwise insists on a pip install.
+
+    The catch is that a non-editable install is a *snapshot* taken at pip time,
+    and nothing keeps it in step with the tree this script was launched from.
+    When the two drift, the WebUI runs half of each: webui/ comes from the
+    checkout (relative imports), while aotriton.tune comes from site-packages.
+    That is not hypothetical -- it produced a TypeError from a queue API that
+    had changed on only one side, and because get_tuning_progress() swallows
+    exceptions, it surfaced as silently empty progress tables rather than as an
+    error anyone could act on.
+
+    A dashboard launched by path from a checkout should run that checkout's
+    code. Binding here makes that true by construction, and leaves the
+    pip-installed copy as the fallback for anyone importing webui some other
+    way.
+    """
+    import importlib.util
+
+    pkg_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'python')
+    init_py = os.path.join(pkg_dir, '__init__.py')
+    if 'aotriton' in sys.modules or not os.path.isfile(init_py):
+        return None
+
+    spec = importlib.util.spec_from_file_location(
+        'aotriton', init_py, submodule_search_locations=[pkg_dir])
+    module = importlib.util.module_from_spec(spec)
+    # Register before exec_module: the package must be findable under its own
+    # name while its __init__ runs, or any self-referential import inside it
+    # would miss and fall through to the installed copy this exists to shadow.
+    sys.modules['aotriton'] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        del sys.modules['aotriton']
+        raise
+    return pkg_dir
+
+
+_AOTRITON_PKG = _bind_checkout_aotriton()
+
 try:
     from cheroot.wsgi import Server as WSGIServer
     from cheroot.ssl.builtin import BuiltinSSLAdapter
@@ -50,6 +98,10 @@ if __name__ == '__main__':
         print(f"=" * 70)
         print(f"URL:     http://{args.host}:{port}")
         print(f"Workdir: {args.workdir}")
+        # Which aotriton the WebUI is actually running. Printed because the
+        # failure mode when it is the wrong one is silent (see
+        # _bind_checkout_aotriton), so it must be visible without asking.
+        print(f"Package: {_AOTRITON_PKG or 'installed aotriton (not this checkout)'}")
         print(f"Refresh: every {refresh_interval}s")
         print(f"=" * 70)
 
@@ -96,6 +148,10 @@ if __name__ == '__main__':
         print(f"=" * 70)
         print(f"URL:     https://{args.host}:{port}")
         print(f"Workdir: {args.workdir}")
+        # Which aotriton the WebUI is actually running. Printed because the
+        # failure mode when it is the wrong one is silent (see
+        # _bind_checkout_aotriton), so it must be visible without asking.
+        print(f"Package: {_AOTRITON_PKG or 'installed aotriton (not this checkout)'}")
         print(f"Certificates: {secrets_dir}")
         print(f"")
         if is_demo:

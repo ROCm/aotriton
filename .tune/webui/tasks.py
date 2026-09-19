@@ -448,54 +448,88 @@ class ComputeBestResultsCommand(CommandBuilder):
     """Compute best_tuning_results table from raw tuning results"""
     RELATIVE = '.tune/bin/compute_best_results'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+             dry_run: bool = False):
         args = [workdir, '--tuning_mode', tuning_mode]
-        return self._run(self.RELATIVE, args, workdir, 'Compute best tuning results', dry_run=dry_run)
+        if arch:
+            args += ['--arch', arch]
+        label = 'Compute best tuning results' + (f' ({arch})' if arch else '')
+        return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
+
+
+# The op database the "incremental over existing db" checkbox seeds from. Repo
+# relative because _run() executes with cwd=AOTRITON_ROOT. Read-only: the export
+# writes to scratch/op_database.sqlite3, never back to this file.
+INCREMENTAL_OP_BASE_DB = 'modules/flash/database/op_database.sqlite3.tar.xz'
 
 
 class ExportBestResultsCommand(CommandBuilder):
     """Export best results to centralized SQLite database"""
     RELATIVE = '.tune/bin/export_best_results'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+             incremental: bool = False, dry_run: bool = False):
         args = [workdir, '--tuning_mode', tuning_mode]
-        return self._run(self.RELATIVE, args, workdir, 'Export best results to centraldb', dry_run=dry_run)
+        if arch:
+            args += ['--arch', arch]
+        if incremental:
+            args += ['--base_db', INCREMENTAL_OP_BASE_DB]
+        label = 'Export best results to centraldb' + (f' ({arch})' if arch else '')
+        if incremental:
+            label += ' (incremental)'
+        return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
 
 class RecreateMaterializedViewCommand(CommandBuilder):
     """Recreate accuracy table via DROP + CREATE (faster than REFRESH CONCURRENTLY)"""
     RELATIVE = '.tune/bin/recreate_materialized_view'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+             dry_run: bool = False):
         args = [workdir, '--tuning_mode', tuning_mode]
-        return self._run(self.RELATIVE, args, workdir, 'Recreate materialized view', dry_run=dry_run)
+        if arch:
+            args += ['--arch', arch]
+        label = 'Recreate materialized view' + (f' ({arch})' if arch else '')
+        return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
 
 class UpdateMaterializedViewCommand(CommandBuilder):
     """Incremental upsert of accuracy table for cached task_ids"""
     RELATIVE = '.tune/bin/update_materialized_view'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+             dry_run: bool = False):
         args = [workdir, '--tuning_mode', tuning_mode]
-        return self._run(self.RELATIVE, args, workdir, 'Update materialized view (incremental)', dry_run=dry_run)
+        if arch:
+            args += ['--arch', arch]
+        label = 'Update materialized view (incremental)' + (f' ({arch})' if arch else '')
+        return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
 
 class SancheckCommand(CommandBuilder):
     """Run LUT sanity check against the exported centralized database"""
     RELATIVE = '.tune/bin/sancheck'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+             dry_run: bool = False):
         args = [workdir, '--tuning_mode', tuning_mode]
-        return self._run(self.RELATIVE, args, workdir, 'LUT sanity check', dry_run=dry_run)
+        if arch:
+            args += ['--arch', arch]
+        label = 'LUT sanity check' + (f' ({arch})' if arch else '')
+        return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
 
 class DecomposeDbCommand(CommandBuilder):
     """Decompose centraldb.sqlite3 into per-arch/kernel shards under <workdir>/installed/database/"""
     RELATIVE = '.tune/bin/decomposedb'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+             dry_run: bool = False):
         args = [workdir, '--tuning_mode', tuning_mode]
-        return self._run(self.RELATIVE, args, workdir, 'Decompose database', dry_run=dry_run)
+        if arch:
+            args += ['--arch', arch]
+        label = 'Decompose database' + (f' ({arch})' if arch else '')
+        return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
 
 class BakeLutCommand(CommandBuilder):
@@ -715,24 +749,26 @@ def recreate_schema(workdir, dry_run: bool = False):
     return _recreate_schema.exec(workdir, dry_run=dry_run)
 
 
-def compute_best_results(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+def compute_best_results(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):
     """Compute best_tuning_results table from raw tuning results"""
-    return _compute_best_results.exec(workdir, tuning_mode=tuning_mode, dry_run=dry_run)
+    return _compute_best_results.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
 
 
-def export_best_results(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+def export_best_results(workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+                        incremental: bool = False, dry_run: bool = False):
     """Export best results to centralized SQLite database"""
-    return _export_best_results.exec(workdir, tuning_mode=tuning_mode, dry_run=dry_run)
+    return _export_best_results.exec(workdir, tuning_mode=tuning_mode, arch=arch,
+                                     incremental=incremental, dry_run=dry_run)
 
 
-def recreate_materialized_view(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+def recreate_materialized_view(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):
     """Recreate accuracy table via DROP + CREATE"""
-    return _recreate_materialized_view.exec(workdir, tuning_mode=tuning_mode, dry_run=dry_run)
+    return _recreate_materialized_view.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
 
 
-def sancheck(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+def sancheck(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):
     """Run LUT sanity check against the exported centralized database"""
-    return _sancheck.exec(workdir, tuning_mode=tuning_mode, dry_run=dry_run)
+    return _sancheck.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
 
 
 def bake_lut(workdir, extra_args: list | None = None, tuning_mode: str = 'kernel', dry_run: bool = False):
@@ -743,13 +779,13 @@ def bake_lut(workdir, extra_args: list | None = None, tuning_mode: str = 'kernel
     return _bake_lut.exec(workdir, extra_args, tuning_mode=tuning_mode, dry_run=dry_run)
 
 
-def update_materialized_view(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
-    return _update_materialized_view.exec(workdir, tuning_mode=tuning_mode, dry_run=dry_run)
+def update_materialized_view(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):
+    return _update_materialized_view.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
 
 
-def decomposedb(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+def decomposedb(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):
     """Decompose centraldb.sqlite3 into per-arch/kernel shards"""
-    return _decomposedb.exec(workdir, tuning_mode=tuning_mode, dry_run=dry_run)
+    return _decomposedb.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
 
 
 def get_git_status(workdir):
@@ -1263,11 +1299,18 @@ def get_tester_signature(workdir, hostname):
 
 
 
-def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=None, adiff: bool = False, dry_run: bool = False):
+def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=None,
+                     adiff: bool = False, ref_device_policy: str | None = None,
+                     dry_run: bool = False):
     """Queue run-test on a remote tester host via .tune/single/run-test.sh (tsp-backed).
 
     When adiff is True the remote script is switched to .ci/run-ci-test.sh via
     the --adiff flag, which reads adiff.txt to select the tests to run.
+
+    ref_device_policy ('cpu'/'cuda'/'default') becomes AOTRITON_REF_DEVICE_OPTION
+    in the remote container. It is separate from `variant` on purpose: variant
+    picks what runs and where the output lands, this picks where the REFERENCE is
+    computed, and folding the two together would need a variant per combination.
     """
     worker = get_worker_by_hostname(workdir, hostname)
     if not worker:
@@ -1291,7 +1334,22 @@ def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=N
     if adiff:
         cmd += ['--adiff']
         desc += ' adiff=1'
+    if ref_device_policy:
+        cmd += ['--ref_device_policy', ref_device_policy]
+        desc += f' ref_device_policy={ref_device_policy}'
     return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=desc, dry_run=dry_run)
+
+
+# Keyed by the --backend value, valued with the fnprefix .ci/run-test.sh writes
+# for it. One copy, because two drifting copies are how flyc came to be read out
+# of ut_pass<N>.out.
+_BACKEND_OUT_PREFIX = {
+    'split': 'ut_pass',
+    'fused': 'fused_pass',
+    'aiter': 'aiter_pass',
+    'flyc':  'flyc_pass',
+    'v3':    'oput_pass',
+}
 
 
 def get_failed_tests(workdir, hostname, pass_num, backend, variant=None):
@@ -1302,8 +1360,7 @@ def get_failed_tests(workdir, hostname, pass_num, backend, variant=None):
     _, _, workdir_override = worker
     default_wd = get_default_workdir(workdir) or workdir
     remote_wd = workdir_override or default_wd
-    prefix_map = {'split': 'ut_pass', 'fused': 'fused_pass', 'aiter': 'aiter_pass', 'v3': 'oput_pass'}
-    prefix = prefix_map.get(backend, 'ut_pass')
+    prefix = _BACKEND_OUT_PREFIX.get(backend, 'ut_pass')
     output_dir = f'{remote_wd}/run/tests'
     if variant == 'partial':
         output_dir += '/partial'
@@ -1333,8 +1390,7 @@ def get_tail_output(workdir, hostname, pass_num, backend, variant=None):
     _, _, workdir_override = worker
     default_wd = get_default_workdir(workdir) or workdir
     remote_wd = workdir_override or default_wd
-    prefix_map = {'split': 'ut_pass', 'fused': 'fused_pass', 'aiter': 'aiter_pass', 'v3': 'oput_pass'}
-    prefix = prefix_map.get(backend, 'ut_pass')
+    prefix = _BACKEND_OUT_PREFIX.get(backend, 'ut_pass')
     output_dir = f'{remote_wd}/run/tests'
     if variant == 'partial':
         output_dir += '/partial'

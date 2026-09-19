@@ -43,19 +43,31 @@ from _common_test import (
 RECORD_ADIFFS_TO = os.getenv('RECORD_ADIFFS_TO', default=None)
 USE_ADIFFS_TXT = os.getenv('USE_ADIFFS_TXT', default=None)
 
+# <utname> TAB <value>, where <value> is OOM, NAN, CPUREF, or a JSON adiff.
+#
+# CPUREF validates the test against the CPU reference instead of the GPU one,
+# which is the same thing as saying the GPU reference is not trustworthy for it.
+# No writer emits CPUREF -- the recorder below prints `utname TAB json` and
+# .tune/bin/append_oom_to_adiffs.sh prints `utname (call) TAB OOM` -- so every
+# such line is hand-added.
+#
+# Comments and blank lines are allowed because the file is hand-edited.
+adiffs = {}
 if USE_ADIFFS_TXT is not None:
-    adiffs = {}
     with open(USE_ADIFFS_TXT) as f:
-        for line in f:
-            utname, adiff_str = line.rstrip().split('\t')
-            if adiff_str == "OOM":
-                adiffs[utname] = "OOM"
-            elif adiff_str == "NAN":
-                adiffs[utname] = "NAN"
+        for lineno, line in enumerate(f, start=1):
+            line = line.rstrip('\n')
+            if not line.strip() or line.lstrip().startswith('#'):
+                continue
+            fields = line.rstrip().split('\t')
+            if len(fields) != 2:
+                raise ValueError(f'{USE_ADIFFS_TXT}:{lineno}: expected '
+                                 f'<utname> TAB <value>, got {line!r}')
+            utname, adiff_str = fields
+            if adiff_str in ("OOM", "NAN", "CPUREF"):
+                adiffs[utname] = adiff_str
             else:
                 adiffs[utname] = json.loads(adiff_str)
-else:
-    adiffs = {}
 
 # SIGSEGV_ERROR_CODE = signal.SIGSEGV
 
@@ -303,11 +315,45 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
         mark = pytest.mark.xfail(reason="[Adiffs] XPASS due to known NAN.")
         request.node.add_marker(mark)
         return 0
+    # CPUREF does NOT return -- the test still runs, just against the CPU
+    # reference -- so unlike OOM/NAN the sentinel has to be cleared here.
+    # validate_with_reference() subscripts this entry as a dict
+    # (_common_test.py's use_adiff_entry["adiff"] / ["grads_adiff"]) and it is
+    # passed straight through below, so leaving the string in place would raise
+    # TypeError: string indices must be integers. None is also the honest value:
+    # a CPUREF line carries no recorded adiff.
+    adiff_ref_device_policy = None
+    if use_adiff_entry == "CPUREF":
+        adiff_ref_device_policy = 'cpu'
+        use_adiff_entry = None
+        print("[Adiffs] CPUREF: validating against the CPU reference")
     print(f"{use_adiff_entry=}")
     torch.cuda.empty_cache()
     SKIP_DK_DV = False
     SKIP_DQ = False
-    SKIP_DB = True if bias_type is None else False
+    # `bias_type` is a comma-separated token set: the bias kind, plus any
+    # modifiers, in any order. Split rather than matched, so nothing here has to
+    # know the kind names -- 'vector,nograd' works the day a vector bias does,
+    # and so does 'nograd,vector'.
+    #
+    # `nograd` is the only modifier so far: the caller supplies a bias but does
+    # not want its gradient. AOTriton spells that as an all-zero dB stride triple
+    # over a null DB, and PyTorch takes it on every bool-masked SDPA -- the mask
+    # becomes an additive bias that is not a leaf and carries no grad, so
+    # attention_backward.cu passes `empty_t4` for DB. Without a case here that
+    # path has no coverage at all: a bias otherwise always requires grad (the
+    # SKIP_DB line below), and attn_torch_function's backward used to allocate dB
+    # from `b` unconditionally, so even a non-grad bias got a real, writable one.
+    if isinstance(bias_type, str):
+        _bias_tokens = bias_type.split(',')
+        BIAS_NOGRAD = 'nograd' in _bias_tokens
+        _bias_kinds = [t for t in _bias_tokens if t != 'nograd']
+        assert len(_bias_kinds) == 1, \
+            f'bias_type {bias_type!r} must name exactly one bias kind, got {_bias_kinds}'
+        bias_type = _bias_kinds[0]
+    else:
+        BIAS_NOGRAD = False
+    SKIP_DB = True if bias_type is None else BIAS_NOGRAD
     USE_AUTOTUNE = True
     torch.manual_seed(20)
     # The `storage_flip` slot carries either spelling. A `StorageLayout` names a
@@ -343,7 +389,7 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
     ctx = SdpaContext(BATCH, N_HEADS, _alloc_hdim, seqlen_q, seqlen_k, dtype,
                       bias_type=bias_type, storage_flip=transpose, device=device_str, fillnan=True,
                       prime_hdim=_prime_hdim, storage_layout=storage_layout)
-    ctx.create_ref_inputs()
+    ctx.create_ref_inputs(target_device_policy=adiff_ref_device_policy)
     ctx.set_require_grads(skip_dq=SKIP_DQ, skip_dk_dv=SKIP_DK_DV, skip_db=SKIP_DB)
     q, k, v, b = ctx.dev_tensors
     # The row pitch each tensor's INNERMOST axis requires. For everything but a
@@ -457,15 +503,32 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
     return seqlen_q * seqlen_k * HDIM_MAX
 
 def core_test_op_bwd(request, args, device : int | None = None):
+    # The reclaim is in a `finally` because it used to sit inside the `try`,
+    # right after the call, and so ran ONLY when the test returned normally.
+    # Every other exit skipped it -- and the one that matters most is
+    # torch.OutOfMemoryError, a RuntimeError, which the handler below re-raises:
+    # a test that ran out of memory left its partial allocations in the caching
+    # allocator and made the next large test likelier to OOM too. That cascades,
+    # is order-dependent, and evaporates when the test is re-run alone. An
+    # assertion failure and an xfail leaked the same way, just less visibly.
+    qkh = 0
+    completed = False
+    skipped = False
     try:
         if device is None:
             qkh = _do_test_op_bwd(request, args, device_str='cuda')
         else:
             with torch.cuda.device(device):
                 qkh = _do_test_op_bwd(request, args, device_str=f'cuda:{device}')
-        if qkh > 2048 * 2048 * 64:
-            gc.collect()
-            torch.cuda.empty_cache()
+        completed = True
+    except pytest.skip.Exception:
+        # Skipped before anything was allocated: every skip guard in
+        # _do_test_op_bwd runs before the SdpaContext is built, so there is
+        # nothing to reclaim and empty_cache() would only buy a device sync.
+        # Listed first because Skipped derives from BaseException, not from the
+        # exceptions below.
+        skipped = True
+        raise
     except torch.AcceleratorError as e:
         print(f'AcceleratorError: {e}')
         exit_pytest()
@@ -473,6 +536,14 @@ def core_test_op_bwd(request, args, device : int | None = None):
         if hipGetLastError() == hipError_t.hipErrorIllegalAddress:
             exit_pytest()
         raise e
+    finally:
+        # On a clean run keep the size guard -- empty_cache() synchronises, and
+        # a small test has nothing worth reclaiming. After a FAILURE reclaim
+        # unconditionally: the test may have died part-way through allocating,
+        # so its footprint has no relation to the shape it was asked for.
+        if not skipped and (not completed or qkh > 2048 * 2048 * 64):
+            gc.collect()
+            torch.cuda.empty_cache()
 
 # Deliberately unparametrized: only need one dtype+hdim to detect the defect
 def core_test_bottom_right_fully_masked_rows(device_str='cuda'):

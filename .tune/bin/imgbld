@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 # Build worker Docker images
-# Usage: imgbld [--host <hostname>...] <workdir>
+# Usage: imgbld [--host <hostname>]... <workdir>
 
 set -e
 
@@ -16,15 +16,14 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 parse_host_filter "$@"
 
-# Remove --host from args
+# Remove --host (and its value) from args, leaving the positionals.
+# Must consume exactly what parse_host_filter consumed, or the two disagree
+# about which tokens are hostnames and which are the workdir.
 ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --host)
-            shift
-            while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; do
-                shift
-            done
+            shift 2 || shift
             ;;
         *)
             ARGS+=("$1")
@@ -36,7 +35,7 @@ done
 WORKDIR="${ARGS[0]}"
 
 if [ -z "$WORKDIR" ]; then
-    echo "Usage: $0 [--host <hostname>...] <workdir>" >&2
+    echo "Usage: $0 [--host <hostname>]... <workdir>" >&2
     exit 1
 fi
 
@@ -50,14 +49,20 @@ for hostname in "${HOSTNAMES[@]}"; do
         continue
     fi
 
-    # Determine remote workdir for this worker
+    # Determine remote workdir and GPU arch for this worker
     WORKER_INFO=$(get_worker_by_hostname "$WORKDIR" "$hostname")
     IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
     WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
-    echo "Queuing docker build on $hostname (workdir: $WORKER_WORKDIR)"
+    echo "Queuing docker build on $hostname (workdir: $WORKER_WORKDIR, arch: ${arch:-<unset>})"
 
-    "$TUNE_ROOT/single/build_image.sh" "$WORKDIR" "$hostname"
+    # Hand the registry's arch down explicitly rather than letting the remote
+    # work it out: the image's torch is selected by GPU arch
+    # (torch[device-<arch>]), and the remote may have neither amd-smi nor
+    # rocminfo on PATH to ask -- they can be absent, or buried in a TheRock
+    # venv at a location nothing here can predict. The registry already holds
+    # the answer for every worker, so it is the one authority worth using.
+    "$TUNE_ROOT/single/build_image.sh" "$WORKDIR" "$hostname" --arch "$arch"
 
     BUILD_COUNT=$((BUILD_COUNT + 1))
 done

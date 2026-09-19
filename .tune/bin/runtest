@@ -5,7 +5,7 @@
 # Run tests on all Tester-role hosts (or a filtered subset).
 #
 # Usage:
-#   runtest <workdir> <pass#> <test_level> <split|fused|aiter|v3> [--hostname <h>...] [--follow]
+#   runtest <workdir> <pass#> <test_level> <split|fused|aiter|flyc|v3> [--hostname <h>...] [--follow]
 #
 #   --hostname <h>  Restrict to specific hosts (repeatable); default: all Tester-role hosts.
 #   --follow        Wait for each tsp job to finish before moving to the next host.
@@ -45,7 +45,7 @@ done
 
 if [ "${#POSITIONAL[@]}" -lt 4 ]; then
   cat >&2 <<EOF
-Usage: $0 <workdir> <pass#> <test_level> <split|fused|aiter|v3> [--hostname <h>...] [--follow]
+Usage: $0 <workdir> <pass#> <test_level> <split|fused|aiter|flyc|v3> [--hostname <h>...] [--follow]
 
   --hostname <h>  Restrict to specific Tester-role hosts (repeatable).
   --follow        Wait for each remote tsp job to complete (tsp -t).
@@ -74,8 +74,19 @@ for worker in "${WORKERS[@]}"; do
     continue
   fi
 
-  "$TUNE_ROOT/single/run-test.sh" "$WORKDIR" "$hostname" "$arch" "${workdir_override:-}" \
-    "$PASS_NUM" "$TEST_LEVEL" "$BACKEND" $FOLLOW_FLAG
+  # By name, matching run-test.sh's parser. It stopped accepting positionals in
+  # 31aec350, which left every dispatch here dying on `Unknown argument` at the
+  # workdir. --workdir_override is passed only when the worker has one, rather
+  # than as an empty value, so the two agree on "absent" without relying on an
+  # empty argument surviving.
+  "$TUNE_ROOT/single/run-test.sh" \
+    --workdir "$WORKDIR" \
+    --hostname "$hostname" \
+    --arch "$arch" \
+    ${workdir_override:+--workdir_override "$workdir_override"} \
+    --pass "$PASS_NUM" \
+    --test_level "$TEST_LEVEL" \
+    --backend "$BACKEND" $FOLLOW_FLAG
 
   COUNT=$((COUNT + 1))
 done

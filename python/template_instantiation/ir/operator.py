@@ -167,6 +167,14 @@ class Operator(Interface):
         lut_shape = [f.noptimized_for] + [len(sparse_key_possible_values[key]) for key in sparse_keys]
         lut_tensor = np.full(lut_shape, -1, dtype=np.int32)
         backend_key = 'op$backend'
+        if True:  # FIXME: Flyc duct tape
+            # Databases exported after the op$backend split carry two ranked
+            # columns; older ones (including the checked-in
+            # modules/flash/database/op_database.sqlite3) still have the single
+            # op$backend, so keep reading that when the new one is absent.
+            if 'op$best1st' in df.columns:
+                backend_key = 'op$best1st'
+            FLYC_ARCHS = ('gfx950', 'gfx1201')
         for i, ind_key in enumerate(sparse_keys):
             bucket = sparse_key_possible_values[ind_key]
             def discretization(v, bucket=bucket):
@@ -177,7 +185,31 @@ class Operator(Interface):
                 lut_tensor[i] = lut_tensor[0]
             df_i = df[df['gpu'] == gpu]
             inds = tuple([df_i[f'$$ind_{j}'] for j in range(nkeys)])
-            lut_tensor[i][inds] = df_i[backend_key]
+            chosen = df_i[backend_key]
+            if True:  # FIXME: Flyc duct tape
+                # A donor arch's rows are copied verbatim (see database_gpus),
+                # so gfx1200 inherits gfx1201's picks -- flyc among them, which
+                # it has no images for. That lands as a valid-looking index the
+                # runtime will not rescue: op.cc only substitutes fallback_backend
+                # for a NEGATIVE entry, and only retries on
+                # hipErrorPeerAccessUnsupported, while flyc answers
+                # hipErrorNotSupported. Swap flyc for the runner-up here.
+                if f.arch not in FLYC_ARCHS and 'op$best2nd' in df_i.columns:
+                    names = self.backend_names
+                    if 'flyc' in names:
+                        flyc_ind = names.index('flyc')
+                        chosen = chosen.where(chosen != flyc_ind,
+                                              df_i['op$best2nd'])
+                        # best2nd REPEATS best1st when flyc was the only
+                        # backend to clear the accuracy gate -- see
+                        # compute_best_results.py's `alt[0] if alt else won`
+                        # -- so the substitution above can leave flyc standing
+                        # and hand gfx1200 the very index this exists to
+                        # remove. Backend 0 is triton / triton_split, which
+                        # every arch has images for, so it is the one answer
+                        # that is always launchable.
+                        chosen = chosen.where(chosen != flyc_ind, 0)
+            lut_tensor[i][inds] = chosen
         backend_inds = np.unique(lut_tensor).tolist()
         return lut_tensor, [self._backends[ind].enum_name for ind in backend_inds], binning_dict
 

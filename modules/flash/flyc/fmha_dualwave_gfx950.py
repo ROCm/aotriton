@@ -2054,6 +2054,56 @@ class ParityStoreHelper(dualwave.DualwaveStoreHelper):
     def _final_o_base(self, q_row):
         return q_row * self.stride_o_seq_v + self.lane_div_32 * 8
 
+    def zero_o_block_if_needed(self, causal_end_raw_i32=None):
+        """The inherited O zeroing, plus the LSE those same rows need.
+
+        A Q block whose every row attends nothing never enters the kernel body
+        -- `active` is `causal_end_raw > 0` -- so this method is the *only*
+        writer for it. At the pinned FlyDSL (`third_party/flydsl-kernel.txt`) it
+        writes O and stops, which leaves LSE holding whatever the caller
+        allocated. That is a wrong answer for any caller who will run a
+        backward, and an unreadable one for a test harness: AOTriton's fills L
+        with NaN, so the rows come back NaN and read as a store that faulted.
+
+        `l = 0` is the whole of the addition, because `_store_lse_row_unguarded`
+        already turns a zero `l` into the `+inf` those rows are contractually
+        owed -- see there. Passing it rather than the value keeps one expression
+        of "this row attended nothing" in the kernel instead of two.
+
+        Not folded into the inherited `scf.if`: `super()` owns that region and
+        is imported, never edited. Two regions on the same wave-uniform scalar
+        compare is what an override can spell, and the second is entered only by
+        blocks that took the early exit, which do no other work at all.
+
+        **Deletable on the next flydsl bump.** Upstream has since grown the same
+        store inside its own `zero_o_block_if_needed`, passing exactly this
+        `m = 0, l = 0` pair (plus a `sink_log2` this build has no knob for), so
+        when the pin moves past it this override becomes a duplicate store and
+        should go. The `+inf` select it depends on must stay either way: upstream
+        spells the value `m * ln2 + log(l)`, which is `-inf` at best.
+        """
+        super().zero_o_block_if_needed(causal_end_raw_i32)
+        if const_expr(not self.traits.RETURN_LSE):
+            return
+        if causal_end_raw_i32 is None:
+            causal_end_raw_i32 = self.causal_end_raw_i32
+        # Rebuilt here rather than captured, so the address arithmetic stays
+        # inside the branch for the blocks that skip it. This is `self.q_row`'s
+        # own definition, and the inherited O store above uses it too: one row
+        # mapping for both tensors and for both the early exit and the body.
+        q_start = self.q_start
+        wave_q_offset = self.wave_q_offset
+        lane_mod_32 = self.lane_mod_32
+        zero = self.c_zero_f
+        store = self._store_lse_row
+
+        @flyc.jit
+        def _store_masked_lse_block():
+            if causal_end_raw_i32 <= fx.Int32(0):
+                store(zero, zero, q_start + wave_q_offset + lane_mod_32)
+
+        _store_masked_lse_block()
+
     def _store_lse_row(self, m_row, l_row, q_row):
         """`_store_lse_row_unguarded`, skipped entirely when `LSE` is null.
 
@@ -2148,6 +2198,45 @@ class ParityStoreHelper(dualwave.DualwaveStoreHelper):
             dualwave._fmul(m_row, self.c_ln2_f, self.fm_fast),
             dualwave.fmath.log(as_mlir_value(l_row), fastmath=self.fm_fast),
             self.fm_fast,
+        )
+        # A Q block that attends nothing gets **+inf**, and the formula above
+        # does not produce it. Two separate things are wrong without this
+        # select.
+        #
+        # *The sign.* The backward pass subtracts LSE from `qk`, so `+inf` is
+        # what makes `exp(qk - lse)` zero for exactly the rows that must
+        # contribute nothing. `-inf` would make it `+inf` instead. This is the
+        # convention `fwd_kernel.py` writes at its fully-masked early exit,
+        # naming that reason, and gfx1201's FlyDSL kernel writes at its LSE
+        # store; gfx950 was the only forward with neither.
+        #
+        # *The value.* `l == 0` makes the `log` above `-inf`, but `fm_fast` is
+        # `fastmath<fast>`, which carries `ninf`, so InstSimplify folds an
+        # infinite operand of the `fadd` to **poison** -- and a store of poison
+        # is one InstCombine may delete. Measured: the fully-masked rows came
+        # back holding the harness's own NaN fill, so the defect reads as "LSE
+        # was never written" rather than as a sign error.
+        #
+        # `l` is bit-exact 0 there and at least 1 on any live row -- the running
+        # max contributes `exp2(0)` -- so test the bit pattern; integer compares
+        # lower predictably under fast math, where a float compare against a
+        # value the flags promise cannot exist does not.
+        #
+        # **This is wider than Triton's rule, deliberately, and it matches
+        # gfx1201.** Triton writes `+inf` only for a whole masked *block*; a
+        # masked row inside a live block falls through its ordinary epilogue,
+        # which starts `l_i` at 1.0 and `m_i` at `-FLT_MAX` and so writes about
+        # -2.36e38 -- Triton fixes up `Out` for those rows and leaves their LSE
+        # alone. The predicate below cannot separate the two cases and does not
+        # try, exactly as gfx1201's does not. `l` starting at 0 here rather than
+        # at 1.0 is what makes the predicate meaningful at all.
+        #
+        # Both LSE writers come through here. The other is
+        # `zero_o_block_if_needed`, the whole-block early exit taken when
+        # `causal_end_raw <= 0`, which passes a literal `l = 0.0`: the compare
+        # folds and this costs that path nothing.
+        lse_val = (fmha.bitcast_i32(fx.Float32(l_row)) != fx.Int32(0)).select(
+            fx.Float32(lse_val), fx.Float32(float("inf"))
         )
         base, pitch = fmha.lse_row_addressing(
             self.varlen_bits_arg,

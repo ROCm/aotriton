@@ -18,11 +18,12 @@ HOSTNAME="$2"
 shift 2
 
 # Collect extra args after '--'
+# Optional, repeatable '--' separator -- see start_worker.sh for why callers
+# disagree about it and what each spelling used to break.
 EXTRA_ARGS=()
-if [ "$1" = "--" ]; then
-  shift
-  EXTRA_ARGS=("$@")
-fi
+for _arg in "$@"; do
+  [ "$_arg" = "--" ] || EXTRA_ARGS+=("$_arg")
+done
 
 if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
   echo "Usage: $0 <workdir> <hostname> [-- <extra args>]" >&2
@@ -59,6 +60,6 @@ fi
 WORKER_CONTAINER_ID=$(cat "$RUNFILE")
 
 echo "Restarting worker service in container: $WORKER_CONTAINER_ID"
-docker exec "$WORKER_CONTAINER_ID" bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh restart /wkdir $ARCH ${EXTRA_ARGS[*]}"
+docker exec "$WORKER_CONTAINER_ID" bash -lc "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh restart /wkdir $ARCH ${EXTRA_ARGS[*]}"
 echo "Worker restarted"
 EOF

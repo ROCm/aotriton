@@ -15,11 +15,12 @@ from ..utils import (
 from .common import (
     codegen_struct_cfields,
     MissingLutEntry,
-    hsaco_ondisk_name,
-    hsaco_dir,
+    # Only used by the disabled compile_status filter in __init__ below.
+    # hsaco_ondisk_name,
+    # hsaco_dir,
 )
 from .basetune import BaseTuneCodeGenerator
-import json
+# import json  # ditto: only the disabled compile_status filter needed this
 import numpy as np
 
 class AutotuneCodeGenerator(BaseTuneCodeGenerator):
@@ -44,19 +45,37 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
             # Replace sigs with configs from KernelDescription.gen_autotune_configs
             if args.build_for_tuning and kdesc.is_tunable:
                 self._sigs = list(kdesc.gen_signatures_for_tuning(f))
-                if args.build_for_tuning_second_pass:
-                    image_path = hsaco_dir(args.build_dir, kdesc)
-                    def hsaco_compile_successful(ksig : KernelSignature):
-                        full = image_path / hsaco_ondisk_name(kdesc, ksig)
-                        if not full.exists():
-                            return False
-                        meta = full.with_suffix('.json')
-                        if not meta.exists():
-                            return False
-                        with open(meta) as f:
-                            j = json.load(f)
-                            return j['compile_status'] == 'Complete'
-                    self._sigs = [ ksig for ksig in self._sigs if hsaco_compile_successful(ksig) ]
+                # Signatures whose HSACO failed to compile are deliberately KEPT.
+                #
+                # One tuning entry will test both PADDED_HEAD False and True,
+                # since it is supposed to work for both.
+                # If an hsaco compiled with PADDED_HEAD=False but failed with PADDED_HEAD=True
+                # the index will diverge. benchmark ... attn_fwd=X will test
+                # different copt/psel for different testing cases.
+                #
+                # Keeping the failed signature makes impl_index absolute:
+                # selecting it resolves to the 0-byte image and fails at
+                # launch, which is detectable, instead of quietly substituting
+                # its neighbour, which is not.
+                #
+                # Concrete example:
+                # Triton version 0d6318389183f488f9344e7672658ddc1a3e41c9
+                # Tuning entry:
+                #   dtype='float32';hdim=48;seqlen_q=8192;seqlen_k=8192;causal=False;dropout_p=0.5;bias_type=0
+                #
+                # if args.build_for_tuning_second_pass:
+                #     image_path = hsaco_dir(args.build_dir, kdesc)
+                #     def hsaco_compile_successful(ksig : KernelSignature):
+                #         full = image_path / hsaco_ondisk_name(kdesc, ksig)
+                #         if not full.exists():
+                #             return False
+                #         meta = full.with_suffix('.json')
+                #         if not meta.exists():
+                #             return False
+                #         with open(meta) as f:
+                #             j = json.load(f)
+                #             return j['compile_status'] == 'Complete'
+                #     self._sigs = [ ksig for ksig in self._sigs if hsaco_compile_successful(ksig) ]
         else:
             log(lambda : f'translate_dataframe for kernel {kdesc.NAME}')
             self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_dataframe(f, self._df)

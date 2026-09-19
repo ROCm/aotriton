@@ -33,13 +33,27 @@ echo "Detecting GPU info from $HOSTNAME..."
 # Use -T to disable pseudo-terminal (suppresses login banners)
 # Use -o LogLevel=ERROR to reduce SSH verbosity
 # Disable set -e temporarily to capture exit code
+#
+# Through `bash -lc`, not as a bare container command. amd-smi is on PATH only
+# via /etc/profile.d/aotriton.sh -- which activates the venv and exports
+# ROCM_PATH/bin -- and a bare container command is not a login shell, so it
+# gets neither and dies with `"amd-smi": executable file not found in $PATH`.
+# Every other .tune entry point into this image already goes through a login
+# shell (remotebld, run-test.sh, testrun_direct) or names the venv interpreter
+# by absolute path (prebuild_wheel.sh); this was the one that did neither.
+#
+# The inner single quotes are literal, and load-bearing. ssh does not preserve
+# argument boundaries -- it joins the remote argv into one string for the
+# remote shell to re-split -- so an unquoted `bash -lc amd-smi static --json`
+# would arrive as four words and bash would take `static` and `--json` as $0
+# and $1 rather than passing them to amd-smi.
 set +e
 JSON_OUTPUT=$(ssh -T -o LogLevel=ERROR "$HOSTNAME" docker run --rm \
   --device=/dev/kfd \
   --device=/dev/dri \
   --group-add video \
   "$CELERY_WORKER_IMAGE" \
-  amd-smi static --json 2>&1)
+  bash -lc "'amd-smi static --json'" 2>&1)
 
 EXIT_CODE=$?
 set -e

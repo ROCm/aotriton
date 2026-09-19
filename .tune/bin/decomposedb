@@ -7,15 +7,19 @@
 #   1. Generate scratch/decompose_db.sh from scratch/centraldb.sqlite3
 #      via aotriton.database_decompose
 #   2. Execute the generated script to produce
-#      <workdir>/installed/database/amd/<arch>/<family>/<kernel>.sqlite3.tar.xz
+#      <workdir>/installed/database/<family>/database/amd/<arch>/<kernel>.sqlite3.tar.xz
+#
+# That shape is not arbitrary: it mirrors the checked-in
+# modules/<family>/database/amd/<arch>/, which is what
+# v3src/CMakeLists.txt globs for when handed --database_root.
 #
 # Usage:
-#   decomposedb <workdir> [--tuning_mode kernel|op]
+#   decomposedb <workdir> [--tuning_mode kernel|op] [--arch <arch>]
 
 set -euo pipefail
 
 if [ "$#" -lt 1 ]; then
-    echo "Usage: $0 <workdir> [--tuning_mode kernel|op]" >&2
+    echo "Usage: $0 <workdir> [--tuning_mode kernel|op] [--arch <arch>]" >&2
     exit 1
 fi
 
@@ -23,9 +27,11 @@ WORKDIR="$1"
 shift
 
 TUNING_MODE="kernel"
+ARCH=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --tuning_mode) TUNING_MODE="$2"; shift 2 ;;
+        --arch) ARCH="$2"; shift 2 ;;
         *) echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -40,6 +46,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 . "$SCRIPT_DIR/../lib/require_aotriton_pkg.sh"
 
 DECOMPOSE_OUTPUT="$WORKDIR/installed/database"
+
+# The per-family subtree the non-sharded artifacts belong in. The sharded ones
+# get their family from the central database's table names (FLASH$attn_fwd ->
+# flash); these do not carry one, so it is named here. Only flash exists today;
+# a second family would make this a loop rather than a constant.
+DECOMPOSE_FAMILY="flash"
+FAMILY_DB_DIR="$DECOMPOSE_OUTPUT/$DECOMPOSE_FAMILY/database"
 mkdir -p "$DECOMPOSE_OUTPUT"
 
 if [ "$TUNING_MODE" = "op" ]; then
@@ -50,13 +63,30 @@ if [ "$TUNING_MODE" = "op" ]; then
         exit 1
     fi
 
+    # The op database is one monolithic tarball with no per-architecture
+    # shards, so --arch cannot scope what gets installed the way it does for
+    # kernel mode. It is not ignored either: if the export that produced
+    # $OP_DB was itself arch-scoped, this file already holds one architecture,
+    # and the archive written below replaces the installed one wholesale.
+    if [ -n "$ARCH" ]; then
+        echo "" >&2
+        echo "WARNING: --arch $ARCH has no effect on the op database." >&2
+        echo "         op_database.sqlite3.tar.xz is monolithic -- it has no" >&2
+        echo "         per-architecture shards to filter, and the archive below" >&2
+        echo "         REPLACES the installed one entirely." >&2
+        echo "         If $OP_DB came from an arch-scoped export, the installed" >&2
+        echo "         op database will contain only $ARCH's data." >&2
+        echo "" >&2
+    fi
+
     echo "Vacuuming op_database.sqlite3..."
     sqlite3 "$OP_DB" "VACUUM;"
 
     echo "Compressing op_database.sqlite3..."
-    tar -cJf "$DECOMPOSE_OUTPUT/op_database.sqlite3.tar.xz" \
+    mkdir -p "$FAMILY_DB_DIR"
+    tar -cJf "$FAMILY_DB_DIR/op_database.sqlite3.tar.xz" \
         -C "$(dirname "$OP_DB")" "$(basename "$OP_DB")"
-    echo "Decompose (op) complete: $DECOMPOSE_OUTPUT/op_database.sqlite3.tar.xz"
+    echo "Decompose (op) complete: $FAMILY_DB_DIR/op_database.sqlite3.tar.xz"
     exit 0
 fi
 
@@ -78,7 +108,21 @@ export GNU_PARALLEL
 
 SCRIPT_OUTPUT="$WORKDIR/scratch/decompose_db.sh"
 
-rm -rf "$DECOMPOSE_OUTPUT"
+# The wipe exists so an interrupted earlier run cannot leave a stale
+# <kernel>.sqlite3 that the generated INSERTs would append to a second time.
+# Under --arch it must be confined to that architecture's directory: the whole
+# point of a per-architecture run is that the ones already installed survive it.
+# Running the steps for gfx942 and later for gfx950 has to leave gfx942's
+# shards in place -- the unscoped wipe would delete them and never regenerate
+# them, since the centraldb this run reads holds only gfx950.
+if [ -n "$ARCH" ]; then
+    echo "Rebuilding only */database/amd/$ARCH under $DECOMPOSE_OUTPUT; other architectures kept."
+    # Globbed over families rather than naming one: the shards are written per
+    # family by database_decompose, so an arch lives once per family.
+    rm -rf "$DECOMPOSE_OUTPUT"/*/database/amd/"$ARCH"
+else
+    rm -rf "$DECOMPOSE_OUTPUT"
+fi
 mkdir -p "$DECOMPOSE_OUTPUT"
 
 echo "Step 1/3: Generating decompose script..."
@@ -86,10 +130,14 @@ echo "  Input:  $CENTRALDB"
 echo "  Script: $SCRIPT_OUTPUT"
 echo "  Output: $DECOMPOSE_OUTPUT"
 
+ARCH_ARGS=()
+[ -n "$ARCH" ] && ARCH_ARGS=(--arch "$ARCH")
+
 PYTHONPATH="$REPO_ROOT" python3 -m aotriton.database_decompose \
     --database_file "$CENTRALDB" \
     --script_output "$SCRIPT_OUTPUT" \
-    --decompose_output "$DECOMPOSE_OUTPUT"
+    --decompose_output "$DECOMPOSE_OUTPUT" \
+    "${ARCH_ARGS[@]}"
 
 echo ""
 echo "Step 2/3: Running decompose script..."
@@ -97,7 +145,17 @@ bash "$SCRIPT_OUTPUT"
 
 echo ""
 echo "Step 3/3: Copying base database archives from modules/flash/database/..."
-cp "$REPO_ROOT"/modules/flash/database/*.sqlite3.tar.xz "$DECOMPOSE_OUTPUT/"
+if [ -n "$ARCH" ]; then
+    # -n on an arch-scoped run: this path promises not to disturb what is
+    # already installed, and the checked-in baselines must not overwrite an
+    # archive a previous run baked. The unscoped path has already deleted the
+    # directory above, so there is nothing there to clobber.
+    mkdir -p "$FAMILY_DB_DIR"
+    cp -n "$REPO_ROOT"/modules/"$DECOMPOSE_FAMILY"/database/*.sqlite3.tar.xz "$FAMILY_DB_DIR/"
+else
+    mkdir -p "$FAMILY_DB_DIR"
+    cp "$REPO_ROOT"/modules/"$DECOMPOSE_FAMILY"/database/*.sqlite3.tar.xz "$FAMILY_DB_DIR/"
+fi
 
 echo ""
 echo "Decompose complete: $DECOMPOSE_OUTPUT"

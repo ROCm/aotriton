@@ -27,7 +27,7 @@ Options:
                 --asan: build with AddressSanitizer (clang). Requires TheRock
                         clang, which ships only with ROCm >= 7.10, so every -r
                         must be a TheRock version given as a long pre-release
-                        string (e.g. 7.14.0a20260624). With no -r it defaults
+                        string (e.g. 10.2.0a20260918). With no -r it defaults
                         to THEROCK_ASAN_VERSION. Tarball gets a +asan suffix.
        --arch <list>: ';'-separated GPU arch list (e.g. 'gfx942;gfx950'),
                         forwarded to cmake as AOTRITON_TARGET_ARCH. Defaults
@@ -80,10 +80,11 @@ eval set -- "$TEMP"
 
 SUITE_SELECT_IMAGE=-1
 SUITE_SELECT_RUNTIME=-1
-# TheRock runtimes are pre-release/nightlies and must use the long version
-# string (e.g. 7.15.0a20260707). The last entry is also the default GPU image
-# ROCm (IMAGE_ROCMVER), so keep a gfx1250-capable TheRock build last.
-SUITE_RUNTIME_LIST=(6.4.4 7.0.3 7.1.1 7.2.4 7.14.0a20260624 7.15.0a20260707)
+# TheRock runtimes are either a release (7.14.1) or a nightly, which must be the
+# long version string (e.g. 10.2.0a20260918). The last entry is also the default
+# GPU image ROCm (IMAGE_ROCMVER), so keep a gfx1250-capable TheRock build last.
+# 7.15 is gone: it was renamed to 10 and its nightlies retired.
+SUITE_RUNTIME_LIST=(6.4.4 7.0.3 7.1.1 7.2.4 7.14.1 10.2.0a20260918)
 CMDLIST=()
 SUITE_DEFAULT_SELECTION=1
 SUITE_YAML=""
@@ -97,7 +98,7 @@ SUITE_ASAN=0
 SUITE_ARCH="ALL"
 # Default TheRock version used for ASAN builds when no -r overrides are provided.
 # (If -r is specified, those versions are used instead.)
-THEROCK_ASAN_VERSION="7.14.0a20260624"
+THEROCK_ASAN_VERSION="7.14.1"
 
 while true; do
   case "$1" in
@@ -232,6 +233,7 @@ echo "SUITE_RUNTIME_LIST ${SUITE_RUNTIME_LIST[@]}"
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
+. "${SCRIPT_DIR}/common-therock.sh"
 . "${SCRIPT_DIR}/common-git-cache.sh"
 . "${SCRIPT_DIR}/common-pin.sh"
 . "${SCRIPT_DIR}/common-git-https-origin.sh"
@@ -315,22 +317,20 @@ if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
   # die there. pin_line is build_llvm_tarball.sh's reader, which also rejects a
   # file that has grown a second pin.
   #
-  # TODO: PEP 508 compatible parser
   FLYDSL_LLVM_PIN="$(pin_line "${SCRIPT_DIR}/../third_party/flydsl-llvm.txt")" || exit 1
   if [[ -z "${SUITE_FLYDSL_COMMIT}" && -n "${FLYDSL_LLVM_PIN}" ]]; then
-    # The ref to build is the one flydsl-compiler.txt names, spelled as a tag.
-    # FlyDSL releases are tagged vX.Y.Z, so `flydsl==0.3.1` is `v0.3.1`. Any
-    # other requirement shape is not something to guess at.
-    FLYDSL_REQ="$(pin_line "${SCRIPT_DIR}/../third_party/flydsl-compiler.txt")" || exit 1
-    if [[ "${FLYDSL_REQ}" =~ ^flydsl[[:space:]]*==[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-      SUITE_FLYDSL_COMMIT="v${BASH_REMATCH[1]}"
-    else
+    # The commit to build is the one flydsl-compiler.txt pins, read by the
+    # shared parser rather than a second regex -- the two used to disagree
+    # about what that file may contain, which is how a pin move breaks a
+    # release build in the one branch nobody exercises until release day.
+    FLYDSL_PIN_TEXT="$(parse_flydsl_pin "${SCRIPT_DIR}/../third_party/flydsl-compiler.txt")" || {
       echo "Error: third_party/flydsl-llvm.txt pins ${FLYDSL_LLVM_PIN}, so this" >&2
-      echo "release must build FlyDSL from source, but the ref to build cannot be" >&2
-      echo "derived from third_party/flydsl-compiler.txt ('${FLYDSL_REQ}')." >&2
+      echo "release must build FlyDSL from source, but the commit to build cannot" >&2
+      echo "be read from third_party/flydsl-compiler.txt." >&2
       echo "Pass --flydsl_commit <ref> explicitly." >&2
       exit 1
-    fi
+    }
+    SUITE_FLYDSL_COMMIT="$(printf '%s' "${FLYDSL_PIN_TEXT}" | tail -n 1)"
     echo "third_party/flydsl-llvm.txt is non-empty (${FLYDSL_LLVM_PIN})."
     echo "Building FlyDSL ${SUITE_FLYDSL_COMMIT} from source; the pinned wheel cannot be used."
   fi
@@ -388,6 +388,8 @@ function build_inside() {
     if printf '%s\n%s\n' "7.10" "${rocmver}" | sort -V -C; then
       DOCKERFILE="theRock.Dockerfile"
       BUILD_ARG=(--build-arg "THEROCK_VERSION=${rocmver}")
+      BUILD_ARG+=(--build-arg \
+        "THEROCK_PIP_INDEX_URL=$(therock_pip_index_url "${rocmver}")")
     else
       DOCKERFILE="rocm.Dockerfile"
       BUILD_ARG=(--build-arg "ROCM_VERSION_IN_URL=${rocmver}")

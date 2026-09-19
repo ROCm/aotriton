@@ -3,6 +3,29 @@
 {% block title %}Debug{% endblock %}
 
 {% block content %}
+{#
+  Error text is capped twice, for two different problems.
+
+  ERROR_MAX_CHARS bounds what reaches the page at all. A task_queue.error can
+  carry an exaid OSError, which embeds the worker's whole stdout AND stderr --
+  megabytes of traceback, per row, in a table that shows many rows. Clamping
+  that with CSS alone would still ship every byte to the browser.
+
+  .err-cell then bounds what it occupies on screen: a fixed max height with its
+  own scrollbar, so one long error cannot stretch a row past the rest of the
+  table. The text stays selectable and scrollable rather than being hidden.
+#}
+{% set ERROR_MAX_CHARS = 4000 %}
+<style>
+  .err-cell {
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-width: 40rem;
+      max-height: 12rem;
+      overflow: auto;
+      margin: 0;
+  }
+</style>
 <h2>Debug – Task Inspector</h2>
 
 <section>
@@ -114,7 +137,7 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
             <tr><td><strong>created_at</strong></td><td>{{ t.created_at }}</td></tr>
             <tr><td><strong>started_at</strong></td><td>{{ t.started_at or '—' }}</td></tr>
             <tr><td><strong>completed_at</strong></td><td>{{ t.completed_at or '—' }}</td></tr>
-            <tr><td><strong>error</strong></td><td><pre style="white-space: pre-wrap; margin: 0;">{{ t.error or '—' }}</pre></td></tr>
+            <tr><td><strong>error</strong></td><td><pre class="err-cell">{{ (t.error | string | truncate(ERROR_MAX_CHARS, True, '\n… [truncated, full text in the worker log]')) if t.error else '—' }}</pre></td></tr>
             <tr>
                 <td><strong>task_config</strong></td>
                 <td><pre style="white-space: pre-wrap; font-size: 0.85em; margin: 0;">{{ t.task_config | tojson(indent=2) }}</pre></td>
@@ -172,7 +195,7 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
                         {% endfor %}
                     </table>
                     {% else %}—{% endif %}</td>
-                <td><pre>{{ r.error | tojson if r.error else '—' }}</pre></td>
+                <td><pre class="err-cell">{{ (r.error | tojson | truncate(ERROR_MAX_CHARS, True, '… [truncated]')) if r.error else '—' }}</pre></td>
                 <td>{{ r.gpu_id if r.gpu_id is not none else '—' }}</td>
                 <td>{{ r.created_at }}</td>
             </tr>
@@ -293,7 +316,7 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
                         {% endfor %}
                     </table>
                     {% else %}—{% endif %}</td>
-                <td><pre style="white-space: pre-wrap; font-size: 0.8em; margin: 0;">{{ r.error | tojson if r.error else '—' }}</pre></td>
+                <td><pre class="err-cell" style="font-size: 0.8em;">{{ (r.error | tojson | truncate(ERROR_MAX_CHARS, True, '… [truncated]')) if r.error else '—' }}</pre></td>
                 <td>{{ r.created_at }}</td>
             </tr>
             {% endfor %}

@@ -49,6 +49,56 @@ def should_dryrun() -> bool:
     return getattr(g, 'demo_mode', False)
 
 
+def step_arch() -> str | None:
+    """The Bake LUT individual-step architecture filter, or None for all.
+
+    The one place the '__all__' sentinel is understood, matching how the
+    bake-lut fix-host select's own sentinel is normalized server-side rather
+    than in the template. Returning None means no --arch reaches the script, so
+    an unfiltered request is byte-for-byte the request it was before the
+    selector existed.
+
+    The value is checked against this workdir's own architectures before it
+    goes anywhere. It reaches .tune/bin/decomposedb, which interpolates it into
+
+        rm -rf "$DECOMPOSE_OUTPUT"/*/database/amd/"$ARCH"
+
+    so a value carrying '..' walks out of the architecture directory and
+    deletes unrelated workdir content. A form field is not a promise about its
+    own contents: the select offers exactly these options, but nothing stops a
+    request that did not come from the select.
+
+    Membership, not a pattern. The set is already known -- it is what populates
+    the selector -- and accepting only what this workdir actually has is both
+    the tighter rule and the one that stays correct when architecture names
+    take a shape no pattern here anticipated.
+    """
+    value = (request.form.get('arch') or '').strip()
+    if not value or value == '__all__':
+        return None
+    known = tasks.get_architectures(current_app.config['WORKDIR'])
+    if value not in known:
+        abort(400, description=f'Unknown architecture: {value!r}')
+    return value
+
+
+def step_use_base_db() -> bool:
+    """The op-mode "incremental over existing db" checkbox.
+
+    Reads `base_db`, not `incremental`: /api/servers/bake-lut already takes an
+    `incremental` field meaning an incremental ACCURACY TABLE update, which is a
+    different operation. Naming this after the flag it becomes keeps the two
+    apart.
+
+    Normalized here for the same reason step_arch() is: absent means the request
+    is byte-for-byte what it was before the checkbox existed. htmx serialises the
+    JS boolean as 'true'; '1' is also accepted because every other flag on this
+    page is spelled that way (bake-lut's incremental/fix), and a hand-rolled curl
+    that follows the neighbouring convention should not silently do nothing.
+    """
+    return (request.form.get('base_db') or '').strip().lower() in ('true', '1')
+
+
 @bp.route('/')
 def dashboard():
     """Dashboard overview page"""
@@ -90,8 +140,12 @@ def servers():
     config_vars = tasks.get_config_vars(workdir)
     hostnames = tasks.get_hostnames(workdir)
     tuning_mode = tasks.get_tuning_mode(workdir)
+    # Architectures this workdir actually has workers for, same source and same
+    # helper the Builds page uses. Not config.TUNING_ARCHITECTURES, which is an
+    # aspirational list and would offer arches this workdir has no data for.
+    archs = tasks.get_architectures(workdir)
     return render_template('servers.html', config_vars=config_vars, hostnames=hostnames,
-                           tuning_mode=tuning_mode)
+                           tuning_mode=tuning_mode, archs=archs)
 
 
 @bp.route('/builds')
@@ -99,12 +153,11 @@ def builds():
     """Build management page"""
     workdir = current_app.config['WORKDIR']
     archs = tasks.get_architectures(workdir)
-    hostnames = tasks.get_hostnames(workdir)
     build_node_config = tasks.get_build_node_config(workdir)
     default_workdir = tasks.get_default_workdir(workdir) or '(not set)'
     git_status = tasks.get_git_status(workdir)
     use_installed_db = tasks.get_test_build_use_installed_db(workdir)
-    return render_template('builds.html', archs=archs, hostnames=hostnames,
+    return render_template('builds.html', archs=archs,
                            build_node_config=build_node_config,
                            default_workdir=default_workdir,
                            git_status=git_status,
@@ -312,7 +365,7 @@ def api_compute_best_results():
     """Compute best_tuning_results table from raw tuning results"""
     workdir = current_app.config['WORKDIR']
     tuning_mode = request.form.get('mode', 'kernel')
-    result = tasks.compute_best_results(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
+    result = tasks.compute_best_results(workdir, tuning_mode=tuning_mode, arch=step_arch(), dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -321,7 +374,8 @@ def api_export_best_results():
     """Export best results to centralized SQLite database"""
     workdir = current_app.config['WORKDIR']
     tuning_mode = request.form.get('mode', 'kernel')
-    result = tasks.export_best_results(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
+    result = tasks.export_best_results(workdir, tuning_mode=tuning_mode, arch=step_arch(),
+                                       incremental=step_use_base_db(), dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -330,7 +384,7 @@ def api_recreate_materialized_view():
     """Recreate accuracy table via DROP + CREATE"""
     workdir = current_app.config['WORKDIR']
     tuning_mode = request.form.get('mode', 'kernel')
-    result = tasks.recreate_materialized_view(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
+    result = tasks.recreate_materialized_view(workdir, tuning_mode=tuning_mode, arch=step_arch(), dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -339,7 +393,7 @@ def api_sancheck():
     """Run LUT sanity check against the exported centralized database"""
     workdir = current_app.config['WORKDIR']
     tuning_mode = request.form.get('mode', 'kernel')
-    result = tasks.sancheck(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
+    result = tasks.sancheck(workdir, tuning_mode=tuning_mode, arch=step_arch(), dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -375,7 +429,7 @@ def api_bake_lut():
 def api_update_materialized_view():
     workdir = current_app.config['WORKDIR']
     tuning_mode = request.form.get('mode', 'kernel')
-    result = tasks.update_materialized_view(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
+    result = tasks.update_materialized_view(workdir, tuning_mode=tuning_mode, arch=step_arch(), dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -384,7 +438,7 @@ def api_decomposedb():
     """Decompose centraldb.sqlite3 into per-arch/kernel shards"""
     workdir = current_app.config['WORKDIR']
     tuning_mode = request.form.get('mode', 'kernel')
-    result = tasks.decomposedb(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
+    result = tasks.decomposedb(workdir, tuning_mode=tuning_mode, arch=step_arch(), dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -892,11 +946,22 @@ def api_run_test(hostname):
     backend = request.form.get('backend', 'split')
     variant = request.form.get('variant') or request.args.get('variant') or None
     adiff = bool(request.form.get('adiff') or request.args.get('adiff'))
-    if backend not in ('split', 'fused', 'aiter', 'v3'):
+    # Orthogonal to `variant`, which selects what to run and where the output
+    # goes. Which device the REFERENCE is computed on is an independent axis, so
+    # it gets its own parameter rather than a variant per combination.
+    ref_device_policy = (request.form.get('ref_device_policy')
+                         or request.args.get('ref_device_policy') or None)
+    if backend not in ('split', 'fused', 'aiter', 'flyc', 'v3'):
         return jsonify({'status': 'error', 'message': f'Invalid backend: {backend}'}), 400
     if variant and variant not in ('partial', 'partial_adiffs'):
         return jsonify({'status': 'error', 'message': f'Invalid variant: {variant}'}), 400
-    result = tasks.run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=variant, adiff=adiff, dry_run=should_dryrun())
+    if ref_device_policy and ref_device_policy not in ('cpu', 'cuda', 'default'):
+        return jsonify({'status': 'error',
+                        'message': f'Invalid ref_device_policy: {ref_device_policy}'}), 400
+    result = tasks.run_test_on_host(workdir, hostname, pass_num, test_level, backend,
+                                    variant=variant, adiff=adiff,
+                                    ref_device_policy=ref_device_policy,
+                                    dry_run=should_dryrun())
     return jsonify(result)
 
 

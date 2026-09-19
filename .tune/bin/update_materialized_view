@@ -28,6 +28,7 @@ WORKDIR="$1"
 shift
 FIX_SPEC=""
 TUNING_MODE="kernel"
+ARCH=""
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -39,12 +40,30 @@ while [ "$#" -gt 0 ]; do
             TUNING_MODE="$2"
             shift 2
             ;;
+        --arch)
+            ARCH="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown argument: $1" >&2
             exit 1
             ;;
     esac
 done
+
+# --arch goes to BOTH sides, and both are necessary.
+#
+# query_broken_entries --arch narrows which task_ids come out (fix path only).
+# That alone is not enough: retry_task_ids.txt on the default path spans the
+# whole fleet, and populate_most_accurate DELETEs the ids it is handed before
+# re-inserting. Without --arch reaching populate as well, it would delete the
+# other architectures' rows for those ids and re-insert only this one's.
+ARCH_ARGS=()
+ARCH_QBE=()
+if [ -n "$ARCH" ]; then
+    ARCH_ARGS=(--arch "$ARCH")
+    ARCH_QBE=(--arch "$ARCH")
+fi
 
 if [ ! -d "$WORKDIR" ]; then
     echo "Error: workdir does not exist: $WORKDIR" >&2
@@ -78,9 +97,9 @@ if [ -n "$FIX_SPEC" ]; then
 
     echo "Updating most_accurate_tuning_results (fix broken, pass=$FIX_PASS${FIX_HOST:+, host=$FIX_HOST})..."
     # shellcheck disable=SC2086
-    "$SCRIPT_DIR/query_broken_entries" "$WORKDIR" --pass "$FIX_PASS" $HOST_ARG \
+    "$SCRIPT_DIR/query_broken_entries" "$WORKDIR" --pass "$FIX_PASS" $HOST_ARG "${ARCH_QBE[@]}" \
     | "$UMV_PYTHON" -m aotriton.tune.pq.populate_most_accurate \
-        "$WORKDIR" --task_ids_file - --tuning_mode "$TUNING_MODE"
+        "$WORKDIR" --task_ids_file - --tuning_mode "$TUNING_MODE" "${ARCH_ARGS[@]}"
 else
     TASK_IDS_FILE="$WORKDIR/scratch/retry_task_ids.txt"
 
@@ -94,5 +113,5 @@ else
     echo "Task IDs file: $TASK_IDS_FILE"
 
     "$UMV_PYTHON" -m aotriton.tune.pq.populate_most_accurate \
-        "$WORKDIR" --task_ids_file "$TASK_IDS_FILE" --tuning_mode "$TUNING_MODE"
+        "$WORKDIR" --task_ids_file "$TASK_IDS_FILE" --tuning_mode "$TUNING_MODE" "${ARCH_ARGS[@]}"
 fi

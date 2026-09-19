@@ -32,11 +32,16 @@ fi
 WORKDIR="$1"
 shift
 TUNING_MODE="kernel"
+ARCH=""
 EXTRA_ARGS=()
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --tuning_mode) TUNING_MODE="$2"; shift 2 ;;
+        # Must come before the catch-all below. Anything unrecognised is
+        # forwarded verbatim to generate.py, which has no --arch and would
+        # abort on it.
+        --arch) ARCH="$2"; shift 2 ;;
         *) EXTRA_ARGS+=("$1"); shift ;;
     esac
 done
@@ -66,6 +71,28 @@ GPUS=$(sqlite3 "$CENTRALDB" \
      UNION SELECT gpu FROM \"FLASH\$bwd_kernel_dq\" \
      UNION SELECT gpu FROM \"FLASH\$bwd_kernel_fuse\"" \
     2>/dev/null | tr '\n' ' ' | xargs)
+
+# --arch FILTERS the list derived above rather than constructing a gpu name.
+#
+# Deriving and filtering keeps two properties that "$ARCH_mod0" would lose. It
+# never invents a name generate.py would reject: --target_gpus is constrained by
+# choices=AOTRITON_SUPPORTED_GPUS, so a synthesised gpu for an architecture
+# outside that tuple dies in argparse. And an architecture can carry several
+# mods -- restricting to an architecture means all of its mods, which a prefix
+# match gives and a hardcoded _mod0 does not.
+if [ -n "$ARCH" ]; then
+    FILTERED=""
+    for gpu in $GPUS; do
+        [ "${gpu%%_mod*}" = "$ARCH" ] && FILTERED="$FILTERED $gpu"
+    done
+    GPUS="$(echo "$FILTERED" | xargs)"
+    if [ -z "$GPUS" ]; then
+        echo "Error: no gpu for arch $ARCH in $CENTRALDB." >&2
+        echo "       Run: .tune/bin/export_best_results $WORKDIR --arch $ARCH" >&2
+        exit 1
+    fi
+    echo "Sanity checking arch $ARCH only: $GPUS"
+fi
 
 GPU_ARGS=()
 if [ -n "$GPUS" ]; then

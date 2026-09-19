@@ -7,16 +7,23 @@ pip wheel third_party/triton -w /tmp/triton_wheel/
 mkdir build
 cd build
 export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:${CONDA_PREFIX}/lib/pkgconfig"
-cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 -DAOTRITON_USE_LOCAL_TRITON_WHEEL=/tmp/triton_wheel/<triton_wheel>.whl -G Ninja
+# See https://github.com/ROCm/FlyDSL for build instructions
+cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 -DAOTRITON_USE_LOCAL_TRITON_WHEEL=/tmp/triton_wheel/<triton_wheel>.whl -DAOTRITON_USE_LOCAL_FLYDSL_WHEEL=<absolute path to flydsl>.whl -G Ninja
 # Use ccmake to tweak options
 ninja install/strip  # Use `ninja install` to keep symbols
 ```
 
 The library and the header file can be found under `build/install_dir` afterwards.
-You may ignore the `export PKG_CONFIG_PATH` part if you're not building with conda
+You may ignore the `export PKG_CONFIG_PATH` part if you're not building with conda.
 
 Note: do not run `ninja` separately, due to the limit of the current build
 system, `ninja install` will run the whole build process unconditionally.
+
+The FlyDSL wheel must be compiled from `third_party/flydsl-compiler.txt` with
+LLVM from `third_party/flydsl-llvm.txt`. Image-mode builds only:
+`AOTRITON_NOIMAGE_MODE` needs neither the FlyDSL nor the Triton wheel.
+
+* As of 0.14b development cycle, LLVM used by FlyDSL wheels suffers from https://github.com/llvm/llvm-project/pull/223465
 
 ### Prerequisites
 
@@ -38,6 +45,7 @@ system, `ninja install` will run the whole build process unconditionally.
   - On RHEL and its derivatives this dependency is ensured by `xz-devel`.
   - On Debian and its derivatives this dependency is met by installing `pkgconf`
     or `pkg-config` in older releases.
+
 ## Generation
 
 The kernel definition for generation is done in
@@ -76,7 +84,7 @@ The precompiled binaries will be downloaded and shipped with PyTorch during [bui
 
 CAVEAT: As a fast moving target, AOTriton's FlashAttention API changes over
 time. Hence, a specific PyTorch release is only compatible with a few versions
-of AOTriton. The compatibility matrix is shown below
+of AOTriton. The compatibility matrix is shown below.
 
 |  PyTorch Upstream     |           AOTriton Feature Release              |
 |-----------------------|-------------------------------------------------|
@@ -110,7 +118,7 @@ of AOTriton. The compatibility matrix is shown below
    has changed drastically.
 
 ROCm's PyTorch release/\<version\> branch is slightly different from PyTorch
-upstream and may support more recent version of AOTriton
+upstream and may support more recent versions of AOTriton.
 
 |  PyTorch ROCm Fork    |           AOTriton Feature Release              |
 |-----------------------|-------------------------------------------------|
@@ -132,5 +140,5 @@ replacement of their corresponding feature releases.
 
 1. AOTriton on Windows currently isn't able to build kernel images by itself.
    This is because triton is not officially available on Windows yet.
-2. To build on Windows, set AOTRITON_NOIMAGE_MODE and use the `aotriton.images`
+2. To build on Windows, set `AOTRITON_NOIMAGE_MODE` and use the `aotriton.images`
    folder from a Linux build.

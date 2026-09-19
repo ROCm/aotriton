@@ -43,7 +43,7 @@ Options:
          --python <X.Y>     CPython to build for. Default 3.11. flydsl wheels
                             are ABI specific, so this is part of the cache key.
            --rocm <ver>     TheRock version for the build image. Default
-                            7.15.0a20260707, the newest in the release suite's
+                            10.2.0a20260918, the newest in the release suite's
                             list. FlyJitRuntime links HIP but AOTriton never
                             launches through it, so this does not affect the
                             kernels the wheel produces.
@@ -62,7 +62,7 @@ LLVM_TARBALL=""
 VERSION_SUFFIX=""
 PAT_ENVIRON=""
 PYVER="3.11"
-ROCMVER="7.15.0a20260707"
+ROCMVER="10.2.0a20260918"
 JOBS=""
 while [[ "$1" == --* ]]; do
   # `shift 2` with one argument left FAILS WITHOUT SHIFTING, so $1 never changes
@@ -103,6 +103,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/common-git-cache.sh"
 . "${SCRIPT_DIR}/common-altwheel.sh"
+. "${SCRIPT_DIR}/common-therock.sh"
 
 # The *compiler* repo, and it is public, so nothing here needs a credential by
 # default. The kernel-development fork is a different repository and is not a
@@ -196,23 +197,6 @@ if [ -z "$(docker images -q "${BASE_DOCKER_IMAGE}" 2>/dev/null)" ]; then
     --build-arg "PYVER=${PYVER}" \
     -f base.Dockerfile .) >&2
 fi
-# FlyDSL needs ROCm to configure at all -- lib/Runtime/ROCm/CMakeLists.txt does
-# find_package(hip REQUIRED) under its only backend -- so the wheel is built in
-# a ROCm-bearing derivative of the base image. theRock.Dockerfile, the same one
-# the release suite uses, with BASE_TAG pointing at this Python: a wheel's cp
-# tag has to match the venv that will install it.
-#
-# ROCm comes from TheRock rather than dnf packages because that is what the
-# rest of AOTriton targets, and .ci/flydsl-patch/ teaches FlyDSL's CMake to
-# find it -- a TheRock root is a site-packages directory, not /opt/rocm.
-FLYDSL_DOCKER_IMAGE="aotriton:buildenv-rocm${ROCMVER}-py${PYVER}"
-if [ -z "$(docker images -q "${FLYDSL_DOCKER_IMAGE}" 2>/dev/null)" ]; then
-  (cd "${SCRIPT_DIR}" && docker build --network=host -t "${FLYDSL_DOCKER_IMAGE}" \
-    --build-arg "BASE_TAG=base-py${PYVER}" \
-    --build-arg "THEROCK_VERSION=${ROCMVER}" \
-    -f theRock.Dockerfile .) >&2
-fi
-
 # One mirror volume per distinct origin, mirror_volume_for_origin()'s shape.
 if [[ "${FLYDSL_ORIGIN}" == "${FLYDSL_DEFAULT_ORIGIN}" ]]; then
   MIRROR_VOLUME="flydsl-mirror"
@@ -254,6 +238,33 @@ if [[ -n "${HIT}" ]]; then
   echo "FlyDSL wheel for ${RESOLVED:0:8} (python ${PYVER}) already cached, skipping." >&2
   realpath "${HIT}"
   exit 0
+fi
+
+# Built HERE, below the cache check, not before it. Only the wheel build below
+# uses this image -- sync_mirror and the tag resolve above both run in
+# BASE_DOCKER_IMAGE -- and it is by far the most expensive step in the script,
+# a whole ROCm install via pip. Building it first meant a run whose wheel was
+# already cached still paid for it, which is what made a cached FlyDSL look
+# like a rebuild next to a cached LLVM tarball that returns immediately.
+#
+# FlyDSL needs ROCm to configure at all -- lib/Runtime/ROCm/CMakeLists.txt does
+# find_package(hip REQUIRED) under its only backend -- so the wheel is built in
+# a ROCm-bearing derivative of the base image. theRock.Dockerfile, the same one
+# the release suite uses, with BASE_TAG pointing at this Python: a wheel's cp
+# tag has to match the venv that will install it.
+#
+# ROCm comes from TheRock rather than dnf packages because that is what the
+# rest of AOTriton targets, and .ci/flydsl-patch/ teaches FlyDSL's CMake to
+# find it -- a TheRock root is a site-packages directory, not /opt/rocm.
+FLYDSL_DOCKER_IMAGE="aotriton:buildenv-rocm${ROCMVER}-py${PYVER}"
+if [ -z "$(docker images -q "${FLYDSL_DOCKER_IMAGE}" 2>/dev/null)" ]; then
+  # The index has to follow the version: theRock.Dockerfile's own default is a
+  # RELEASE index, so a nightly --rocm left to that default resolves no wheel.
+  (cd "${SCRIPT_DIR}" && docker build --network=host -t "${FLYDSL_DOCKER_IMAGE}" \
+    --build-arg "BASE_TAG=base-py${PYVER}" \
+    --build-arg "THEROCK_VERSION=${ROCMVER}" \
+    --build-arg "THEROCK_PIP_INDEX_URL=$(therock_pip_index_url "${ROCMVER}")" \
+    -f theRock.Dockerfile .) >&2
 fi
 
 PAT_ENV_ARG=()

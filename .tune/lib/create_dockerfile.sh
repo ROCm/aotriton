@@ -21,6 +21,69 @@ fi
 
 load_config "$WORKDIR"
 
+# Where the worker venv's torch comes from. AMD's multi-arch wheel index serves
+# a torch built against a specific ROCm, selected by an extra naming the GPU
+# arch it must run on, plus the matching `rocm` runtime/devel distribution.
+# This replaces the older `pip install /torch-*.whl /triton-*.whl`, which
+# depended on the base image happening to carry those two files at /.
+#
+# ROCM_GPU_ARCH here is only the fallback baked into the Dockerfile as an ARG
+# default, for a build target that is not a registered worker (a build node,
+# which has no arch row to read). imgbld/build_image.sh override it per host
+# with `--build-arg ROCM_GPU_ARCH=<arch>` taken from the worker registry --
+# deliberately, because the arch must NOT be probed on the remote: a worker is
+# not guaranteed to have amd-smi or rocminfo on PATH (they may live inside a
+# TheRock venv at an unknown location, or not be installed at all), while the
+# registry already knows every worker's arch.
+#
+# TODO: the index URL and the two versions are hardcoded to what the current
+#       target system needs. They belong in config.rc (the ROCm release in
+#       particular changes on its own schedule); deferred to a later phase.
+ROCM_WHL_INDEX="https://repo.amd.com/rocm/whl-multi-arch/"
+ROCM_VERSION="7.14.1"
+TORCH_VERSION="2.12.0"
+ROCM_GPU_ARCH="gfx950"
+
+# What a bare Debian/Ubuntu base needs to be a tuning worker. The old base
+# images were vendor PyTorch images carrying all of this already; a plain
+# debian:13 carries none of it, and each missing piece surfaces as a separate
+# `command not found` several layers into the build.
+#
+#   python3 python3-venv  `python3 -m venv` itself. Debian splits ensurepip out
+#                         of python3 into python3-venv, so both are required --
+#                         python3 alone gets past `not found` only to fail
+#                         inside `-m venv`.
+#   python3-dev           AOTriton's cmake does
+#                         `find_package(Python3 COMPONENTS Development REQUIRED)`
+#                         for the pybind11 extension, which needs the headers,
+#                         not just the interpreter.
+#   git                   build_triton_wheel.sh reads the third_party/triton
+#                         gitlink and, on a cache miss, clones Triton --
+#                         `git: command not found` is where this last failed.
+#   cmake ninja-build build-essential
+#                         the Triton wheel build and .ci/build-tune.sh.
+#   pkg-config liblzma-dev
+#                         AOTriton's top-level CMakeLists.txt has
+#                         `pkg_search_module(LZMA REQUIRED liblzma)` for Kernel
+#                         Storage V2, so configure dies without both.
+#   ca-certificates curl  the HTTPS fetch from ${ROCM_WHL_INDEX} and whatever
+#                         image.scripts/ pulls down (pip vendors its own CA
+#                         bundle, but nothing else here does).
+#
+# This list is create_perfmon_dockerfile.sh's on xinyazhang/generalized-def,
+# which solved the same bare-base problem for the perfmon image, plus
+# python3-dev -- that image builds AOTriton shims and never the Python binding,
+# so it needs no headers.
+#
+# Accumulated rather than written as one long line: the value is interpolated
+# into a Dockerfile RUN whose lines are joined by backslash continuations, so
+# an embedded newline here would break that line and take the rest of the
+# apt-get invocation with it.
+IMAGE_BOOTSTRAP_PACKAGES="ca-certificates curl git"
+IMAGE_BOOTSTRAP_PACKAGES="$IMAGE_BOOTSTRAP_PACKAGES cmake ninja-build build-essential"
+IMAGE_BOOTSTRAP_PACKAGES="$IMAGE_BOOTSTRAP_PACKAGES pkg-config liblzma-dev"
+IMAGE_BOOTSTRAP_PACKAGES="$IMAGE_BOOTSTRAP_PACKAGES python3 python3-venv python3-dev"
+
 if [ -z "$CELERY_WORKER_IMAGE_BASE" ]; then
   echo "Error: CELERY_WORKER_IMAGE_BASE not set in config.rc" >&2
   exit 1
@@ -30,6 +93,12 @@ if [ -z "$CELERY_WORKER_PYTHON" ]; then
   echo "Error: CELERY_WORKER_PYTHON not set in config.rc" >&2
   exit 1
 fi
+
+# The venv root, for `. <venv>/bin/activate`. Derived rather than configured:
+# CELERY_WORKER_PYTHON is already the single source of truth for where the venv
+# is, and every other consumer (bash_direct, testbld, start_worker.sh) derives
+# it the same way.
+VENV_DIR="$(dirname "$(dirname "$CELERY_WORKER_PYTHON")")"
 
 # Create output directory
 IMAGE_BUILD_DIR="$WORKDIR/image.build"
@@ -42,15 +111,100 @@ cat > "$IMAGE_BUILD_DIR/Dockerfile" <<EOF
 #          Do not manually edit. Customize via config.rc or image.scripts/ instead.
 FROM ${CELERY_WORKER_IMAGE_BASE}
 
-COPY config.rc /config.rc
-# Copy scripts
-COPY image.scripts /image.scripts
+# config.rc and image.scripts/ are COPYied further down, immediately above the
+# layer that consumes them, NOT here. They are the most volatile inputs to this
+# image -- config.rc changes whenever any tuning setting does -- and a COPY
+# invalidates every layer after it. Sitting at the top, they put a multi-gigabyte
+# torch and ROCm download behind a file that changes constantly, which is what
+# made every rebuild re-download the wheels.
 
-# Create venv if CELERY_WORKER_PYTHON doesn't exist and install wheels
+# Toolchain the worker needs regardless of what the base image is.
+#
+# Unconditional on purpose. An earlier version gated this on whether python3
+# could already import venv, which was wrong the moment the list grew past
+# Python: a vendor base that satisfies the Python check would have skipped the
+# layer and lost git, cmake and the rest with it. apt-get is idempotent, so a
+# base that already has everything just re-resolves it and moves on.
+RUN apt-get update && \\
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
+        ${IMAGE_BOOTSTRAP_PACKAGES} && \\
+    rm -rf /var/lib/apt/lists/*
+
+# Which GPU arch this image's torch is built for. Overridden per host by
+# build_image.sh's --build-arg from the worker registry; the default below is
+# for build targets that have no registry entry.
+ARG ROCM_GPU_ARCH=${ROCM_GPU_ARCH}
+
+# Create venv if CELERY_WORKER_PYTHON doesn't exist and install torch + ROCm.
+#
+# \`rocm-sdk init\` is TheRock's required post-install step, and is only valid
+# because the spec above takes \`devel\` -- ROCm's 300-post-install.rst says to
+# run init only when devel is installed. Without it the wheels are unpacked but
+# ROCM_PATH resolves to nothing, so hipcc and the HIP headers stay invisible to
+# every later cmake.
 RUN if [ ! -f ${CELERY_WORKER_PYTHON} ]; then \\
       python3 -m venv \$(dirname \$(dirname ${CELERY_WORKER_PYTHON})); \\
-      ${CELERY_WORKER_PYTHON} -m pip install /torch-*.whl /triton-*.whl; \\
+      ${CELERY_WORKER_PYTHON} -m pip install --index-url ${ROCM_WHL_INDEX} \\
+          "torch[device-\${ROCM_GPU_ARCH}]==${TORCH_VERSION}+rocm${ROCM_VERSION}" \\
+          "rocm[devel]==${ROCM_VERSION}" && \\
+      \$(dirname ${CELERY_WORKER_PYTHON})/rocm-sdk init && \\
+      echo "Resolved ROCM_PATH=\$(\$(dirname ${CELERY_WORKER_PYTHON})/rocm-sdk path --root)"; \\
     fi
+
+# Activate the venv and locate ROCm for every login shell.
+#
+# A login profile rather than an ENV or a BASH_ENV because \`bash -lc\` is
+# already how .tune enters this image: remotebld runs libbld that way (both the
+# tuning and the build-node path), and so do run-test.sh and testrun_direct.
+# Hooking the shell those callers already ask for beats adding a second
+# mechanism they would each have to opt into.
+#
+# ROCM_PATH is asked of \`rocm-sdk path --root\` at use time, never baked in at
+# build time. rocm-sdk is the authority on where its own tree lives; a value
+# recorded in an ENV is a second source of truth that goes stale silently when
+# the venv is rebuilt or the wheels are upgraded in place, still pointing at a
+# directory that happens to exist. Without this, cmake fell back to /opt/rocm
+# and \`find_package(hip)\` found no hip-config.cmake there.
+#
+# The two guards are not caches:
+#
+#   VIRTUAL_ENV  login shells nest (remotebld's payload sources activate
+#                itself), and re-activating would stack another copy of the
+#                venv onto PATH each time.
+#   ROCM_PATH    lets a caller aim the image at a different ROCm tree with
+#                \`docker run -e ROCM_PATH=...\` and have it respected rather
+#                than overwritten. The override is all-or-nothing: it skips the
+#                PATH and LD_LIBRARY_PATH exports too, so a caller who sets it
+#                owns those as well.
+#
+# The \`command -v rocm-sdk\` test is what keeps a legacy vendor base working:
+# that image has no TheRock wheels, so there is nothing to ask, and the ROCm it
+# does ship stays exactly where it was.
+RUN set -eux; \\
+    mkdir -p /etc/profile.d; \\
+    printf '%s\\n' \\
+      '# Auto-generated by .tune/lib/create_dockerfile.sh. Do not edit by hand.' \\
+      '# Sourced by /etc/profile for every login shell (bash -l, bash -lc).' \\
+      '[ -n "\${VIRTUAL_ENV:-}" ] || . ${VENV_DIR}/bin/activate' \\
+      'if [ -z "\${ROCM_PATH:-}" ] && command -v rocm-sdk >/dev/null 2>&1; then' \\
+      '    ROCM_PATH="\$(rocm-sdk path --root)"' \\
+      '    export ROCM_PATH' \\
+      '    export PATH="\${ROCM_PATH}/bin:\${ROCM_PATH}/llvm/bin:\${PATH}"' \\
+      '    export LD_LIBRARY_PATH="\${ROCM_PATH}/lib\${LD_LIBRARY_PATH:+:\${LD_LIBRARY_PATH}}"' \\
+      'fi' \\
+      > /etc/profile.d/aotriton.sh
+
+# Sanity check through the same profile a later build will use. Failing here
+# beats failing three layers into an AOTriton build with cmake reporting only
+# that it could not find hip-config.cmake under /opt/rocm.
+RUN bash -lc 'set -eux; \\
+      python -c "import sys; print(sys.executable)"; \\
+      if command -v rocm-sdk >/dev/null 2>&1; then \\
+        echo "ROCM_PATH=\${ROCM_PATH}"; \\
+        hipconfig --version; \\
+      else \\
+        echo "no rocm-sdk in this image; leaving ROCm discovery to the base"; \\
+      fi'
 
 # Install requirements-tuning.txt
 COPY aotriton.src/requirements*.txt /tmp/
@@ -59,6 +213,11 @@ WORKDIR /tmp
 RUN ${CELERY_WORKER_PYTHON} -m pip install -r /tmp/requirements-tuning.txt && \\
     ${CELERY_WORKER_PYTHON} -m pip install -r /tmp/requirements-dev.txt && \\
     rm -rf /tmp/requirements*.txt /tmp/python
+
+# The volatile inputs, deliberately last. Everything above is expensive and
+# rarely changes; these two change often and invalidate only what follows them.
+COPY config.rc /config.rc
+COPY image.scripts /image.scripts
 
 # Run all scripts matching pattern: NN-*.sh
 RUN for script in /image.scripts/[0-9][0-9]-*.sh; do \\

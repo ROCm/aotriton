@@ -49,9 +49,14 @@ Usage:
 """
 
 import argparse
+import atexit
 import logging
+import shutil
 import sqlite3
+import tarfile
+import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import psycopg
@@ -174,9 +179,13 @@ KERNEL_SCHEMAS = {
 }
 
 # Op-mode schemas — same input columns as the kernel tables (minus tuned_kernel$/
-# compiler_options$ columns) plus op$backend and op$tflops.
+# compiler_options$ columns) plus the op$ columns below.
 _OP_EXTRA_COLS = [
-    ('op$backend', 'INTEGER', 'op_backend', None),
+    # FIXME: Flyc duct tape -- this was one ('op$backend', ...) column. Split so
+    # the generator can drop a flyc winner on an arch without flyc images.
+    # Integers, not names, to keep the shipped db small.
+    ('op$best1st', 'INTEGER', 'op_best1st', None),
+    ('op$best2nd', 'INTEGER', 'op_best2nd', None),
     ('op$tflops',  'REAL',    'op_tflops',  None),
 ]
 
@@ -295,10 +304,94 @@ def insert_row(db: sqlite3.Connection, kernel: str,
 
 
 # ---------------------------------------------------------------------------
+# Half-precision cross-patching
+# ---------------------------------------------------------------------------
+
+DTYPE_COL = 'inputs$Q_dtype'
+
+# Ordered (missing, borrow_from) pairs. Only the two half-precision types
+# substitute for each other: they share element size, so the tuned tile shapes,
+# waves_per_eu and num_warps that make up a row transfer directly. float32 is
+# deliberately absent -- it has different occupancy and would not.
+DTYPE_FALLBACK_PAIRS = (
+    ('torch.float16',  'torch.bfloat16'),
+    ('torch.bfloat16', 'torch.float16'),
+)
+
+
+def patch_missing_dtypes(db: sqlite3.Connection, kernel: str, cols: list,
+                         arch: str | None = None) -> int:
+    """Fill in a half-precision dtype that has no rows by copying the other one.
+
+    A GPU tuned only for bfloat16 leaves the float16 lookups with nothing to
+    find, and vice versa. Rather than leave those holes, copy the rows across
+    with only the dtype column rewritten.
+
+    Scoped per gpu, and only where the target is entirely absent for that gpu.
+    Per gpu because coverage is per gpu -- one architecture having both dtypes
+    says nothing about another. Only when entirely absent because a partially
+    tuned dtype is real data being extended in the wrong direction: mixing
+    measured rows with borrowed ones would leave no way to tell which is which,
+    and the measured half is the half worth trusting.
+
+    `arch` restricts the patching to that architecture's gpus, honouring the
+    export's own --arch. Usually redundant -- the wrapper deletes the output
+    file first, so an arch-scoped export writes a database holding only that
+    arch -- but not always: --output can be aimed at an existing database, and
+    ensure_table/insert_row then add to whatever is already in it. Without this
+    an arch-scoped run would reach into another architecture's rows and
+    fabricate entries for it, which is the one thing --arch promises not to do.
+
+    Returns the number of rows added.
+    """
+    names = _col_names(cols)
+    if DTYPE_COL not in names:
+        return 0
+
+    table = f'FLASH${kernel}'
+    col_str = ', '.join(f'"{c}"' for c in names)
+    # The dtype column is the one value being rewritten; everything else is
+    # carried over untouched, so the borrowed row is identical to its source
+    # apart from the label.
+    select_str = ', '.join('?' if c == DTYPE_COL else f'"{c}"' for c in names)
+
+    added = 0
+    gpus = [r[0] for r in db.execute(f'SELECT DISTINCT "gpu" FROM "{table}"')]
+    if arch is not None:
+        # Split on '_mod' rather than matching a constructed '<arch>_mod0':
+        # an architecture may carry several mods, and all of them belong to it.
+        # Same rule sancheck applies to its own gpu list.
+        gpus = [g for g in gpus if g.split('_mod', 1)[0] == arch]
+    for gpu in gpus:
+        present = {
+            row[0]: row[1]
+            for row in db.execute(
+                f'SELECT "{DTYPE_COL}", COUNT(*) FROM "{table}" '
+                f'WHERE "gpu" = ? GROUP BY 1', (gpu,))
+        }
+        for missing, borrow_from in DTYPE_FALLBACK_PAIRS:
+            if present.get(missing, 0) or not present.get(borrow_from, 0):
+                continue
+            cur = db.execute(
+                f'INSERT OR IGNORE INTO "{table}" ({col_str}) '
+                f'SELECT {select_str} FROM "{table}" '
+                f'WHERE "gpu" = ? AND "{DTYPE_COL}" = ?',
+                (missing, gpu, borrow_from),
+            )
+            if cur.rowcount > 0:
+                added += cur.rowcount
+                logger.warning(
+                    'PATCHED %s %s: %d %s rows copied from %s (no measured '
+                    '%s data for this gpu)',
+                    table, gpu, cur.rowcount, missing, borrow_from, missing)
+    return added
+
+
+# ---------------------------------------------------------------------------
 # Main export logic
 # ---------------------------------------------------------------------------
 
-def export(conn_params: dict, output_path: Path) -> None:
+def export(conn_params: dict, output_path: Path, arch: str | None = None) -> None:
     t0 = time.monotonic()
 
     logger.info('Querying best_tuning_results (tuning_level=kernel)...')
@@ -310,11 +403,14 @@ def export(conn_params: dict, output_path: Path) -> None:
                 FROM best_tuning_results b
                 JOIN task_queue t ON t.id = b.task_id AND t.arch = b.arch
                 WHERE t.status != 'cancelled' AND b.tuning_level = 'kernel'
+                  {arch_clause}
                 ORDER BY b.arch, b.iface_name
-            """)
+            """.format(arch_clause='AND b.arch = %s' if arch else ''),
+                        [arch] if arch else None)
             rows = cur.fetchall()
 
-    logger.info('Fetched %d rows from best_tuning_results (tuning_level=kernel)', len(rows))
+    logger.info('Fetched %d rows from best_tuning_results (tuning_level=kernel%s)',
+                len(rows), f', arch={arch}' if arch else '')
 
     counts: dict[str, int] = {}
     skipped = 0
@@ -326,7 +422,11 @@ def export(conn_params: dict, output_path: Path) -> None:
 
         for row in rows:
             task_id     = row['task_id']
-            arch        = row['arch']
+            # NOT `arch`: that name is this function's --arch parameter, read
+            # again after this loop by patch_missing_dtypes. Rebinding it here
+            # would leave the patch scoped to whichever arch happened to come
+            # last instead of to the one the caller asked for (or to all).
+            row_arch    = row['arch']
             iface_name  = row['iface_name']
             task_config = row['task_config']
             impl_desc   = row['impl_desc']
@@ -335,7 +435,7 @@ def export(conn_params: dict, output_path: Path) -> None:
                 logger.warning(
                     'Skipping task_id=%s arch=%s kernel=%s: impl_desc is NULL '
                     '(compute_best_results may not have run for this entry)',
-                    task_id, arch, iface_name,
+                    task_id, row_arch, iface_name,
                 )
                 skipped += 1
                 continue
@@ -348,7 +448,7 @@ def export(conn_params: dict, output_path: Path) -> None:
             entry  = task_config['entry']
             psels  = impl_desc.get('psels') or {}
             copts  = impl_desc.get('copts') or {}
-            gpu    = f'{arch}_mod0'
+            gpu    = f'{row_arch}_mod0'
 
             cols, unique = KERNEL_SCHEMAS[iface_name]
 
@@ -360,7 +460,7 @@ def export(conn_params: dict, output_path: Path) -> None:
             except Exception as exc:
                 logger.warning(
                     'Skipping task_id=%s arch=%s kernel=%s entry=%s: %s',
-                    task_id, arch, iface_name, entry, exc,
+                    task_id, row_arch, iface_name, entry, exc,
                 )
                 skipped += 1
                 continue
@@ -368,20 +468,180 @@ def export(conn_params: dict, output_path: Path) -> None:
             insert_row(db, iface_name, cols, values)
             counts[iface_name] = counts.get(iface_name, 0) + 1
 
+        # After every measured row is in, not during: the decision is "does
+        # this gpu have any rows of that dtype at all", which is only knowable
+        # once the loop has finished.
+        patched = sum(patch_missing_dtypes(db, kernel, cols, arch=arch)
+                      for kernel, (cols, _unique) in KERNEL_SCHEMAS.items())
+
         db.commit()
 
     for iface_name, n in sorted(counts.items()):
         logger.info('  %-20s: %d rows', iface_name, n)
 
     total = sum(counts.values())
+    if patched:
+        logger.warning('  %d row(s) were CROSS-PATCHED between float16 and '
+                       'bfloat16 and are not measured data', patched)
     logger.info(
-        'Done: %d rows exported to %s, %d skipped in %.1fs',
-        total, output_path, skipped, time.monotonic() - t0,
+        'Done: %d rows exported to %s (%d cross-patched), %d skipped in %.1fs',
+        total, output_path, patched, skipped, time.monotonic() - t0,
     )
     logger.info('Next step: .tune/bin/sancheck <workdir>')
 
 
-def export_op(conn_params: dict, output_path: Path) -> None:
+def _open_base_db(base_db: Path) -> sqlite3.Connection:
+    """Open --base_db READ ONLY, decompressing a .tar.xz to a temp file first.
+
+    mode=ro is the point, not a precaution: the usual --base_db is the in-tree
+    modules/flash/database/op_database.sqlite3.tar.xz, and a run must leave it
+    untouched -- the export's only output is --output. A plain .sqlite3 base
+    would otherwise be opened read-write, so the guarantee rests on the URI
+    rather than on every caller remembering to only SELECT.
+
+    decomposedb writes a single flat `op_database.sqlite3` member (see its
+    `tar -cJf ... -C $(dirname) $(basename)`), and the in-tree archive has the
+    same shape, so the member is located by suffix rather than a hardcoded name.
+    """
+    if base_db.suffix != '.xz':
+        return sqlite3.connect(f'file:{base_db}?mode=ro', uri=True)
+    with tarfile.open(base_db) as tar:
+        members = [m for m in tar.getmembers() if m.name.endswith('.sqlite3')]
+        if len(members) != 1:
+            raise ValueError(
+                f'{base_db} holds {len(members)} .sqlite3 members, expected exactly one')
+        tmpdir = tempfile.mkdtemp(prefix='aotriton-base-db.')
+        # Deleted at exit rather than here: sqlite needs the file (and room for
+        # its journal) for as long as the connection lives, and the connection
+        # outlives this function. Without this every run leaves a copy of the
+        # baseline database behind in /tmp.
+        atexit.register(shutil.rmtree, tmpdir, ignore_errors=True)
+        tar.extract(members[0], tmpdir)
+        return sqlite3.connect(Path(tmpdir) / members[0].name)
+
+
+def load_base_into(db: sqlite3.Connection, base_db: Path) -> int:
+    """Copy --base_db into `db`, upgrading 0.13b's schema on the way.
+
+    The only difference between the two formats is the backend column: 0.13b has
+    a single op$backend, 0.14b the ranked pair op$best1st/op$best2nd. Every input
+    column and both UNIQUE keys are identical, so the upgrade is one
+    INSERT .. SELECT per table with op$backend copied into both ranked columns.
+    0.13b recorded no runner-up and none can be invented, and best2nd == best1st
+    is the honest encoding of that -- it makes the generator's flyc substitution
+    a no-op on baseline rows rather than a guess.
+    """
+    total = 0
+    src = _open_base_db(base_db)
+    try:
+        for table_name, (cols, unique) in OP_SCHEMAS.items():
+            ensure_table(db, table_name, cols, unique)
+            table = f'FLASH${table_name}'
+            have = {r[1] for r in src.execute(f'PRAGMA table_info("{table}")')}
+            if not have:
+                logger.warning('--base_db has no table %s, skipping', table)
+                continue
+            names = _col_names(cols)
+            upgraded = 'op$best1st' not in have
+            if upgraded:
+                missing = [c for c in names
+                           if c not in have and not c.startswith('op$best')]
+                if missing or 'op$backend' not in have:
+                    raise ValueError(
+                        f'{base_db}: {table} is neither the 0.13b nor the 0.14b '
+                        f'op schema (missing {missing or ["op$backend"]})')
+                # op$backend -> both ranked columns; every other column by name.
+                select = ', '.join(
+                    '"op$backend"' if c.startswith('op$best') else f'"{c}"'
+                    for c in names)
+            else:
+                select = ', '.join(f'"{c}"' for c in names)
+            insert_cols = ', '.join(f'"{c}"' for c in names)
+            placeholders = ', '.join('?' * len(names))
+            rows = src.execute(f'SELECT {select} FROM "{table}"').fetchall()
+            db.executemany(
+                f'INSERT OR REPLACE INTO "{table}" ({insert_cols}) '
+                f'VALUES ({placeholders})', rows)
+            logger.info('  %-20s: %d base rows%s', table_name, len(rows),
+                        ' (upgraded from op$backend)' if upgraded else '')
+            total += len(rows)
+    finally:
+        src.close()
+    db.commit()
+    return total
+
+
+def merge_into(dst: sqlite3.Connection, src: sqlite3.Connection) -> tuple[int, int]:
+    """Overwrite dst's entries with src's. Returns (replaced, added).
+
+    insert_row's INSERT OR REPLACE plus the tables' UNIQUE(<input columns>)
+    constraint is what makes this an overwrite of exactly the colliding entries
+    rather than an append; the split of replaced vs added is counted here because
+    it is the number that says what an incremental run actually did.
+    """
+    replaced = added = 0
+    for table_name, (cols, _unique) in OP_SCHEMAS.items():
+        table = f'FLASH${table_name}'
+        names = _col_names(cols)
+        col_str = ', '.join(f'"{c}"' for c in names)
+        placeholders = ', '.join('?' * len(names))
+        before = dst.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        rows = src.execute(f'SELECT {col_str} FROM "{table}"').fetchall()
+        dst.executemany(
+            f'INSERT OR REPLACE INTO "{table}" ({col_str}) VALUES ({placeholders})',
+            rows)
+        after = dst.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        added += after - before
+        replaced += len(rows) - (after - before)
+    dst.commit()
+    return replaced, added
+
+
+def export_op_incremental(conn_params: dict, output_path: Path, base_db: Path,
+                          arch: str | None = None) -> None:
+    """Write output_path = converted base_db, overwritten by this run's pg rows.
+
+    base_db is an INPUT and is never written to; both halves are staged in
+    memory and only output_path is created.
+
+    The two halves are independent -- one reads a tar.xz off disk, the other
+    queries PostgreSQL -- so they run concurrently into separate in-memory
+    databases and are merged afterwards. check_same_thread=False because each
+    connection is created in one thread and read back in another; they are never
+    used by two threads at once.
+    """
+    t0 = time.monotonic()
+    base = sqlite3.connect(':memory:', check_same_thread=False)
+    fresh = sqlite3.connect(':memory:', check_same_thread=False)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f_base = pool.submit(load_base_into, base, base_db)
+            f_new = pool.submit(export_op_into, fresh, conn_params, arch)
+            n_base = f_base.result()
+            n_new = f_new.result()
+
+        replaced, added = merge_into(base, fresh)
+        logger.info('Incremental: %d base rows + %d new rows -> %d replaced, %d added',
+                    n_base, n_new, replaced, added)
+        with sqlite3.connect(output_path) as out:
+            base.backup(out)
+    finally:
+        base.close()
+        fresh.close()
+
+    logger.info('Done: %d rows written to %s in %.1fs',
+                n_base + added, output_path, time.monotonic() - t0)
+    logger.info('Next step: .tune/bin/sancheck <workdir> --tuning_mode op')
+
+
+def export_op_into(db: sqlite3.Connection, conn_params: dict,
+                   arch: str | None = None) -> int:
+    """Fill `db` with the op slice of best_tuning_results. Returns the row count.
+
+    Takes an open connection rather than a path so the same body serves both the
+    plain export (a file) and --base_db (an in-memory staging db merged into the
+    converted baseline).
+    """
     t0 = time.monotonic()
 
     logger.info('Querying best_tuning_results (tuning_level=op)...')
@@ -394,8 +654,10 @@ def export_op(conn_params: dict, output_path: Path) -> None:
                 FROM best_tuning_results b
                 JOIN task_queue t ON t.id = b.task_id AND t.arch = b.arch
                 WHERE t.status != 'cancelled' AND b.tuning_level = 'op'
+                  {arch_clause}
                 ORDER BY b.arch, b.iface_name
-            """)
+            """.format(arch_clause='AND b.arch = %s' if arch else ''),
+                        [arch] if arch else None)
             rows = cur.fetchall()
 
     logger.info('Fetched %d rows from best_tuning_results (tuning_level=op)', len(rows))
@@ -403,59 +665,95 @@ def export_op(conn_params: dict, output_path: Path) -> None:
     counts: dict[str, int] = {}
     skipped = 0
 
-    with sqlite3.connect(output_path) as db:
-        for table_name, (cols, unique) in OP_SCHEMAS.items():
-            ensure_table(db, table_name, cols, unique)
+    for table_name, (cols, unique) in OP_SCHEMAS.items():
+        ensure_table(db, table_name, cols, unique)
 
-        for row in rows:
-            task_id     = row['task_id']
-            arch        = row['arch']
-            iface_name  = row['iface_name']
-            task_config = row['task_config']
-            impl_index  = row['impl_index']
+    for row in rows:
+        task_id     = row['task_id']
+        # NOT `arch`: that name is this function's --arch parameter, read again
+        # after this loop by patch_missing_dtypes. See export() for the same
+        # rule.
+        row_arch    = row['arch']
+        iface_name  = row['iface_name']
+        task_config = row['task_config']
+        impl_index  = row['impl_index']
 
-            table_name = op_table_name(iface_name)
-            if table_name not in OP_SCHEMAS:
-                logger.warning('Skipping unknown op %s (task_id=%s)', iface_name, task_id)
-                skipped += 1
-                continue
+        # This column is a BACKEND INDEX; impl_index is a position in the
+        # tuner's per-arch variant list. They differ wherever the runnable
+        # backends are not a contiguous prefix (gfx1201: triton=0, flyc=2).
+        # impl_desc carries the index actually forced; the fallback covers
+        # rows written before it did.
+        impl_desc = row['impl_desc'] or {}
+        op_backend = impl_desc.get('backend_index', impl_index)
+        if True:  # FIXME: Flyc duct tape
+            # compute_best_results.py puts the runner-up here. Absent (older
+            # rows, or a single passing backend) means there is no second
+            # choice, so best2nd repeats best1st and the generator's
+            # substitution becomes a no-op rather than a wrong index.
+            op_backend_2nd = impl_desc.get('backend_2nd_index', op_backend)
 
-            cols, _ = OP_SCHEMAS[table_name]
-            entry = task_config['entry']
-            gpu   = f'{arch}_mod0'
+        table_name = op_table_name(iface_name)
+        if table_name not in OP_SCHEMAS:
+            logger.warning('Skipping unknown op %s (task_id=%s)', iface_name, task_id)
+            skipped += 1
+            continue
 
-            try:
-                values = []
-                for col_def in cols:
-                    source = col_def[2]
-                    if source == 'op_backend':
-                        values.append(impl_index)
-                    elif source == 'op_tflops':
-                        values.append(0.0)
-                    else:
-                        values.append(extract_value(col_def, gpu, entry, {}, {}))
-            except Exception as exc:
-                logger.warning(
-                    'Skipping task_id=%s arch=%s op=%s entry=%s: %s',
-                    task_id, arch, iface_name, entry, exc,
-                )
-                skipped += 1
-                continue
+        cols, _ = OP_SCHEMAS[table_name]
+        entry = task_config['entry']
+        gpu   = f'{row_arch}_mod0'
 
-            insert_row(db, table_name, cols, values)
-            counts[table_name] = counts.get(table_name, 0) + 1
+        try:
+            values = []
+            for col_def in cols:
+                source = col_def[2]
+                if source == 'op_best1st':
+                    values.append(op_backend)
+                elif source == 'op_best2nd':
+                    values.append(op_backend_2nd)
+                elif source == 'op_tflops':
+                    values.append(0.0)
+                else:
+                    values.append(extract_value(col_def, gpu, entry, {}, {}))
+        except Exception as exc:
+            logger.warning(
+                'Skipping task_id=%s arch=%s op=%s entry=%s: %s',
+                task_id, row_arch, iface_name, entry, exc,
+            )
+            skipped += 1
+            continue
 
-        db.commit()
+        insert_row(db, table_name, cols, values)
+        counts[table_name] = counts.get(table_name, 0) + 1
+
+    # Before any --base_db merge, deliberately: applied afterwards this would
+    # invent cross-patched rows against the BASELINE's dtype coverage. Here the
+    # new rows get exactly the treatment a non-incremental export gives them.
+    patched = sum(patch_missing_dtypes(db, table_name, cols, arch=arch)
+                  for table_name, (cols, _unique) in OP_SCHEMAS.items())
+
+    db.commit()
 
     for table_name, n in sorted(counts.items()):
         logger.info('  %-20s: %d rows', table_name, n)
 
     total = sum(counts.values())
-    logger.info(
-        'Done: %d rows exported to %s, %d skipped in %.1fs',
-        total, output_path, skipped, time.monotonic() - t0,
-    )
-    logger.info('Next step: .tune/bin/sancheck <workdir> --tuning_mode op')
+    if patched:
+        logger.warning('  %d row(s) were CROSS-PATCHED between float16 and '
+                       'bfloat16 and are not measured data', patched)
+    logger.info('Collected %d op rows (%d cross-patched), %d skipped in %.1fs',
+                total, patched, skipped, time.monotonic() - t0)
+    return total
+
+
+def export_op(conn_params: dict, output_path: Path, arch: str | None = None,
+              base_db: Path | None = None) -> None:
+    if base_db is None:
+        with sqlite3.connect(output_path) as db:
+            total = export_op_into(db, conn_params, arch=arch)
+        logger.info('Done: %d rows exported to %s', total, output_path)
+        logger.info('Next step: .tune/bin/sancheck <workdir> --tuning_mode op')
+        return
+    export_op_incremental(conn_params, output_path, base_db, arch=arch)
 
 
 # ---------------------------------------------------------------------------
@@ -481,7 +779,29 @@ def main() -> None:
     parser.add_argument('--tuning_mode', choices=['kernel', 'op'], default='kernel',
                         help='Selects the tuning_level slice of the unified '
                              'best_tuning_results table to export')
+    parser.add_argument('--arch', default=None,
+                        help='Export only this architecture. The output file is '
+                             'REPLACED, not merged into, so it will then contain '
+                             'only this architecture. Default: all.')
+    parser.add_argument('--base_db', default=None, type=Path,
+                        help='op mode only. Seed --output with this existing op '
+                             'database, then overwrite only the entries this run '
+                             'measured. READ ONLY: it is opened mode=ro and is '
+                             'never modified; everything is written to --output. '
+                             'Accepts a .sqlite3 or a .tar.xz, and upgrades '
+                             "0.13b's single op$backend column to the ranked "
+                             'op$best1st/op$best2nd pair on the way in.')
     args = parser.parse_args()
+
+    if args.base_db is not None:
+        # op-only because the kernel path already has a partial-update story --
+        # per-arch shards that accumulate under installed/database/amd/<arch>/ --
+        # whereas the op database is installed wholesale and has no accumulator.
+        if args.tuning_mode != 'op':
+            parser.error('--base_db requires --tuning_mode op '
+                         '(kernel mode accumulates through per-arch shards instead)')
+        if not args.base_db.is_file():
+            parser.error(f'--base_db does not exist: {args.base_db}')
 
     if args.workdir:
         conn_params = get_db_connection_params(Path(args.workdir))
@@ -492,10 +812,27 @@ def main() -> None:
         if args.password:
             conn_params['password'] = args.password
 
+    if args.arch:
+        # The output file is rewritten from scratch on every run, so an
+        # arch-scoped export yields a single-architecture database rather than
+        # merging into whatever was there. That is intended for the kernel
+        # path -- scratch/ is a staging area and decomposedb accumulates
+        # per-architecture into installed/ -- but the op path has no such
+        # accumulator, so say plainly what the caller is about to install.
+        logger.warning('Exporting arch=%s ONLY. %s is replaced, not merged.',
+                       args.arch, args.output)
+        if args.tuning_mode == 'op' and args.base_db is None:
+            logger.warning('op mode: the resulting database is INCOMPLETE. '
+                           'decomposedb --tuning_mode op installs it wholesale, '
+                           'with no per-architecture shards, so the installed op '
+                           'database will hold only arch=%s. Pass --base_db to '
+                           'seed the output from an existing database first.',
+                           args.arch)
+
     if args.tuning_mode == 'op':
-        export_op(conn_params, args.output)
+        export_op(conn_params, args.output, arch=args.arch, base_db=args.base_db)
     else:
-        export(conn_params, args.output)
+        export(conn_params, args.output, arch=args.arch)
 
 
 if __name__ == '__main__':

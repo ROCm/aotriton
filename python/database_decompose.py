@@ -13,6 +13,11 @@ def parse():
     p.add_argument('--database_file', type=Path, default=(db_base / 'tuning_database.sqlite3'))
     p.add_argument('--script_output', type=Path, default=(db_base / 'decompose_db.sh'))
     p.add_argument('--decompose_output', type=Path, default=db_base)
+    p.add_argument('--arch', default=None,
+                   help='Only emit shards for this architecture (e.g. gfx942). '
+                        'Other architectures already present under '
+                        '--decompose_output are left alone. Default: every '
+                        'architecture found in the database.')
     args = p.parse_args()
     return args
 
@@ -45,12 +50,26 @@ def write_script(args, dbc, out):
         for table, sql in db_tables.items():
             FAMILY, kernel = table.split('$')
             for gpu, in dbc.execute(f'SELECT DISTINCT gpu FROM {table}'):
+                # Filter on the arch, not the gpu: one arch can have several
+                # mods (gfx942_mod0/mod1/...), and restricting to an
+                # architecture means all of its mods, not an assumed _mod0.
+                if args.arch is not None and gpu2arch(gpu) != args.arch:
+                    continue
                 yield table, sql, VENDOR, gpu, FAMILY.lower(), kernel
     central_dbf = args.database_file.as_posix()
+    emitted = 0
     for table, raw_sql, vendor, gpu, family, kernel in gen():
+        emitted += 1
         arch = gpu2arch(gpu)
         sql = raw_sql.replace('id INTEGER PRIMARY KEY,', '')
-        db_dir = args.decompose_output / vendor / arch
+        # <family>/database/<vendor>/<arch>/, the same shape as the checked-in
+        # modules/<family>/database/amd/<arch>/. The family level is not
+        # decoration: v3src/CMakeLists.txt resolves an external database with
+        # `file(GLOB "${AOTRITON_TUNING_DATABASE_ROOT}/*/database")`, so a tree
+        # without it matches nothing, the extract-and-compose loop never runs,
+        # and the build fails much later with a missing tuning_database.sqlite3.
+        # `family` was already being computed here and thrown away.
+        db_dir = args.decompose_output / family / 'database' / vendor / arch
         dbf = db_dir / f'{kernel}.sqlite3'
         print(f'mkdir -p {db_dir.as_posix()}', file=out)
         print(f"sqlite3 '{dbf}' << 'EOF'", file=out)
@@ -59,10 +78,43 @@ def write_script(args, dbc, out):
         cols = ','.join(db_cols_strings[table])
         print(f"INSERT INTO '{table}' SELECT {cols} FROM 'central'.'{table}' WHERE gpu LIKE '{arch}_%';", file=out)
         print('EOF', file=out)
-    db_base = args.decompose_output / VENDOR
+    if args.arch is not None and emitted == 0:
+        # An empty script exits 0 and looks like a successful decompose. Say so
+        # instead: the usual cause is that the export step ran for a different
+        # architecture, so this one is simply not in the database.
+        print(f"echo 'Warning: no gpu in {central_dbf} belongs to arch "
+              f"{args.arch}; nothing to decompose.' >&2", file=out)
+
+    # Rooted at decompose_output, not at a <vendor> subdirectory: the shards now
+    # live under <family>/database/<vendor>/, so there is no single vendor
+    # directory to walk, and a family added later needs no change here.
+    db_base = args.decompose_output
     print(TARXZ, file=out)
     print(f'''export -f tarxz''', file=out)
-    print(f'''find {db_base.as_posix()} -name '*.sqlite3' | "$GNU_PARALLEL" tarxz''', file=out)
+    # Matched by -path, never a bare -name, and under --arch the architecture
+    # is part of the pattern. tarxz() DELETES each .sqlite3 once it has
+    # archived it, so whatever this find selects, it also consumes.
+    #
+    #   */database/<vendor>/*  keeps it off the central database, which
+    #   decompose_output defaults to sitting alongside -- an unrestricted find
+    #   would archive and then remove the very file the INSERTs above read.
+    #
+    #   .../<arch>/*           keeps an --arch run off every OTHER
+    #   architecture's shards. "A completed earlier run leaves none behind" is
+    #   true and not enough: an INTERRUPTED one does, and this run would then
+    #   archive a half-written shard for an architecture it was told not to
+    #   touch -- turning a visibly incomplete .sqlite3 into a .tar.xz that
+    #   looks finished, which is worse than leaving it alone. eca39ab6's
+    #   accumulation guarantee says other architectures survive an --arch run;
+    #   this is the part of it that was missing.
+    #
+    # A pattern, not a narrower root: -path never has to exist, so scoping this
+    # way still works on a first run, where <arch>/ is created seconds earlier
+    # by the INSERTs above.
+    arch_glob = f'*/database/{VENDOR}/*' if args.arch is None \
+        else f'*/database/{VENDOR}/{args.arch}/*'
+    print(f'''find {db_base.as_posix()} -path '{arch_glob}' -name '*.sqlite3' | "$GNU_PARALLEL" tarxz''',
+          file=out)
 
 
 def main():

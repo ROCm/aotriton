@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+"""
+Move task_queue rows back to 'pending' so they are picked up and run again.
+
+Rows are chosen either by a rule (--select) or by naming them (--id).
+
+--select covers the two states nothing retries on its own:
+
+    --select stale    status='running' with started_at older than the stale
+                      timeout. A worker that died, was killed, or lost its
+                      container leaves its claim behind; nothing reaps it, so
+                      the task stays 'running' forever and no other worker will
+                      take it.
+    --select failed   status='failed'. These are terminal until something moves
+                      them, which is this.
+
+--id takes task ids directly and does not look at status, for the cases no rule
+covers -- a task wedged in a state you have just diagnosed, or a handful picked
+out of a report. Ids that are not in the table are listed and skipped. End the
+id list with `--` before the workdir.
+
+By default the tasks' existing measurements in tuning_results and
+most_accurate_tuning_results are deleted, so the re-run starts clean rather
+than mixing new results with the ones that are already there. --keep_results
+spares them, for when the rows are believed good and only the queue state is
+wrong -- a worker that finished the work but died before reporting it.
+
+Both tuning levels are handled. A selection is made across the whole queue and
+the ids are grouped by their own tuning_level before resetting, because
+tuning_results is shared between levels and the delete has to be scoped to the
+level each id actually belongs to.
+
+Shows what it matched and asks before changing anything.
+
+Usage:
+    .tune/bin/reset_task --select stale  ~/wkdir.v3.5
+    .tune/bin/reset_task --select failed ~/wkdir.v3.5
+    .tune/bin/reset_task --select failed --keep_results ~/wkdir.v3.5
+    .tune/bin/reset_task --id 1234 1235 1236 -- ~/wkdir.v3.5
+
+--id is variadic, so `--` ends the id list and separates it from the workdir.
+(.tune/bin/reset_task ~/wkdir.v3.5 --id 1234 works too, for the same reason.)
+"""
+
+import argparse
+import sys
+from collections import Counter, defaultdict
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_TUNE_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _task_id(value: str) -> int:
+    """int(), with the fix for the usual mistake spelled out.
+
+    --id is variadic, so it consumes every following token, workdir included.
+    `--` ends the list, which is what argparse already documents for this case;
+    on its own argparse reports "invalid int value: '/path/to/wkdir'", which
+    names the symptom and not the remedy.
+    """
+    try:
+        return int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f'{value!r} is not a task id. --id takes every token after it; end '
+            f'the list with -- : reset_task --id 1 2 3 -- <workdir>')
+
+
+def print_summary(what: str, rows: list[dict]) -> None:
+    print(f'\nSelected ({what}): {len(rows)}')
+    if not rows:
+        return
+
+    by_arch: Counter = Counter()
+    by_level: Counter = Counter()
+    by_host: Counter = Counter()
+    for r in rows:
+        by_arch[r['arch']] += 1
+        by_level[r['tuning_level']] += 1
+        by_host[r['node_hostname'] or '(none)'] += 1
+
+    print('\nBy arch:')
+    for k, n in sorted(by_arch.items()):
+        print(f'  {k}: {n}')
+    print('\nBy tuning level:')
+    for k, n in sorted(by_level.items()):
+        print(f'  {k}: {n}')
+
+    if what == 'ids':
+        # --id does not filter on status, so what those ids actually are is the
+        # thing the operator has not been told yet. Resetting a 'completed' row
+        # is legitimate but rarely intended.
+        by_status: Counter = Counter(r['status'] for r in rows)
+        print('\nBy current status:')
+        for k, n in sorted(by_status.items()):
+            print(f'  {k}: {n}')
+
+    if what == 'stale':
+        # The oldest claim is the one worth eyeballing: if it is barely over the
+        # threshold, the "stale" task may just be slow, and resetting it hands
+        # the same work to a second worker while the first is still on it.
+        ages = sorted((r['age_s'] or 0) for r in rows)
+        print(f'\nRunning for (hours): min {ages[0]/3600:.1f}, '
+              f'max {ages[-1]/3600:.1f}')
+        print('\nBy worker host:')
+        for k, n in sorted(by_host.items()):
+            print(f'  {k}: {n}')
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument('workdir', help='Project workdir containing config.rc')
+    how = parser.add_mutually_exclusive_group(required=True)
+    how.add_argument('--select', choices=['stale', 'failed'],
+                     help="Which rows to reset: 'stale' = still running past "
+                          "the stale timeout, 'failed' = the task failed. The "
+                          "effective timeout is printed at run time.")
+    how.add_argument('--id', nargs='+', type=_task_id, metavar='ID',
+                     help='Reset these task ids, whatever their status. '
+                          'Ids that do not exist are reported and skipped.')
+    parser.add_argument('--keep_results', action='store_true',
+                        help="Keep the tasks' existing tuning_results and "
+                             'most_accurate_tuning_results rows. Default is to '
+                             'delete them so the re-run starts clean.')
+    args = parser.parse_args()
+
+    workdir = Path(args.workdir)
+    if not workdir.is_dir():
+        sys.exit(f'Error: workdir does not exist: {workdir}')
+
+    # Imported here, after the arguments are parsed and validated. At module
+    # scope these pull in psycopg and, through pq_helpers, the flash tune
+    # module -- so `-h` used to fail with an ImportError from somewhere three
+    # packages down instead of printing usage. Nothing about the usage text
+    # needs the database stack to be importable.
+    sys.path.insert(0, str(_TUNE_ROOT / 'libexec'))
+    try:
+        import psycopg
+        from aotriton.tune.pq.queue import TaskQueue
+        from aotriton.tune.utils import get_db_connection_params
+        from pq_helpers import (find_resettable, find_resettable_by_ids,
+                                reset_to_pending)
+    except ImportError as exc:
+        sys.exit(f"Error: {exc}\n"
+                 f"  The 'aotriton' package must be importable and current.\n"
+                 f"  Install or refresh it with: pip install -e '{_REPO_ROOT}'")
+
+    # Importable is not the same as current. A non-editable install is a
+    # snapshot taken at pip time, so an `aotriton` from before this tool existed
+    # imports perfectly and then fails on the first attribute it does not have.
+    # Check once, here, and say what to do -- rather than surfacing an
+    # AttributeError from whichever call happened to come first.
+    for _needed in ('find_resettable', 'find_resettable_by_ids',
+                    'STALE_TIMEOUT_SECONDS'):
+        if not hasattr(TaskQueue, _needed):
+            sys.exit(
+                f"Error: the installed 'aotriton' package is out of date "
+                f"(TaskQueue has no {_needed}).\n"
+                f"  Loaded from: {sys.modules[TaskQueue.__module__].__file__}\n"
+                f"  Refresh it with: pip install -e '{_REPO_ROOT}'")
+
+    delete_results = not args.keep_results
+    conn_params = get_db_connection_params(workdir)
+    if args.select == 'stale':
+        print(f'Stale timeout: {TaskQueue.STALE_TIMEOUT_SECONDS}s')
+
+    with psycopg.connect(**conn_params, autocommit=False) as conn:
+        if args.id:
+            label = 'ids'
+            print(f'Querying task_queue for {len(args.id)} id(s) …')
+            rows = find_resettable_by_ids(conn, args.id)
+            # Named ids that are not in the table are the caller's typo or a
+            # stale list; say which rather than silently resetting fewer rows
+            # than were asked for.
+            missing = sorted(set(args.id) - {r['id'] for r in rows})
+            if missing:
+                print(f'  not found: {", ".join(str(i) for i in missing)}')
+        else:
+            label = args.select
+            print(f'Querying task_queue for {args.select} tasks …')
+            rows = find_resettable(conn, args.select)
+        print_summary(label, rows)
+
+        if not rows:
+            print('\nNothing to do.')
+            return
+
+        if delete_results:
+            print('\nExisting tuning_results and most_accurate_tuning_results '
+                  'rows for these tasks WILL BE DELETED (--keep_results spares them).')
+        else:
+            print('\n--keep_results: existing results are kept; the re-run '
+                  'will write alongside them.')
+
+        answer = input('\nReset these rows to pending? [y/N] ').strip().lower()
+        if answer != 'y':
+            print('Aborted.')
+            return
+
+        # Grouped by level, one call each: reset_to_pending scopes every
+        # statement by tuning_level, so a mixed id list handed to a single call
+        # would silently reset only the part matching the level passed.
+        by_level: dict[str, list[int]] = defaultdict(list)
+        for r in rows:
+            by_level[r['tuning_level']].append(r['id'])
+
+        affected = 0
+        for level, ids in sorted(by_level.items()):
+            n = reset_to_pending(conn, ids, tuning_level=level,
+                                 delete_results=delete_results)
+            print(f'  {level}: {n} rows reset')
+            affected += n
+        conn.commit()
+        print(f'Done: {affected} rows reset to pending.')
+
+
+if __name__ == '__main__':
+    main()

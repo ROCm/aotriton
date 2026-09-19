@@ -4,7 +4,8 @@
 
 # Build Testing Version of AOTriton Libraries (run INSIDE container)
 #
-# Builds all tuned architectures detected from <workdir>/installed/database/amd/
+# Builds all tuned architectures detected from
+# <workdir>/installed/database/<family>/database/amd/
 # in one cmake pass and installs to <workdir>/installed/test/.
 #
 # This script must be run inside the CELERY_WORKER_IMAGE container.
@@ -54,9 +55,21 @@ source "$(dirname "$CELERY_WORKER_PYTHON")/activate"
 
 DATABASE_ROOT="$WORKDIR/installed/database"
 
+# Architectures live at <root>/<family>/database/amd/<arch>, mirroring the
+# checked-in modules/<family>/database. Enumerated across families rather than
+# from one fixed path: the same arch appears once per family, hence the sort -u.
+# This is also the shape v3src/CMakeLists.txt globs for -- it resolves
+# --database_root with `file(GLOB "${AOTRITON_TUNING_DATABASE_ROOT}/*/database")`
+# and silently extracts nothing when the family level is absent, which surfaces
+# far later as a missing tuning_database.sqlite3 during codegen.
+list_db_archs() {
+    find "$DATABASE_ROOT" -mindepth 4 -maxdepth 4 -type d -path '*/database/amd/*' \
+        -printf '%f\n' 2>/dev/null | sort -u
+}
+
 if [ "$SOURCE_DB" -eq 0 ]; then
-  if [ ! -d "$DATABASE_ROOT/amd" ]; then
-    echo "Error: no sharded database found at $DATABASE_ROOT/amd" >&2
+  if [ -z "$(list_db_archs)" ]; then
+    echo "Error: no sharded database found under $DATABASE_ROOT/*/database/amd/" >&2
     echo "Run .tune/bin/decomposedb first, or pass --source_db to use the source-embedded database." >&2
     exit 1
   fi
@@ -74,11 +87,14 @@ AOTRITON_ROOT="$(realpath "$SCRIPT_DIR/../..")"
 # sqlite3 CLI may not be present inside CELERY_WORKER_IMAGE; use Python fallback
 . "$TUNE_ROOT/lib/sqlite3_compat.sh"
 . "$TUNE_ROOT/lib/aotriton_version.sh"
+# pin_line first -- find_flydsl.sh's helpers are written against it.
+. "$AOTRITON_ROOT/.ci/common-pin.sh"
+. "$TUNE_ROOT/lib/find_flydsl.sh"
 
 # Collect architectures to build
 if [ -n "$SINGLE_ARCH" ]; then
-  if [ "$SOURCE_DB" -eq 0 ] && [ ! -d "$DATABASE_ROOT/amd/$SINGLE_ARCH" ]; then
-    echo "Error: no sharded database found for arch '$SINGLE_ARCH' at $DATABASE_ROOT/amd/$SINGLE_ARCH" >&2
+  if [ "$SOURCE_DB" -eq 0 ] && ! list_db_archs | grep -qx "$SINGLE_ARCH"; then
+    echo "Error: no sharded database found for arch '$SINGLE_ARCH' under $DATABASE_ROOT/*/database/amd/" >&2
     exit 1
   fi
   ARCH_LIST=("$SINGLE_ARCH")
@@ -91,9 +107,9 @@ else
       exit 1
     fi
   else
-    mapfile -t ARCH_LIST < <(ls -1 "$DATABASE_ROOT/amd/")
+    mapfile -t ARCH_LIST < <(list_db_archs)
     if [ "${#ARCH_LIST[@]}" -eq 0 ]; then
-      echo "Error: no architectures found under $DATABASE_ROOT/amd/" >&2
+      echo "Error: no architectures found under $DATABASE_ROOT/*/database/amd/" >&2
       exit 1
     fi
   fi
@@ -104,6 +120,33 @@ echo "Architectures to build: ${ARCH_LIST[*]}"
 echo "Step 1: Building Triton wheel..."
 TRITON_WHEEL=$("$TUNE_ROOT/single/build_triton_wheel.sh" --no_build_fallback "$WORKDIR")
 echo "Using Triton wheel: $TRITON_WHEEL"
+
+# Step 1b: locate the FlyDSL wheel, if this tree needs a locally built one.
+#
+# Resolved once, outside the per-arch loop, for the same reason the Triton wheel
+# is: it is the same wheel for every arch. Found rather than built -- the .ci/
+# builders need Docker and this script runs inside CELERY_WORKER_IMAGE, so the
+# host-side prebuild (remotebld's sibling step) is what produces it.
+#
+# ABI tag comes from the venv activated at the top of this script, which is the
+# venv cmake will install the wheel into; CMakeLists.txt:451-452 rejects a
+# mismatch outright.
+FLYDSL_WHEEL=""
+if flydsl_required "$AOTRITON_ROOT"; then
+  PYVER=$(python --version 2>&1 | cut -d' ' -f2 | cut -d. -f1,2)
+  if ! FLYDSL_WHEEL=$(find_flydsl_wheel "$AOTRITON_ROOT" "$WORKDIR" "$PYVER"); then
+    echo "Error: third_party/flydsl-llvm.txt is non-empty, so this build needs a" >&2
+    echo "locally built FlyDSL wheel, but none for python ${PYVER} is cached in" >&2
+    echo "$WORKDIR/scratch/flydsl/." >&2
+    echo "" >&2
+    echo "Without it cmake fails at configure (CMakeLists.txt's flydsl-llvm.txt" >&2
+    echo "tripwire). Run remotebld, which pre-builds it via a sibling container," >&2
+    echo "or build it directly with:" >&2
+    echo "  .tune/single/prebuild_wheel.sh --select all <workdir>" >&2
+    exit 1
+  fi
+  echo "Using FlyDSL wheel: $FLYDSL_WHEEL"
+fi
 
 # Step 2: per-arch build via .ci/build-test.sh. test123 avoids clashing with
 # both the tuning "123" suffix and PyTorch's bundled AOTriton.
@@ -123,8 +166,16 @@ for ARCH in "${ARCH_LIST[@]}"; do
   ALTWHEEL_CONFIG="$(get_resolved_altwheel_yaml "$AOTRITON_ROOT" "$WORKDIR")"
   [ -n "$ALTWHEEL_CONFIG" ] && BUILD_TEST_ARGS+=(--altwheel_config "$ALTWHEEL_CONFIG")
 
+  [ -n "$FLYDSL_WHEEL" ] && BUILD_TEST_ARGS+=(--flydsl_wheel "$FLYDSL_WHEEL")
+
+  # PYTORCH_ROCM_ARCH for the same reason build_arch.sh sets it: this build
+  # also reaches find_package(Torch) -- AOTRITON_USE_TORCH defaults ON and
+  # build-test.sh does not turn it off -- and torch's LoadHIP.cmake refuses to
+  # configure without it rather than probing for a GPU this loop may not be
+  # building for.
   AOTRITON_BUILD_PATH="$BUILD_DIR" \
   AOTRITON_INSTALL_PATH="$INSTALL_DIR" \
+  PYTORCH_ROCM_ARCH="$ARCH" \
     bash "$AOTRITON_ROOT/.ci/build-test.sh" "${BUILD_TEST_ARGS[@]}" "$ARCH" "$TRITON_WHEEL"
 
   echo "Installed: $INSTALL_DIR"

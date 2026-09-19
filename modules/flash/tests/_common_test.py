@@ -18,6 +18,7 @@ HAS_REDUCED_SDPA = hasattr(torch.backends.cuda, "allow_fp16_bf16_reduction_math_
 AOTRITON_TORCH_ONLY_USE_CPU = bool(int(os.getenv('AOTRITON_TORCH_ONLY_USE_CPU', default='0')))
 # Usually we compare with GPU because it is much faster
 # Overrides by AOTRITON_TORCH_ONLY_USE_CPU=1
+AOTRITON_REF_DEVICE_OPTION_SET = (os.getenv('AOTRITON_REF_DEVICE_OPTION', default=None) is not None)
 AOTRITON_REF_DEVICE_OPTION = os.getenv('AOTRITON_REF_DEVICE_OPTION', default='default')
 
 def _get_torch_version():
@@ -365,8 +366,7 @@ class SdpaContext(object):
                  prime_hdim=None,
                  storage_layout=None,
                  ):
-        real_device = 'cpu' if AOTRITON_TORCH_ONLY_USE_CPU else device
-        self._real_device = real_device
+        self._set_real_device(device)
         self._prng_seed = prng_seed
         self._target_device = device
         # `int` or `(qk, vo)`; see `narrow_to_prime`. `D_HEAD` stays the
@@ -528,6 +528,15 @@ class SdpaContext(object):
     def ref_device(self):
         return self.ref_tensors[0].device
 
+    def _set_real_device(self, device):
+        '''
+        The device the dev tensors actually live on, which is where a 'cuda'
+        reference goes. EVERY __init__ must call this: the subclasses do not
+        chain to SdpaContext.__init__, so anything set only there is missing on
+        a VarlenSdpaContext, and create_ref_inputs' policy reads it.
+        '''
+        self._real_device = 'cpu' if AOTRITON_TORCH_ONLY_USE_CPU else device
+
     @staticmethod
     def clone_tensor(t, dtype, device=None):
         if t is None:
@@ -538,71 +547,76 @@ class SdpaContext(object):
     def clone_tensor_tuple(in_tensors, dtype, device=None):
         return tuple([SdpaContext.clone_tensor(t, dtype=dtype, device=device) for t in in_tensors])
 
-    def create_ref_inputs(self, target_gpu_device='cuda'):
+    def create_ref_inputs(self, target_device_policy=None, target_device=None):
+        '''
+        Device policy is not actual device, it's which class of device we should use
+            a) cpu -> device = cpu
+            b) cuda -> device = self._real_device, friendly to gpu-lease
+            c) default -> use faulty reference detection logic baked below
+
+        Device policy precedence:
+            1. AOTRITON_TORCH_ONLY_USE_CPU      # torch is cpu only
+            2. AOTRITON_REF_DEVICE_OPTION       # env var
+            3. caller's target_device_policy    # usually configured by adiff's CPUREF
+            4. default
+        '''
         if AOTRITON_TORCH_ONLY_USE_CPU:
-            ref_device_option = 'cpu'
+            ref_device_policy = 'cpu'
+        elif AOTRITON_REF_DEVICE_OPTION_SET:
+            ref_device_policy = AOTRITON_REF_DEVICE_OPTION
+        elif target_device_policy is not None:
+            ref_device_policy = target_device_policy
         else:
-            ref_device_option = AOTRITON_REF_DEVICE_OPTION
-        '''
-        torch's bf16 batched GEMM leaves part of its output UNWRITTEN on gfx950
-        under ROCm 7.14, which poisons lp_ref and makes ref_error nan -- and a
-        nan threshold fails every tensor at once, so a torch bug reads as a
-        backend bug. Reachable with neither AOTriton nor FlyDSL loaded:
+            ref_device_policy = 'default'
 
-            a = torch.rand(15, 257,   16, device='cuda', dtype=torch.bfloat16)
-            b = torch.rand(15,  16, 2081, device='cuda', dtype=torch.bfloat16)
-            out = torch.full((15, 257, 2081), -12345.0, device='cuda', dtype=torch.bfloat16)
-            torch.bmm(a, b, out=out)
-            (out == torch.tensor(-12345.0, dtype=torch.bfloat16)).sum()  # 274733
-
-        The nan is UNINITIALIZED MEMORY, not a computed value: every element the
-        GEMM writes is correct, it simply never writes 274733 of them, and those
-        keep whatever the caching allocator last left there. Prefill with a
-        finite value and the nan count is zero while the same 274733 elements
-        are wrong. So nan was the lucky case -- when the leftover bytes decode
-        as plausible floats the oracle is quietly wrong and the test passes.
-
-        Hence the shape test covers WHERE WE SAW IT, not the trigger surface.
-        The failure needs bf16 + batch 15 + M 257 + N 2081 + K <= 64 together to
-        show up as nan, but the failing set moves between runs and the rest of
-        the family is silently wrong without tripping anything. Widening this to
-        every bf16 case would be sound and is far too slow; catching the quiet
-        ones needs _validate to reject a nan REFERENCE, which it does not yet.
-
-        Gated on the ROCm version so it retires itself, rather than lingering
-        the way the cunn_SoftMaxForward workaround below did.
-        '''
-        if (ref_device_option == 'default' and ROCM_IS_7_14
+        def apply_policy():
+            if target_device is not None:
+                return target_device
+            if (ref_device_policy == 'default' and ROCM_IS_7_14
                 and self.dtype == torch.bfloat16
                 and (self.seqlen_q, self.seqlen_k) == (257, 2081)):
-            ref_device = 'cpu'
-        elif ref_device_option == 'default' and TORCH_GE_2_7:
-            ref_device = 'cuda'  # Known softmax issues have been fixed in 2.7
-        elif ref_device_option == 'default':
-            ref_device = target_gpu_device
-            seqlen_k = self.seqlen_k
-            hdim = self.hdim
-            '''
-            test_gqa[False-1.2-dtype0-0.5-False-579-2048-203-N_HEADS1-4]
-            triggers GPU segfault when testing with -k 'test_gqa[False-1.2-'
-            (Cannot be reproduced independently)
-            '''
-            if seqlen_k == 579:
-                ref_device = 'cpu'
-            '''
-            Shader _ZN2at6native12_GLOBAL__N_119cunn_SoftMaxForwardILi2EdddNS1_22SoftMaxForwardEpilogueEEEvPT2_PKT0_i causes Segfault
-            for Case test_op_bwd[False-0.0-dtype2-0.0-False-587-64-8-4-4], but cannot be reproduced by running this individual UT.
-            Avoiding running it on GPU for now
-            '''
-            if self.dtype == torch.float32:
-                if seqlen_k == 587 or hdim % 16 != 0:
-                    ref_device = 'cpu'
-        elif ref_device_option == 'cuda':
-            ref_device = target_gpu_device
-        elif ref_device_option == 'cpu':
-            ref_device = 'cpu'
-        else:
-            assert False, f'Unknown ref_device_option value {ref_device_option}. Allowed choices "default" "cpu" "cuda"'
+                # torch's bf16 bmm leaves 274733 output elements UNWRITTEN on gfx950
+                # under ROCm 7.14 -- uninitialized memory, not a wrong computation.
+                # Repro needs neither AOTriton nor FlyDSL:
+                #   torch.bmm(torch.rand(15, 257, 16, device='cuda', dtype=torch.bfloat16),
+                #             torch.rand(15, 16, 2081, device='cuda', dtype=torch.bfloat16))
+                # The resulting nan in ref_error is the LUCKY case, because a nan
+                # threshold fails every tensor at once and gets noticed; when the
+                # stale bytes decode as plausible floats the oracle is quietly wrong
+                # and the test passes. So this shape is WHERE WE SAW IT, not the
+                # trigger surface -- the failing set moves between runs. Widening to
+                # every bf16 case is sound and far too slow; catching the quiet ones
+                # needs _validate to reject a nan REFERENCE, which it does not yet.
+                # ROCm-gated so it retires itself.
+                return 'cpu'
+            if ref_device_policy == 'default' and TORCH_GE_2_7:
+                return self._real_device  # Known softmax issues have been fixed in 2.7
+            if ref_device_policy == 'default':
+                seqlen_k = self.seqlen_k
+                hdim = self.hdim
+                '''
+                test_gqa[False-1.2-dtype0-0.5-False-579-2048-203-N_HEADS1-4]
+                triggers GPU segfault when testing with -k 'test_gqa[False-1.2-'
+                (Cannot be reproduced independently)
+                '''
+                if seqlen_k == 579:
+                    return 'cpu'
+                '''
+                Shader _ZN2at6native12_GLOBAL__N_119cunn_SoftMaxForwardILi2EdddNS1_22SoftMaxForwardEpilogueEEEvPT2_PKT0_i causes Segfault
+                for Case test_op_bwd[False-0.0-dtype2-0.0-False-587-64-8-4-4], but cannot be reproduced by running this individual UT.
+                Avoiding running it on GPU for now
+                '''
+                if self.dtype == torch.float32:
+                    if seqlen_k == 587 or hdim % 16 != 0:
+                        return 'cpu'
+                return self._real_device
+            if ref_device_policy == 'cuda':
+                return self._real_device
+            if ref_device_policy == 'cpu':
+                return 'cpu'
+            assert False, f'Unknown ref_device_policy value {ref_device_policy}. Allowed choices "default" "cpu" "cuda"'
+
+        ref_device = apply_policy()
         self.create_ref_inputs_with_device(ref_device)
 
     def create_ref_inputs_with_device(self, ref_device):
@@ -921,7 +935,7 @@ class SdpaContext(object):
         if 'fwd_ref' in todo:
             del self.ref_tensors
             del self.lp_ref_tensors
-            self.create_ref_inputs(target_gpu_device=self._real_device)
+            self.create_ref_inputs(target_device=self._real_device)
             self.compute_ref_forward(sdpa_params)
         if hasattr(self, 'dref') and 'bwd_ref' in todo:
             del self.dref_tensors
@@ -954,6 +968,7 @@ class VarlenSdpaContext(SdpaContext):
         '''
 
     def __init__(self, N_HEADS, D_HEAD, seqlens_q, seqlens_k, dtype, device='cuda'):
+        self._set_real_device(device)
         if isinstance(D_HEAD, int):
             HDIM_QK = HDIM_VO = D_HEAD
         else:
@@ -1142,6 +1157,7 @@ class StridedVarlenSdpaContext(VarlenSdpaContext):
 
 class SdpaContextFromNPZ(SdpaContext):
     def __init__(self, fn, dtype, device='cuda'):
+        self._set_real_device(device)
         d = np.load(fn)
         def real_dtype():
             if d['is_fp16']:

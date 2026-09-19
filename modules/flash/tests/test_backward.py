@@ -46,10 +46,15 @@ if FOR_RELEASE >= 0:
     # does not support bias, so the matrix-bias pair has to come out of the
     # list rather than be skipped inside the test -- the point of pairing is
     # that there is no programmatic skip left here.
+    #
+    # 'matrix,nograd' is a bias whose gradient the caller does not want: dB
+    # arrives as a null pointer over an all-zero stride triple, which is what
+    # PyTorch passes for every bool-masked SDPA and what no other case reaches.
+    # See the bias_type parser in _do_test_op_bwd.
     @pytest.mark.parametrize('causal,bias_type',
-                             [(False, None), (False, 'matrix'), (True, None)]
+                             [(False, None), (False, 'matrix'), (False, 'matrix,nograd'), (True, None)]
                              if BWD_IMPL != 'aiter' else [(False, None), (True, None)],
-                             ids=['CausalOff-BiasOff', 'CausalOff-BiasOn', 'CausalOn-BiasOff']
+                             ids=['CausalOff-BiasOff', 'CausalOff-BiasOn', 'CausalOff-BiasOnNoGrad', 'CausalOn-BiasOff']
                              if BWD_IMPL != 'aiter' else ['CausalOff-BiasOff', 'CausalOn-BiasOff'])
     @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 'aiter' else [0.0])
     @pytest.mark.parametrize('dtype', DTYPES)

@@ -107,7 +107,8 @@ SELECT task_id, arch, '{self.tuning_level}', task_config, {self.key_col}, test_c
 FROM (""" + self._select_sql + ") sub"
 
 
-def populate(conn, task_ids: list[int] | None = None, tuning_mode: str = 'kernel') -> int:
+def populate(conn, task_ids: list[int] | None = None, tuning_mode: str = 'kernel',
+             arch: str | None = None) -> int:
     """
     Populate most_accurate_tuning_results for one tuning_level.
 
@@ -117,11 +118,20 @@ def populate(conn, task_ids: list[int] | None = None, tuning_mode: str = 'kernel
                       If given, DELETE + INSERT for those task_ids only (small, serial ok).
         tuning_mode:  'kernel' | 'op' -- selects the tuning_level filter applied
                       to tuning_results.
+        arch:         If given, restrict to that architecture. This narrows the
+                      DELETE as well as the SELECT, in both modes -- see the
+                      comments at each DELETE for why that is not optional.
 
     Returns:
         Number of rows produced (rowcount after the swap-INSERT or plain INSERT).
     """
     sql = SqlStatements(tuning_mode)
+
+    # Assembled once and used by both modes. The `{filter}` placeholder is a SQL
+    # fragment, not a parameter, so the matching values have to be carried
+    # alongside it and prepended to every execute() that uses it.
+    arch_filter = 'AND tq.arch = %s' if arch else ''
+    arch_params: list = [arch] if arch else []
 
     if task_ids is None:
         # Full mode: CREATE TEMP TABLE AS SELECT (CTAS is parallel-safe;
@@ -149,15 +159,28 @@ def populate(conn, task_ids: list[int] | None = None, tuning_mode: str = 'kernel
             cur.execute('SET jit = off')
         with conn.cursor() as cur:
             cur.execute(f'DROP TABLE IF EXISTS {sql.temp_table_name}')
-            cur.execute(sql.ctas_temp_sql.format(filter=''))
+            cur.execute(sql.ctas_temp_sql.format(filter=arch_filter), arch_params or None)
 
-        # Swap: replace only this tuning_level's rows in the real table.
+        # Swap: replace only this tuning_level's rows in the real table -- and,
+        # when an arch was given, only that arch's.
+        #
+        # The arch predicate here is not an optimisation, it is what keeps the
+        # swap from destroying data. The CTAS above repopulates ONLY the selected
+        # arch, so a DELETE that still spanned every arch would drop the others
+        # and never put them back. Exactly the hazard the tuning_level comment
+        # above describes, one dimension over.
         conn.autocommit = False
         with conn.cursor() as cur:
-            cur.execute(
-                f'DELETE FROM {sql.table_name} WHERE tuning_level = %s',
-                (sql.tuning_level,),
-            )
+            if arch:
+                cur.execute(
+                    f'DELETE FROM {sql.table_name} WHERE tuning_level = %s AND arch = %s',
+                    (sql.tuning_level, arch),
+                )
+            else:
+                cur.execute(
+                    f'DELETE FROM {sql.table_name} WHERE tuning_level = %s',
+                    (sql.tuning_level,),
+                )
             cur.execute(sql.swap_insert_sql)
             row_count = cur.rowcount
             cur.execute(f'DROP TABLE IF EXISTS {sql.temp_table_name}')
@@ -165,15 +188,31 @@ def populate(conn, task_ids: list[int] | None = None, tuning_mode: str = 'kernel
     else:
         # Incremental mode: row count is small, parallel not needed.
         # DELETE in one transaction, INSERT in a fresh one.
+        #
+        # The DELETE takes the arch predicate too. A task_id belongs to exactly
+        # one arch -- task_queue's PK is (id, arch) over a global BIGSERIAL --
+        # so it is tempting to conclude the task_id list already scopes this.
+        # It does not: the list can name task_ids from SEVERAL arches (a
+        # retry_task_ids.txt spans the fleet), and the INSERT below re-inserts
+        # only the selected arch's. Without the predicate, the other arches'
+        # rows for those task_ids would be deleted and never restored.
         conn.autocommit = False
         with conn.cursor() as cur:
-            cur.execute(
-                f'DELETE FROM {sql.table_name} WHERE tuning_level = %s AND task_id = ANY(%s)',
-                (sql.tuning_level, task_ids),
-            )
+            if arch:
+                cur.execute(
+                    f'DELETE FROM {sql.table_name} '
+                    f'WHERE tuning_level = %s AND task_id = ANY(%s) AND arch = %s',
+                    (sql.tuning_level, task_ids, arch),
+                )
+            else:
+                cur.execute(
+                    f'DELETE FROM {sql.table_name} WHERE tuning_level = %s AND task_id = ANY(%s)',
+                    (sql.tuning_level, task_ids),
+                )
         conn.commit()
         with conn.cursor() as cur:
-            cur.execute(sql.insert_sql.format(filter='AND tr.task_id = ANY(%s)'), (task_ids,))
+            cur.execute(sql.insert_sql.format(filter=f'AND tr.task_id = ANY(%s) {arch_filter}'),
+                        [task_ids] + arch_params)
             row_count = cur.rowcount
         conn.commit()
 
@@ -196,6 +235,12 @@ def main() -> None:
         choices=['kernel', 'op'],
         default='kernel',
         help='Selects the tuning_level filter applied to tuning_results',
+    )
+    parser.add_argument(
+        '--arch',
+        default=None,
+        help='Restrict to one architecture (e.g. gfx942). Other architectures\' '
+             'rows are left untouched. Default: all architectures.',
     )
     args = parser.parse_args()
 
@@ -220,16 +265,18 @@ def main() -> None:
 
     conn_params = get_db_connection_params(workdir)
 
+    scope = f' arch={args.arch}' if args.arch else ' all arches'
     if task_ids is None:
-        print(f'Full populate ({args.tuning_mode}): replace this tuning_level\'s rows...')
+        print(f'Full populate ({args.tuning_mode},{scope}): replace this slice\'s rows...')
     else:
-        print(f'Incremental populate ({args.tuning_mode}): {len(task_ids)} task_id(s)...')
+        print(f'Incremental populate ({args.tuning_mode},{scope}): {len(task_ids)} task_id(s)...')
 
     with psycopg.connect(**conn_params, autocommit=False) as conn:
-        row_count = populate(conn, task_ids, tuning_mode=args.tuning_mode)
+        row_count = populate(conn, task_ids, tuning_mode=args.tuning_mode, arch=args.arch)
 
     table = SqlStatements(args.tuning_mode).table_name
-    print(f'Done: {row_count} rows inserted into {table} (tuning_level={args.tuning_mode}).')
+    print(f'Done: {row_count} rows inserted into {table} '
+          f'(tuning_level={args.tuning_mode},{scope}).')
 
 
 if __name__ == '__main__':

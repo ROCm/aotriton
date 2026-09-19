@@ -250,8 +250,36 @@ def _get_temperature_amdsmi(amdsmi_dev, sensor):
         amdsmi.AmdSmiTemperatureMetric.CURRENT
     )
 
+# Architectures the cooldown gate applies to.
+#
+# Not every GPU needs one, and the wait is not free: it runs on every
+# device_ctx() entry, opens AMD-SMI, and can stall a task for as long as the
+# part takes to cool. gfx1201 is the one that has needed it.
+#
+# Restricting by architecture rather than by threshold: a threshold that never
+# trips still pays the AMD-SMI initialisation per context entry, and it leaves
+# the reason a GPU is exempt encoded as a number nobody can trace back to a
+# decision.
+THERMAL_GATED_ARCHS = frozenset({'gfx1201'})
+
+
+def _device_arch(device_id):
+    """`gcnArchName` for device_id, base name only, or None if unreadable.
+
+    'gfx1201:sramecc-:xnack-' -> 'gfx1201'.
+    """
+    try:
+        name = torch.cuda.get_device_properties(device_id).gcnArchName
+    except (AttributeError, RuntimeError):
+        return None
+    return str(name).split(':', 1)[0]
+
+
 def wait_gpu_temperature(device_id=None, threshold=85.0):
-    """Wait until GPU temperature drops below threshold.
+    """Wait until GPU temperature drops below threshold, on gated archs only.
+
+    Returns immediately on any architecture outside THERMAL_GATED_ARCHS,
+    before AMD-SMI is touched, so an ungated GPU pays nothing for this.
 
     Reports on every poll rather than only once the wait gets long. The
     `OVERHEATING:` prefix is a wire protocol: ExaidProxy.readinfo() forwards
@@ -262,6 +290,17 @@ def wait_gpu_temperature(device_id=None, threshold=85.0):
     """
     if device_id is None:
         device_id = default_device_id()
+
+    arch = _device_arch(device_id)
+    if arch is not None and arch not in THERMAL_GATED_ARCHS:
+        return
+    if arch is None:
+        # Unreadable architecture keeps the protection rather than dropping it.
+        # Skipping in the unknown case would trade a cost this function exists
+        # to pay for a risk it exists to prevent, and the two are not
+        # comparable: an unnecessary wait is slow, an unprotected part is hot.
+        print(f'WARNING: cannot read gcnArchName for device {device_id}; '
+              f'applying the thermal gate anyway', file=sys.stderr, flush=True)
 
     # Use AMD-SMI directly to avoid HIP ID vs AMD-SMI ID confusion
     amdsmi_dev, sensor = _own_amdsmi_device(device_id)

@@ -365,7 +365,17 @@ class _attention(torch.autograd.Function):
         # `db` mirrors `b`, on the KV axis rather than the head dim: the bias is
         # allocated at `round_to_8x(seqlen_k)` and narrowed, so its gradient is
         # too, and the two agree on strides instead of only on shape.
-        db = _alloc_like(b, 'db', attn_extra_args, None if b is None else b.shape[-1])
+        #
+        # **Unless the bias does not require a gradient**, which AOTriton spells
+        # as a null DB over an all-zero stride triple -- `mk_aotensor(None,
+        # if_empty_then_like=q)` produces exactly the `empty_t4` PyTorch passes
+        # from attention_backward.cu for a bool attn_mask. Allocating a dB anyway
+        # would keep that path unreachable from every test that goes through
+        # autograd, which is how a null-DB store survived in the flyc gfx1201 dQ
+        # kernel. `b.requires_grad` rather than `ctx.needs_input_grad`, so this
+        # agrees with SdpaContext._compute_backward's own test.
+        db = (_alloc_like(b, 'db', attn_extra_args, b.shape[-1])
+              if b is not None and b.requires_grad else None)
         delta = lazy_delta(L)
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]

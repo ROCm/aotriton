@@ -109,6 +109,7 @@
                                 <option value="split">split</option>
                                 <option value="fused">fused</option>
                                 <option value="aiter">aiter</option>
+                                <option value="flyc">flyc</option>
                                 <option value="v3">v3</option>
                             </select>
                         </label>
@@ -162,6 +163,18 @@
                                 hx-vals='js:{pass_num: document.getElementById("pass-{{ worker.hostname }}").value, test_level: document.getElementById("level-{{ worker.hostname }}").value, backend: document.getElementById("backend-{{ worker.hostname }}").value}'
                                 style="font-size: 0.8em; padding: 0.3rem 0.5rem;">
                             Run Partial Test
+                        </button>
+                        {# The same partial run, with the reference computed on the CPU:
+                           gfx1201's GPU reference (torch math_sdp) segfaults on some
+                           shapes and hands the test a bad oracle. ref_device_policy is a
+                           separate parameter from variant because the two are
+                           independent -- this changes where the reference is computed,
+                           not what runs or where the output goes. #}
+                        <button hx-post="/api/testing/{{ worker.hostname }}/run-test?variant=partial&amp;ref_device_policy=cpu"
+                                hx-swap="none"
+                                hx-vals='js:{pass_num: document.getElementById("pass-{{ worker.hostname }}").value, test_level: document.getElementById("level-{{ worker.hostname }}").value, backend: document.getElementById("backend-{{ worker.hostname }}").value}'
+                                style="font-size: 0.8em; padding: 0.3rem 0.5rem;">
+                            Run Partial Test with CPUREF
                         </button>
                         <button type="button"
                                 onclick="window.open('/api/testing/{{ worker.hostname }}/failures?pass=' + document.getElementById('pass-{{ worker.hostname }}').value + '&backend=' + document.getElementById('backend-{{ worker.hostname }}').value + '&variant=partial', '_blank', 'width=900,height=600')"

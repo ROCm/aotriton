@@ -407,6 +407,26 @@ class BwdDqKernelContext(ParityKernelContext):
         )
         self.do_gmem_elem_offset = self.q_start * self.stride_do_seq_v
         if const_expr(traits.STORE_DB):
+            # **Whether dB is wanted is a runtime question, not a build one.**
+            # `STORE_DB` above only decides whether the store *exists*; a build
+            # that has it still has to serve a caller who passes a bias but does
+            # not want its gradient, which AOTriton spells as an all-zero dB
+            # stride triple over a null DB (`bwd_kernel_dq.py`'s `store_db`).
+            # PyTorch takes that path on every bool-masked SDPA: the mask becomes
+            # an additive bias that is not a leaf, so attention_backward.cu hands
+            # over `empty_t4` for DB.
+            #
+            # Not currently a fault here, unlike gfx1201's flat store: the buffer
+            # bound below collapses to 0 records when `stride_db_seq_q` is 0, so
+            # the hardware drops every store and the null base is never touched.
+            # That is an accident of the `num_records` arithmetic rather than
+            # anything this kernel says, and it does not cover a null DB carried
+            # with a non-zero row stride. Say it instead.
+            self.db_store_enabled = (
+                (fx.Int64(self.stride_db_batch) != fx.Int64(0))
+                | (fx.Int64(self.stride_db_head) != fx.Int64(0))
+                | (fx.Int64(self.stride_db_seq_q) != fx.Int64(0))
+            )
             # Same slab shape as the forward's bias descriptor -- dB is indexed
             # (batch, head, q row, kv col) and the KV axis is contractually
             # contiguous -- and a raw resource for the same reason: the stores
@@ -1066,7 +1086,12 @@ class BwdDbStoreHelper(ParityStoreHelper):
         lo_packs, hi_packs = ds_packs
         row_base = q_row * fx.Index(ctx.stride_db_seq_q)
         col_base = dualwave._seq_pad_col_base(traits, tile_idx, lane_div_32=self.lane_div_32)
-        in_row = q_row < self.seqlen_q_v
+        # `db_store_enabled` folded in here, once per tile, rather than into
+        # `live` once per element: it is uniform, and the per-element form would
+        # cost an instruction per score on the rungs that have no registers to
+        # spare. A disabled store lands on `db_oob_off` and the hardware drops it,
+        # which is the suppression device this whole helper is built on.
+        in_row = (q_row < self.seqlen_q_v) & ctx.db_store_enabled
         per_pack = traits.OPERAND_LANE_ELEMS
         for half, packs in ((0, lo_packs), (1, hi_packs)):
             for pks in range_constexpr(len(packs)):
@@ -1103,7 +1128,7 @@ class BwdDbStoreHelper(ParityStoreHelper):
         ctx = self.ctx_ref
         n = acc_elems(traits)
         row_base = q_row * fx.Index(ctx.stride_db_seq_q)
-        in_row = q_row < self.seqlen_q_v
+        in_row = (q_row < self.seqlen_q_v) & ctx.db_store_enabled  # see store_tile
         tok_lane = fx.Int32(4) * fx.Int32(lane // fx.Index(MFMA16_M))
         vec = Vec(ds_pack, (n * 2,), self.elem_dtype)
         for r in range_constexpr(2):
