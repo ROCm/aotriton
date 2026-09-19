@@ -187,12 +187,9 @@ stage_flydsl_wheel() {
     --llvm_tarball "$tarball" \
     --python "$PYVER" \
     --version_suffix ".aotriton${aotriton_major}.${aotriton_minor}")"
-  # Same reason as the LLVM stamp: testbld and build_arch.sh must install the
-  # wheel this run produced, and the cache holds wheels from every FlyDSL and
-  # LLVM pin this workdir has ever seen. Matching on the ABI tag alone would
-  # pick any of them.
-  mkdir -p "$FLYDSL_WHEEL_DIR"
-  printf '%s' "$wheel" > "$(flydsl_wheel_stamp "$FLYDSL_WHEEL_DIR" "$PYVER")"
+  # No stamp: testbld and build_arch.sh resolve the wheel from the pins
+  # themselves (find_flydsl_wheel), so a pin moving without a re-prebuild is a
+  # miss rather than a stale hit.
   echo "FlyDSL wheel: $wheel"
 }
 

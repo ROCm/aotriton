@@ -50,7 +50,7 @@ BUILD_TUNE_ARGS=()
 # build needs the wheel just to reach codegen.
 if flydsl_required "$AOTRITON_ROOT"; then
   PYVER=$(python --version 2>&1 | cut -d' ' -f2 | cut -d. -f1,2)
-  if ! FLYDSL_WHEEL=$(find_flydsl_wheel "$WORKDIR" "$PYVER"); then
+  if ! FLYDSL_WHEEL=$(find_flydsl_wheel "$AOTRITON_ROOT" "$WORKDIR" "$PYVER"); then
     echo "Error: third_party/flydsl-llvm.txt is non-empty, so this build needs a" >&2
     echo "locally built FlyDSL wheel, but none for python ${PYVER} is cached in" >&2
     echo "$WORKDIR/scratch/flydsl/." >&2

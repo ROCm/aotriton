@@ -70,21 +70,10 @@ flydsl_llvm_sha12() {
   printf '%s' "${sha:0:12}"
 }
 
-# Where each prebuild stage records the artifact it produced.
-#
-# A STAMP, not a glob. Both .ci build scripts print the exact path of the
-# artifact -- cache hit or fresh build, diagnostics go to stderr -- so the
-# identity is already known at the only moment it is unambiguous. Recomputing
-# it later means re-deriving a cache key that lives in
-# .ci/build_flydsl_wheel.sh (FlyDSL sha8, the --version_suffix, the LLVM sha12,
-# the patch count, the ABI tag), and a second copy of that key is a second
-# thing to get wrong.
-#
-# The wheel stamp is per Python ABI because the wheels are: CMakeLists.txt
-# makes a cp-tag mismatch a FATAL_ERROR, so one stamp per workdir would let two
-# images overwrite each other's answer and move the failure an hour downstream.
-flydsl_llvm_stamp()  { printf '%s/.current-tarball' "$1"; }
-flydsl_wheel_stamp() { printf '%s/.current-wheel-cp%s' "$1" "${2/./}"; }
+# Where the LLVM stage records the tarball it produced. A stamp, because
+# .ci/build_llvm_tarball.sh prints the exact path (diagnostics go to stderr) and
+# the distro component of the name is its business, not ours.
+flydsl_llvm_stamp() { printf '%s/.current-tarball' "$1"; }
 
 # Print the LLVM tarball the CURRENT pin names, or return 1.
 #
@@ -105,14 +94,56 @@ find_flydsl_llvm_tarball() {
   printf '%s' "$tarball"
 }
 
-# Print the cached FlyDSL wheel for this workdir and Python ABI, or return 1.
+# The wheel name .ci/build_flydsl_wheel.sh would produce for the CURRENT pins,
+# as a glob. Every component of its cache key, in its order:
+#
+#   flydsl-*+git<flydsl sha8><version suffix>.llvm<llvm sha12>.p<patches>-*<abi>*.whl
+#
+# All five matter, and a wheel missing any one of them is a different wheel:
+# the FlyDSL commit and the LLVM commit are what was compiled and what it was
+# compiled against (the wrong LLVM miscompiles register spills and returns
+# wrong numbers rather than failing); .ci/flydsl-patch/ is part of what the
+# wheel IS, so its count is in the name; and CMakeLists.txt makes a cp-tag
+# mismatch a FATAL_ERROR.
+#
+# Kept in step with that script's cached_wheel() by hand. The alternative --
+# trusting a path the prebuild recorded -- cannot notice a pin moving under it,
+# which is precisely when a stale wheel is installed and nothing says so.
+flydsl_wheel_glob() {
+  local aotriton_root="$1" pyver="$2"
+  local flydsl_sha llvm_sha12 patches major minor
+  flydsl_sha="$(flydsl_ref_from_pin "$aotriton_root")" || return 1
+  llvm_sha12="$(flydsl_llvm_sha12 "$aotriton_root")" || return 1
+  # Both pins must name a commit, because the cache is keyed on the RESOLVED
+  # SHA and only a build can resolve a moving ref. Refusing here names the pin
+  # to fix; globbing on the first 8 characters of a branch name would instead
+  # match nothing and read as "run the prebuild", which would not help.
+  if [[ ! "$flydsl_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    echo "Error: third_party/flydsl-compiler.txt pins '$flydsl_sha', not a commit SHA." >&2
+    return 1
+  fi
+  if [[ ! "$llvm_sha12" =~ ^[0-9a-fA-F]{12}$ ]]; then
+    echo "Error: third_party/flydsl-llvm.txt does not pin a commit SHA." >&2
+    return 1
+  fi
+  patches=$(ls "$aotriton_root"/.ci/flydsl-patch/*.patch 2>/dev/null | wc -l)
+  read -r major minor <<< "$(get_aotriton_major_minor "$aotriton_root")"
+  printf 'flydsl-*+git%s.aotriton%s.%s.llvm%s.p%s-*cp%s*.whl' \
+    "${flydsl_sha:0:8}" "$major" "$minor" "$llvm_sha12" "$patches" "${pyver//./}"
+}
+
+# Print the cached FlyDSL wheel matching the current pins and Python ABI, or
+# return 1. A miss is how "run the prebuild first" gets said.
 find_flydsl_wheel() {
-  local workdir="$1"
-  local pyver="$2"       # X.Y, as `python --version` reports it
-  local stamp wheel
-  stamp="$(flydsl_wheel_stamp "$workdir/scratch/flydsl" "$pyver")"
-  [ -f "$stamp" ] || return 1
-  wheel="$(cat "$stamp")"
+  local aotriton_root="$1"
+  local workdir="$2"
+  local pyver="$3"       # X.Y, as `python --version` reports it
+  local glob wheel
+  glob="$(flydsl_wheel_glob "$aotriton_root" "$pyver")" || return 1
+  # Unquoted on purpose: $glob is a pattern. `|| true` because callers run under
+  # `set -euo pipefail`, where ls exiting 2 on a missing cache dir would kill
+  # them at the assignment instead of letting this return 1.
+  wheel=$(ls "$workdir/scratch/flydsl"/$glob 2>/dev/null | head -n 1) || true
   [ -n "$wheel" ] && [ -f "$wheel" ] || return 1
   printf '%s' "$wheel"
 }
