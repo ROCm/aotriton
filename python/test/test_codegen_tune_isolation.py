@@ -5,34 +5,19 @@
 
 The code generator (python/codegen/, python/template_instantiation/,
 modules/*/aot/) must never import anything from `aotriton.tune`: `aotriton`
-and `aotriton-tune` (python/tune/) are separate installable distributions, and
-the main `aotriton` wheel never bundles tuning infrastructure (see
-modules/flash/aot/sancheck.py, which used to reach into
-modules/flash/tune/sancheck.py through aotriton.tune.registry.load_family_tune
-before that back-edge was severed).
+and `aotriton-tune` are separate distributions, and the main wheel never
+bundles tuning infrastructure.
 
-Loading the real flash family's `aot` package (via
-`aotriton.codegen.parser.Parser.load_family_aot`, the exact call
-`ir/triton/kdesc.py`'s `_lut_sancheck` makes) is enough to reach
-`aot.sancheck.LutSancheck` -- the class this whole back-edge existed for. If
-loading it pulls in a single `aotriton.tune*` module, the back-edge is back.
+Loading the real flash family's `aot` package (the same call `kdesc.py`'s
+`_lut_sancheck` makes) is enough to reach `aot.sancheck.LutSancheck` -- the
+class this back-edge existed for. If loading it pulls in any `aotriton.tune*`
+module, the back-edge is back.
 
-The check runs in a FRESH subprocess, not against this process's own
-`sys.modules`. Two reasons, both real:
-  * This file can run in the same pytest session as test_tune_infra.py (see
-    the combined invocation in the verification plan), which legitimately
-    imports `aotriton.tune.*` for unrelated reasons. Checking THIS process's
-    `sys.modules` for bare absence would then fail for a reason that has
-    nothing to do with the invariant.
-  * The reverse failure mode is just as real: if `aotriton.tune` is already
-    cached in `sys.modules` (again, e.g. because test_tune_infra.py ran
-    first), a regressed `_gen_missing_entries`/`_common.py` that reaches back
-    into `aotriton.tune` would silently reuse that cached module instead of
-    importing anything NEW -- a before/after diff of the CURRENT process's
-    `sys.modules` would then miss the regression entirely (false negative).
-A clean subprocess starts with neither problem: nothing has imported
-`aotriton.tune` yet, so any import of it triggered by loading `aot` shows up,
-every time, regardless of what else ran earlier in this pytest session.
+Runs the check in a FRESH subprocess rather than against this process's own
+`sys.modules`: another test (python/tune/tests/test_tune_infra.py) may legitimately
+import aotriton.tune first in the same pytest session, which would either
+mask a real regression (already cached, so "nothing new" gets imported) or
+falsely flag one (bare-presence check). A clean subprocess has neither problem.
 """
 
 import subprocess
@@ -44,8 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MODULES_DIR = _REPO_ROOT / 'modules'
 
-# Runs in a fresh `python -c`, not imported: see the module docstring for why
-# this must not just inspect the current process's sys.modules.
+# Runs in a fresh `python -c` -- see module docstring for why.
 _CHECK_SCRIPT = f'''
 import inspect
 import sys
@@ -56,8 +40,8 @@ from aotriton.codegen.parser import Parser
 
 aot = Parser({str(_MODULES_DIR)!r}).load_family_aot('flash')
 
-# Not vacuous: the load step must actually resolve LutSancheck, or the tune-
-# module check below would pass for the wrong reason (nothing loaded at all).
+# Not vacuous: must actually resolve LutSancheck, else the check below
+# would pass for the wrong reason.
 assert inspect.isclass(aot.sancheck.LutSancheck), (
     f"aot.sancheck.LutSancheck did not resolve to a class: {{aot.sancheck.LutSancheck!r}}")
 

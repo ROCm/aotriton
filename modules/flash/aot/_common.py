@@ -47,11 +47,7 @@ def check_value(functional, repr_name):
             return tc[aname].triton_compile_signature
     assert False, f'Cannot find {repr_name=} in {functional=}'
 
-# NOTE: LutSancheck (the LUT sancheck + missing-entry diagnostic) lives in
-# modules/flash/aot/sancheck.py (sibling module), which imports
-# check_value/_empty_generator directly from here -- no more duplication
-# needed for those two helpers specifically for sancheck. check_value/
-# _empty_generator still keep their own copies here (rather than sancheck.py
-# importing everything and everyone else importing from sancheck.py) since
-# other aot/*.py files (aiter_fwd.py, aiter_bwd.py) depend on check_value
-# from here too, and this module has no dependency on sancheck.py.
+# NOTE: LutSancheck lives in modules/flash/aot/sancheck.py (sibling module),
+# which imports check_value/_empty_generator from here directly. They stay
+# defined here rather than in sancheck.py since aiter_fwd.py/aiter_bwd.py also
+# depend on check_value from here.

@@ -2,13 +2,10 @@
 # SPDX-License-Identifier: MIT
 #
 # Packaging for the `aotriton-tune` distribution: python/tune/ -> aotriton.tune.
-# A standalone distribution living inside python/, which otherwise maps to the
-# `aotriton` package (see repo-root setup.py). Safe because the root setup.py's
-# find_packages() excludes 'tune'/'tune.*' explicitly, and this directory's own
-# setup.py (not the root one) computes its own package_dir. `aotriton` is a PEP
-# 420 namespace package: this distribution ships aotriton/tune/... with no
-# aotriton/__init__.py, and merges into the same namespace as the main
-# `aotriton` distribution at import time.
+# A standalone distribution inside python/ (excluded from the root setup.py's
+# find_packages()). `aotriton` is a PEP 420 namespace package: this ships
+# aotriton/tune/... with no aotriton/__init__.py, merging into the same
+# namespace as the main `aotriton` distribution at import time.
 
 [build-system]
 requires = ["setuptools>=64"]

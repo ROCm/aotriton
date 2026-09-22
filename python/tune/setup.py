@@ -2,14 +2,11 @@
 # SPDX-License-Identifier: MIT
 #
 # Maps python/tune/ to the `aotriton.tune` namespace-package subtree:
-#   python/tune/__init__.py        -> aotriton.tune
-#   python/tune/pq/*                -> aotriton.tune.pq
-#   python/tune/localq/*            -> aotriton.tune.localq
+#   python/tune/__init__.py -> aotriton.tune, python/tune/pq/* -> aotriton.tune.pq,
 #   ... etc, for every sub-package discovered under python/tune/.
 #
-# Version parsed from the repo-root CMakeLists.txt, same single source of
-# truth as the main `aotriton` distribution's setup.py, two directories
-# further up from here than from the repo root.
+# Version parsed from the repo-root CMakeLists.txt, same source of truth as
+# the main distribution's setup.py.
 
 import re
 import pathlib
@@ -34,14 +31,11 @@ def _aotriton_version() -> str:
     return f"{field('MAJOR')}.{field('MINOR')}.{field('PATCH')}"
 
 
-# '.examples' is data (sample tuning-tree dumps), not a Python package --
-# excluded the same way the root setup.py excludes 'modules'/'modules.*'.
+# '.examples' is data (sample tuning-tree dumps), not a Python package.
 _subs = find_packages(where=str(_TUNEDIR), exclude=['.examples', '.examples.*'])
 _packages = ['aotriton.tune'] + [f'aotriton.tune.{p}' for p in _subs]
-# package_dir values are resolved by setuptools relative to THIS
-# distribution's own project root (python/tune/, where this setup.py and its
-# pyproject.toml live) -- NOT the repo root two levels up. `_ROOT` is only
-# used above for CMakeLists.txt.
+# package_dir is resolved relative to THIS distribution's own root
+# (python/tune/), not the repo root -- `_ROOT` is only used for CMakeLists.txt.
 _package_dir = {'aotriton.tune': '.'}
 _package_dir.update({f'aotriton.tune.{p}': p.replace('.', '/')
                      for p in _subs})

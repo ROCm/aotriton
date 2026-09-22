@@ -3,15 +3,12 @@
 
 """
 Flash-family LUT sancheck + missing-entry diagnostic, called by the ATI kdesc
-(LutSancheck.method(self=kdesc, ...) via load_family_aot) --
-see python/template_instantiation/ir/triton/kdesc.py's sancheck_lut_tensor/_gen_missing_entries.
+(LutSancheck.method(self=kdesc, ...) via load_family_aot) -- see
+kdesc.py's sancheck_lut_tensor/_gen_missing_entries.
 
-Loaded as aot.sancheck.LutSancheck, alongside the rest of modules/flash/aot/:
-no back-edge into the tuning package. `check_value`/`_empty_generator` are
-imported from ._common (siblings here), the same helpers other
-modules/flash/aot/*.py files use (attn_fwd.py, bwd_kernel_dk_dv.py,
-bwd_kernel_dq.py, bwd_kernel_fuse.py, bwd_preprocess.py,
-bwd_preprocess_varlen.py, aiter_fwd.py, aiter_bwd.py).
+Loaded as aot.sancheck.LutSancheck alongside the rest of modules/flash/aot/:
+no back-edge into the tuning package. `check_value`/`_empty_generator` come
+from ._common, the same helpers the other aot/*.py files use.
 
 Torch-free: safe to import outside a GPU container.
 """

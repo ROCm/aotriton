@@ -247,8 +247,7 @@ class KernelDescription(Interface):
 
         Resolved through self.FAMILY: nothing under template_instantiation/ may
         name a concrete family. `aot` is the already-loaded family package
-        (see load_family_aot); LutSancheck lives beside it as aot.sancheck, so
-        no separate load-by-path or modules_dir computation is needed here.
+        (see load_family_aot); LutSancheck lives beside it as aot.sancheck.
         """
         # Lazy: aotriton.codegen imports template_instantiation at module level
         # (e.g. codegen/kernel.py), so hoisting these would cycle.
