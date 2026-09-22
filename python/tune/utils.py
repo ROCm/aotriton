@@ -10,6 +10,7 @@ import subprocess
 import select
 import errno
 import time
+import fcntl
 import logging
 from pathlib import Path
 from typing import Dict, Any
@@ -45,7 +46,7 @@ def __getattr__(name):
     """PEP 562 module __getattr__: lazily resolve `dacite_tuple`.
 
     `dacite` is an optional, tuning-only dependency (see modules/flash/tune's
-    module docstrings and python/test/test_tune_infra.py). Every caller here
+    module docstrings and python/tune/tests/test_tune_infra.py). Every caller here
     imports it via `from aotriton.tune.utils import ... dacite_tuple ...`,
     which -- if `dacite_tuple` were a plain module-level value computed via
     `dacite.Config(...)` at import time -- would force an eager `import
@@ -115,7 +116,6 @@ class SafeLineReader:
 
     def _setup_nonblocking(self):
         """Set stdout to non-blocking mode."""
-        import fcntl
         if self.fd is None and self.process.stdout:
             self.fd = self.process.stdout.fileno()
             self.original_flags = fcntl.fcntl(self.fd, fcntl.F_GETFL)
@@ -123,7 +123,6 @@ class SafeLineReader:
 
     def _restore_blocking(self):
         """Restore stdout to blocking mode."""
-        import fcntl
         if self.fd is not None and self.original_flags is not None:
             fcntl.fcntl(self.fd, fcntl.F_SETFL, self.original_flags)
 
