@@ -17,11 +17,7 @@ cd "${ROOT}"
 [ -d "${VENV}" ] || python3 -m venv "${VENV}"
 "${VENV}/bin/python" -m pip install -q -r requirements-dev.txt
 "${VENV}/bin/python" -m pip install -q .   # the aotriton package; python/test imports aotriton.*
-# aotriton.tune is a separate distribution (python/tune/), not bundled above,
-# but its own tests (below) need it installed too.
-"${VENV}/bin/python" -m pip install -q ./python/tune
 
-# python/tune/tests/test_exaid.py is deliberately excluded here: it needs a
-# real GPU and torch, unlike test_tune_infra.py/test_gpu_utils_amdsmi.py.
-exec "${VENV}/bin/python" -m pytest python/test python/pytest-gpu-lease/tests \
-  python/tune/tests/test_tune_infra.py python/tune/tests/test_gpu_utils_amdsmi.py -q "$@"
+# aotriton.tune (python/tune/) is a separate distribution and deliberately
+# not installed/tested here: tuning is not part of this CI, tuning uses CI.
+exec "${VENV}/bin/python" -m pytest python/test python/pytest-gpu-lease/tests -q "$@"

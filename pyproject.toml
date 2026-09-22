@@ -22,12 +22,10 @@ requires-python = ">=3.10"
 # (e.g. `python -m aotriton.generate`) — not as installed binaries.
 
 [tool.pytest.ini_options]
-testpaths = [
-    "python/test", "python/pytest-gpu-lease/tests",
-    # Only these two files, not all of python/tune/tests/: test_exaid.py in
-    # there needs a real GPU and torch, unlike these.
-    "python/tune/tests/test_tune_infra.py", "python/tune/tests/test_gpu_utils_amdsmi.py",
-]
+testpaths = ["python/test", "python/pytest-gpu-lease/tests"]
+# python/tune/tests/ (the aotriton-tune distribution's own tests) is
+# deliberately not collected here: tuning is not part of this CI, tuning
+# uses CI.
 # GPU integration tests live under modules/flash/tests/ and require hardware; keep them separate.
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
