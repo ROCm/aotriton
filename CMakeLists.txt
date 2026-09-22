@@ -1,7 +1,7 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.27 FATAL_ERROR)
 
 project(AOTriton CXX C ASM)
 
@@ -118,6 +118,12 @@ option(AOTRITON_BUILD_FOR_TUNING "Build all GPU kernels and set -DAOTRITON_BUILD
 set(AOTRITON_BUILD_FOR_TUNING_BUT_SKIP_KERNEL "" CACHE STRING "Use tuning database for certain kernels when AOTRITON_BUILD_FOR_TUNING=ON")
 option(AOTRITON_ENABLE_FP32_INPUTS "Enable FP32 support." ON)
 option(AOTRITON_NOIMAGE_MODE "Only build C++ Shim part. Kernel image builds are disabled" OFF)
+option(AOTRITON_HIPFREE_MODE "Only build the aotriton_hipfree static library and its headers -- everything in the C++ runtime that does not call a real HIP runtime function. Skips GPU kernel images and the aotriton_v2 shared library entirely. Implies AOTRITON_NOIMAGE_MODE=ON and AOTRITON_NO_PYTHON=ON (aotriton_v2, which the python binding links against, is not defined in this mode)." OFF)
+if(AOTRITON_HIPFREE_MODE)
+  set(AOTRITON_NOIMAGE_MODE ON CACHE BOOL "Only build C++ Shim part. Kernel image builds are disabled" FORCE)
+  set(AOTRITON_NO_PYTHON ON CACHE BOOL "Disable python binding build" FORCE)
+endif()
+set(AOTRITON_HIPFREE_LIBRARY "" CACHE PATH "Path to a previously-built aotriton_hipfree static library (produced by an AOTRITON_HIPFREE_MODE=ON build). When set, v3src/ skips compiling aotriton_hipfree's sources entirely and links this prebuilt archive into aotriton_v2 instead -- lets the HIP-free bulk of the runtime be compiled once and reused across every ROCm version in the release matrix.")
 # Allow setting AOTRITON_DEBUG_SKIP_TRITON_KERNELS from env var, accept CMake values
 # (1/ON/TRUE), overridden by explicit -D
 set(_AOTRITON_SKIP_TRITON_DEFAULT OFF)
