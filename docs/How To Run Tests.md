@@ -22,6 +22,11 @@ FOR_RELEASE=1 PYTHONPATH=install_dir/lib/ pytest ../modules/flash/tests/test_bac
   running this, since `requirements-dev.txt` installs `pytest-gpu-lease` from a
   path (`./python/pytest-gpu-lease`) resolved against the current working
   directory, not the requirements file's location.
+* The tune-infra tests (`test_tune_infra.py`, `test_pon.py`,
+  `test_gpu_utils_amdsmi.py`, `test_codegen_tune_isolation.py`) additionally
+  require `pip install -e ./python/tune` (or non-editable
+  `pip install ./python/tune`): `aotriton.tune` is a separate distribution
+  (`aotriton-tune`) not pulled in by `requirements-dev.txt`.
 
 # Pre-requisites for parallel testing on multi-GPUs
 

@@ -10,7 +10,6 @@ import subprocess
 import select
 import errno
 import time
-import fcntl
 import logging
 from pathlib import Path
 from typing import Dict, Any
@@ -116,6 +115,7 @@ class SafeLineReader:
 
     def _setup_nonblocking(self):
         """Set stdout to non-blocking mode."""
+        import fcntl
         if self.fd is None and self.process.stdout:
             self.fd = self.process.stdout.fileno()
             self.original_flags = fcntl.fcntl(self.fd, fcntl.F_GETFL)
@@ -123,6 +123,7 @@ class SafeLineReader:
 
     def _restore_blocking(self):
         """Restore stdout to blocking mode."""
+        import fcntl
         if self.fd is not None and self.original_flags is not None:
             fcntl.fcntl(self.fd, fcntl.F_SETFL, self.original_flags)
 

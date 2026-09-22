@@ -243,30 +243,23 @@ class KernelDescription(Interface):
         return cfg(f)
 
     def _lut_sancheck(self):
-        """This kernel's family-side `LutSancheck`, from modules/<family>/tune.
+        """This kernel's family-side `LutSancheck`, from modules/<family>/aot.
 
         Resolved through self.FAMILY: nothing under template_instantiation/ may
-        name a concrete family.
-
-        modules/ is located via the family's already-loaded aot package rather
-        than registry.default_modules_dir(), which falls back to <cwd>/modules.
-        The generator takes its tree from --root_dir and does not chdir, so an
-        unrelated modules/ in the invoking directory would otherwise win.
+        name a concrete family. `aot` is the already-loaded family package
+        (see load_family_aot); LutSancheck lives beside it as aot.sancheck, so
+        no separate load-by-path or modules_dir computation is needed here.
         """
         # Lazy: aotriton.codegen imports template_instantiation at module level
         # (e.g. codegen/kernel.py), so hoisting these would cycle.
-        from pathlib import Path
         from aotriton.codegen.parser import load_family_aot
-        from aotriton.tune.registry import load_family_tune
         aot = load_family_aot(self.FAMILY)
         if aot is None:
             raise RuntimeError(
                 f"{self.FAMILY} aot package is not loaded; the LUT sancheck "
                 f"back-edge runs after linking and relies on the Parser "
                 f"having loaded it")
-        # <root_dir>/modules/<family>/aot/__init__.py -> <root_dir>/modules
-        modules_dir = Path(aot.__file__).resolve().parents[2]
-        return load_family_tune(self.FAMILY, modules_dir).sancheck.LutSancheck
+        return aot.sancheck.LutSancheck
 
     def sancheck_lut_tensor(self, f, lut_tensor):
         return self._lut_sancheck().sancheck_lut_tensor(self, f, lut_tensor)

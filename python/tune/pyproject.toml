@@ -1,0 +1,21 @@
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+#
+# Packaging for the `aotriton-tune` distribution: python/tune/ -> aotriton.tune.
+# A standalone distribution living inside python/, which otherwise maps to the
+# `aotriton` package (see repo-root setup.py). Safe because the root setup.py's
+# find_packages() excludes 'tune'/'tune.*' explicitly, and this directory's own
+# setup.py (not the root one) computes its own package_dir. `aotriton` is a PEP
+# 420 namespace package: this distribution ships aotriton/tune/... with no
+# aotriton/__init__.py, and merges into the same namespace as the main
+# `aotriton` distribution at import time.
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aotriton-tune"
+dynamic = ["version"]
+description = "AOTriton tuning infrastructure (aotriton.tune)"
+requires-python = ">=3.10"

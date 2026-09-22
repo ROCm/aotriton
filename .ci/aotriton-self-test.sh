@@ -17,5 +17,11 @@ cd "${ROOT}"
 [ -d "${VENV}" ] || python3 -m venv "${VENV}"
 "${VENV}/bin/python" -m pip install -q -r requirements-dev.txt
 "${VENV}/bin/python" -m pip install -q .   # the aotriton package; python/test imports aotriton.*
+# aotriton.tune is a separate distribution (aotriton-tune, python/tune/), not
+# bundled into the wheel installed above. python/test includes
+# test_tune_infra.py, test_pon.py, test_gpu_utils_amdsmi.py, which import
+# aotriton.tune.* unconditionally and only skip on missing dacite/psycopg, not
+# on a missing aotriton.tune package -- so it must be installed here too.
+"${VENV}/bin/python" -m pip install -q ./python/tune
 
 exec "${VENV}/bin/python" -m pytest python/test python/pytest-gpu-lease/tests -q "$@"

@@ -48,11 +48,10 @@ def check_value(functional, repr_name):
     assert False, f'Cannot find {repr_name=} in {functional=}'
 
 # NOTE: LutSancheck (the LUT sancheck + missing-entry diagnostic) lives in
-# modules/flash/tune/sancheck.py, since it is tuning logic rather than codegen
-# logic. The codegen back-edge in python/template_instantiation/ir/triton/kdesc.py
-# resolves it via
-# aotriton.tune.registry.load_family_tune(<family>).sancheck.LutSancheck.
-# check_value/_empty_generator stay here (small,
-# pure, stable helpers duplicated rather than imported, same pattern as
-# aot/flash_entry.py vs. tune/entry.py) since other aot/*.py files
-# (aiter_fwd.py, aiter_bwd.py) still depend on check_value from here.
+# modules/flash/aot/sancheck.py (sibling module), which imports
+# check_value/_empty_generator directly from here -- no more duplication
+# needed for those two helpers specifically for sancheck. check_value/
+# _empty_generator still keep their own copies here (rather than sancheck.py
+# importing everything and everyone else importing from sancheck.py) since
+# other aot/*.py files (aiter_fwd.py, aiter_bwd.py) depend on check_value
+# from here too, and this module has no dependency on sancheck.py.

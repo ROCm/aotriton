@@ -20,6 +20,7 @@ tree. Family is inferred from the `modules/<family>/aot` path.
 
 import aotriton.template_instantiation as ati
 
+from . import sancheck
 from .attn_fwd import attn_fwd
 from .bwd_kernel_dk_dv import bwd_kernel_dk_dv
 from .bwd_kernel_dq import bwd_kernel_dq

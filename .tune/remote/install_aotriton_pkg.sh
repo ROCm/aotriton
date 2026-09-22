@@ -35,7 +35,8 @@ set -euo pipefail
 
 SRC="${1:-/wkdir/aotriton.src}"
 STAGE="$(mktemp -d /tmp/aotriton-pkg.XXXXXX)"
-trap 'rm -rf "$STAGE"' EXIT
+STAGE2="$(mktemp -d /tmp/aotriton-tune-pkg.XXXXXX)"
+trap 'rm -rf "$STAGE" "$STAGE2"' EXIT
 
 # Everything `pip install .` reads, and nothing else:
 #   pyproject.toml   build-system requirements
@@ -68,10 +69,28 @@ done
 # requirements.txt, so building against them is both correct and offline.
 python -m pip install -q --no-deps --no-build-isolation "$STAGE"
 
+# `aotriton.tune` is a separate distribution (aotriton-tune, python/tune/), not
+# bundled into the main `aotriton` wheel installed above -- `aotriton` is a PEP
+# 420 namespace package, and this worker actually needs aotriton.tune (the
+# tuning queue / pq / localq code), so install it the same way, from its own
+# staging copy. python/tune/setup.py reads CMakeLists.txt from two parents up
+# from itself, i.e. from $STAGE2's root, so CMakeLists.txt goes at $STAGE2/ and
+# the tune tree (which already carries its own pyproject.toml/setup.py) goes at
+# $STAGE2/python/tune/.
+mkdir -p "$STAGE2/python"
+cp -a "$SRC/CMakeLists.txt" "$STAGE2/"
+cp -a "$SRC/python/tune" "$STAGE2/python/"
+python -m pip install -q --no-deps --no-build-isolation "$STAGE2/python/tune"
+
 # Report what the worker will actually import. The failure this exists to
 # prevent is silent -- a stale package imports perfectly well -- so the
-# resolved path belongs in the log next to the version.
+# resolved path belongs in the log next to the version. `aotriton` is a
+# namespace package (no __file__), so report its merged search path(s)
+# instead, plus confirmation that aotriton.tune (the second install above)
+# actually resolved.
 python - <<'PY'
 import aotriton
-print(f"aotriton package installed: {aotriton.__file__}")
+print(f"aotriton namespace path(s): {list(aotriton.__path__)}")
+import aotriton.tune
+print(f"aotriton.tune installed: {aotriton.tune.__file__}")
 PY
