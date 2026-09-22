@@ -19,6 +19,7 @@ of hard-failing when they are absent.
 
 import ast
 import importlib
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -29,6 +30,36 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # for conftest-adjacen
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MODULES_DIR = _REPO_ROOT / 'modules'
+
+
+def test_family_tune_import_without_fcntl():
+    """Code generation can load family tuning metadata without POSIX fcntl."""
+    code = r'''
+import builtins
+from pathlib import Path
+
+real_import = builtins.__import__
+
+def import_without_fcntl(name, globals=None, locals=None, fromlist=(), level=0):
+    if name == "fcntl":
+        raise ModuleNotFoundError("No module named 'fcntl'", name="fcntl")
+    return real_import(name, globals, locals, fromlist, level)
+
+builtins.__import__ = import_without_fcntl
+
+from aotriton.tune import utils
+assert utils.fcntl is None
+
+from aotriton.tune.registry import load_family_tune
+family = load_family_tune("flash", modules_dir=Path("modules"))
+assert family.TuneDesc is not None
+'''
+
+    subprocess.run(
+        [sys.executable, '-c', code],
+        cwd=_REPO_ROOT,
+        check=True,
+    )
 
 
 # --- (a) F6: modules/<family> stays a plain directory; the by-path loader ---

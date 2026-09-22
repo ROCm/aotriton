@@ -10,10 +10,16 @@ import subprocess
 import select
 import errno
 import time
-import fcntl
 import logging
 from pathlib import Path
 from typing import Dict, Any
+
+try:
+    import fcntl
+except ImportError:
+    # fcntl is unavailable on Windows. Only the POSIX subprocess readers below
+    # require it; importing the shared tuning helpers must remain portable.
+    fcntl = None
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +122,10 @@ class SafeLineReader:
 
     def _setup_nonblocking(self):
         """Set stdout to non-blocking mode."""
+        if fcntl is None:
+            raise NotImplementedError(
+                "SafeLineReader requires POSIX fcntl support"
+            )
         if self.fd is None and self.process.stdout:
             self.fd = self.process.stdout.fileno()
             self.original_flags = fcntl.fcntl(self.fd, fcntl.F_GETFL)
@@ -123,6 +133,8 @@ class SafeLineReader:
 
     def _restore_blocking(self):
         """Restore stdout to blocking mode."""
+        if fcntl is None:
+            return
         if self.fd is not None and self.original_flags is not None:
             fcntl.fcntl(self.fd, fcntl.F_SETFL, self.original_flags)
 
@@ -249,7 +261,10 @@ def safe_readline(
     Note: Uses SafeLineReader to maintain buffer state across multiple calls.
           Reader instance is cached on the process object.
     """
-    assert sys.platform != 'win32'
+    if fcntl is None:
+        raise NotImplementedError(
+            "safe_readline requires POSIX fcntl support"
+        )
 
     # Get or create reader for this process
     if not hasattr(process, '_stdout_reader'):
