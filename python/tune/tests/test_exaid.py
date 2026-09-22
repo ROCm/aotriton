@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: MIT
 
 import pytest
-from .exaid import exaid_create, ExaidSubprocessNotOK
-from .tdesc import ImplSelector
+from aotriton.tune.exaid import exaid_create, ExaidSubprocessNotOK
+from aotriton.tune.tdesc import ImplSelector
 import shutil
 import json
 import torch
@@ -42,5 +42,5 @@ def test_exaid(module, gpu_id):
     shutil.rmtree(tmpdir)
 
 if __name__ == '__main__':
-    raise SystemExit("Run this file with pytest, not directly:\n  pytest python/tune/test_exaid.py")
+    raise SystemExit("Run this file with pytest, not directly:\n  pytest python/tune/tests/test_exaid.py")
 
