@@ -14,4 +14,7 @@ TUNING_ARCHITECTURES = [
     'gfx1201',
     'gfx1250',
     'gfx1151',
+    'gfx1170',
+    'gfx1171',
+    'gfx1172'
 ]
