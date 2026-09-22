@@ -24,8 +24,10 @@ FOR_RELEASE=1 PYTHONPATH=install_dir/lib/ pytest ../modules/flash/tests/test_bac
   directory, not the requirements file's location.
 * The tune-infra tests (`python/tune/tests/test_tune_infra.py`,
   `python/tune/tests/test_gpu_utils_amdsmi.py`) additionally require
-  `pip install -e ./python/tune`: `aotriton.tune` is a separate distribution,
-  not pulled in by `requirements-dev.txt`.
+  `pip install -e .` (the main distribution -- e.g. `modules/flash/tune/entry.py`
+  imports `aotriton.utils`) and `pip install -e ./python/tune`: `aotriton.tune`
+  is a separate distribution, and neither is pulled in by
+  `requirements-dev.txt`.
 
 # Pre-requisites for parallel testing on multi-GPUs
 

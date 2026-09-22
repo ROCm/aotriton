@@ -37,10 +37,11 @@ def _tree_cache_key(modules_dir, family: str, block: str) -> str:
     name-only key means whichever tree loaded first serves both. That is
     invisible while the two agree and silently wrong the moment they diverge.
 
-    This module's loaders (`load_family_tune`, `load_family_visperf`, ...) are
-    keyed by family name alone; without tree-keying, whichever tree loads
-    first for a family would silently serve every later caller too, process-
-    wide, instead of raising the ImportError that would expose a mismatch.
+    Without this per-tree keying, this module's loaders (`load_family_tune`,
+    `load_family_visperf`, ...) would effectively be keyed by family name
+    alone: whichever tree loaded first for a family would silently serve
+    every later caller too, process-wide, instead of raising the ImportError
+    that would expose a mismatch.
     """
     digest = hashlib.blake2b(str(Path(modules_dir).resolve()).encode(),
                              digest_size=6).hexdigest()
