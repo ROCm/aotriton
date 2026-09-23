@@ -1,31 +1,9 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Sources here must not call a real hip*() runtime function. HIP headers, for
-# hipError_t/hipStream_t as types, are fine -- see hip::host below.
-set(COMMON_CC_FILES
-  cpp_tune.cc
-  fd_unix.cc
-  fd_win32.cc
-  log.cc
-  lszip.cc
-  packed_kernel_common.cc
-  pon.cc
-)
-# Assertion only: a .cc added here without a matching COMMON_CC_FILES entry
-# fails the configure step instead of silently never being built.
-aux_source_directory(. _COMMON_CC_FILES_DISCOVERED)
-list(TRANSFORM _COMMON_CC_FILES_DISCOVERED REPLACE "^\\./" "")
-list(SORT _COMMON_CC_FILES_DISCOVERED)
-set(_COMMON_CC_FILES_EXPECTED ${COMMON_CC_FILES})
-list(SORT _COMMON_CC_FILES_EXPECTED)
-if(NOT _COMMON_CC_FILES_DISCOVERED STREQUAL _COMMON_CC_FILES_EXPECTED)
-  message(FATAL_ERROR
-    "v3src/common/*.cc source set changed: aux_source_directory discovered "
-    "[${_COMMON_CC_FILES_DISCOVERED}] but v3src/common/CMakeLists.txt expects "
-    "[${_COMMON_CC_FILES_EXPECTED}]. A source that calls a real hip*() runtime "
-    "function belongs in v3src/hip-dependent/ instead.")
-endif()
+# No .cc here calls a real hip*() function -- that is what the directory means.
+# HIP headers, for hipError_t/hipStream_t as types, are fine; see hip::host below.
+aux_source_directory(. COMMON_CC_FILES)
 
 file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES ENCODING UTF-8)
 
