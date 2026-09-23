@@ -14,7 +14,11 @@
 # Run from "Developer PowerShell for VS 2022" (need cl.exe/link.exe on PATH).
 #
 # Usage:
-#   .\build-shim.ps1 <target arch>[;<arch>...]
+#   .\build-shim.ps1 <target arch>[;<arch>...] <vcpkg root>
+#
+# <vcpkg root> is the directory containing scripts\buildsystems\vcpkg.cmake --
+# required on win32: unlike Linux, this build needs vcpkg-provided
+# dependencies via CMAKE_TOOLCHAIN_FILE.
 #
 # Overrides (matching common-build.sh's env-var overrides):
 #   $env:AOTRITON_BUILD_PATH          - explicit build dir (default: build-<major>.<minor>-shim-<arch>)
@@ -23,7 +27,10 @@
 
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [string]$TargetArch
+    [string]$TargetArch,
+
+    [Parameter(Mandatory = $true, Position = 1)]
+    [string]$VcpkgRoot
 )
 
 $ErrorActionPreference = "Stop"
@@ -61,6 +68,21 @@ if (-not (Test-Path $HipConfig)) {
 }
 $env:PATH = "$env:ROCM_PATH\bin;$env:ROCM_PATH\llvm\bin;$env:PATH"
 
+# --- vcpkg toolchain file check ---------------------------------------------
+# Resolve to absolute BEFORE Push-Location below: a relative <vcpkg root> is
+# relative to the caller's cwd, and would silently resolve to the wrong place
+# (or nowhere) once the script cd's into $BuildDir for the cmake invocation.
+if (-not (Test-Path $VcpkgRoot)) {
+    throw "<vcpkg root> does not exist: $VcpkgRoot"
+}
+$VcpkgRoot = (Resolve-Path $VcpkgRoot).Path
+$VcpkgToolchainFile = Join-Path $VcpkgRoot "scripts\buildsystems\vcpkg.cmake"
+if (-not (Test-Path $VcpkgToolchainFile)) {
+    throw "vcpkg.cmake not found at $VcpkgToolchainFile -- <vcpkg root> must " +
+          "be the vcpkg checkout root (the directory containing scripts\), " +
+          "not a subdirectory. Got: $VcpkgRoot"
+}
+
 # --- Version numbers, mirroring common-vars.sh's grep-based parsing --------
 $cmakeListsText = Get-Content $RootCMakeLists -Raw
 $aotritonMajor = [regex]::Match($cmakeListsText, 'set\(AOTRITON_VERSION_MAJOR_INT\s+(\d+)\)').Groups[1].Value
@@ -90,6 +112,7 @@ try {
         -DAOTRITON_NOIMAGE_MODE=ON `
         -DAOTRITON_GPU_BUILD_TIMEOUT=0 `
         -DAOTRITON_NO_PYTHON=ON `
+        -DCMAKE_TOOLCHAIN_FILE="$VcpkgToolchainFile" `
         -G Ninja
     if ($LASTEXITCODE -ne 0) { throw "cmake configure failed with exit code $LASTEXITCODE" }
 
