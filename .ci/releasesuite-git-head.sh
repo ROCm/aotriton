@@ -430,14 +430,8 @@ function build_inside() {
     "${TARGETS}" "${WHEEL_CFG}" "${ASAN_MODE}" "${ARCH_LIST}"
 }
 
-# Both selections want something out of the IMAGE_ROCMVER container, so they
-# share one invocation: `gpu` because that is where images are built, `common`
-# because aotriton_common.a calls no real hip*() function and one build of it
-# links into every runtime below, instead of being recompiled by each of the
-# ${#SUITE_RUNTIME_LIST[@]} runtime invocations. Asking for both is free -- the
-# image build compiles the archive anyway and only has to package it.
-#
-# This has to run BEFORE the runtime loop, which consumes what it caches.
+# One IMAGE_ROCMVER invocation serves both: gpu builds the images, common caches
+# the archive the runtime loop links instead of recompiling. Must precede it.
 PREBUILD_TARGETS=()
 [ ${SUITE_SELECT_IMAGE} -gt 0 ] && PREBUILD_TARGETS+=(gpu)
 [ ${SUITE_SELECT_RUNTIME} -gt 0 ] && PREBUILD_TARGETS+=(common)
