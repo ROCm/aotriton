@@ -44,6 +44,11 @@ take_launch_error() {
   return err;
 }
 
+hipError_t
+peek_hip_error() {
+  return hipPeekAtLastError();
+}
+
 AiterAsmKernel::AiterAsmKernel(const char* name, const char* hsaco)
   : mangled_kernel_function_name_(name), hsaco_(hsaco)
 {
