@@ -84,7 +84,7 @@ SUITE_SELECT_RUNTIME=-1
 # long version string (e.g. 10.2.0a20260918). The last entry is also the default
 # GPU image ROCm (IMAGE_ROCMVER), so keep a gfx1250-capable TheRock build last.
 # 7.15 is gone: it was renamed to 10 and its nightlies retired.
-SUITE_RUNTIME_LIST=(6.4.4 7.0.3 7.1.1 7.2.4 7.14.1 10.2.0a20260918)
+SUITE_RUNTIME_LIST=(6.4.4 7.0.3 7.1.1 7.2.4 7.14.1 10.0.0 10.2.0a20260918)
 CMDLIST=()
 SUITE_DEFAULT_SELECTION=1
 SUITE_YAML=""
