@@ -57,7 +57,7 @@ target_link_libraries(aotriton_v2 PUBLIC hip::host hip::amdhip64)
 # WHOLE_ARCHIVE forces all objects in, matching the old behavior of compiling
 # everything into one SHARED library.
 # Needs CMake >= 3.24; root floor is 3.27.
-target_link_libraries(aotriton_v2 PRIVATE $<LINK_LIBRARY:WHOLE_ARCHIVE,aotriton_hipfree>)
+target_link_libraries(aotriton_v2 PRIVATE $<LINK_LIBRARY:WHOLE_ARCHIVE,aotriton_common>)
 set_target_properties(aotriton_v2 PROPERTIES VERSION
   ${AOTRITON_VERSION_MAJOR_INT}.${AOTRITON_VERSION_MINOR_INT}.${AOTRITON_VERSION_PATCH_INT})
 

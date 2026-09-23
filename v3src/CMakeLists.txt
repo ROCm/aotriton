@@ -450,6 +450,6 @@ endif()
 message(STATUS "AOTRITON_SHIM_FLAGS ${AOTRITON_SHIM_FLAGS}")
 
 add_subdirectory(common)
-if(NOT AOTRITON_HIPFREE_MODE)
+if(NOT AOTRITON_COMMON_LIBRARY_ONLY_MODE)
   add_subdirectory(hip-dependent)
 endif()
