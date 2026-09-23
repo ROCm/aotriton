@@ -380,7 +380,7 @@ fi
 
 function build_inside() {
   rocmver="$1"
-  NOIMAGE_MODE="$2"
+  TARGETS="$2"
   ASAN_MODE="${3:-OFF}"
   ARCH_LIST="${4:-ALL}"
   DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}"
@@ -404,7 +404,7 @@ function build_inside() {
   fi
   # By environment rather than as a fifth positional: runc-manylinux-build-tar.sh's
   # argument list is a fixed shape shared with anything else that drives it, and
-  # this is optional in a way NOIMAGE_MODE/WHEEL_CFG/ASAN_MODE/ARCH_LIST are not.
+  # this is optional in a way TARGETS/WHEEL_CFG/ASAN_MODE/ARCH_LIST are not.
   # Named for the cmake variable it becomes, so there is one name to grep for.
   if [[ -n "${FLYDSL_WHEEL_CFG}" ]]; then
     EXTRA_ENV+=(-e "AOTRITON_USE_LOCAL_FLYDSL_WHEEL=${FLYDSL_WHEEL_CFG}")
@@ -427,15 +427,30 @@ function build_inside() {
     -w / \
     ${DOCKER_IMAGE} \
     bash -l /tmp/runc-manylinux-build-tar.sh \
-    "${NOIMAGE_MODE}" "${WHEEL_CFG}" "${ASAN_MODE}" "${ARCH_LIST}"
+    "${TARGETS}" "${WHEEL_CFG}" "${ASAN_MODE}" "${ARCH_LIST}"
 }
+
+# aotriton_common.a calls no real hip*() function, so one build of it links into
+# every runtime below. It is built once here and cached, rather than recompiled
+# by each of the ${#SUITE_RUNTIME_LIST[@]} runtime invocations.
+#
+# The image build compiles it anyway, so when an image pass is running it just
+# packages what it already has ("gpu,common") and no extra container runs. The
+# standalone "common" pass exists only for a runtime-only suite. Either way the
+# cache has to be populated BEFORE the runtime loop, which is why the image pass
+# now precedes it.
+if [ ${SUITE_SELECT_IMAGE} -gt 0 ]; then
+  if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
+    build_inside "${IMAGE_ROCMVER}" gpu,common "${ASAN_MODE}" "${SUITE_ARCH}"
+  else
+    build_inside "${IMAGE_ROCMVER}" gpu "${ASAN_MODE}" "${SUITE_ARCH}"
+  fi
+elif [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
+  build_inside "${IMAGE_ROCMVER}" common "${ASAN_MODE}" "${SUITE_ARCH}"
+fi
 
 if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
   for rocmver in "${SUITE_RUNTIME_LIST[@]}"; do
-    build_inside "${rocmver}" ON "${ASAN_MODE}" "${SUITE_ARCH}"
+    build_inside "${rocmver}" runtime "${ASAN_MODE}" "${SUITE_ARCH}"
   done
-fi
-
-if [ ${SUITE_SELECT_IMAGE} -gt 0 ]; then
-  build_inside "${IMAGE_ROCMVER}" OFF "${ASAN_MODE}" "${SUITE_ARCH}"
 fi
