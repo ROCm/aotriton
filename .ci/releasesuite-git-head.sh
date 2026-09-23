@@ -430,23 +430,20 @@ function build_inside() {
     "${TARGETS}" "${WHEEL_CFG}" "${ASAN_MODE}" "${ARCH_LIST}"
 }
 
-# aotriton_common.a calls no real hip*() function, so one build of it links into
-# every runtime below. It is built once here and cached, rather than recompiled
-# by each of the ${#SUITE_RUNTIME_LIST[@]} runtime invocations.
+# Both selections want something out of the IMAGE_ROCMVER container, so they
+# share one invocation: `gpu` because that is where images are built, `common`
+# because aotriton_common.a calls no real hip*() function and one build of it
+# links into every runtime below, instead of being recompiled by each of the
+# ${#SUITE_RUNTIME_LIST[@]} runtime invocations. Asking for both is free -- the
+# image build compiles the archive anyway and only has to package it.
 #
-# The image build compiles it anyway, so when an image pass is running it just
-# packages what it already has ("gpu,common") and no extra container runs. The
-# standalone "common" pass exists only for a runtime-only suite. Either way the
-# cache has to be populated BEFORE the runtime loop, which is why the image pass
-# now precedes it.
-if [ ${SUITE_SELECT_IMAGE} -gt 0 ]; then
-  if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
-    build_inside "${IMAGE_ROCMVER}" gpu,common "${ASAN_MODE}" "${SUITE_ARCH}"
-  else
-    build_inside "${IMAGE_ROCMVER}" gpu "${ASAN_MODE}" "${SUITE_ARCH}"
-  fi
-elif [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
-  build_inside "${IMAGE_ROCMVER}" common "${ASAN_MODE}" "${SUITE_ARCH}"
+# This has to run BEFORE the runtime loop, which consumes what it caches.
+PREBUILD_TARGETS=()
+[ ${SUITE_SELECT_IMAGE} -gt 0 ] && PREBUILD_TARGETS+=(gpu)
+[ ${SUITE_SELECT_RUNTIME} -gt 0 ] && PREBUILD_TARGETS+=(common)
+PREBUILD=$(IFS=,; echo "${PREBUILD_TARGETS[*]}")
+if [ -n "${PREBUILD}" ]; then
+  build_inside "${IMAGE_ROCMVER}" "${PREBUILD}" "${ASAN_MODE}" "${SUITE_ARCH}"
 fi
 
 if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
