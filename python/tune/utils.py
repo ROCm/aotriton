@@ -46,7 +46,7 @@ def __getattr__(name):
     """PEP 562 module __getattr__: lazily resolve `dacite_tuple`.
 
     `dacite` is an optional, tuning-only dependency (see modules/flash/tune's
-    module docstrings and python/test/test_tune_infra.py). Every caller here
+    module docstrings and python/tune/tests/test_tune_infra.py). Every caller here
     imports it via `from aotriton.tune.utils import ... dacite_tuple ...`,
     which -- if `dacite_tuple` were a plain module-level value computed via
     `dacite.Config(...)` at import time -- would force an eager `import

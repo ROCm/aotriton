@@ -151,18 +151,6 @@ def test_parse_pon_names_the_token_that_has_no_equals():
         parse_pon('a=1;garbage;b=2')
 
 
-def test_flash_entry_round_trips_through_pon():
-    from aotriton.tune.registry import load_flash_entry_module
-
-    modules_dir = Path(__file__).resolve().parents[2] / 'modules'
-    FlashEntry = load_flash_entry_module(modules_dir=modules_dir).FlashEntry
-
-    e = FlashEntry(dtype='bfloat16', hdim=(64, 128), seqlen_q=256, seqlen_k=512,
-                   causal=True, dropout_p=0.5, bias_type=1)
-    d = parse_pon(e.as_text())
-    assert FlashEntry(**d) == e
-
-
 def main():
     """Standalone runner. Every test here runs without pytest -- `pytest.raises`
     is a plain context manager, not a fixture -- so nothing is skipped and a

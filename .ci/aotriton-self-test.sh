@@ -18,4 +18,6 @@ cd "${ROOT}"
 "${VENV}/bin/python" -m pip install -q -r requirements-dev.txt
 "${VENV}/bin/python" -m pip install -q .   # the aotriton package; python/test imports aotriton.*
 
+# aotriton.tune (python/tune/) is a separate distribution and deliberately
+# not installed/tested here: tuning is not part of this CI, tuning uses CI.
 exec "${VENV}/bin/python" -m pytest python/test python/pytest-gpu-lease/tests -q "$@"
