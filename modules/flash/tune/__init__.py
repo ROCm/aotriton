@@ -21,17 +21,14 @@ deliberately exports nothing alongside it for that purpose: if something
 outside needs metadata `TuneDesc` cannot supply, extend
 `TuningDescription`'s interface rather than adding a second handle.
 
-Everything below except `sancheck` (needed eagerly by the codegen back-edge in
-python/template_instantiation/ir/triton/kdesc.py, and torch-free) stays lazily
-resolved: importing this package must not pull in torch/pyaotriton (see
-desc.py's module docstring for why).
+Everything below stays lazily resolved: importing this package must not pull
+in torch/pyaotriton (see desc.py's module docstring for why).
 """
 
 from .desc import FlashTune
 from aotriton.tune.tdesc import ImplSelector
-from . import sancheck
 from . import pytest_entry
 
 TuneDesc = FlashTune
 
-__all__ = ['TuneDesc', 'ImplSelector', 'sancheck', 'pytest_entry']
+__all__ = ['TuneDesc', 'ImplSelector', 'pytest_entry']

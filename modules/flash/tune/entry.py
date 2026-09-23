@@ -13,7 +13,7 @@ Any GPU related imports must be deferred to the related function instead import
 at the beginning of the file.
 
 `dacite` is likewise an optional, tuning-only dependency (see
-python/test/test_tune_infra.py's module docstring) -- `from_dict()` below
+python/tune/tests/test_tune_infra.py's module docstring) -- `from_dict()` below
 imports it lazily, inside the method, so merely importing this module (e.g.
 via registry.load_flash_entry_module(), used by non-GPU tools like
 .tune/webui/tasks.py) never requires dacite to be installed.
@@ -46,7 +46,7 @@ class FlashEntry:
     def as_text(self) -> str:
         # KEEP BYTE-IDENTICAL to modules/flash/aot/flash_entry.py's FlashEntry.as_text()
         # (codegen-side copy, torch-free -- see that file's docstring, and
-        # python/test/test_tune_infra.py's test_flash_entry_as_text_matches_codegen_copy).
+        # python/tune/tests/test_tune_infra.py's test_flash_entry_as_text_matches_codegen_copy).
         return render_pon(asdict(self))
 
     @property
