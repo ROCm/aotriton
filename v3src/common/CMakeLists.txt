@@ -5,14 +5,6 @@
 # HIP headers, for hipError_t/hipStream_t as types, are fine; see hip::host below.
 aux_source_directory(. COMMON_CC_FILES)
 
-file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES ENCODING UTF-8)
-
-# Modular family C++ sources: every modules/<family>/csrc/**.cc (recursively, so
-# per-family subdirs like csrc/aiter are picked up). Convention over hardcoding —
-# adding a family needs no edit here. CONFIGURE_DEPENDS re-globs when files change.
-file(GLOB_RECURSE MODULE_CC_FILES CONFIGURE_DEPENDS
-     "${PROJECT_SOURCE_DIR}/modules/*/csrc/*.cc")
-
 # Static so one build (AOTRITON_COMMON_LIBRARY_ONLY_MODE=ON) can be reused unmodified as
 # AOTRITON_COMMON_LIBRARY across every ROCm version in the release matrix.
 if(AOTRITON_COMMON_LIBRARY)
@@ -21,6 +13,15 @@ if(AOTRITON_COMMON_LIBRARY)
   set_target_properties(aotriton_common PROPERTIES
     IMPORTED_LOCATION "${AOTRITON_COMMON_LIBRARY}")
 else()
+  # Only the generating path reads these: a reuse build never runs the code
+  # generator, so Bare.shim does not exist for it.
+  file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES ENCODING UTF-8)
+  # Modular family C++ sources: every modules/<family>/csrc/**.cc (recursively, so
+  # per-family subdirs like csrc/aiter are picked up). Convention over hardcoding —
+  # adding a family needs no edit here. CONFIGURE_DEPENDS re-globs when files change.
+  file(GLOB_RECURSE MODULE_CC_FILES CONFIGURE_DEPENDS
+       "${PROJECT_SOURCE_DIR}/modules/*/csrc/*.cc")
+
   add_library(aotriton_common STATIC ${SHIM_CC_FILES} ${COMMON_CC_FILES} ${MODULE_CC_FILES})
   set_target_properties(aotriton_common PROPERTIES LINKER_LANGUAGE CXX)
   target_include_directories(aotriton_common PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>)

@@ -25,6 +25,27 @@ message(STATUS "AOTRITON_TARGET_ARCH ${AOTRITON_TARGET_ARCH}")
 message(STATUS "AOTRITON_OVERRIDE_TARGET_GPUS ${AOTRITON_OVERRIDE_TARGET_GPUS}")
 message(STATUS "EFFECTIVE_TARGET_GPUS ${EFFECTIVE_TARGET_GPUS}")
 
+# A reuse build compiles none of the generated shim -- it is already inside the
+# archive -- so the database and the generator that consume it are dead work.
+# The one output still needed, <family>/backends.h, comes from the archive too.
+set(AOTRITON_GENERATED_INCLUDE_DIR "${AOTRITON_V2_BUILD_DIR}/include")
+if(AOTRITON_COMMON_LIBRARY)
+  # <prefix>/lib/libaotriton_common.a -> <prefix>: the layout of both an
+  # AOTRITON_COMMON_LIBRARY_ONLY_MODE install tree and the CI cache tarball.
+  cmake_path(GET AOTRITON_COMMON_LIBRARY PARENT_PATH AOTRITON_COMMON_PREFIX)
+  cmake_path(GET AOTRITON_COMMON_PREFIX PARENT_PATH AOTRITON_COMMON_PREFIX)
+  set(AOTRITON_GENERATED_INCLUDE_DIR "${AOTRITON_COMMON_PREFIX}/include")
+  if(NOT EXISTS "${AOTRITON_GENERATED_INCLUDE_DIR}/aotriton")
+    message(FATAL_ERROR
+      "AOTRITON_COMMON_LIBRARY=${AOTRITON_COMMON_LIBRARY} has no generated "
+      "headers at ${AOTRITON_GENERATED_INCLUDE_DIR}/aotriton. It must point at "
+      "<prefix>/lib/libaotriton_common.a of an "
+      "AOTRITON_COMMON_LIBRARY_ONLY_MODE install tree.")
+  endif()
+  message(STATUS "Reusing ${AOTRITON_COMMON_LIBRARY}; skipping database compose and codegen")
+endif()
+
+if(NOT AOTRITON_COMMON_LIBRARY)
 if(AOTRITON_TUNING_DATABASE_ROOT)
   # External override: same per-family shape as modules/*/database
   # (<family>/database/amd/<arch>/...), just rooted elsewhere.
@@ -176,6 +197,7 @@ COMMAND_ECHO STDOUT
 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
 COMMAND_ERROR_IS_FATAL ANY
 )
+endif(NOT AOTRITON_COMMON_LIBRARY)
 
 # Compile HSACO Kernels
 if(NOT AOTRITON_NOIMAGE_MODE)

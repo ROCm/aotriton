@@ -20,7 +20,7 @@ target_include_directories(aotriton_v2 PRIVATE ${AOTRITON_V2_BUILD_DIR})
 # for <build>/v3src/include/aotriton/<family>/backends.h -- the per-operator
 # backend-index constants aotriton.generate emits. Public because the index is:
 # attn_options::force_backend_index takes it.
-target_include_directories(aotriton_v2 PUBLIC $<BUILD_INTERFACE:${AOTRITON_V2_BUILD_DIR}/include>)
+target_include_directories(aotriton_v2 PUBLIC $<BUILD_INTERFACE:${AOTRITON_GENERATED_INCLUDE_DIR}>)
 set_target_properties(aotriton_v2 PROPERTIES
   POSITION_INDEPENDENT_CODE ON
 )
@@ -69,7 +69,7 @@ install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/aotriton"
         FILES_MATCHING PATTERN "*.h")
 # The generated half of the public headers (per-family backends.h), installed
 # into the same tree so a consumer sees one include root.
-install(DIRECTORY "${AOTRITON_V2_BUILD_DIR}/include/aotriton"
+install(DIRECTORY "${AOTRITON_GENERATED_INCLUDE_DIR}/aotriton"
         DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}
         FILES_MATCHING PATTERN "*.h")
 install(TARGETS aotriton_v2
