@@ -21,8 +21,14 @@
 // due to chicken-and-egg issue.
 #cmakedefine AOTRITON_GIT_SHA1 @AOTRITON_GIT_SHA1@
 
+// Consumers must see dllimport: dllexport on the extern template declarations
+// in util.h is a contradiction MSVC reports as C4910.
 #ifdef _MSC_VER
+#ifdef AOTRITON_BUILDING_LIBRARY
 #define AOTRITON_API __declspec(dllexport)
+#else
+#define AOTRITON_API __declspec(dllimport)
+#endif
 #else
 #define AOTRITON_API __attribute__ ((visibility ("default")))
 #endif

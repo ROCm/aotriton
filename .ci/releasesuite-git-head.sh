@@ -84,7 +84,7 @@ SUITE_SELECT_RUNTIME=-1
 # long version string (e.g. 10.2.0a20260918). The last entry is also the default
 # GPU image ROCm (IMAGE_ROCMVER), so keep a gfx1250-capable TheRock build last.
 # 7.15 is gone: it was renamed to 10 and its nightlies retired.
-SUITE_RUNTIME_LIST=(6.4.4 7.0.3 7.1.1 7.2.4 7.14.1 10.2.0a20260918)
+SUITE_RUNTIME_LIST=(6.4.4 7.0.3 7.1.1 7.2.4 7.14.1 10.0.0 10.2.0a20260918)
 CMDLIST=()
 SUITE_DEFAULT_SELECTION=1
 SUITE_YAML=""
@@ -380,7 +380,7 @@ fi
 
 function build_inside() {
   rocmver="$1"
-  NOIMAGE_MODE="$2"
+  TARGETS="$2"
   ASAN_MODE="${3:-OFF}"
   ARCH_LIST="${4:-ALL}"
   DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}"
@@ -404,7 +404,7 @@ function build_inside() {
   fi
   # By environment rather than as a fifth positional: runc-manylinux-build-tar.sh's
   # argument list is a fixed shape shared with anything else that drives it, and
-  # this is optional in a way NOIMAGE_MODE/WHEEL_CFG/ASAN_MODE/ARCH_LIST are not.
+  # this is optional in a way TARGETS/WHEEL_CFG/ASAN_MODE/ARCH_LIST are not.
   # Named for the cmake variable it becomes, so there is one name to grep for.
   if [[ -n "${FLYDSL_WHEEL_CFG}" ]]; then
     EXTRA_ENV+=(-e "AOTRITON_USE_LOCAL_FLYDSL_WHEEL=${FLYDSL_WHEEL_CFG}")
@@ -427,15 +427,21 @@ function build_inside() {
     -w / \
     ${DOCKER_IMAGE} \
     bash -l /tmp/runc-manylinux-build-tar.sh \
-    "${NOIMAGE_MODE}" "${WHEEL_CFG}" "${ASAN_MODE}" "${ARCH_LIST}"
+    "${TARGETS}" "${WHEEL_CFG}" "${ASAN_MODE}" "${ARCH_LIST}"
 }
+
+# One IMAGE_ROCMVER invocation serves both: gpu builds the images, common caches
+# the archive the runtime loop links instead of recompiling. Must precede it.
+PREBUILD_TARGETS=()
+[ ${SUITE_SELECT_IMAGE} -gt 0 ] && PREBUILD_TARGETS+=(gpu)
+[ ${SUITE_SELECT_RUNTIME} -gt 0 ] && PREBUILD_TARGETS+=(common)
+PREBUILD=$(IFS=,; echo "${PREBUILD_TARGETS[*]}")
+if [ -n "${PREBUILD}" ]; then
+  build_inside "${IMAGE_ROCMVER}" "${PREBUILD}" "${ASAN_MODE}" "${SUITE_ARCH}"
+fi
 
 if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
   for rocmver in "${SUITE_RUNTIME_LIST[@]}"; do
-    build_inside "${rocmver}" ON "${ASAN_MODE}" "${SUITE_ARCH}"
+    build_inside "${rocmver}" runtime "${ASAN_MODE}" "${SUITE_ARCH}"
   done
-fi
-
-if [ ${SUITE_SELECT_IMAGE} -gt 0 ]; then
-  build_inside "${IMAGE_ROCMVER}" OFF "${ASAN_MODE}" "${SUITE_ARCH}"
 fi

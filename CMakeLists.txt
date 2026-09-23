@@ -1,7 +1,7 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.27 FATAL_ERROR)
 
 project(AOTriton CXX C ASM)
 
@@ -118,6 +118,38 @@ option(AOTRITON_BUILD_FOR_TUNING "Build all GPU kernels and set -DAOTRITON_BUILD
 set(AOTRITON_BUILD_FOR_TUNING_BUT_SKIP_KERNEL "" CACHE STRING "Use tuning database for certain kernels when AOTRITON_BUILD_FOR_TUNING=ON")
 option(AOTRITON_ENABLE_FP32_INPUTS "Enable FP32 support." ON)
 option(AOTRITON_NOIMAGE_MODE "Only build C++ Shim part. Kernel image builds are disabled" OFF)
+option(AOTRITON_COMMON_LIBRARY_ONLY_MODE "Only build v3src/common/, the half of the runtime calling no real HIP function. Implies AOTRITON_NOIMAGE_MODE=ON and AOTRITON_NO_PYTHON=ON" OFF)
+if(AOTRITON_COMMON_LIBRARY_ONLY_MODE)
+  # Normal variables, not FORCEd cache entries. A cache entry would outlive the
+  # mode that set it: reconfiguring the same build tree with
+  # AOTRITON_COMMON_LIBRARY_ONLY_MODE=OFF leaves ON behind, because option()
+  # never overwrites an existing cache entry -- and that build then silently
+  # produces no kernel images and no Python bindings.
+  set(AOTRITON_NOIMAGE_MODE ON)
+  set(AOTRITON_NO_PYTHON ON)
+endif()
+set(AOTRITON_COMMON_LIBRARY "" CACHE PATH "Path to a prebuilt aotriton_common static library to link into aotriton_v2, instead of compiling v3src/common/")
+if(AOTRITON_COMMON_LIBRARY_ONLY_MODE AND AOTRITON_COMMON_LIBRARY)
+  # Contradictory: the first builds and installs aotriton_common, the second
+  # reuses a prebuilt one as an IMPORTED target -- which install(TARGETS)
+  # rejects, with an error naming neither option.
+  message(FATAL_ERROR
+    "AOTRITON_COMMON_LIBRARY_ONLY_MODE builds aotriton_common; "
+    "AOTRITON_COMMON_LIBRARY reuses a prebuilt one. Set at most one of them.")
+endif()
+# Checked here rather than in v3src/ so they fire before the (much slower)
+# image-build prerequisites, which would otherwise report first.
+if(AOTRITON_COMMON_LIBRARY AND NOT AOTRITON_NOIMAGE_MODE)
+  message(FATAL_ERROR
+    "AOTRITON_COMMON_LIBRARY reuses a prebuilt archive and so skips the code "
+    "generator, but kernel image builds need the rules it emits. Set "
+    "AOTRITON_NOIMAGE_MODE=ON, or unset AOTRITON_COMMON_LIBRARY.")
+endif()
+if(AOTRITON_COMMON_LIBRARY AND AOTRITON_BUILD_FOR_TUNING)
+  message(FATAL_ERROR
+    "AOTRITON_BUILD_FOR_TUNING regenerates and recompiles the shim, which a "
+    "prebuilt AOTRITON_COMMON_LIBRARY already contains. Set at most one.")
+endif()
 # Allow setting AOTRITON_DEBUG_SKIP_TRITON_KERNELS from env var, accept CMake values
 # (1/ON/TRUE), overridden by explicit -D
 set(_AOTRITON_SKIP_TRITON_DEFAULT OFF)

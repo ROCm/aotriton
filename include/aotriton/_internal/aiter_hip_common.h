@@ -65,6 +65,10 @@ struct AiterAsmKernelArgs
 void record_launch_error(hipError_t err);
 // Reads the pending refusal and clears it; hipSuccess when there was none.
 hipError_t take_launch_error();
+// hipPeekAtLastError behind a non-inline call. Inlining it would put a real
+// hip*() call in every TU including this header -- including the AITER
+// dispatchers, which aotriton_common compiles.
+hipError_t peek_hip_error();
 
 namespace ck_tile {
   using index_t = int32_t;
@@ -103,10 +107,10 @@ namespace ck_tile {
     static_cast<void>(take_launch_error());
     auto ran_ok = [](auto&& callable, const stream_config& s) {
       callable(s);
-      // Two distinct failures: hipPeekAtLastError catches a launch that ran and
+      // Two distinct failures: peek_hip_error catches a launch that ran and
       // failed, take_launch_error catches one that never ran at all. Both are
       // evaluated -- take_launch_error must clear even when HIP already failed.
-      bool hip_ok = hipPeekAtLastError() == hipSuccess;
+      bool hip_ok = peek_hip_error() == hipSuccess;
       bool ran    = take_launch_error() == hipSuccess;
       return hip_ok && ran;
     };

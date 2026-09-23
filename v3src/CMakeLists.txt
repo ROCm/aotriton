@@ -25,6 +25,27 @@ message(STATUS "AOTRITON_TARGET_ARCH ${AOTRITON_TARGET_ARCH}")
 message(STATUS "AOTRITON_OVERRIDE_TARGET_GPUS ${AOTRITON_OVERRIDE_TARGET_GPUS}")
 message(STATUS "EFFECTIVE_TARGET_GPUS ${EFFECTIVE_TARGET_GPUS}")
 
+# A reuse build compiles none of the generated shim -- it is already inside the
+# archive -- so the database and the generator that consume it are dead work.
+# The one output still needed, <family>/backends.h, comes from the archive too.
+set(AOTRITON_GENERATED_INCLUDE_DIR "${AOTRITON_V2_BUILD_DIR}/include")
+if(AOTRITON_COMMON_LIBRARY)
+  # <prefix>/lib/libaotriton_common.a -> <prefix>: the layout of both an
+  # AOTRITON_COMMON_LIBRARY_ONLY_MODE install tree and the CI cache tarball.
+  cmake_path(GET AOTRITON_COMMON_LIBRARY PARENT_PATH AOTRITON_COMMON_PREFIX)
+  cmake_path(GET AOTRITON_COMMON_PREFIX PARENT_PATH AOTRITON_COMMON_PREFIX)
+  set(AOTRITON_GENERATED_INCLUDE_DIR "${AOTRITON_COMMON_PREFIX}/include")
+  if(NOT EXISTS "${AOTRITON_GENERATED_INCLUDE_DIR}/aotriton")
+    message(FATAL_ERROR
+      "AOTRITON_COMMON_LIBRARY=${AOTRITON_COMMON_LIBRARY} has no generated "
+      "headers at ${AOTRITON_GENERATED_INCLUDE_DIR}/aotriton. It must point at "
+      "<prefix>/lib/libaotriton_common.a of an "
+      "AOTRITON_COMMON_LIBRARY_ONLY_MODE install tree.")
+  endif()
+  message(STATUS "Reusing ${AOTRITON_COMMON_LIBRARY}; skipping database compose and codegen")
+endif()
+
+if(NOT AOTRITON_COMMON_LIBRARY)
 if(AOTRITON_TUNING_DATABASE_ROOT)
   # External override: same per-family shape as modules/*/database
   # (<family>/database/amd/<arch>/...), just rooted elsewhere.
@@ -176,6 +197,7 @@ COMMAND_ECHO STDOUT
 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
 COMMAND_ERROR_IS_FATAL ANY
 )
+endif(NOT AOTRITON_COMMON_LIBRARY)
 
 # Compile HSACO Kernels
 if(NOT AOTRITON_NOIMAGE_MODE)
@@ -449,106 +471,7 @@ if(AOTRITON_NAME_SUFFIX)
 endif()
 message(STATUS "AOTRITON_SHIM_FLAGS ${AOTRITON_SHIM_FLAGS}")
 
-file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES ENCODING UTF-8)
-
-aux_source_directory(. CC_FILES)
-# aux_source_directory is NOT recursive: a subdirectory such as pon/ is
-# silently ignored unless added explicitly, and the omission only surfaces
-# later as a link error for its symbols.
-aux_source_directory(./pon CC_FILES)
-# Modular family C++ sources: every modules/<family>/csrc/**.cc (recursively, so
-# per-family subdirs like csrc/aiter are picked up). Convention over hardcoding —
-# adding a family needs no edit here. CONFIGURE_DEPENDS re-globs when files change.
-file(GLOB_RECURSE MODULE_CC_FILES CONFIGURE_DEPENDS
-     "${PROJECT_SOURCE_DIR}/modules/*/csrc/*.cc")
-add_library(aotriton_v2 SHARED ${SHIM_CC_FILES} ${CC_FILES} ${MODULE_CC_FILES})
-set_target_properties(aotriton_v2 PROPERTIES LINKER_LANGUAGE CXX)
-target_link_libraries(aotriton_v2 PRIVATE ${CMAKE_DL_LIBS})
-if(AOTRITON_ENABLE_SUFFIX)
-  set_target_properties(aotriton_v2 PROPERTIES OUTPUT_NAME "aotriton${AOTRITON_NAME_SUFFIX}_v2")
+add_subdirectory(common)
+if(NOT AOTRITON_COMMON_LIBRARY_ONLY_MODE)
+  add_subdirectory(hip-dependent)
 endif()
-
-target_include_directories(aotriton_v2 PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/../include>)
-# for <build>/include/aotriton/config.h. Code should use <aotriton/config.h>
-target_include_directories(aotriton_v2 PUBLIC $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include>)
-target_include_directories(aotriton_v2 INTERFACE $<INSTALL_INTERFACE:include>)
-target_include_directories(aotriton_v2 PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-# for <build>/v3src/include/aotriton/<family>/backends.h -- the per-operator
-# backend-index constants aotriton.generate emits. Public because the index is:
-# attn_options::force_backend_index takes it.
-target_include_directories(aotriton_v2 PUBLIC $<BUILD_INTERFACE:${AOTRITON_V2_BUILD_DIR}/include>)
-set_target_properties(aotriton_v2 PROPERTIES
-  POSITION_INDEPENDENT_CODE ON
-)
-if(AOTRITON_BUILD_FOR_TUNING)
-  target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_BUILD_FOR_TUNING=1)
-  add_dependencies(aotriton_v2 aotriton_v2_regen_shim)
-else(AOTRITON_BUILD_FOR_TUNING)
-  target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_BUILD_FOR_TUNING=0)
-endif(AOTRITON_BUILD_FOR_TUNING)
-target_link_libraries(aotriton_v2 PRIVATE lzma_interface)
-target_link_libraries(aotriton_v2 PUBLIC hip::host hip::amdhip64)
-set_target_properties(aotriton_v2 PROPERTIES VERSION
-  ${AOTRITON_VERSION_MAJOR_INT}.${AOTRITON_VERSION_MINOR_INT}.${AOTRITON_VERSION_PATCH_INT})
-
-if(NOT WIN32)
-  execute_process(
-    COMMAND ${CMAKE_COMMAND}
-    -E env VIRTUAL_ENV=${VENV_DIR}
-    "${VENV_BIN_PYTHON}" -m aotriton.comment_only_asm
-    -o "${AOTRITON_V2_BUILD_DIR}/set_aotriton_version.s"
-    ${AOTRITON_VERSION_MAJOR_INT}
-    ${AOTRITON_VERSION_MINOR_INT}
-    ${AOTRITON_VERSION_PATCH_INT}
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
-    COMMAND_ERROR_IS_FATAL ANY
-  )
-  target_sources(aotriton_v2 PRIVATE "${AOTRITON_V2_BUILD_DIR}/set_aotriton_version.s")
-else()
-  # FIXME: Add version string to Windows binaries.
-endif()
-# Otherwise the binary size blows up
-# FIXME: Properly export symbols
-set_target_properties(aotriton_v2 PROPERTIES CXX_VISIBILITY_PRESET hidden)
-
-include(GNUInstallDirs)
-message("CMAKE_INSTALL_INCLUDEDIR ${CMAKE_INSTALL_INCLUDEDIR}")
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}/include/aotriton"
-        DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}
-        FILES_MATCHING PATTERN "*.h")
-# The generated half of the public headers (per-family backends.h), installed
-# into the same tree so a consumer sees one include root.
-install(DIRECTORY "${AOTRITON_V2_BUILD_DIR}/include/aotriton"
-        DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}
-        FILES_MATCHING PATTERN "*.h")
-install(TARGETS aotriton_v2
-        EXPORT aotriton-targets
-        DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
-install(EXPORT aotriton-targets
-  DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/cmake/aotriton)
-
-# Packages
-include(CMakePackageConfigHelpers)
-configure_package_config_file(${CMAKE_CURRENT_SOURCE_DIR}/config.cmake.in
-  "${CMAKE_CURRENT_BINARY_DIR}/aotriton-config.cmake"
-  INSTALL_DESTINATION "lib/cmake/aotriton"
-  NO_SET_AND_CHECK_MACRO
-  NO_CHECK_REQUIRED_COMPONENTS_MACRO)
-write_basic_package_version_file(
-  "${CMAKE_CURRENT_BINARY_DIR}/aotriton-config-version.cmake"
-  VERSION "${AOTRITON_VERSION_MAJOR_INT}.${AOTRITON_VERSION_MINOR_INT}.${AOTRITON_VERSION_PATCH_INT}"
-  COMPATIBILITY AnyNewerVersion)
-install(FILES
-  ${CMAKE_CURRENT_BINARY_DIR}/aotriton-config.cmake
-  ${CMAKE_CURRENT_BINARY_DIR}/aotriton-config-version.cmake
-  DESTINATION lib/cmake/aotriton)
-
-if(NOT AOTRITON_NOIMAGE_MODE)
-  install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/aotriton.images"
-          DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
-          PATTERN "*.nsv" EXCLUDE)
-endif(NOT AOTRITON_NOIMAGE_MODE)
-
-# Python binding only available for AOTriton V2 API
-add_library(aotriton INTERFACE)
-target_link_libraries(aotriton INTERFACE aotriton_v2)
