@@ -33,7 +33,7 @@ LLVM from `third_party/flydsl-llvm.txt`. Image-mode builds only:
 * `gcc >= 8` or `clang >= 10`
   - For Designated initializers, but only gcc >= 9 is tested.
   - The binary delivery is compiled with gcc13
-* `cmake >= 3.26`
+* `cmake >= 3.27`
   - Only `cmake >= 3.30` is tested
 * `ninja`
   - Only `ninja >= 1.11` is tested

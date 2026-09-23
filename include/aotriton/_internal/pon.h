@@ -40,7 +40,7 @@ namespace AOTRITON_NS {
 // families -- otherwise `if (pon.contains("x")) use(*pon.get_int("x"));`, the
 // pairing the two-form API invites, would dereference an empty optional on
 // exactly the not-computed case. It is enforced in one place, `find_value()` in
-// v3src/pon/pon.cc, so the promise cannot be true of some accessors only.
+// v3src/common/pon.cc, so the promise cannot be true of some accessors only.
 //
 // Each accessor comes in TWO forms, and the difference is deliberate:
 //
