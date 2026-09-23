@@ -162,7 +162,7 @@ def bwd_kernel_dq(
                                    PADDED_COL=PADDED_HEAD,
                                    TRANSPOSED=False)
     qk_scale = sm_scale * RCP_LN2
-    bias_scale = 1.0 / sm_scale
+    bias_scale = RCP_LN2
     kt_ptrs0, kt_ptrs1, kt_ptrs2 = composed_ptrs(K,
                                                  stride_kz, stride_kh, stride_kn, stride_kk,
                                                  k_batch_index, off_h_k, k_row_off + offs_n,

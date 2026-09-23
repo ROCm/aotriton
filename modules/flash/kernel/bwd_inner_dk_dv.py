@@ -148,7 +148,6 @@ def bwd_inner_dk_dv(
                 left_mask = MS[:, None] - window_left <= NS[None, :]
                 mask = mask & left_mask
             # tl.device_print('mask', mask)
-            qk = tl.where(mask, qk, float("-inf"))
 
         if BIAS_TYPE == 0:
             pass
@@ -157,12 +156,10 @@ def bwd_inner_dk_dv(
             # tl.device_print('FULL_BLOCKS', FULL_BLOCKS)
             # tl.device_print('start_k', start_k)
             if not FULL_BLOCKS:
-                mask = (offs_q_curr < seqlen_q) & (offs_k < seqlen_k)[None, :]
                 bias = tl.load(bias_ptrs, mask=mask, other=0.0)
                 # tl.device_print('mask', mask)
             else:
                 bias = tl.load(bias_ptrs)
-            qk += bias * bias_scale
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
@@ -186,7 +183,12 @@ def bwd_inner_dk_dv(
         RCP_LN2: tl.constexpr = 1.4426950408889634
         l_i *= RCP_LN2
         # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54
-        p = tl.math.exp2(qk_scale * qk - l_i) # (BLOCK_M, BLOCK_N)
+        qk = qk_scale * qk
+        if BIAS_TYPE == 1:
+            qk += bias * bias_scale
+        if not FULL_BLOCKS or IS_CAUSAL:
+            qk = tl.where(mask, qk, float("-inf"))
+        p = tl.math.exp2(qk - l_i) # (BLOCK_M, BLOCK_N)
 
         if not FULL_BLOCKS or IS_CAUSAL:
             if qk_scale == 0.0:
