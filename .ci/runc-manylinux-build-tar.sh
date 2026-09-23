@@ -131,8 +131,15 @@ else
   hipver=$(scl enable gcc-toolset-13 "cpp -I${ROCM_PATH}/include /tmp/print_hip_version.h" | tail -n 1 | sed 's/ //g')
 fi
 
-# manylinux tag: hardcoded to AlmaLinux 8 baseline (glibc 2.28).
-MANYLINUX_TAG="manylinux_2_28"
+# The tag states the minimum glibc these binaries need, so read it off the
+# container's glibc instead of restating the base image's version here.
+libc_version=$(getconf GNU_LIBC_VERSION | awk '{print $2}')
+IFS=. read -r libc_major libc_minor _ <<< "${libc_version}"
+if [ -z "${libc_major}" ] || [ -z "${libc_minor}" ]; then
+  echo "Error: cannot parse a glibc version out of 'getconf GNU_LIBC_VERSION' (got '${libc_version}')." >&2
+  exit 1
+fi
+MANYLINUX_TAG="manylinux_${libc_major}_${libc_minor}"
 
 asan_suffix=""
 if [[ "${ASAN_MODE}" == "ON" ]]; then
