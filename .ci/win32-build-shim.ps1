@@ -116,8 +116,12 @@ try {
         -G Ninja
     if ($LASTEXITCODE -ne 0) { throw "cmake configure failed with exit code $LASTEXITCODE" }
 
-    ninja install/strip
-    if ($LASTEXITCODE -ne 0) { throw "ninja install/strip failed with exit code $LASTEXITCODE" }
+    # Not `install/strip`: that target only exists when CMAKE_STRIP is set,
+    # which CMake never does for MSVC -- there's no GNU-style strip tool in
+    # that toolchain, since debug symbols live in separate .pdb files rather
+    # than being embedded in the binary the way ELF/.so does it.
+    ninja install
+    if ($LASTEXITCODE -ne 0) { throw "ninja install failed with exit code $LASTEXITCODE" }
 } finally {
     Pop-Location
 }
