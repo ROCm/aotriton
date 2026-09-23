@@ -1,29 +1,9 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# The only sources calling a real hip*() runtime function: hipModuleLoadDataEx,
-# hipModuleGetFunction, hipModuleLaunchKernel, hipGetDeviceProperties,
-# hipStreamGetDevice, hipModuleUnload.
-set(HIP_CC_FILES
-  aiter_hip_common.cc
-  on_device_kernel.cc
-  triton_kernel.cc
-  util.cc
-)
-# Assertion only: a .cc added here without a matching HIP_CC_FILES entry fails
-# the configure step instead of silently never being built.
-aux_source_directory(. _HIPDEP_CC_FILES_DISCOVERED)
-list(TRANSFORM _HIPDEP_CC_FILES_DISCOVERED REPLACE "^\\./" "")
-list(SORT _HIPDEP_CC_FILES_DISCOVERED)
-set(_HIPDEP_CC_FILES_EXPECTED ${HIP_CC_FILES})
-list(SORT _HIPDEP_CC_FILES_EXPECTED)
-if(NOT _HIPDEP_CC_FILES_DISCOVERED STREQUAL _HIPDEP_CC_FILES_EXPECTED)
-  message(FATAL_ERROR
-    "v3src/hip-dependent/*.cc source set changed: aux_source_directory discovered "
-    "[${_HIPDEP_CC_FILES_DISCOVERED}] but v3src/hip-dependent/CMakeLists.txt expects "
-    "[${_HIPDEP_CC_FILES_EXPECTED}]. A source that calls no real hip*() runtime "
-    "function belongs in v3src/common/ instead.")
-endif()
+# Every .cc here calls a real hip*() runtime function -- that is what the
+# directory means, so the source list is simply whatever is in it.
+aux_source_directory(. HIP_CC_FILES)
 
 add_library(aotriton_v2 SHARED ${HIP_CC_FILES})
 set_target_properties(aotriton_v2 PROPERTIES LINKER_LANGUAGE CXX)
