@@ -35,6 +35,7 @@ else()
     POSITION_INDEPENDENT_CODE ON
     CXX_VISIBILITY_PRESET hidden
   )
+  target_compile_definitions(aotriton_common PRIVATE AOTRITON_BUILDING_LIBRARY)
   if(AOTRITON_BUILD_FOR_TUNING)
     target_compile_definitions(aotriton_common PRIVATE -DAOTRITON_BUILD_FOR_TUNING=1)
     add_dependencies(aotriton_common aotriton_v2_regen_shim)

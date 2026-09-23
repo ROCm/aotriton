@@ -24,6 +24,7 @@ target_include_directories(aotriton_v2 PUBLIC $<BUILD_INTERFACE:${AOTRITON_V2_BU
 set_target_properties(aotriton_v2 PROPERTIES
   POSITION_INDEPENDENT_CODE ON
 )
+target_compile_definitions(aotriton_v2 PRIVATE AOTRITON_BUILDING_LIBRARY)
 if(AOTRITON_BUILD_FOR_TUNING)
   target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_BUILD_FOR_TUNING=1)
   add_dependencies(aotriton_v2 aotriton_v2_regen_shim)
