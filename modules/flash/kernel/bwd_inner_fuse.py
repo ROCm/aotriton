@@ -196,12 +196,12 @@ def bwd_inner_dk_dv_fuse(
                                          do0, do1, do2,
                                          BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                          axis=1)
-        # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54
         qk = qk_scale * qk
         if BIAS_TYPE == 1:
             qk += bias * bias_scale
         if not FULL_BLOCKS or IS_CAUSAL:
             qk = tl.where(mask, qk, float("-inf"))
+        # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54
         p = tl.math.exp2(qk - l_i) # (BLOCK_M, BLOCK_N)
 
         if not FULL_BLOCKS or IS_CAUSAL:

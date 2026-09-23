@@ -182,12 +182,12 @@ def bwd_inner_dk_dv(
                           other=0.0)
         RCP_LN2: tl.constexpr = 1.4426950408889634
         l_i *= RCP_LN2
-        # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54
         qk = qk_scale * qk
         if BIAS_TYPE == 1:
             qk += bias * bias_scale
         if not FULL_BLOCKS or IS_CAUSAL:
             qk = tl.where(mask, qk, float("-inf"))
+        # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54
         p = tl.math.exp2(qk - l_i) # (BLOCK_M, BLOCK_N)
 
         if not FULL_BLOCKS or IS_CAUSAL:
