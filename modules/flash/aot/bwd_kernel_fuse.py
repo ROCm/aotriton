@@ -44,6 +44,19 @@ def gen_autotune_configs(f):
     waves_per_eu = [1, 2, 3, 4]
     num_warps = [4, 8] if wave32 else [2, 4]
 
+    if arch == 'gfx1250':
+        # aiter gfx1250-MHA-DEFAULT.json's waves_per_eu=2 crashes at BLOCK_M=BLOCK_N=64
+        # (3 task_ids) and at 32x32 (5 crashing + 1 NaN task_id) per the tuning DB
+        # (~/wkdir.aiday); waves_per_eu=1 at the same block/warp settings is clean.
+        for block_m, block_n, waves in ((64, 64, 1), (32, 32, 1), (16, 16, 2)):
+            kw = {
+                'BLOCK_M': block_m,
+                'BLOCK_N': block_n,
+                'waves_per_eu': waves,
+            }
+            yield ati.tune.Config(kw, num_stages=1, num_warps=4)
+        return
+
     for block_m, block_n, waves, warps in itertools.product(
             block_sizes, block_sizes, waves_per_eu, num_warps):
         if block_m < block_n:

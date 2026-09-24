@@ -45,6 +45,39 @@ def gen_autotune_configs(f):
     waves_per_eu = [1, 2, 3, 4]
     num_warps = [4, 8] if wave32 else [2, 4]
 
+    if arch == 'gfx1250':
+        # aiter gfx1250-MHA-DEFAULT.json's BLOCK_M=BLOCK_N=64/waves_per_eu=2 produces
+        # NaN output on 2 tuned task_configs (tuning DB ~/wkdir.aiday, task_ids 45,72);
+        # waves_per_eu=1 at the same block size stayed clean, so drop only that knob.
+        for block_m, block_n, waves in ((64, 64, 1), (32, 32, 2), (16, 16, 2)):
+            kw = {
+                'BLOCK_M': block_m,
+                'BLOCK_N': block_n,
+                'NUM_XCDS': num_xcds,
+                'waves_per_eu': waves,
+            }
+            yield ati.tune.Config(kw, num_stages=1, num_warps=4)
+        # HEAD_DIM=256 fp32 (no bias), either non-causal+dropout or causal+no-dropout,
+        # has no shipped candidate passing every UT. Add two extra block-size options
+        # at the same baseline copts (nw4/we2) rather than introducing new copts.
+        head_dim = f.choices.BLOCK_DMODEL
+        causal_type = f.choices.CAUSAL_TYPE
+        enable_dropout = f.choices.ENABLE_DROPOUT
+        if not (head_dim == 256 and dtype == '*fp32:16' and f.choices.BIAS_TYPE == 0
+                and ((causal_type == 0 and enable_dropout)
+                     or (causal_type != 0 and not enable_dropout))):
+            return
+        for (block_m, block_n), waves, warps in itertools.product(
+                ((32, 32), (32, 16), (16, 16)), waves_per_eu, (4, 8)):
+            kw = {
+                'BLOCK_M': block_m,
+                'BLOCK_N': block_n,
+                'NUM_XCDS': num_xcds,
+                'waves_per_eu': waves,
+            }
+            yield ati.tune.Config(kw, num_stages=1, num_warps=warps)
+        return
+
     for block_m, block_n, waves, warps in itertools.product(
             block_sizes, block_sizes, waves_per_eu, num_warps):
         if block_m < block_n:

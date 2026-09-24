@@ -86,6 +86,56 @@ def _use_extended_search(f, arch, dtype, head_dim, causal_type):
             and f.choices.PADDED_HEAD is False)
 
 
+# gfx1250's space is hand-picked rather than swept: the arch is unreleased and
+# most of the generic candidates either crash the compiler or return NaN. These
+# are the tiles the tech-preview tuning run (~/wkdir.aiday) covered with data.
+GFX1250_BLOCK_SIZES = [(64, 32), (32, 32), (16, 16)]
+
+
+def _gfx1250_config(block_m, block_n, waves, pre_load_v, causal_type, num_xcds,
+                    *, num_warps):
+    kw = {
+        'PERSISTENT_TYPE': 2 if causal_type != 0 else 0,
+        'GRID_CU_MULTIP': 2,
+        'BLOCK_M': block_m,
+        'BLOCK_N': block_n,
+        'waves_per_eu': waves,
+        'PRE_LOAD_V': pre_load_v,
+        'NUM_XCDS': num_xcds,
+    }
+    return ati.tune.Config(kw, num_stages=1, num_warps=num_warps)
+
+
+def _gfx1250_needs_register_pressure_sweep(dtype, head_dim, causal_type,
+                                           bias_type, enable_dropout):
+    """The fp32 functionals where no baseline candidate passes every UT.
+
+    HEAD_DIM=256 fp32 with bias+dropout register-pressures the gfx1250 compiler
+    hard enough that none of the waves_per_eu=2/PRE_LOAD_V=True candidates passes
+    on every test case (task 1540: idx0 fails 02_irregular_hdim, idx2 fails
+    04_irregular_both, both ~1000x+ over threshold - a spill/scheduling symptom,
+    not a real accuracy limit). waves_per_eu is a target-occupancy hint (lower
+    relaxes the register budget instead of forcing a tighter one) and
+    PRE_LOAD_V=False skips prefetching V into registers/LDS early, both plausible
+    relief valves, so both get swept.
+
+    HEAD_DIM=128 fp32 causal+dropout and HEAD_DIM=256 fp32 non-causal dropout
+    (both no bias) have the same gap and reuse the sweep; crash-safety there is
+    unvalidated (the sweep crashed every extra candidate for the bias=1
+    functional), but broader coverage across these gaps is intentional.
+
+    This cannot be scoped tighter than the compile-time functional: seqlen is a
+    runtime dispatch value, so the sweep also applies to other seqlen buckets
+    sharing the functional, not just the case that motivated it."""
+    if dtype != '*fp32:16' or not enable_dropout:
+        return False
+    if head_dim == 256 and bias_type == 1:
+        return True
+    if bias_type != 0:
+        return False
+    return (head_dim == 128 and causal_type != 0) or (head_dim == 256 and causal_type == 0)
+
+
 def gen_autotune_configs(f):
     """Generate architecture-aware forward tuning configurations."""
     arch = f.arch
@@ -105,6 +155,30 @@ def gen_autotune_configs(f):
     waves_per_eu = [1, 2, 3, 4]
     num_warps = [2, 4] if wave64 else [4, 8]
     num_stages = [1]
+
+    if arch == 'gfx1250':
+        # aiter gfx1250-MHA-DEFAULT.json's num_warps=4/waves_per_eu=2 crashes on
+        # non-causal tasks at BLOCK_M/N=32 and 16x16 (tuning DB ~/wkdir.aiday: 4 and
+        # 1 crashing task_ids respectively), and BLOCK_M=128 has no validated data at
+        # all (only 3 non-causal tasks tuned, causal path untested). num_warps=8/
+        # waves_per_eu=2 stayed crash/NaN-free across every tested block size and
+        # causal/non-causal path, so use it with the largest block size that's
+        # actually covered by data (64x32) in place of the untested 128x64.
+        for block_m, block_n in GFX1250_BLOCK_SIZES:
+            yield _gfx1250_config(block_m, block_n, 2, True, causal_type, num_xcds,
+                                  num_warps=8)
+        if not _gfx1250_needs_register_pressure_sweep(dtype, head_dim, causal_type,
+                                                      f.choices.BIAS_TYPE,
+                                                      f.choices.ENABLE_DROPOUT):
+            return
+        for (block_m, block_n), pre_load_v, waves in itertools.product(
+                GFX1250_BLOCK_SIZES, (True, False), waves_per_eu):
+            if pre_load_v and waves == 2:
+                continue  # already yielded above
+            for warps in (4, 8):
+                yield _gfx1250_config(block_m, block_n, waves, pre_load_v,
+                                      causal_type, num_xcds, num_warps=warps)
+        return
 
     if _use_extended_search(f, arch, dtype, head_dim, causal_type):
         tile_stages = list(extended_search_grid())
