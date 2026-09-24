@@ -654,7 +654,7 @@ NONPOS_SYM_SEQLENS = [(17, 1), (257, 571)]
 # Reference sweep: no single-key shape. With one key the exact dQ and dK are 0,
 # so there is no reference error to scale a tolerance from, and the kernel's fp32
 # rounding noise fails it for either sign of sm_scale.
-NONPOS_REF_SEQLENS = [(1, 17), (17, 2), (257, 571)]
+NONPOS_REF_SEQLENS = [(1, 17), (17, 2), (128, 128), (257, 571)]
 # (window_left, window_right), top-left aligned; both edges active. Every query
 # row keeps at least one key at the NONPOS_REF_SEQLENS shapes.
 NONPOS_WINDOW = (16, 3)
