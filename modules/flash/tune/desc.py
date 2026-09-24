@@ -131,7 +131,8 @@ class FlashTune(TuningDescription):
         with device_ctx():
             yield from self._do_gen_ref(entry, data_root)
             for idx, im in enumerate(extra_ims):
-                tname = f'{6 + idx:02d}_utextra'
+                # Numbered after _do_gen_ref's last case (07_binning_irregular_both).
+                tname = f'{8 + idx:02d}_utextra'
                 yield self._write_ref_no_clamp(im, data_root, tname)
 
     def _clamp_memory_usage(self, im: FlashInputMetadata) -> FlashInputMetadata:
@@ -256,6 +257,24 @@ class FlashTune(TuningDescription):
 
         bshd = dataclasses.replace(irregular_seqlen, storage_flip=(1,2))
         yield self._write_ref(bshd, data_root, '05_bshd')
+
+        # Binning-boundary coverage: a seqlen past the entry's own bin exercises
+        # the `le` binning clamp, which sparse tuning tables (e.g. gfx1250's
+        # three-entry tech preview) lean on for everything between entries.
+        # Re-clamped like 01_gqa: doubling both seqlens quadruples the attention
+        # matrix, and the largest entries are already tuned at seqlen 8192.
+        binning_seqlen = dataclasses.replace(im,
+                                             seqlen_q=2 * im.seqlen_q,
+                                             seqlen_k=2 * im.seqlen_k)
+        binning_seqlen = self._clamp_memory_usage(binning_seqlen)
+        yield self._write_ref(binning_seqlen, data_root, '06_binning_seqlen')
+
+        binning_irregular_both = dataclasses.replace(im,
+                                                     seqlen_q=2 * im.seqlen_q - 37,
+                                                     seqlen_k=2 * im.seqlen_k - 37,
+                                                     hdim=im.hdim - 8)
+        binning_irregular_both = self._clamp_memory_usage(binning_irregular_both)
+        yield self._write_ref(binning_irregular_both, data_root, '07_binning_irregular_both')
         # TODO: varlen tests
 
     def _write_ref(self,
