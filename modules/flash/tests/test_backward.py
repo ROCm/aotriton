@@ -262,9 +262,9 @@ def test_matrix_bias_fwd_bwd_symmetry(gpu_id, dtype, bias_val):
     with torch.cuda.device(gpu_id):
         core_test_matrix_bias_fwd_bwd_symmetry(dtype, bias_val)
 
-# ROCM-31582 / PR 245. Ungated (level 0): sm_scale <= 0 used to inf-scale the
-# bias (1/sm_scale) and flip padded -inf tiles under a negative scale. Analytic
-# Q=K=0 case plus a reference sweep over prime / non-aligned / asymmetric seqlens.
+# Ungated (level 0): sm_scale <= 0 must still give finite, correct gradients,
+# with a bias and with masked tail tiles. Q = K = 0 makes the answer exact, so
+# this checks Out, LSE, dQ, dK, dV and dB directly without a reference.
 @pytest.mark.parametrize('seqlen_q,seqlen_k', NONPOS_SYM_SEQLENS)
 @pytest.mark.parametrize('sm_scale', NONPOS_SCALES)
 @pytest.mark.parametrize('dtype', DTYPES)
@@ -272,9 +272,8 @@ def test_nonpositive_scale_symmetry(gpu_id, dtype, sm_scale, seqlen_q, seqlen_k)
     with torch.cuda.device(gpu_id):
         core_test_nonpositive_scale_symmetry(dtype, sm_scale, seqlen_q, seqlen_k)
 
-# Window and bias are not crossed: AOTriton does not build windowed/causal
-# kernels with a bias (flash_disabled). Dropout does not touch the scale/bias/mask
-# step, so one case covers it.
+# sm_scale <= 0 on random inputs against the reference, with bias, causal,
+# sliding window, and dropout.
 @pytest.mark.parametrize('BATCH', [3])
 @pytest.mark.parametrize('N_HEADS', [5], ids=fmt_nheads)
 @pytest.mark.parametrize('D_HEAD', [53], ids=fmt_hdim)
