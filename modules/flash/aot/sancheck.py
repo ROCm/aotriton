@@ -26,6 +26,8 @@ from ._common import check_value, _empty_generator
 LUT_FULL_SEQLEN_Q = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
 LUT_FULL_SEQLEN_K = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
 LUT_FULL_SEQLEN_NAVI = [16, 32, 64, 128, 256, 512, 1024, 2048]
+# gfx1250's tech-preview database is tuned on three seqlen entries only.
+LUT_FULL_SEQLEN_TP = [64, 256, 2048]
 
 
 class LutSancheck:
@@ -61,12 +63,19 @@ class LutSancheck:
             return True, [], _empty_generator()
         MI = (AOTRITON_ARCH_WARPSIZE[arch] == 64)
         Navi = (AOTRITON_ARCH_WARPSIZE[arch] == 32)
+        TECH_PREVIEW = (arch == 'gfx1250')
         LUT_TENSOR_SIZE = (len(LUT_FULL_SEQLEN_Q), len(LUT_FULL_SEQLEN_K))
         LUT_TENSOR_SIZE_NAVI = (len(LUT_FULL_SEQLEN_NAVI), len(LUT_FULL_SEQLEN_NAVI))
+        LUT_TENSOR_SIZE_TP = (len(LUT_FULL_SEQLEN_TP), len(LUT_FULL_SEQLEN_TP))
         log(lambda : f'{lut_tensor.shape=} ==? {LUT_TENSOR_SIZE=}')
         all_pos = (lut_tensor >= 0).all()
         shape = lut_tensor.shape[1:]
-        if MI:
+        # Tested before Navi: gfx1250 is wave32, and the Navi branch alone would
+        # reject its three-entry tech-preview table.
+        if TECH_PREVIEW:
+            shape_match = (shape == LUT_TENSOR_SIZE or shape == LUT_TENSOR_SIZE_NAVI
+                           or shape == LUT_TENSOR_SIZE_TP)
+        elif MI:
             shape_match = shape == LUT_TENSOR_SIZE
         elif Navi:
             shape_match = (shape == LUT_TENSOR_SIZE or shape == LUT_TENSOR_SIZE_NAVI)
@@ -79,12 +88,19 @@ class LutSancheck:
         if not all_pos:
             errors.append("certain entries are empty (-1)")
         if not shape_match:
-            if Navi:
+            if TECH_PREVIEW:
+                errors.append(f"Unexpected {shape=}, Expecting {LUT_TENSOR_SIZE}, "
+                              f"{LUT_TENSOR_SIZE_NAVI} or {LUT_TENSOR_SIZE_TP}")
+            elif Navi:
                 errors.append(f"Unexpected {shape=}, Expecting {LUT_TENSOR_SIZE} or {LUT_TENSOR_SIZE_NAVI}")
             else:
                 errors.append(f"Unexpected {shape=}, Expecting {LUT_TENSOR_SIZE}")
         # Pick the seqlen lists that match the actual lut_tensor shape for this arch.
-        if Navi and lut_tensor.shape[1:] == LUT_TENSOR_SIZE_NAVI:
+        if TECH_PREVIEW and lut_tensor.shape[1:] == LUT_TENSOR_SIZE_TP:
+            lut_full_seqlen_q = LUT_FULL_SEQLEN_TP
+            lut_full_seqlen_k = LUT_FULL_SEQLEN_TP
+            expected_size = LUT_TENSOR_SIZE_TP
+        elif Navi and lut_tensor.shape[1:] == LUT_TENSOR_SIZE_NAVI:
             lut_full_seqlen_q = LUT_FULL_SEQLEN_NAVI
             lut_full_seqlen_k = LUT_FULL_SEQLEN_NAVI
             expected_size = LUT_TENSOR_SIZE_NAVI
