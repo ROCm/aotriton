@@ -49,6 +49,14 @@ class LutSancheck:
             hdim = check_value(functional, 'BLOCK_DMODEL')
             if hdim > 256:
                 return True
+        # Mirrors _common.flash_disabled's gfx1250 rules: that one reads
+        # f.choices, this one check_value, so neither can call the other.
+        if functional.arch == 'gfx1250':
+            hdim = check_value(functional, 'BLOCK_DMODEL')
+            if hdim > 256:
+                return True
+            if hdim & (hdim - 1) != 0:
+                return True
         return False
 
     def sancheck_lut_tensor(self,
