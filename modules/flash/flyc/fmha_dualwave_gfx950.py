@@ -667,17 +667,70 @@ class ParityGemmHelper(dualwave.DualwaveGemmHelper):
     threaded into the loaders' addressing.
     """
 
-    def qk_stage(self, v_k, q_all_scaled_bf16, acc, stage=0):
+    def scale_scores(self, v_s):
+        """`qk_scale * S`, on the f32 accumulator, once the D axis is complete.
+
+        **This is where `sm_scale * log2e` enters, and the Triton kernels are
+        the reason it is here rather than on Q or in `sub_m`.**
+        `fwd_kernel_inner.py:150` reads `qk += (Qk_scale * tl.dot(q0, k0))`:
+        the scale multiplies the f32 dot product, and every later consumer --
+        the bias add, the masks, the row max, `exp2`, the LSE -- sees scores
+        already in the base-2 domain. Keeping that domain is the whole appeal:
+        nothing downstream of this call changes at all.
+
+        The two alternatives are both closed, each by its own measurement:
+
+        - **Folding it into Q** costs `|S| * 2**-9` in the exponent. See
+          `ParityQLoader.scale_all`, which now refuses.
+        - **Folding it into `sub_m`'s subtract** as an FMA -- `m_ij =
+          max(m_i, Qk_scale * max(qk))` and `exp2(fma(qk, Qk_scale, -m_ij))` --
+          is free, and `fwd_kernel_inner.py:186` forbids it by name: *"DO NOT
+          USE the following FMA optimization pattern, which has numerical
+          errors for large inputs"*, aotriton issue 54. `_scale_sub_score_pair`
+          upstream is that pattern; it is reached only by the fp8 helper, whose
+          scores have a different dynamic range.
+
+        Called **before** the masks, which is the other half of what Triton
+        does: `fwd_kernel_inner.py:134` writes `-inf` into `qk` before the
+        `+= Qk_scale * dot`, so no infinity is ever an FMA operand. Here the
+        GEMM runs first and the masks follow, which reaches the same place --
+        the multiply only ever sees finite raw dot products, so a masked `-inf`
+        cannot become a `0 * inf` NaN at `sm_scale == 0.0` (a value
+        `modules/flash/tests/test_forward.py` parametrizes).
+
+        Once per tile, not once per D stage: the stages of `qk_stage` sum into
+        one accumulator, so scaling the total is both cheaper and closer to the
+        fp32 reference than scaling each partial sum would be. **Which means
+        the caller owns the call** -- `qk_stage` cannot do it, because it
+        cannot tell a middle stage from the last one, and `qk` cannot either,
+        because `fmha_bwd_dq_gfx950` calls it for raw scores on purpose and
+        applies its own scale in `scale_and_sub_lse`.
+        """
+        s_lo, s_hi = v_s
+        # 16 is the forward's score-pair half width, spelled as a literal
+        # everywhere else it appears (`_sub_score_pair`, `_scale_sub_score_pair`,
+        # `seq_pad_mask_inplace`). `ACC_ELEMS` is dQ's name for the same thing
+        # and is not a field of the forward traits.
+        scale_v = Vec.from_elements([fx.Float32(self.c_sm_scale_log2e)], fx.Float32).broadcast_to(16)
+        return (
+            as_mlir_value(Vec(s_lo) * scale_v),
+            as_mlir_value(Vec(s_hi) * scale_v),
+        )
+
+    def qk_stage(self, v_k, q_all_bf16, acc, stage=0):
         """One D stage of `S += Q·K^T`, with the Q pack held off the MFMA.
 
-        **`mfma_operand_wait_state` is load-bearing here, and the reason is not
-        the one `scale_all` suggests.** Q is scaled and rounded back to bf16
-        once, before the KV loop, so the `v_cvt_pk_bf16_f32` that builds these
-        packs looks loop-invariant -- but the whole chain is 32 VGPRs live
-        across the loop, and LLVM sinks it back in and rematerializes it per
-        MFMA rather than pay that. What lands is the operand written in the
-        slot before the MFMA that reads it, with only scalar instructions
-        between:
+        Returns **raw** scores: `scale_scores` is the caller's, for the reasons
+        given there.
+
+        **`mfma_operand_wait_state` is load-bearing here**, and it no longer
+        has the explanation it was written with. It used to be that Q was
+        scaled and rounded back to bf16 once before the KV loop, so the
+        `v_cvt_pk_bf16_f32` that built these packs looked loop-invariant -- but
+        the whole chain was 32 VGPRs live across the loop, and LLVM sank it
+        back in and rematerialized it per MFMA rather than pay that. What
+        landed was the operand written in the slot before the MFMA that reads
+        it, with only scalar instructions between:
 
             v_cvt_pk_bf16_f32 v100, v48, v49
             s_subb_u32 s1, s1, s9                    <- scalar, no wait state
@@ -691,6 +744,16 @@ class ParityGemmHelper(dualwave.DualwaveGemmHelper):
         MFMA reads the same quad one slot later and is shielded by the `k_lo`
         one, so a single barrier per pack covers both.
 
+        With the pre-scale gone, Q reaches the MFMA straight from its LDS read
+        and there is no convert to sink, so the *measured* chain above cannot
+        form from this source any more. The barrier stays: the packs are still
+        built by VALU (`_get_q_pack` shuffles), `dualwave` reaches the same
+        `mfma_operand_wait_state` for dK/dV and dQ where the hazard was caught
+        producing a wrong answer, and a scan of the rebuilt kernels is what
+        should retire it -- not the disappearance of one of its two known
+        producers. `fmha_bwd_dq_gfx950` passes an unscaled Q through this same
+        method and needs it regardless.
+
         The `_s_nop(1)` in `qk` below is a different thing at a different
         place -- it sits *after* all the QK MFMAs and, as its comment records,
         works by perturbing register allocation rather than by supplying a wait
@@ -701,13 +764,13 @@ class ParityGemmHelper(dualwave.DualwaveGemmHelper):
         steps = self.traits.K_STEPS_PER_STAGE
         for ks in range_constexpr(steps):
             q_pack = mfma_operand_wait_state(
-                dualwave._get_q_pack(self.traits, q_all_scaled_bf16, stage * steps + ks)
+                dualwave._get_q_pack(self.traits, q_all_bf16, stage * steps + ks)
             )
             v_s_lo = dualwave._mfma_acc(k_lo[ks], q_pack, v_s_lo, self.mma_atom, self.mfma_acc_vec_type)
             v_s_hi = dualwave._mfma_acc(k_hi[ks], q_pack, v_s_hi, self.mma_atom, self.mfma_acc_vec_type)
         return (v_s_lo, v_s_hi)
 
-    def qk(self, v_k, q_all_scaled_bf16, stage=0):
+    def qk(self, v_k, q_all_bf16, stage=0):
         """Unstaged entry point: seed at zero and run the one stage there is.
 
         `D_STAGES == 1` used to go through `super().qk`, which builds its own
@@ -715,8 +778,12 @@ class ParityGemmHelper(dualwave.DualwaveGemmHelper):
         `stage * steps + ks == ks`, so `qk_stage` from a zero seed is the same
         loop; routing both through it is what puts the barrier on every build
         rather than only the staged ones.
+
+        **Raw, like `qk_stage`.** `fmha_bwd_dq_gfx950` is the other caller and
+        wants it that way -- it applies `qk_scale` itself, fused into the LSE
+        subtract. The forward reaches `scale_scores` through `_FwdGemmHelper`.
         """
-        out = self.qk_stage(v_k, q_all_scaled_bf16, (self.c_zero_v16f32, self.c_zero_v16f32), stage)
+        out = self.qk_stage(v_k, q_all_bf16, (self.c_zero_v16f32, self.c_zero_v16f32), stage)
         # Works, and **not for the reason it looks like.** Without it head_dim
         # 96 computes a wrong answer; with it, 96 is correct across five shapes
         # in both masking modes at ~0 cost.
@@ -1440,6 +1507,48 @@ class ParityQLoader(dualwave.DualwaveQLoader):
     chunk containing `hdim_qk` lands inside the allocation. What must not
     happen is those elements reaching the MFMA, which is what `discard` stops.
     """
+
+    def scale_all(self, q_all):
+        """Refused. `qk_scale` belongs on the f32 scores; see `scale_scores`.
+
+        The inherited `scale_all` extends Q to f32, multiplies by
+        `sm_scale * log2e` and **rounds the product back to the input dtype**.
+        Q is already bf16/f16, so that second rounding is pure loss: each
+        element gains a fresh relative error of up to `2**-9`, the QK dot
+        multiplies it by the logit magnitude, and it arrives *in the exponent*
+        of `exp2(S - m)`, where it becomes a relative error on the softmax
+        weight of `2**(|S| * 2**-9)`. That is invisible at
+        `sm_scale = rsqrt(head_dim)`, where `|S|` is O(1), and several percent
+        at `sm_scale = 1`, where `|S|` grows as `sqrt(head_dim)`:
+
+            head_dim   sm_scale   max |err| vs fp64, Q folded   scores scaled
+              512        0.044             0.0034                 0.0034
+              512        0.40              0.0632                 0.0155
+              512        1.00              0.1658                 0.0145
+
+        `BwdDqSoftmaxHelper.scale_and_sub_lse` measured the same thing in dQ
+        and stopped folding there, on the grounds that the forward "tolerates
+        that because O is a normalised average and the error largely cancels".
+        It does not cancel far enough:
+        `test_transformers.py::test_mem_eff_attention_single_query_tail` calls
+        SDPA at `scale=1.0, head_dim=512, bf16` and misses on 1.4% of its
+        output by up to 0.29.
+
+        So both directions now do what the Triton kernels do --
+        `fwd_kernel_inner.py:150` is `qk += (Qk_scale * tl.dot(q0, k0))` -- and
+        this method exists only to make the fold unreachable. It is *one
+        keystroke away* from being called again (the two forward bodies used to
+        call it on the line after `load_all`), and nothing downstream checks
+        shapes or magnitudes, so a reintroduction would be a silently wrong
+        answer at large `sm_scale` and a correct one everywhere the tests look
+        hardest. `fmha_bwd_dq_gfx950.py`'s module docstring names the same trap
+        for the same reason.
+        """
+        raise NotImplementedError(
+            "Q must not be pre-scaled: rounding `Q * sm_scale * log2e` back to bf16 costs "
+            "~2**-9 of relative precision *in the exponent*. Apply `qk_scale` to the f32 "
+            "scores with `ParityGemmHelper.scale_scores` instead, as the Triton kernels do."
+        )
 
     def load_pack(self, q_row_in_block, ks):
         pack = super().load_pack(q_row_in_block, ks)

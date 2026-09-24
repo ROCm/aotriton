@@ -318,7 +318,10 @@ def make_wide_body(
     @flyc.jit
     def _wide_body():
         """One KV tile per iteration, D staged through LDS and sharded across waves."""
-        q_all_scaled_bf16 = q_loader.scale_all(q_loader.load_all())
+        # **Not scaled.** `qk_scale` lands on the f32 scores below, once the D
+        # axis is complete; `ParityQLoader.scale_all` records what folding it
+        # into Q costs and now refuses.
+        q_all_bf16 = q_loader.load_all()
 
         runs = tuple(
             (st * traits.D_CHUNKS_PER_STAGE_SHARD, st * traits.D_CHUNKS_PER_STAGE, traits.D_CHUNKS_PER_STAGE_SHARD)
@@ -372,7 +375,12 @@ def make_wide_body(
                 _sched_barrier(0)
                 _s_barrier()  # every wave's stage-st DMA has landed, not just mine
                 v_k = kv_lds_to_regs.load_k(cur, stage=st)
-                v_s = gemm_helper.qk_stage(v_k, q_all_scaled_bf16, v_s, st)
+                v_s = gemm_helper.qk_stage(v_k, q_all_bf16, v_s, st)
+
+            # Every stage has landed, so S is complete and this is the one
+            # point where `qk_scale` can be applied exactly once. Before the
+            # masks, so the multiply never meets a `-inf`; see `scale_scores`.
+            v_s = gemm_helper.scale_scores(v_s)
 
             if const_expr(traits.CAUSAL):
                 v_s = softmax_helper.causal_mask_prologue_if_needed(v_s, j, kv_end_tile=j + fx.Index(1))
