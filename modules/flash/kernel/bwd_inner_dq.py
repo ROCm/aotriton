@@ -28,7 +28,7 @@ def dot(BLOCK_M : tl.constexpr, QDIM : tl.constexpr, KDIM : tl.constexpr, q, k):
 def bwd_inner_dq(
     # I/O Tensor
     dq0, dq1, dq2,
-    qk_scale, bias_scale,
+    qk_scale,
     DB_ptr, store_db,
     # Problem Description
     q0, q1, q2,
@@ -148,7 +148,7 @@ def bwd_inner_dq(
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
         qk = qk_scale * qk
         if BIAS_TYPE == 1:
-            qk += bias * bias_scale
+            qk += bias.to(qk.dtype) * 1.44269504089
         if not FULL_BLOCKS or IS_CAUSAL:
             qk = tl.where(mask, qk, float("-inf"))
         # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54

@@ -31,7 +31,7 @@ def bwd_inner_dk_dv_fuse(
     # I/O Tensor
     dk0, dk1, dk2,
     dv0, dv1, dv2,
-    qk_scale, bias_scale,
+    qk_scale,
     # Problem Description
     q_ptrs0, q_ptrs1, q_ptrs2,
     q_stride,
@@ -198,7 +198,7 @@ def bwd_inner_dk_dv_fuse(
                                          axis=1)
         qk = qk_scale * qk
         if BIAS_TYPE == 1:
-            qk += bias * bias_scale
+            qk += bias.to(qk.dtype) * 1.44269504089
         if not FULL_BLOCKS or IS_CAUSAL:
             qk = tl.where(mask, qk, float("-inf"))
         # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54
