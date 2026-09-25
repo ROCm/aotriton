@@ -301,8 +301,10 @@ if FOR_RELEASE >= 0:
     #     measure a fold that costs it 2**-24, which is nothing.
     #   - (seqlen_q, seqlen_k, causal): the two pairs the torch UT parametrises.
     #
-    # 2 x 3 x 2 x 2 = 24 cases. BATCH/N_HEADS are fixed small -- neither is on
-    # the error's axis, and hdim 512 is the expensive part of the footprint.
+    # 2 x 3 x 2 x 2 = 24 cases, 16 of them on gfx11, which has no kernel above
+    # hdim 256 and skips that rung in core_test_sm_scale_magnitude. BATCH and
+    # N_HEADS are fixed small -- neither is on the error's axis, and hdim 512
+    # is the expensive part of the footprint.
     #
     # The bounds are per dtype and NOT per `sm_scale`, which is the property
     # under test: a kernel that keeps `qk_scale` on the f32 accumulator has an

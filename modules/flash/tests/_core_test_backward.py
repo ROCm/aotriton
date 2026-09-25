@@ -630,7 +630,7 @@ def core_test_sm_scale_magnitude(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, cau
     kernel may fold `qk_scale = sm_scale * log2e` into Q before the QK GEMM
     instead of applying it to the f32 QK accumulator afterwards; when Q is
     f16/bf16 that fold rounds the product back to the input dtype, and the
-    ~2**-9 of relative error it costs lands in the *exponent* of
+    ~2**-8 of relative error it costs lands in the *exponent* of
     `exp2(S - m)`. The resulting output error is proportional to
     `sm_scale * sqrt(hdim)`, so it is invisible at the usual
     `sm_scale = 1/sqrt(hdim)` (where that product is 1) and grows without bound
@@ -702,6 +702,13 @@ def core_test_sm_scale_magnitude(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, cau
     irrelevant to it, and `_do_test_op_fwd` lives in test_forward.py, which
     conftest.py excludes from directory collection.
     '''
+    # Same bound core_test_op_bwd applies, for the same reason: gfx11 has no
+    # kernel above hdim 256. Coverage survives it -- the bf16 hdim 256 cases
+    # are 0.1165 and 0.1246 Q-folded against a 0.03 bound, so the defect is
+    # still caught on a chip that never reaches 512.
+    if 'gfx11' in torch.cuda.get_device_properties(0).gcnArchName:
+        if D_HEAD > 256:
+            pytest.skip("Skip hdim > 256 on gfx11 arch due to register pressure.")
     if sm_scale == 'l1':
         sm_scale = 1.0 / D_HEAD
     elif sm_scale == 'l2':
