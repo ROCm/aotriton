@@ -12,8 +12,9 @@ usage() {
   cat <<'EOF' >&2
 Usage: build-debug.sh [options] <target arch> [optional pre-compiled triton wheel]
 
-The testing build with CMAKE_BUILD_TYPE=Debug, in its own build directory. No
-mold. <target arch> may be a semicolon-separated list.
+The testing build with CMAKE_BUILD_TYPE=Debug. Shares build-test.sh's build
+directory, so keep one or the other. No mold. <target arch> may be a
+semicolon-separated list.
 EOF
   common_build_usage_options
 }
@@ -26,8 +27,6 @@ common_build_parse "$@"
 common_build_take_arch
 common_build_take_triton_wheel
 
-# "debug", not "test". This used to pass "test", which put a Debug build in
-# `build-<version>-test-<arch>` -- the directory build-test.sh uses for its
-# Release build. The two then reconfigured each other's tree on every
-# alternation, with nothing to show for it but the rebuild.
-common_build_run Debug 123 debug -DAOTRITON_GPU_BUILD_TIMEOUT=0
+# "test", not "debug": run-test.sh globs for build-<version>-test-*<arch> and
+# errors on more than one hit, so a debug build has to land where it will look.
+common_build_run Debug 123 test -DAOTRITON_GPU_BUILD_TIMEOUT=0
