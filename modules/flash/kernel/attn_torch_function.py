@@ -83,9 +83,14 @@ def translate_causal(causal, seqlen_q, seqlen_k):
             window_left = seqlen_q
             window_right = 0
         elif causal == CausalType.BOTTOM_RIGHT:
+            # The sentinel include/aotriton/flash.h passes as
+            # WindowValue::BottomRightAligned; parse_window decodes it to
+            # window_right = seqlen_k - seqlen_q. The explicit pair this used to
+            # pass, (seqlen_q - seqlen_k, seqlen_k), is a band around the
+            # diagonal, not bottom-right causal.
             causal_type = CausalType.WINDOWED
-            window_left = seqlen_q - seqlen_k
-            window_right = seqlen_k
+            window_left = -2147483646
+            window_right = -2147483646
         else:
             causal_type = causal
     return causal_type, window_left, window_right
@@ -133,6 +138,9 @@ class AttentionExtraArgs:
     report_best_config : bool = False
     persistent_type : int = PersistentType.AUTOSELECT
     is_testing : bool = True
+    # Return the logsumexp tensor as the third value in place of the tuning
+    # result, as modules/flash/tests/attn_torch_function.py does.
+    return_logsumexp : bool = False
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -434,7 +442,8 @@ class _attention(torch.autograd.Function):
                 print(f'{kernel_name=} {best.kwargs=} {best.num_warps=} {best.num_stages=}')
         if attn_extra_args.is_testing:
             assert not torch.isnan(M).any(), f'{M.shape=} {M=}'
-        return o, encoded_softmax, ctx.tuning_result
+        ret3 = M if attn_extra_args.return_logsumexp else ctx.tuning_result
+        return o, encoded_softmax, ret3
 
     @staticmethod
     def backward_split(ctx, do, _, fwd_tuning_result):
