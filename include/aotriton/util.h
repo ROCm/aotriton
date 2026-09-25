@@ -209,12 +209,14 @@ private:
   DType dtype_ = kUnknown;
 };
 
-#ifndef aotriton_v2_EXPORTS
+// Not aotriton_v2_EXPORTS: that is defined only for aotriton_v2's own sources,
+// so aotriton_common's would declare extern what they are meant to define.
+#ifndef AOTRITON_BUILDING_LIBRARY
 extern template class TensorView<1>;
 extern template class TensorView<2>;
 extern template class TensorView<3>;
 extern template class TensorView<4>;
-#endif // aotriton_v2_EXPORTS
+#endif // AOTRITON_BUILDING_LIBRARY
 
 // Lazy allocated Tensors
 // For tensors that are only needed by certain backend of arguments

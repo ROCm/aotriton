@@ -3,17 +3,12 @@
 
 """
 Flash-family LUT sancheck + missing-entry diagnostic, called by the ATI kdesc
-(LutSancheck.method(self=kdesc, ...) via aotriton.tune.registry.load_family_tune) --
-see python/template_instantiation/ir/triton/kdesc.py's sancheck_lut_tensor/_gen_missing_entries.
+(LutSancheck.method(self=kdesc, ...) via load_family_aot) -- see
+kdesc.py's sancheck_lut_tensor/_gen_missing_entries.
 
-Moved out of modules/flash/aot/_common.py (modular-tune.md §3b/step 11) so the
-codegen back-edge into modules/flash/tune/ goes through the tune-side registry
-instead of aot-side internals. `check_value`/`_empty_generator` are small,
-pure, stable helpers duplicated (not imported) from _common.py -- _common.py
-must keep its own copies for the other modules/flash/aot/*.py files that use
-them (attn_fwd.py, bwd_kernel_dk_dv.py, bwd_kernel_dq.py, bwd_kernel_fuse.py,
-bwd_preprocess.py, bwd_preprocess_varlen.py, aiter_fwd.py, aiter_bwd.py), the
-same pattern already used for FlashEntry (aot/flash_entry.py vs. entry.py).
+Loaded as aot.sancheck.LutSancheck alongside the rest of modules/flash/aot/:
+no back-edge into the tuning package. `check_value`/`_empty_generator` come
+from ._common, the same helpers the other aot/*.py files use.
 
 Torch-free: safe to import outside a GPU container.
 """
@@ -21,20 +16,7 @@ Torch-free: safe to import outside a GPU container.
 from aotriton.gpu_targets import AOTRITON_ARCH_WARPSIZE
 from aotriton.utils import log
 
-
-def _empty_generator():
-    return
-    yield  # makes this a generator function
-
-
-def check_value(functional, repr_name):
-    if not isinstance(repr_name, list):
-        repr_name = [repr_name]
-    tc = functional.compact_choices
-    for aname in repr_name:
-        if aname in tc:
-            return tc[aname].triton_compile_signature
-    assert False, f'Cannot find {repr_name=} in {functional=}'
+from ._common import check_value, _empty_generator
 
 
 # Flash's LUT axes. These live here, not on the ATI kdesc: the kdesc is the
@@ -118,7 +100,7 @@ class LutSancheck:
     def _gen_missing_entries(self, functional, lut_tensor,
                              arch, lut_full_seqlen_q, lut_full_seqlen_k, expected_size):
         import numpy as np
-        from .entry import FlashEntry
+        from .flash_entry import FlashEntry
         causal_raw = check_value(functional, 'CAUSAL_TYPE')
         hdim = check_value(functional, 'BLOCK_DMODEL')
         dropout_p = 0.5 if check_value(functional, 'ENABLE_DROPOUT') else 0.0

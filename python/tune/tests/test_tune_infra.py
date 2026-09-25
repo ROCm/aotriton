@@ -27,7 +27,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # for conftest-adjacent helpers, if any
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _MODULES_DIR = _REPO_ROOT / 'modules'
 
 
@@ -320,6 +320,19 @@ def test_flash_entry_as_text_matches_codegen_copy():
     a2 = TuningFlashEntry(hdim=(64, 128))
     b2 = CodegenFlashEntry(hdim=(64, 128))
     assert a2.as_text() == b2.as_text()
+
+
+def test_flash_entry_round_trips_through_pon():
+    # Moved from python/test/test_pon.py: the only test in that file that
+    # touched aotriton.tune, so it belongs here instead.
+    from aotriton.tune.registry import load_flash_entry_module
+    from aotriton.utils import parse_pon
+
+    FlashEntry = load_flash_entry_module(modules_dir=_MODULES_DIR).FlashEntry
+    e = FlashEntry(dtype='bfloat16', hdim=(64, 128), seqlen_q=256, seqlen_k=512,
+                   causal=True, dropout_p=0.5, bias_type=1)
+    d = parse_pon(e.as_text())
+    assert FlashEntry(**d) == e
 
 
 # --- (c) pq/localq stay torch-free at import time -----------------------------

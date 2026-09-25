@@ -37,13 +37,11 @@ def _tree_cache_key(modules_dir, family: str, block: str) -> str:
     name-only key means whichever tree loaded first serves both. That is
     invisible while the two agree and silently wrong the moment they diverge.
 
-    The two halves have to agree, because `ir/triton/kdesc.py`'s
-    `_lut_sancheck` calls `load_family_aot` and `load_family_tune` one line
-    apart on the same tree: with only one of them tree-keyed, `aot` resolves to
-    the requested tree while `tune` returns whichever loaded first. The
-    fakefamily tree has no `tune/` at all, so the stale hit silently returns
-    the REAL `LutSancheck` instead of raising the ImportError that would have
-    exposed the mismatch.
+    Without this per-tree keying, this module's loaders (`load_family_tune`,
+    `load_family_visperf`, ...) would effectively be keyed by family name
+    alone: whichever tree loaded first for a family would silently serve
+    every later caller too, process-wide, instead of raising the ImportError
+    that would expose a mismatch.
     """
     digest = hashlib.blake2b(str(Path(modules_dir).resolve()).encode(),
                              digest_size=6).hexdigest()
