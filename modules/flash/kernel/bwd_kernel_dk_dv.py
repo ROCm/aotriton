@@ -235,7 +235,6 @@ def bwd_kernel_dk_dv(
     dv0, dv1, dv2 = composed_zeros_2d(BLOCK_N, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     dk0, dk1, dk2 = composed_zeros_2d(BLOCK_N, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     qk_scale = sm_scale * 1.44269504089
-    bias_scale = 1.0 / sm_scale
     group_size = num_head_q // num_head_k
 
     mask_on_seq_k = (start_k + BLOCK_N > seqlen_k)
@@ -309,7 +308,7 @@ def bwd_kernel_dk_dv(
             dk0, dk1, dk2, dv0, dv1, dv2 = bwd_inner_dk_dv(
                 dk0, dk1, dk2,
                 dv0, dv1, dv2,
-                qk_scale, bias_scale,
+                qk_scale,
                 q_ptrs0, q_ptrs1, q_ptrs2,
                 stride_qm,
                 kt0, kt1, kt2, vt0, vt1, vt2,
@@ -346,7 +345,7 @@ def bwd_kernel_dk_dv(
             dk0, dk1, dk2, dv0, dv1, dv2 = bwd_inner_dk_dv(
                 dk0, dk1, dk2,
                 dv0, dv1, dv2,
-                qk_scale, bias_scale,
+                qk_scale,
                 q_ptrs0, q_ptrs1, q_ptrs2,
                 stride_qm,
                 kt0, kt1, kt2, vt0, vt1, vt2,

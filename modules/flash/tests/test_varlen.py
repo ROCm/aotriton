@@ -27,7 +27,7 @@ from _common_test import (
 # also out when the FORWARD is pinned to flyc, and that half was added to
 # _core_test_backward.py only -- so every fp32 varlen case asked for a kernel
 # that was never built. Importing the name is what stops the two drifting again.
-from _core_test_backward import DTYPES, SKIP_BWD
+from _core_test_backward import DTYPES, SKIP_BWD, NONPOS_SCALES
 
 FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
 
@@ -309,6 +309,18 @@ def test_op_bwd(gpu_id, N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, 
         _do_test_varlen(N_HEADS, D_HEAD,
                         seqlens_q, seqlens_k,
                         causal, sm_scale, dropout_p, dtype, varlen_type, lse_layout)
+
+# sm_scale <= 0 with varlen: each sequence's ragged tail (primes, 1, one past a
+# block edge) must stay masked. padded pads every sequence to the longest, so
+# each one ends in masked slack. No sequence has a single key: see
+# NONPOS_REF_SEQLENS in test_backward.py.
+@pytest.mark.parametrize('sm_scale', NONPOS_SCALES)
+def test_nonpositive_sm_scale_varlen(gpu_id, sm_scale):
+    seqlens_q = np.array([17, 1, 67, 128, 31])
+    seqlens_k = np.array([31, 17, 64, 129, 2])
+    with torch.cuda.device(gpu_id):
+        _do_test_varlen(3, 64, seqlens_q, seqlens_k,
+                        False, sm_scale, 0.0, torch.float16, 'padded', 'HT')
 
 # Distinct per head, so the logsumexp varies along H. Also the number of heads.
 HEAD_SCALES = [1.0, 2.0, 3.0]

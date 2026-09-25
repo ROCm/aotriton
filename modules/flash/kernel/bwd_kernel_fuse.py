@@ -146,7 +146,6 @@ def bwd_kernel_fuse(
             return
 
         qk_scale = sm_scale * 1.44269504089
-        bias_scale = 1.0 / sm_scale
         q_ptrs0, q_ptrs1, q_ptrs2 = composed_ptrs(Q,
                                                   stride_qz, stride_qh, stride_qm, stride_qk,
                                                   batch_index, off_h_q, q_row_off + offs_q_dq,
@@ -290,7 +289,7 @@ def bwd_kernel_fuse(
             nblocks_1 = closed_interval_size(fb_lo, fb_hi)
             dq0, dq1, dq2 = bwd_inner_dq(
                 dq0, dq1, dq2,
-                qk_scale, bias_scale,
+                qk_scale,
                 DB_ptr, store_db,
                 q0, q1, q2,
                 kt_ptrs0, kt_ptrs1, kt_ptrs2,
@@ -323,7 +322,7 @@ def bwd_kernel_fuse(
             nblocks_2 = closed_interval_size(rb_lo, rb_hi)
             dq0, dq1, dq2 = bwd_inner_dq(
                 dq0, dq1, dq2,
-                qk_scale, bias_scale,
+                qk_scale,
                 DB_ptr, store_db,
                 q0, q1, q2,
                 kt_ptrs0, kt_ptrs1, kt_ptrs2,
@@ -450,7 +449,6 @@ def bwd_kernel_fuse(
         dv0, dv1, dv2 = composed_zeros_2d(BLOCK_N, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         dk0, dk1, dk2 = composed_zeros_2d(BLOCK_N, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         qk_scale = sm_scale * 1.44269504089
-        bias_scale = 1.0 / sm_scale
         group_size = num_head_q // num_head_k
 
         window_left, window_right = parse_window(IS_CAUSAL,
@@ -523,7 +521,7 @@ def bwd_kernel_fuse(
                 dk0, dk1, dk2, dv0, dv1, dv2 = bwd_inner_dk_dv_fuse(
                     dk0, dk1, dk2,
                     dv0, dv1, dv2,
-                    qk_scale, bias_scale,
+                    qk_scale,
                     q_ptrs0, q_ptrs1, q_ptrs2,
                     stride_qm,
                     kt0, kt1, kt2, vt0, vt1, vt2,
@@ -557,7 +555,7 @@ def bwd_kernel_fuse(
                 dk0, dk1, dk2, dv0, dv1, dv2 = bwd_inner_dk_dv_fuse(
                     dk0, dk1, dk2,
                     dv0, dv1, dv2,
-                    qk_scale, bias_scale,
+                    qk_scale,
                     q_ptrs0, q_ptrs1, q_ptrs2,
                     stride_qm,
                     kt0, kt1, kt2, vt0, vt1, vt2,

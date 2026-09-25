@@ -28,7 +28,7 @@ def dot(BLOCK_M : tl.constexpr, QDIM : tl.constexpr, KDIM : tl.constexpr, q, k):
 def bwd_inner_dq(
     # I/O Tensor
     dq0, dq1, dq2,
-    qk_scale, bias_scale,
+    qk_scale,
     DB_ptr, store_db,
     # Problem Description
     q0, q1, q2,

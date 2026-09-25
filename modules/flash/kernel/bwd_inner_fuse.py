@@ -31,7 +31,7 @@ def bwd_inner_dk_dv_fuse(
     # I/O Tensor
     dk0, dk1, dk2,
     dv0, dv1, dv2,
-    qk_scale, bias_scale,
+    qk_scale,
     # Problem Description
     q_ptrs0, q_ptrs1, q_ptrs2,
     q_stride,

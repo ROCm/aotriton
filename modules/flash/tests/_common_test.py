@@ -332,6 +332,19 @@ def sdpa_math(query, key, value, attn_mask=None, dropout_p=0.0, dropout_mask=Non
                                                                  dropout_mask=dropout_mask)
 
 
+def windowed_attn_mask(seqlen_q, seqlen_k, window_left, window_right, *, dtype, device):
+    """Additive mask for top-left aligned windowed attention.
+
+    Query i attends key j iff i - window_left <= j <= i + window_right, which is
+    the left_mask/right_mask pair the kernels build from parse_window.
+    """
+    i = torch.arange(seqlen_q, device=device)[:, None]
+    j = torch.arange(seqlen_k, device=device)[None, :]
+    keep = (j >= i - window_left) & (j <= i + window_right)
+    mask = torch.zeros((seqlen_q, seqlen_k), dtype=dtype, device=device)
+    return mask.masked_fill_(keep.logical_not(), float('-inf'))
+
+
 def _reference_scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_mask=None, dropout_p=0.0, is_causal=False, scale=None) -> torch.Tensor:
     # Efficient implementation equivalent to the following:
     L, S = query.size(-2), key.size(-2)
@@ -742,10 +755,15 @@ class SdpaContext(object):
         assert num_head_q % num_head_k == 0
         enable_gqa = num_head_q != num_head_k
         dropout_mask = p.dropout_mask if p.dropout_mask is None else p.dropout_mask.to(device=ref_q.device)
+        assert not (p.causal and ref_b is not None), \
+            'causal/window with an explicit bias is undefined'
+        if isinstance(p.causal, tuple):
+            ref_b = windowed_attn_mask(ref_q.shape[2], ref_k.shape[2], *p.causal,
+                                       dtype=ref_q.dtype, device=ref_q.device)
         # _scaled_dot_product_attention_math seems also working for nested tensor
         ref_out, ref_mask = sdpa_math(ref_q, ref_k, ref_v,
                                       dropout_p=p.dropout_p,
-                                      is_causal=p.causal,
+                                      is_causal=p.causal if not isinstance(p.causal, tuple) else False,
                                       attn_mask=ref_b,
                                       scale=p.sm_scale,
                                       dropout_mask=dropout_mask,

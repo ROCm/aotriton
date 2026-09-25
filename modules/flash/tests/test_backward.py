@@ -29,6 +29,8 @@ from _core_test_backward import (
     PRIME_HEADDIMS,
     core_test_logsumexp_scaling,
     core_test_matrix_bias_fwd_bwd_symmetry,
+    core_test_nonpositive_scale_symmetry,
+    NONPOS_SCALES,
     core_test_op_bwd,
     core_test_large_bf16_nan_values,
     core_test_bottom_right_fully_masked_rows,
@@ -257,6 +259,49 @@ def test_logsumexp_scaling(gpu_id, dtype):
 def test_matrix_bias_fwd_bwd_symmetry(gpu_id, dtype, bias_val):
     with torch.cuda.device(gpu_id):
         core_test_matrix_bias_fwd_bwd_symmetry(dtype, bias_val)
+
+# Analytic check: a single-key shape (dQ = dK = 0 checked directly) and a prime one.
+NONPOS_SYM_SEQLENS = [(17, 1), (257, 571)]
+# Reference sweep: no single-key shape. With one key the exact dQ and dK are 0,
+# so there is no reference error to scale a tolerance from, and the kernel's fp32
+# rounding noise fails it for either sign of sm_scale.
+NONPOS_REF_SEQLENS = [(1, 17), (17, 2), (128, 128), (257, 571)]
+# (window_left, window_right), top-left aligned; both edges active. Every query
+# row keeps at least one key at the NONPOS_REF_SEQLENS shapes.
+NONPOS_WINDOW = (16, 3)
+
+# Ungated (level 0): sm_scale <= 0 must still give finite, correct gradients,
+# with a bias and with masked tail tiles. Q = K = 0 makes the answer exact, so
+# this checks Out, LSE, dQ, dK, dV and dB directly without a reference.
+@pytest.mark.parametrize('seqlen_q,seqlen_k', NONPOS_SYM_SEQLENS)
+@pytest.mark.parametrize('sm_scale', NONPOS_SCALES)
+@pytest.mark.parametrize('dtype', DTYPES)
+def test_nonpositive_scale_symmetry(gpu_id, dtype, sm_scale, seqlen_q, seqlen_k):
+    with torch.cuda.device(gpu_id):
+        core_test_nonpositive_scale_symmetry(dtype, sm_scale, seqlen_q, seqlen_k)
+
+# sm_scale <= 0 on random inputs against the reference, with bias, causal,
+# sliding window, and dropout.
+@pytest.mark.parametrize('BATCH', [3])
+@pytest.mark.parametrize('N_HEADS', [5], ids=fmt_nheads)
+@pytest.mark.parametrize('D_HEAD', [53], ids=fmt_hdim)
+@pytest.mark.parametrize('seqlen_q,seqlen_k', NONPOS_REF_SEQLENS)
+@pytest.mark.parametrize('causal,bias_type,dropout_p',
+                         [(False, None, 0.0), (False, 'matrix', 0.0), (True, None, 0.0),
+                          (NONPOS_WINDOW, None, 0.0), (False, None, 0.5)]
+                         if BWD_IMPL != 'aiter' else
+                         [(False, None, 0.0), (True, None, 0.0), (NONPOS_WINDOW, None, 0.0)],
+                         ids=['CausalOff-BiasOff', 'CausalOff-BiasOn', 'CausalOn-BiasOff',
+                              'Window16-3-BiasOff', 'CausalOff-BiasOff-Dropout']
+                         if BWD_IMPL != 'aiter' else
+                         ['CausalOff-BiasOff', 'CausalOn-BiasOff', 'Window16-3-BiasOff'])
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize('sm_scale', NONPOS_SCALES)
+@pytest.mark.parametrize('storage_flip', [False])
+@pytest.mark.parametrize('BWDOP', BWDOP_ids)
+def test_nonpositive_sm_scale(request, gpu_id, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
+    args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+    core_test_op_bwd(request, args, device=gpu_id)
 
 # ROCm/aotriton#235. Ungated (level 0) on purpose: it guards a silent
 # wrong-answer path -- bottom-right causal with seqlen_q > seqlen_k returned

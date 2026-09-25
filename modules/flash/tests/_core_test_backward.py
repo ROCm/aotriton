@@ -770,6 +770,63 @@ def core_test_logsumexp_scaling(dtype):
     # versus base-e mixup in the LSE scaling -- an error of a factor of 1.44.
     assert torch.allclose(L, ref_tensor, rtol=1e-4)
 
+# 0.0 takes the qk_scale == 0 path; -1.2 is the harder negative case.
+NONPOS_SCALES = [0.0, -1.2]
+
+
+def core_test_nonpositive_scale_symmetry(dtype, sm_scale, seqlen_q, seqlen_k):
+    if SKIP_BWD:
+        pytest.skip('SKIP_BWD=1 excludes backward checks')
+    if BWD_IMPL == 'aiter':
+        pytest.skip('AITER ASM does not support matrix bias')
+    # Q = K = 0, so every score is `bias_val` regardless of sm_scale (including
+    # 0 and negative). Softmax is uniform over seqlen_k keys. This is the
+    # non-positive-scale analogue of core_test_matrix_bias_fwd_bwd_symmetry, with
+    # partial tiles and an exact dB / dV check.
+    device = 'cuda'
+    bias_val = 16.0
+    D_HEAD = 16
+    torch.manual_seed(20)
+    q = torch.zeros((1, 1, seqlen_q, D_HEAD), device=device, dtype=dtype, requires_grad=True)
+    k = torch.zeros((1, 1, seqlen_k, D_HEAD), device=device, dtype=dtype, requires_grad=True)
+    v = torch.randn((1, 1, seqlen_k, D_HEAD), device=device, dtype=dtype, requires_grad=True)
+    b = torch.full((1, 1, seqlen_q, seqlen_k), bias_val, device=device, dtype=dtype, requires_grad=True)
+
+    ext = AttentionExtraArgs(return_encoded_softmax=False,
+                             autotune=False,
+                             return_autotune=False,
+                             return_logsumexp=True)
+    tri_out, _, L = attention(q, k, v, b, False, sm_scale, 0.0, ext)
+    dout = torch.randn_like(tri_out)
+    dq, dk, dv, db = torch.autograd.grad(tri_out, [q, k, v, b], dout)
+
+    inv_n = 1.0 / seqlen_k
+    v_f = v.float()
+    dout_f = dout.float()
+    out_ref = v_f.mean(dim=2, keepdim=True).expand_as(tri_out)
+    l_ref = bias_val + math.log(seqlen_k)
+    dv_ref = (inv_n * dout_f.sum(dim=2, keepdim=True)).expand_as(dv)
+    # dB[i,j] = P_ij * (dO_i·V_j - dO_i·Out_i); P_ij = 1/seqlen_k
+    do_dot_v = torch.einsum('bhqd,bhkd->bhqk', dout_f, v_f)
+    do_dot_out = torch.einsum('bhqd,bhqd->bhq', dout_f, out_ref).unsqueeze(-1)
+    db_ref = inv_n * (do_dot_v - do_dot_out)
+
+    atol_lse = 1e-5 if dtype == torch.float32 else 1e-4
+    atol = {torch.float32: 1e-4, torch.float16: 2e-3}.get(dtype, 5e-3)
+    assert torch.allclose(L.float(), torch.full_like(L.float(), l_ref), atol=atol_lse, rtol=atol_lse), \
+        f'L {L.flatten()[:4].tolist()} should be bias+ln(N)={l_ref}'
+    assert torch.allclose(tri_out.float(), out_ref, atol=atol, rtol=atol), \
+        f'Out should be mean(V), maxerr={(tri_out.float() - out_ref).abs().max().item()}'
+    assert torch.allclose(dq.float(), torch.zeros_like(dq.float()), atol=atol, rtol=atol), \
+        f'dQ should be 0, maxerr={dq.abs().max().item()}'
+    assert torch.allclose(dk.float(), torch.zeros_like(dk.float()), atol=atol, rtol=atol), \
+        f'dK should be 0, maxerr={dk.abs().max().item()}'
+    assert torch.allclose(dv.float(), dv_ref, atol=atol, rtol=atol), \
+        f'dV off by {(dv.float() - dv_ref).abs().max().item()}'
+    assert torch.allclose(db.float(), db_ref, atol=atol, rtol=atol), \
+        f'dB off by {(db.float() - db_ref).abs().max().item()}'
+
+
 def core_test_matrix_bias_fwd_bwd_symmetry(dtype, bias_val):
     # Softmax over a single key is exactly 1 whatever the bias is, so the fwd must
     # pass V through untouched, the saved LSE must equal the bias, and the bwd must
