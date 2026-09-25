@@ -129,11 +129,11 @@ def bwd_inner_dq(
                 left_mask = MS[:, None] - window_left <= NS[None, :]
                 mask = mask & left_mask
             # tl.device_print('mask', mask)
+            qk = tl.where(mask, qk, float("-inf"))
 
-        qk = composed_dot_both(q0, q1, q2,
-                               kt0, kt1, kt2,
-                               qk,
-                               BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+        qk += (qk_scale * tl.dot(q0, kt0))
+        if BLOCK_DMODEL1 > 0 : qk += (qk_scale * tl.dot(q1, kt1))
+        if BLOCK_DMODEL2 > 0 : qk += (qk_scale * tl.dot(q2, kt2))
         if BIAS_TYPE == 0:
             pass
         elif BIAS_TYPE == 1:
@@ -141,16 +141,13 @@ def bwd_inner_dq(
             # The optimized tl.load above causes nan for some reason
             bias_ptrs = B_ptr + offs_q[:, None] * stride_bm + offs_k_curr * stride_bn
             if not FULL_BLOCKS:
+                mask = (offs_q[:, None] < seqlen_q) & (offs_k_curr < seqlen_k)
                 bias = tl.load(bias_ptrs, mask=mask, other=0.0)
             else:
                 bias = tl.load(bias_ptrs)
+            qk += bias.to(qk.dtype) * 1.44269504089
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
-        qk = qk_scale * qk
-        if BIAS_TYPE == 1:
-            qk += bias.to(qk.dtype) * 1.44269504089
-        if not FULL_BLOCKS or IS_CAUSAL:
-            qk = tl.where(mask, qk, float("-inf"))
         # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54
         p = tl.math.exp2(qk - l_i[:, None])
 

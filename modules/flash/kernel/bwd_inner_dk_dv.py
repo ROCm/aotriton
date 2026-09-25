@@ -51,9 +51,9 @@ def bwd_inner_dk_dv(
     window_right,
     # constexpr starts here
     BLOCK_M: tl.constexpr,
-    BLOCK_DMODEL0,
-    BLOCK_DMODEL1,
-    BLOCK_DMODEL2,
+    BLOCK_DMODEL0: tl.constexpr,
+    BLOCK_DMODEL1: tl.constexpr,
+    BLOCK_DMODEL2: tl.constexpr,
     BLOCK_N: tl.constexpr,
     FULL_BLOCKS: tl.constexpr,
     IS_CAUSAL: tl.constexpr,
@@ -148,6 +148,12 @@ def bwd_inner_dk_dv(
                 left_mask = MS[:, None] - window_left <= NS[None, :]
                 mask = mask & left_mask
             # tl.device_print('mask', mask)
+            qk = tl.where(mask, qk, float("-inf"))
+
+        # q.offs = (start_q, 0), k.offs = (0, start_k)
+        qk += (qk_scale * tl.dot(q0, kt0))
+        if BLOCK_DMODEL1 > 0 : qk += (qk_scale * tl.dot(q1, kt1))
+        if BLOCK_DMODEL2 > 0 : qk += (qk_scale * tl.dot(q2, kt2))
 
         if BIAS_TYPE == 0:
             pass
@@ -156,18 +162,15 @@ def bwd_inner_dk_dv(
             # tl.device_print('FULL_BLOCKS', FULL_BLOCKS)
             # tl.device_print('start_k', start_k)
             if not FULL_BLOCKS:
+                mask = (offs_q_curr < seqlen_q) & (offs_k < seqlen_k)[None, :]
                 bias = tl.load(bias_ptrs, mask=mask, other=0.0)
                 # tl.device_print('mask', mask)
             else:
                 bias = tl.load(bias_ptrs)
+            qk += bias.to(qk.dtype) * 1.44269504089
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
-        # q.offs = (start_q, 0), k.offs = (0, start_k)
-        qk = composed_dot_both(q0, q1, q2,
-                               kt0, kt1, kt2,
-                               qk,
-                               BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         # Check for OOB accesses on D and LSE
         if FULL_BLOCKS:
             Di = tl.load(D_ptrs + offs_q_curr * lse_pitch)
@@ -182,11 +185,6 @@ def bwd_inner_dk_dv(
                           other=0.0)
         RCP_LN2: tl.constexpr = 1.4426950408889634
         l_i *= RCP_LN2
-        qk = qk_scale * qk
-        if BIAS_TYPE == 1:
-            qk += bias.to(qk.dtype) * 1.44269504089
-        if not FULL_BLOCKS or IS_CAUSAL:
-            qk = tl.where(mask, qk, float("-inf"))
         # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54
         p = tl.math.exp2(qk - l_i) # (BLOCK_M, BLOCK_N)
 
