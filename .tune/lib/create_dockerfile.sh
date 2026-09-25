@@ -39,9 +39,9 @@ load_config "$WORKDIR"
 # TODO: the index URL and the two versions are hardcoded to what the current
 #       target system needs. They belong in config.rc (the ROCm release in
 #       particular changes on its own schedule); deferred to a later phase.
-ROCM_WHL_INDEX="https://repo.amd.com/rocm/whl-multi-arch/"
-ROCM_VERSION="7.14.1"
-TORCH_VERSION="2.12.0"
+ROCM_WHL_INDEX="https://nightly.repo.amd.com/rocm/whl-next/"
+ROCM_VERSION="10.2.0a20260924"
+TORCH_VERSION="2.15.0a0"
 ROCM_GPU_ARCH="gfx950"
 
 # What a bare Debian/Ubuntu base needs to be a tuning worker. The old base
@@ -145,8 +145,9 @@ ARG ROCM_GPU_ARCH=${ROCM_GPU_ARCH}
 RUN if [ ! -f ${CELERY_WORKER_PYTHON} ]; then \\
       python3 -m venv \$(dirname \$(dirname ${CELERY_WORKER_PYTHON})); \\
       ${CELERY_WORKER_PYTHON} -m pip install --index-url ${ROCM_WHL_INDEX} \\
-          "torch[device-\${ROCM_GPU_ARCH}]==${TORCH_VERSION}+rocm${ROCM_VERSION}" \\
-          "rocm[devel]==${ROCM_VERSION}" && \\
+          "rocm[libraries,device-\${ROCM_GPU_ARCH}]==${ROCM_VERSION}" \\
+          "rocm[devel]==${ROCM_VERSION}" \\
+          "torch[device-\${ROCM_GPU_ARCH}]==${TORCH_VERSION}+rocm${ROCM_VERSION}" && \\
       \$(dirname ${CELERY_WORKER_PYTHON})/rocm-sdk init && \\
       echo "Resolved ROCM_PATH=\$(\$(dirname ${CELERY_WORKER_PYTHON})/rocm-sdk path --root)"; \\
     fi
