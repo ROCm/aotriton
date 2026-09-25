@@ -649,15 +649,6 @@ def core_test_logsumexp_scaling(dtype):
 
 # 0.0 takes the qk_scale == 0 path; -1.2 is the harder negative case.
 NONPOS_SCALES = [0.0, -1.2]
-# Analytic check: a single-key shape (dQ = dK = 0 checked directly) and a prime one.
-NONPOS_SYM_SEQLENS = [(17, 1), (257, 571)]
-# Reference sweep: no single-key shape. With one key the exact dQ and dK are 0,
-# so there is no reference error to scale a tolerance from, and the kernel's fp32
-# rounding noise fails it for either sign of sm_scale.
-NONPOS_REF_SEQLENS = [(1, 17), (17, 2), (128, 128), (257, 571)]
-# (window_left, window_right), top-left aligned; both edges active. Every query
-# row keeps at least one key at the NONPOS_REF_SEQLENS shapes.
-NONPOS_WINDOW = (16, 3)
 
 
 def core_test_nonpositive_scale_symmetry(dtype, sm_scale, seqlen_q, seqlen_k):

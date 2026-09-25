@@ -31,9 +31,6 @@ from _core_test_backward import (
     core_test_matrix_bias_fwd_bwd_symmetry,
     core_test_nonpositive_scale_symmetry,
     NONPOS_SCALES,
-    NONPOS_SYM_SEQLENS,
-    NONPOS_REF_SEQLENS,
-    NONPOS_WINDOW,
     core_test_op_bwd,
     core_test_large_bf16_nan_values,
     core_test_bottom_right_fully_masked_rows,
@@ -261,6 +258,16 @@ def test_logsumexp_scaling(gpu_id, dtype):
 def test_matrix_bias_fwd_bwd_symmetry(gpu_id, dtype, bias_val):
     with torch.cuda.device(gpu_id):
         core_test_matrix_bias_fwd_bwd_symmetry(dtype, bias_val)
+
+# Analytic check: a single-key shape (dQ = dK = 0 checked directly) and a prime one.
+NONPOS_SYM_SEQLENS = [(17, 1), (257, 571)]
+# Reference sweep: no single-key shape. With one key the exact dQ and dK are 0,
+# so there is no reference error to scale a tolerance from, and the kernel's fp32
+# rounding noise fails it for either sign of sm_scale.
+NONPOS_REF_SEQLENS = [(1, 17), (17, 2), (128, 128), (257, 571)]
+# (window_left, window_right), top-left aligned; both edges active. Every query
+# row keeps at least one key at the NONPOS_REF_SEQLENS shapes.
+NONPOS_WINDOW = (16, 3)
 
 # Ungated (level 0): sm_scale <= 0 must still give finite, correct gradients,
 # with a bias and with masked tail tiles. Q = K = 0 makes the answer exact, so

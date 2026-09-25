@@ -706,18 +706,16 @@ class SdpaContext(object):
         assert num_head_q % num_head_k == 0
         enable_gqa = num_head_q != num_head_k
         dropout_mask = p.dropout_mask if p.dropout_mask is None else p.dropout_mask.to(device=ref_q.device)
-        is_causal = p.causal
-        attn_mask = ref_b
+        assert not (p.causal and ref_b is not None), \
+            'causal/window with an explicit bias is undefined'
         if isinstance(p.causal, tuple):
-            window_mask = windowed_attn_mask(ref_q.shape[2], ref_k.shape[2], *p.causal,
-                                             dtype=ref_q.dtype, device=ref_q.device)
-            attn_mask = window_mask if ref_b is None else ref_b + window_mask
-            is_causal = False
+            ref_b = windowed_attn_mask(ref_q.shape[2], ref_k.shape[2], *p.causal,
+                                       dtype=ref_q.dtype, device=ref_q.device)
         # _scaled_dot_product_attention_math seems also working for nested tensor
         ref_out, ref_mask = sdpa_math(ref_q, ref_k, ref_v,
                                       dropout_p=p.dropout_p,
-                                      is_causal=is_causal,
-                                      attn_mask=attn_mask,
+                                      is_causal=p.causal if not isinstance(p.causal, tuple) else False,
+                                      attn_mask=ref_b,
                                       scale=p.sm_scale,
                                       dropout_mask=dropout_mask,
                                       enable_gqa=enable_gqa)

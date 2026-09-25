@@ -313,7 +313,7 @@ def test_op_bwd(gpu_id, N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, 
 # sm_scale <= 0 with varlen: each sequence's ragged tail (primes, 1, one past a
 # block edge) must stay masked. padded pads every sequence to the longest, so
 # each one ends in masked slack. No sequence has a single key: see
-# NONPOS_REF_SEQLENS.
+# NONPOS_REF_SEQLENS in test_backward.py.
 @pytest.mark.parametrize('sm_scale', NONPOS_SCALES)
 def test_nonpositive_sm_scale_varlen(gpu_id, sm_scale):
     seqlens_q = np.array([17, 1, 67, 128, 31])
