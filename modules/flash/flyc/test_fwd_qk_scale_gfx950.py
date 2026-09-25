@@ -194,55 +194,22 @@ def _max_err(got, want):
     return (got.double() - want).abs().max().item()
 
 
-# --- A second, unrelated defect that these shapes walk into -----------------
-#
-# **fp16 plus `lazy_rescale` plus a large `sm_scale` returns inf.** Not the
-# rounding this file is about, and not introduced by fixing it: the counts and
-# indices are bit-identical before and after, and it reproduces on the shipped
-# 0.14.1 library through `torch.nn.functional.scaled_dot_product_attention`.
-#
-# `lazy_rescale` holds the running row max until a tile overruns it, which lets
-# `P = exp2(S - m_row)` exceed 1 before `cast_p` writes it in the input dtype.
-# bf16 carries f32's exponent range and does not care; fp16 tops out at 65504,
-# and the excursion at these scales passes it, so P is infinite going into the
-# PV MFMA and O comes back inf. The LSE is *correct* in the same run, which is
-# what says the row max and the running sum are fine and only the P cast is
-# not. Building the same shape with `lazy_rescale=False` returns finite output
-# and is also more accurate (2.2e-3 -> 1.1e-3 at head_dim 64, sm_scale 1.0).
-#
-# The wide kernel (head_dim 512) rescales eagerly and is unaffected at every
-# scale here. Listed as exact measured triples rather than fitted from a
-# threshold: the boundary is a property of the input distribution as much as of
-# the knob, and a formula here would claim to know where it is.
-#
-# `strict`, so that fixing the knob policy turns these into failures and
-# whoever fixes it is told to come back and delete the list.
-_FP16_LAZY_RESCALE_INF = frozenset(
-    {
-        ("f16", 64, 1.0),
-        ("f16", 256, 0.4),
-        ("f16", 256, 1.0),
-    }
-)
-
-
+# The f16 cases below are also the only coverage of a *second* defect, and of
+# the containment `Gfx950Knobs._with_rescale_mode` now applies to it: f16 plus
+# `lazy_rescale` returns inf at head_dim 64/128/256 once `sm_scale` is large,
+# and the policy answers by not asking for `lazy_rescale` in f16 at all. They
+# were strict xfails here when that was still open. Nothing in this file pins
+# the knob, which is the point -- these run whatever the policy decides, so if
+# the containment is dropped or narrowed they go back to failing rather than
+# quietly stopping to test it.
 def _cases(dtypes=tuple(sorted(DTYPES)), head_dims=HEAD_DIMS, scales=SM_SCALES):
     for dtype_str in dtypes:
         for head_dim in head_dims:
             for sm_scale in scales:
-                marks = ()
-                if (dtype_str, head_dim, sm_scale) in _FP16_LAZY_RESCALE_INF:
-                    marks = pytest.mark.xfail(
-                        strict=True,
-                        reason="fp16 + lazy_rescale overflows P to inf at a large "
-                        "sm_scale; separate pre-existing defect, see the comment "
-                        "on _FP16_LAZY_RESCALE_INF",
-                    )
                 yield pytest.param(
                     dtype_str,
                     head_dim,
                     sm_scale,
-                    marks=marks,
                     id=f"{dtype_str}-d{head_dim}-s{'rsqrt' if sm_scale is None else sm_scale}",
                 )
 
