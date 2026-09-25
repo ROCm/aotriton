@@ -74,12 +74,14 @@ check them against our own forward rather than only against torch:
 
 - **`qk_scale = sm_scale * log2e` is applied to the f32 scores, `sm_scale`
   alone to the dQ accumulator at the end.** AOTriton spells them
-  `p = exp2(qk_scale*qk - l_i)` and `dq *= sm_scale`. The forward instead folds
-  `qk_scale` into Q and rounds the product back to bf16; **this kernel
-  deliberately does not**, and `BwdDqSoftmaxHelper.scale_and_sub_lse` has the
-  measurement that says why.
-- **Neither Q nor `dO` is pre-scaled.** `ParityQLoader.scale_all` is one
-  keystroke away and multiplies every gradient by `qk_scale`; nothing checks
+  `p = exp2(qk_scale*qk - l_i)` and `dq *= sm_scale`. The forward used to fold
+  `qk_scale` into Q and round the product back to bf16 while this kernel
+  deliberately did not; `BwdDqSoftmaxHelper.scale_and_sub_lse` has the
+  measurement that says why, and the forward has since been moved onto the
+  same arithmetic (`ParityGemmHelper.scale_scores`). The two now agree.
+- **Neither Q nor `dO` is pre-scaled.** `ParityQLoader.scale_all` now raises
+  rather than scaling, so the Q half of this is enforced; `dO` is not, and
+  pre-scaling it multiplies every gradient by `qk_scale` with nothing checking
   shapes.
 - **LSE is read in natural units and converted here.** The forward writes
   `m_row*ln2 + ln(l)`, so `lse2 = lse * log2e` (AOTriton's `l_i = ... *
@@ -235,6 +237,7 @@ from fmha_dualwave_gfx950 import (
     ParityKvLdsToVgprLoader,
     ParityQLoader,
     ParitySoftmaxHelper,
+    traits_cache_key,
     ParityStoreHelper,
     _bias_slab_num_records_bytes,
     _score_column_runs,
@@ -694,18 +697,22 @@ class BwdDqSoftmaxHelper(ParitySoftmaxHelper):
     def scale_and_sub_lse(self, v_s, qk_scale, lse2):
         """`qk_scale * S - lse2`, one FMA per score element.
 
-        **This is where the backward deliberately stops matching the forward,
-        and it is worth 10x at a large `sm_scale`.** The forward folds
-        `sm_scale * log2e` into Q and rounds the product back to bf16, which
+        **This is where the backward stopped matching the forward, and it was
+        worth 10x at a large `sm_scale`.** The forward folded
+        `sm_scale * log2e` into Q and rounded the product back to bf16, which
         saves a multiply per score; the error that introduces is `|S| * 2^-8`
         in the *exponent*, so `P = exp2(S - lse2)` inherits it as a relative
-        error. The forward tolerates that because `O` is a normalised average
-        and the error largely cancels; `dS = P * (dP - delta)` does not
-        normalise, and `dQ` sums it over the whole key axis.
+        error. The forward was thought to tolerate that because `O` is a
+        normalised average and the error largely cancels, while
+        `dS = P * (dP - delta)` does not normalise and `dQ` sums it over the
+        whole key axis. **The forward did not tolerate it either** -- the
+        measurement below transfers, and `ParityQLoader.scale_all` records what
+        it cost there -- so the fold is gone from both and the table is now the
+        history of a fixed bug rather than a live divergence.
 
         Measured at `B=1 H=4 S=512 d=64`, max error against an fp64 reference:
 
-            sm_scale   Q pre-scaled (forward's fold)   scaled here
+            sm_scale   Q pre-scaled (the old fold)     scaled here
               0.05            1.8e-4                     1.6e-4
               0.25            4.3e-2                     2.0e-2
               1.00            6.9e-1                     6.8e-2
@@ -1164,19 +1171,24 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
     M16 = traits.MFMA_N == 16
     BUILD_SM_SCALE = meta.sm_scale
 
-    # `traits.cache_tag` does not know about the tile geometry or `STORE_DB`,
-    # so everything the build depends on goes in here. Two builds colliding in
-    # the JIT disk cache is what a knob sweep hits first.
+    # Everything the build depends on, so that two builds differing anywhere
+    # cannot collide in the JIT disk cache -- which a knob sweep hits first.
+    # `traits_cache_key` is every trait field rather than `traits.cache_tag`'s
+    # subset; see there for what the subset was silently getting wrong. It
+    # subsumes `STORE_DB`, `HDIM_VO_FLOOR` and the MFMA shape, which this tag
+    # used to name individually and which are all `traits.` reads.
+    #
+    # `strides_constexpr` is **new** here and was a hole of the same kind:
+    # `abi.varlen_args` below reads it, so it changes the emitted kernel, and
+    # it appeared in neither half of the old key. The forward and dK/dV tags
+    # both had it.
     _cache_tag = (
-        traits.cache_tag,
+        traits_cache_key(traits),
         BLOCK_DMODEL,
         PADDED_HEAD,
         HDIM_QK_FLOOR,
-        traits.HDIM_VO_FLOOR,
-        STORE_DB,
+        knobs.strides_constexpr,
         BUILD_SM_SCALE,
-        (knobs.num_waves, knobs.block_m, knobs.block_n, knobs.head_dim_granule),
-        (traits.MFMA_M, traits.MFMA_N, traits.MFMA_K),
     )
 
     _lds_elem_dtype = dualwave.dtype_to_elem_type(traits.DTYPE_STR)

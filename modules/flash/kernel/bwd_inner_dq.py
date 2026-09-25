@@ -131,10 +131,9 @@ def bwd_inner_dq(
             # tl.device_print('mask', mask)
             qk = tl.where(mask, qk, float("-inf"))
 
-        qk = composed_dot_both(q0, q1, q2,
-                               kt0, kt1, kt2,
-                               qk,
-                               BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+        qk += (qk_scale * tl.dot(q0, kt0))
+        if BLOCK_DMODEL1 > 0 : qk += (qk_scale * tl.dot(q1, kt1))
+        if BLOCK_DMODEL2 > 0 : qk += (qk_scale * tl.dot(q2, kt2))
         if BIAS_TYPE == 0:
             pass
         elif BIAS_TYPE == 1:
@@ -146,11 +145,11 @@ def bwd_inner_dq(
                 bias = tl.load(bias_ptrs, mask=mask, other=0.0)
             else:
                 bias = tl.load(bias_ptrs)
-            qk += bias * bias_scale
+            qk += bias.to(qk.dtype) * 1.44269504089
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
         # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54
-        p = tl.math.exp2(qk_scale * qk - l_i[:, None])
+        p = tl.math.exp2(qk - l_i[:, None])
 
         if not FULL_BLOCKS or IS_CAUSAL:
             if qk_scale == 0.0:

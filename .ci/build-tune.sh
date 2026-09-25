@@ -5,79 +5,33 @@ if [ -z "$BASH_VERSION" ]; then
   exit 1
 fi
 
-# Parse options using getopt
-shim_only=false
-altwheel_config=""
-flydsl_wheel=""
-TEMP=$(getopt -o '' --long shim,altwheel_config:,flydsl_wheel: -n 'build-tune.sh' -- "$@")
-if [ $? != 0 ]; then
-  echo 'Usage: build-tune.sh [--shim] [--altwheel_config <yaml>] [--flydsl_wheel <whl>] <target arch> [optional pre-compiled triton wheel]' >&2
-  exit 1
-fi
-
-eval set -- "$TEMP"
-
-while true; do
-  case "$1" in
-    --shim)
-      shim_only=true
-      shift
-      ;;
-    --altwheel_config)
-      altwheel_config="$2"
-      shift 2
-      ;;
-    --flydsl_wheel)
-      flydsl_wheel="$2"
-      shift 2
-      ;;
-    --)
-      shift
-      break
-      ;;
-    *)
-      echo "Internal error!" >&2
-      exit 1
-      ;;
-  esac
-done
-
-if [ "$#" -lt 1 ]; then
-  echo 'Missing arguments. Usage: build-tune.sh [--shim] [--altwheel_config <yaml>] [--flydsl_wheel <whl>] <target arch> [optional pre-compiled triton wheel]' >&2
-  exit 1
-fi
-
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+. "${SCRIPT_DIR}/common-usage.sh"
+
+usage() {
+  cat <<'EOF' >&2
+Usage: build-tune.sh [--shim] [options] <target arch> [optional pre-compiled triton wheel]
+
+The tuning build: every GPU kernel, AOTRITON_BUILD_FOR_TUNING=ON, no mold.
+<target arch> may be a semicolon-separated list.
+
+  --shim  C++ shim only (AOTRITON_NOIMAGE_MODE=ON), into its own build dir
+EOF
+  common_build_usage_options
+}
+
+common_build_usage_if_requested "$@"
 . "${SCRIPT_DIR}/common-build.sh"
 
-target_arch="$1"
-shift
+CB_PROG=build-tune.sh
+CB_EXTRA_LONGOPTS=shim
+common_build_parse "$@"
+common_build_take_arch
+common_build_take_triton_wheel
 
-# Prepare arguments for common_build
-if [ "$shim_only" = true ]; then
-  build_args=("${target_arch}" "tune_shim_only" "-DAOTRITON_BUILD_FOR_TUNING=ON" "-DAOTRITON_NOIMAGE_MODE=ON")
+if [ "${CB_OPT[shim]:-false}" = true ]; then
+  common_build_run Release 123 tune_shim_only \
+    -DAOTRITON_BUILD_FOR_TUNING=ON -DAOTRITON_NOIMAGE_MODE=ON
 else
-  build_args=("${target_arch}" "tune" "-DAOTRITON_BUILD_FOR_TUNING=ON")
+  common_build_run Release 123 tune -DAOTRITON_BUILD_FOR_TUNING=ON
 fi
-
-if [ -n "$altwheel_config" ]; then
-  build_args+=("-DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=$(realpath "$altwheel_config")")
-fi
-
-# Install a flydsl wheel from local disk instead of the third_party/flydsl-compiler.txt
-# pin. realpath is what satisfies cmake's absolute-path requirement on this variable.
-if [ -n "$flydsl_wheel" ]; then
-  build_args+=("-DAOTRITON_USE_LOCAL_FLYDSL_WHEEL=$(realpath "$flydsl_wheel")")
-fi
-
-# Add optional triton wheel argument if provided -- not when an altwheel
-# config is set. The two are mutually exclusive at the cmake level (fatal
-# error if both given): the altwheel config's own .venvs.default supplies
-# the main venv's wheel too, so no separate flag is needed here.
-if [ "$#" -ge 1 ] && [ -z "$altwheel_config" ]; then
-  wheel=$(realpath "$1")
-  build_args+=("-DAOTRITON_USE_LOCAL_TRITON_WHEEL=${wheel}")
-fi
-
-# Call common_build with collected arguments
-common_build "${build_args[@]}"

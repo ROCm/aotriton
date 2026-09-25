@@ -141,6 +141,55 @@ def alloc_with_layout(dims, perm, *, dtype, device, generator=None, rand=False):
         raw = torch.empty(adims, dtype=dtype, device=device)
     return raw.permute(*layout_inverse(perm))
 
+# Here rather than beside its one caller (core_test_sm_scale_magnitude) because
+# everything it knows is knowledge about THIS file: that `alloc_with_layout`
+# above is the only thing that ever fills an SdpaContext input, that it uses
+# `torch.rand`, and that the tensor it hands back is a permuted view whose
+# strides an in-place fill has to preserve. A second test that needs a
+# different input distribution should find this next to the allocation it
+# overrides, not in whichever suite happened to need it first.
+def refill_inputs_normal(ctx, seed=0x9be9_98d4_cf17_5339):
+    """Redraw an SdpaContext's q/k/v/b from N(0, 1), in place, keeping every stride.
+
+    `alloc_with_layout` fills from `torch.rand` -- uniform [0, 1), all positive
+    and all the same order of magnitude. That is a deliberately benign
+    distribution and it hides an entire class of softmax error.
+
+    Consider a kernel that perturbs Q by a relative `eps` before the QK GEMM
+    (rounding `Q * qk_scale` back to the input dtype does exactly this). Row
+    `i` of the score matrix picks up `S_ij += <q_i * eps_i, k_j>`, a quantity
+    that depends on `j` only through `k_j`. With every `k_j` drawn from [0, 1)
+    the `k_j` are near-parallel, so that inner product is very nearly the SAME
+    number for every column of the row -- a common-mode shift, and softmax
+    subtracts the row max, so it cancels. Draw `k_j` from N(0, 1) and the signs
+    vary from column to column, the perturbation stops being common mode, and
+    it survives into the output.
+
+    Measured on gfx950, flyc forward, bf16, 289x289, hdim 512, `sm_scale=1.0`,
+    max |err| vs an f64 reference: 0.0029 with uniform inputs, 0.0094 with
+    normal ones, against a 0.0021 / 0.0020 baseline at `sm_scale=rsqrt(hdim)`.
+    Uniform inputs move by 1.4x where normal inputs move by 4.7x.
+
+    In place rather than as an `SdpaContext` argument because the layout is the
+    allocation's: `alloc_with_layout` allocates in storage order and hands back
+    a permuted view, so filling the view preserves exactly the strides the
+    layout asked for. Must run BEFORE `create_ref_inputs`, which snapshots
+    these tensors into the high-precision and low-precision references.
+    """
+    # ONE generator for the whole tuple, advanced from tensor to tensor. Seeding
+    # per tensor instead would hand q, k and v the same numbers, and identical
+    # q/k/v is a degenerate input: every score in a row is equal, softmax comes
+    # out uniform, and the kernel matches the reference exactly no matter what
+    # it does to the scale.
+    g = None
+    for t in ctx.dev_tensors:
+        if t is None:
+            continue
+        if g is None:
+            g = torch.Generator(device=t.device)
+            g.manual_seed(seed)
+        t.normal_(mean=0.0, std=1.0, generator=g)
+
 # Every tensor whose layout a caller may choose, in the order `StorageLayout`'s
 # round robin walks them. The first five are allocated by `SdpaContext`; the
 # rest are outputs, allocated inside `attn_torch_function.py` and reached

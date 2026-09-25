@@ -14,6 +14,21 @@ default_target_arch=$(grep '^set(AOTRITON_TARGET_ARCH' "${root_cmake}"|cut -d ' 
 native_arch=$(rocm_agent_enumerator|grep -v gfx000|head -n 1)
 ngpus=$(rocm_agent_enumerator|grep -v gfx000|wc -l)
 
+# The build directory name a profile writes, relative to the source tree.
+#
+#   aotriton_build_dir <build for> <target arch>
+#
+# One formula, because two things need it and they are in different files:
+# `_common_build` creates it, and `torch-build.sh` goes looking for what
+# `build-for-torch.sh` left there. Those two used to spell it out separately,
+# so a rename in one was a silent "Cannot find aotriton install directory" in
+# the other.
+aotriton_build_dir() {
+  local build_for="$1"
+  local target_arch="$2"
+  echo "build-${aotriton_major}.${aotriton_minor}-${build_for}-${target_arch//;/_}"
+}
+
 get_llvm_hash() {
   local script_dir="$(dirname "${BASH_SOURCE[0]}")"
   if [ -f "${script_dir}/../third_party/triton/cmake/llvm-hash.txt" ]; then

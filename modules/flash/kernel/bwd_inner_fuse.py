@@ -53,9 +53,9 @@ def bwd_inner_dk_dv_fuse(
     window_right,
     # constexpr starts here
     BLOCK_M: tl.constexpr,
-    BLOCK_DMODEL0,
-    BLOCK_DMODEL1,
-    BLOCK_DMODEL2,
+    BLOCK_DMODEL0: tl.constexpr,
+    BLOCK_DMODEL1: tl.constexpr,
+    BLOCK_DMODEL2: tl.constexpr,
     BLOCK_N: tl.constexpr,
     FULL_BLOCKS: tl.constexpr,
     IS_CAUSAL: tl.constexpr,
@@ -166,6 +166,11 @@ def bwd_inner_dk_dv_fuse(
             # tl.device_print('mask', mask)
             qk = tl.where(mask, qk, float("-inf"))
 
+        # q.offs = (start_q, 0), k.offs = (0, start_k)
+        qk += (qk_scale * tl.dot(q0, kt0))
+        if BLOCK_DMODEL1 > 0 : qk += (qk_scale * tl.dot(q1, kt1))
+        if BLOCK_DMODEL2 > 0 : qk += (qk_scale * tl.dot(q2, kt2))
+
         if BIAS_TYPE == 0:
             pass
         elif BIAS_TYPE == 1:
@@ -177,14 +182,9 @@ def bwd_inner_dk_dv_fuse(
                 # tl.device_print('mask', mask)
             else:
                 bias = tl.load(bias_ptrs)
-            qk += bias * bias_scale
+            qk += bias.to(qk.dtype) * 1.44269504089
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
-        # q.offs = (start_q, 0), k.offs = (0, start_k)
-        qk = composed_dot_both(q0, q1, q2,
-                               kt0, kt1, kt2,
-                               qk,
-                               BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         # Check for OOB accesses on D and LSE
         if FULL_BLOCKS:
             l_i = tl.load(l_ptrs + offs_q_curr * lse_pitch)
@@ -200,7 +200,7 @@ def bwd_inner_dk_dv_fuse(
                                          BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                          axis=1)
         # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54
-        p = tl.math.exp2(qk_scale * qk - l_i) # (BLOCK_M, BLOCK_N)
+        p = tl.math.exp2(qk - l_i) # (BLOCK_M, BLOCK_N)
 
         if not FULL_BLOCKS or IS_CAUSAL:
             if qk_scale == 0.0:

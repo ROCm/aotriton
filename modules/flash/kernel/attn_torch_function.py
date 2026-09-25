@@ -717,8 +717,8 @@ class _attention(torch.autograd.Function):
         use_small_block = ctx.dropout_p > 0.0
         use_medium_block = ctx.bias_type != 0
         # Profiling shows (16, 16) is optimal solution for most bwd configurations
-        BLOCK_M = 16
-        BLOCK_N = 16
+        BLOCK_M = int(os.getenv('BWD_FUSE_BLOCK_M', default='16'))
+        BLOCK_N = int(os.getenv('BWD_FUSE_BLOCK_N', default='16'))
         stride_dbz, stride_dbh, stride_dbm, stride_dbn = db.stride()
         if db.numel() == 0 or not b.requires_grad:
             # Passing all zeros to indicate no elements
@@ -770,6 +770,9 @@ class _attention(torch.autograd.Function):
                         BIAS_TYPE=ctx.bias_type,
                         BLOCK_M=BLOCK_M,
                         BLOCK_N=BLOCK_N,
+                        **({'num_warps': int(os.getenv('BWD_FUSE_NUM_WARPS'))} if os.getenv('BWD_FUSE_NUM_WARPS') else {}),
+                        **({'num_stages': int(os.getenv('BWD_FUSE_NUM_STAGES'))} if os.getenv('BWD_FUSE_NUM_STAGES') else {}),
+                        **({'waves_per_eu': int(os.getenv('BWD_FUSE_WPE'))} if os.getenv('BWD_FUSE_WPE') else {}),
                         )
                 print('bare_bwd_kernel_fuse Done')
         return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
