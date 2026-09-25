@@ -6,6 +6,9 @@ NOTE: ALL SCRIPTS REQUIRE **BASH**.
 | -------------------------- | --------------------------------------------------------- |
 | build-tune.sh              | Build Tuning Version of AOTriton                          |
 | build-test.sh              | Build Testing Version of AOTriton                         |
+| build-debug.sh             | Build Testing Version with CMAKE_BUILD_TYPE=Debug         |
+| build-shim.sh              | Build the C++ shim only; no kernel images, fastest check  |
+| build-release.sh           | Build the shippable library (no name suffix, no bindings) |
 | run-test.sh                | Run full tests against AOTriton built by build-test.sh    |
 | run-ci-test.sh             | Run run-test.sh with `USE_ADIFFS_TXT` set                 |
 | build-for-torch.sh         | Build AOTriton for PyTorch                                |
@@ -38,6 +41,19 @@ NOTE: ALL SCRIPTS REQUIRE **BASH**.
 not fall into any category and consequently does not follow any naming scheme above.
 
 # Example Usages of AOTrtion Tests
+
+## The `build-*.sh` family
+
+Every one of them is the same build with a different *profile* -- a build type,
+a name suffix, a build-directory tag and a few cmake flags. They share their
+option set (`--database_root`, `--flydsl_kernel_root`, `--flydsl_wheel`,
+`--altwheel_config`, `--name_suffix`, `--mold`/`--no_mold`), the optional
+trailing pre-compiled Triton wheel, and the `AOTRITON_BUILD_PATH` /
+`AOTRITON_INSTALL_PATH` environment overrides. Run any of them with no
+arguments, or with `--help`, for the full list.
+
+`build-release.sh` is the exception: it takes raw `-D` cmake options rather
+than named flags, because `runc-manylinux-build-tar.sh` assembles them that way.
 
 ## Build for Tuning
 
@@ -117,15 +133,18 @@ Step 1: build library for pytorch
 
 ``` bash
 cd aotriton
-bash .ci/build-for-torch.sh
+bash .ci/build-for-torch.sh gfx950
 ```
 
 Step 2: build pytoch with aotriton built in Step 1
 
 ``` bash
 cd pytorch
-bahs ../aotriton/.ci/torch-build.sh
+bash ../aotriton/.ci/torch-build.sh
 ```
+
+`torch-build.sh` takes an optional `<target arch>` and defaults to the local
+GPU's, so pass it the same arch as Step 1 if you built for anything else.
 
 ## Triton Wheel Pre-Build
 

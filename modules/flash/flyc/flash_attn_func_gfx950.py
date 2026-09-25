@@ -135,6 +135,7 @@ from fmha_dualwave_gfx950 import (
     ParityKvLdsToVgprLoader,
     ParityQLoader,
     ParitySoftmaxHelper,
+    traits_cache_key,
     ParityStoreHelper,
     wire_ptr,
     wire_view,
@@ -313,6 +314,26 @@ class _WideSoftmaxHelper(_Exp2WaitStateMixin, _KvTailCausalMaskMixin, WideSoftma
     pass
 
 
+class _FwdGemmHelper(ParityGemmHelper):
+    """`qk` with `qk_scale` applied, which is what the *forward* wants.
+
+    `ParityGemmHelper.qk` returns raw `Q·K^T` because `fmha_bwd_dq_gfx950`
+    shares it and folds `qk_scale` into its own LSE subtract. The dual-wave
+    forward body calls `qk` from six sites across its software pipeline -- the
+    prologue, two in the main loop, three in the epilogue -- and every one of
+    them wants the scaled score, so overriding once here beats six wrapped call
+    sites that a seventh site could silently join without.
+
+    The wide body is not covered by this and does not want to be: it never
+    calls `qk`, because its D axis is staged and only the last `qk_stage` has a
+    complete sum to scale. `make_wide_body` calls `scale_scores` itself, right
+    after that loop.
+    """
+
+    def qk(self, v_k, q_all_bf16, stage=0):
+        return self.scale_scores(super().qk(v_k, q_all_bf16, stage))
+
+
 _COMPILED = {}
 
 _COMPILE_HINTS = {
@@ -364,18 +385,18 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
     # Precedence is per-call `scale` > `meta.sm_scale` > derived.
     BUILD_SM_SCALE = meta.sm_scale
 
-    # `traits.cache_tag` does not include the tile geometry, so two families
-    # of the same shape would collide in the JIT disk cache -- which a knob
-    # sweep hits immediately. Everything the build depends on goes in here.
+    # Everything the build depends on, so that two builds differing anywhere
+    # cannot collide in the JIT disk cache. `traits_cache_key` is all 93 trait
+    # fields rather than `traits.cache_tag`'s subset -- see there for what the
+    # subset was silently returning the wrong binary for. The rest are builder
+    # values with no trait of their own.
     _cache_tag = (
-        traits.cache_tag,
+        traits_cache_key(traits),
         BLOCK_DMODEL,
         PADDED_HEAD,
         HDIM_QK_FLOOR,
         STRIDES_CONSTEXPR,
         BUILD_SM_SCALE,
-        (knobs.num_waves, knobs.block_m, knobs.block_n, knobs.head_dim_granule),
-        (knobs.d_stages, knobs.qk_shards, knobs.vo_shards),
     )
 
     _lds_elem_dtype = dualwave.dtype_to_elem_type(traits.DTYPE_STR)
@@ -573,7 +594,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         output_store = (WideStoreHelper if WIDE else ParityStoreHelper)(ctx)
         page_ids = dualwave.DualwavePageIdLoader(ctx)
         q_loader = ParityQLoader(ctx)
-        gemm_helper = (WideGemmHelper if WIDE else ParityGemmHelper)(ctx)
+        gemm_helper = (WideGemmHelper if WIDE else _FwdGemmHelper)(ctx)
         softmax_helper = (_WideSoftmaxHelper if WIDE else _ParitySoftmaxHelper)(ctx)
 
         def _main_body():
@@ -594,9 +615,10 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
             _sched_barrier(0)
             _s_barrier()
 
-            # Load this wave's Q rows and pre-scale by the softmax scale.
+            # Load this wave's Q rows. **Not scaled** -- `qk_scale` is applied
+            # to the f32 scores by `_FwdGemmHelper.qk`; see
+            # `ParityQLoader.scale_all` for what pre-scaling Q costs.
             q_all_bf16 = q_loader.load_all()
-            q_all_scaled_bf16 = q_loader.scale_all(q_all_bf16)
 
             # Pipeline ahead: prefetch K tile1 (buf1) + V tile0 (buf0) as background
             if const_expr(traits.PAGED):
@@ -622,7 +644,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
             # Prologue scores + first softmax pass for KV tile 0
             if const_expr(traits.PAGED):
                 pro_pageid_2_lds = page_ids.load_page_id_lds(page_ids.split_tile(2))
-            v_s_0 = gemm_helper.qk(v_k, q_all_scaled_bf16)
+            v_s_0 = gemm_helper.qk(v_k, q_all_bf16)
             _sched_barrier(0)
 
             # `split_tile(0)`, not tile 0. The prologue loaded `load_k_split(0)`,
@@ -699,7 +721,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
                 # Cluster 1
                 if const_expr(traits.PAGED):
                     c2_pageid_lds = page_ids.load_page_id_lds(j_idx)
-                v_s_1 = gemm_helper.qk(v_k, q_all_scaled_bf16)
+                v_s_1 = gemm_helper.qk(v_k, q_all_bf16)
                 v_p_0 = softmax_helper.exp2(v_p_0, 16, 16)
                 l_row = softmax_helper.reduce_sum(l_row, v_p_0)
                 v_p_0 = softmax_helper.cast_p(v_p_0, j_idx - fx.Index(3))
@@ -769,7 +791,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
                 # Cluster 5
                 if const_expr(traits.PAGED):
                     _c6_kpid_lds = page_ids.load_page_id_lds(j_idx + 1)
-                v_s_0 = gemm_helper.qk(v_k, q_all_scaled_bf16)
+                v_s_0 = gemm_helper.qk(v_k, q_all_bf16)
                 v_p_1 = softmax_helper.exp2(v_p_1, 16, 16)
                 l_row = softmax_helper.reduce_sum(l_row, v_p_1)
                 v_p_1 = softmax_helper.cast_p(v_p_1, j_idx - fx.Index(2))
@@ -856,7 +878,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
             # Epilogue C1
             if const_expr(traits.PAGED):
                 ec2_pageid_lds = page_ids.load_page_id_lds(max_m1)
-            v_s_1 = gemm_helper.qk(v_k, q_all_scaled_bf16)
+            v_s_1 = gemm_helper.qk(v_k, q_all_bf16)
             v_p_0 = softmax_helper.exp2(v_p_0, 16, 16)
             l_row = softmax_helper.reduce_sum(l_row, v_p_0)
             v_p_0 = softmax_helper.cast_p(v_p_0, max_m3 - fx.Index(1))
@@ -921,7 +943,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
             _dualwave_sync_barrier()
 
             # Epilogue C5
-            v_s_0 = gemm_helper.qk(v_k, q_all_scaled_bf16)
+            v_s_0 = gemm_helper.qk(v_k, q_all_bf16)
             l_row = softmax_helper.apply_l_rescale(l_row, rescale_e3)
             v_p_1 = softmax_helper.exp2(v_p_1, 16, 16)
             l_row = softmax_helper.reduce_sum(l_row, v_p_1)
@@ -979,7 +1001,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
             _dualwave_sync_barrier()
 
             # Epilogue C9
-            v_s_1 = gemm_helper.qk(v_k, q_all_scaled_bf16)
+            v_s_1 = gemm_helper.qk(v_k, q_all_bf16)
             l_row = softmax_helper.apply_l_rescale(l_row, rescale_e7)
             v_p_0 = softmax_helper.exp2(v_p_0, 16, 16)
             l_row = softmax_helper.reduce_sum(l_row, v_p_0)

@@ -860,7 +860,59 @@ class Gfx950Knobs(FmhaKnobs):
 # every rung where the hardware can honour it.
 _GFX950_FALLBACK = Gfx950Knobs(
     daz=True,
-    lazy_rescale=True,
+    # **`False`, against upstream's `True`. A LOCAL DIVERGENCE, and the one
+    # place in this file where the default gives up measured speed.**
+    #
+    # `lazy_rescale` skips the per-tile rescale of the O accumulator when the
+    # row max has not moved by more than `DUALWAVE_SWP_RESCALE_THRESHOLD`
+    # (8.0), decided by a wave-uniform ballot so it is one branch rather than
+    # per-lane predication. What it gives up is the guarantee that
+    # `P = exp2(S - m_row) <= 1`: `m_row` is now stale by up to the threshold,
+    # so P can reach 2**8, and P is written in the input dtype before the PV
+    # MFMA. It buys 5-17% at S=4096 -- head_dim 64 -13/-16%, 128 -10/-15%,
+    # 256 -5/-6%, dense/causal -- and the wide body (head_dim 384/512) never
+    # asks for it at all, rescaling eagerly through `rescale_o_serial`.
+    #
+    # It is off because **the default configuration buys accuracy with
+    # performance and not the other way round.** Speed is to come from the
+    # algorithm, from GPU resource management and from instruction scheduling
+    # -- `d_stages`, `vo_shards`, `_with_occupancy_target` and the scheduling
+    # barriers are all of that shape and all stay on. Precision is not a
+    # currency the default spends.
+    #
+    # It costs precision at every rung it touches. Max |err| against an fp64
+    # reference, B=1 H=4 S=289 dense, `sm_scale=1.0`:
+    #
+    #     head_dim   bf16 on -> off      f16 on -> off
+    #        64     1.6e-2 -> 8.1e-3   2.2e-3 -> 1.1e-3, 1920 inf -> 0
+    #       128     1.8e-2 -> 8.5e-3   2.3e-3 -> 1.9e-3, 15232 inf -> 0
+    #       256     2.3e-2 -> 1.2e-2   2.0e-3 -> 1.5e-3, 62464 inf -> 0
+    #
+    # In **f16 it is not an accuracy question at all**: the answer comes back
+    # non-finite, at head_dim 64/128/256 for any `sm_scale` large enough, on
+    # the shipped 0.14.1 library as much as here. There is no trade to weigh
+    # when one arm returns NaN.
+    #
+    # **That f16 defect is NOT understood, and two plausible mechanisms are
+    # ruled out.** The LSE is *correct* in the same runs that return an
+    # infinite O, so the row max and the running sum are both fine and only
+    # the O accumulation is not. It is the rescale branch rather than the skip
+    # branch: raising the threshold, which rescales *less*, monotonically
+    # reduces the count (8.0 -> 1920, 12.0 -> 1664, 16.0 -> 1152 at head_dim
+    # 64). That rules out the obvious story -- P overflowing f16's 65504 where
+    # bf16 has f32's exponent range -- since more skipping would then mean
+    # more overflow, not less; and clamping P to 65504 before `cast_p` changes
+    # nothing, the same 1920 elements and the same error on the finite ones.
+    # `_scale_v_p` and `scale_o`, the two things the branch does touch, both
+    # multiply by `corr = exp2(m_row - m_new) <= 1`, which cannot manufacture
+    # an infinity from a finite operand. What is left is the branch's plumbing
+    # -- the `scf.if` yielding P as a vec32 through `_v_p_to_vec32`/
+    # `_v_vec32_to_p` alongside an inline-asm-anchored scalar -- and that wants
+    # an ISA read rather than another hypothesis.
+    #
+    # Turning it back on is a one-keyword `lazy_rescale=True` on the knobs, so
+    # a sweep that wants the old schedule still has it, infinities included.
+    lazy_rescale=False,
     setprio=True,
     stagger=True,
     lpt_tile_order=False,
