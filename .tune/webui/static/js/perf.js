@@ -439,6 +439,13 @@ function renderHeatmap(container, seqQ, seqK, index, desc, anchor) {
       if (desc.tooltip) {
         const lines = desc.tooltip(row);
         lines.unshift(`TFLOPS (matrix): ${tflops.toFixed(2)}`);
+        // Op level only. _backendLabel returns null for kernel rows, so the
+        // kernel-mode tooltip -- which is the only one that can also offer the
+        // psel × copt click-through -- keeps exactly the lines it always had.
+        // Sits directly under the TFLOPS line, above the family's FLOPs
+        // breakdown, matching the autozoom overview's ordering.
+        const backendLabel = _backendLabel(row);
+        if (backendLabel) lines.splice(1, 0, backendLabel);
         if (supportsL2) lines.push('Click to view psel × copt matrix');
         td.title = lines.join('\n');
       }
@@ -600,12 +607,12 @@ function _azTargetSeqlen() {
   return _AZ_TARGET_SEQLEN[state.arch] || _AZ_DEFAULT_SEQLEN;
 }
 
-// Returns the TFLOPS at (sq, sk). If that exact entry is missing, finds the
+// Returns the timed row at (sq, sk). If that exact entry is missing, finds the
 // closest available sq and sk independently (by absolute distance) and falls
-// back to that entry, or 0 if still not found.
-function _tflopsAtSeq(index, desc, sq, sk) {
+// back to that entry, or null if still not found.
+function _rowAtSeq(index, sq, sk) {
   const row = index.get(`${sq}|${sk}`);
-  if (row && row.median_ms > 0) return desc.tflops(row);
+  if (row && row.median_ms > 0) return row;
 
   // Collect available seqlens from the index keys.
   const seqQs = new Set(), seqKs = new Set();
@@ -616,26 +623,55 @@ function _tflopsAtSeq(index, desc, sq, sk) {
   const nearQ = [...seqQs].reduce((best, v) => Math.abs(v - sq) < Math.abs(best - sq) ? v : best, [...seqQs][0]);
   const nearK = [...seqKs].reduce((best, v) => Math.abs(v - sk) < Math.abs(best - sk) ? v : best, [...seqKs][0]);
   const fallback = index.get(`${nearQ}|${nearK}`);
-  return (fallback && fallback.median_ms > 0) ? desc.tflops(fallback) : 0;
+  return (fallback && fallback.median_ms > 0) ? fallback : null;
 }
 
-// Returns the max TFLOPS across all seqlen_q×seqlen_k entries in the index.
-function _maxTflops(index, desc) {
-  let max = 0;
+// Returns the highest-TFLOPS row across all seqlen_q×seqlen_k entries, or null.
+function _maxTflopsRow(index, desc) {
+  let best = null, max = 0;
   for (const row of index.values()) {
     if (row && row.median_ms > 0) {
       const t = desc.tflops(row);
-      if (t > max) max = t;
+      if (t > max) { max = t; best = row; }
     }
   }
-  return max;
+  return best;
+}
+
+// The single row an autozoom cell's number comes from, under the current
+// seqMode. Returned as a row (not just its TFLOPS) so the tooltip can report
+// per-row facts -- which backend won, at which seqlen -- about the exact
+// measurement the cell is showing.
+function _cellRepRow(index, desc) {
+  if (state.autozoom.seqMode === 'max_tflops') return _maxTflopsRow(index, desc);
+  const sq = _azTargetSeqlen(), sk = _azTargetSeqlen();
+  return _rowAtSeq(index, sq, sk);
 }
 
 // Returns the representative TFLOPS for an autozoom cell based on seqMode.
 function _cellTflops(index, desc) {
-  if (state.autozoom.seqMode === 'max_tflops') return _maxTflops(index, desc);
-  const sq = _azTargetSeqlen(), sk = _azTargetSeqlen();
-  return _tflopsAtSeq(index, desc, sq, sk);
+  const row = _cellRepRow(index, desc);
+  return row ? desc.tflops(row) : 0;
+}
+
+// Tooltip line naming the backend behind an op-level row, or null for
+// kernel-level rows (which have no backend -- their level-2 drilldown shows
+// psel/copt instead, and their hover text must stay unchanged).
+// backend_name is the name `@ati.backend` declared, resolved server-side by
+// aotriton.tune.pq.visperf; the bare index is the fallback when a database
+// predates that name being recorded.
+//
+// withSeqlen: set only by the autozoom overview, where one cell stands for a
+// whole seqlen matrix and the label must say which measurement inside it the
+// backend belongs to. A heatmap/drilldown cell IS one (seqlen_q, seqlen_k),
+// so repeating the seqlen there would only echo the cell's own axes.
+function _backendLabel(row, withSeqlen) {
+  if (!row || (row._level || 'kernel') !== 'op') return null;
+  const index = row.backend_index;
+  if (index === undefined || index === null) return null;
+  const name = row.backend_name ? `${row.backend_name} (#${index})` : `#${index}`;
+  const at = withSeqlen ? ` @ ${row.seqlen_q}×${row.seqlen_k}` : '';
+  return `backend${at}: ${name}`;
 }
 
 // Overview table: rows = rowDims combos, cols = colDims combos.
@@ -706,7 +742,8 @@ function renderAutozoom(grid, layout, anchor) {
       );
 
       if (cell) {
-        const cellT = _cellTflops(cell.index, desc);
+        const repRow = _cellRepRow(cell.index, desc);
+        const cellT = repRow ? desc.tflops(repRow) : 0;
         if (cellT > 0) {
           const dtype = colCombo.dtype || rowCombo.dtype;
           const a    = anchorFor(anchor, dtype);
@@ -719,7 +756,11 @@ function renderAutozoom(grid, layout, anchor) {
           const tooltipLabel = state.autozoom.seqMode === 'max_tflops'
             ? `Max TFLOPS: ${cellT.toFixed(2)}`
             : `TFLOPS @ ${sq}×${sq}: ${cellT.toFixed(2)}`;
-          td.title = `${tooltipLabel}\nClick to view seqlen matrix`;
+          // Op level only; _backendLabel returns null for kernel rows, so the
+          // kernel-mode tooltip is exactly the two lines it always was.
+          const backendLabel = _backendLabel(repRow, true);
+          td.title = [tooltipLabel, backendLabel, 'Click to view seqlen matrix']
+            .filter(Boolean).join('\n');
           td.addEventListener('click', () => {
             state.autozoom.drilldown = { rowCombo, colCombo };
             renderGrid();

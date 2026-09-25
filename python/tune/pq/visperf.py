@@ -25,6 +25,9 @@ def _build_query(desc: dict, arch: str, kernel_or_op: str, mode: str,
     tuning_level filter. Joins tuning_results to retrieve BATCH and N_HEADS
     from result_data->'bim', so the TFLOPS formula accounts for the actual
     benchmark dimensions.
+
+    At the op level two extra columns identify the winning backend, so the UI
+    can say which implementation a cell actually measured.
     """
     table = desc['kernel_table']
     name_col = desc['name_col']
@@ -33,12 +36,32 @@ def _build_query(desc: dict, arch: str, kernel_or_op: str, mode: str,
     dim_selects = ',\n    '.join(f'{expr} AS {alias}' for expr, alias in desc['dims'])
     dim_groups  = ', '.join(alias for _, alias in desc['dims'])
 
+    # Op level only -- kernel-level rows have no backend, and leaving the
+    # columns out keeps their JSON payload byte-for-byte what it was.
+    #
+    # backend_index: impl_index is only a POSITION in the tuner's per-arch
+    # variant list; the index actually forced is in impl_desc. The two diverge
+    # wherever the runnable backends are not a contiguous prefix (on gfx1201
+    # triton=0 and flyc=2, so position 1 is backend 2). export_best_results.py
+    # derives op$best1st from exactly this expression.
+    #
+    # backend_name: the name `@ati.backend` declared, recorded alongside the
+    # index by modules/flash/tune/level_op.impl_desc(). NULL for op rows tuned
+    # before that name was recorded -- _fill_backend_names() repairs those.
+    backend_selects = ''
+    if mode == 'op':
+        backend_selects = (
+            "COALESCE((b.impl_desc->>'backend_index')::int, b.impl_index)"
+            " AS backend_index,\n            "
+            "b.impl_desc->>'backend_name' AS backend_name,\n            "
+        )
+
     # Join tuning_results on the exact winning row to get bim BATCH/N_HEADS.
     # N_HEADS may be a JSON array (GQA); take the first element in that case.
     sql = f"""
         SELECT
             {dim_selects},
-            b.median_time AS median_ms,
+            {backend_selects}b.median_time AS median_ms,
             b.task_id     AS task_id,
             (r.result_data->'bim'->>'BATCH')::int AS batch,
             CASE
@@ -65,6 +88,32 @@ def _build_query(desc: dict, arch: str, kernel_or_op: str, mode: str,
     return sql, params
 
 
+def _fill_backend_names(rows: list[dict]) -> None:
+    """Fill in missing op-level `backend_name` values, in place.
+
+    The name `@ati.backend` declared is stored in impl_desc only for rows
+    tuned once level_op.impl_desc() started recording it; older op rows carry
+    the index alone. Any row in the same result set that DOES carry the name
+    pins index -> name for the whole set, so a partially re-tuned database
+    still names every cell, and no name list is duplicated here or in the
+    browser -- the authority stays the description that produced the rows.
+
+    An index that is named nowhere in the set keeps backend_name = None; the
+    UI then shows the bare index rather than inventing a name.
+    """
+    by_index: dict[int, str] = {}
+    for r in rows:
+        name = r.get('backend_name')
+        index = r.get('backend_index')
+        if name and index is not None:
+            by_index.setdefault(index, name)
+    if not by_index:
+        return
+    for r in rows:
+        if not r.get('backend_name'):
+            r['backend_name'] = by_index.get(r.get('backend_index'))
+
+
 def build_axes(rows: list[dict], desc: dict) -> dict:
     """Compute sorted unique values for each dimension from the result rows."""
     axes: dict[str, list] = {}
@@ -87,6 +136,10 @@ def query_best_results(conn, arch: str, kernel: str, mode: str = 'kernel',
           'axes': {dim: [sorted unique values], ...},
           'rows': [{dim: value, ..., 'median_ms': float}, ...]
         }
+
+    Op-level rows carry two extra keys, 'backend_index' and 'backend_name'
+    (the latter may be None on databases predating the recorded name); kernel
+    rows do not have them at all.
     """
     desc = DESCRIPTORS[descriptor_id]
     sql, params = _build_query(desc, arch, kernel, mode, seqlen_min, seqlen_max)
@@ -96,6 +149,8 @@ def query_best_results(conn, arch: str, kernel: str, mode: str = 'kernel',
         rows = cur.fetchall()
 
     rows = [dict(r) for r in rows]
+    if mode == 'op':
+        _fill_backend_names(rows)
     axes = build_axes(rows, desc)
 
     return {
