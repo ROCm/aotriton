@@ -33,6 +33,9 @@ from _core_test_backward import (
     core_test_large_bf16_nan_values,
     core_test_bottom_right_fully_masked_rows,
     core_test_sm_scale_magnitude,
+    core_test_common_mistakes,
+    COMMON_MISTAKES_CASES,
+    COMMON_MISTAKES_DTYPES,
 )
 from _common_test import ALL_LAYOUTS, StorageLayout
 
@@ -333,6 +336,19 @@ if FOR_RELEASE >= 0:
                                          sm_scale, dtype, storage_flip,
                                          max_adiff=SM_SCALE_MAX_ADIFF[dtype],
                                          device_str=f'cuda:{gpu_id}')
+
+# docs/attention-kernel-numerical-error-lessons/: mistakes a new attention
+# kernel is likely to repeat, each of which the fudge-factored tests above
+# pass. Ungated (level 0) like the guards above it: six small fwd+bwd calls,
+# and every case guards a silent wrong answer rather than a crash.
+#
+# Not parametrized over BWDOP, for the same reason test_bottom_right_fully_masked_rows
+# is not: BWD_IMPL pins the backend for the whole process.
+@pytest.mark.parametrize('dtype', COMMON_MISTAKES_DTYPES)
+@pytest.mark.parametrize('case', COMMON_MISTAKES_CASES)
+def test_common_mistakes(gpu_id, case, dtype):
+    with torch.cuda.device(gpu_id):
+        core_test_common_mistakes(case, dtype, f'cuda:{gpu_id}')
 
 def main2():
     # Memo: False-0.0-dtype0-0.0-False-4-256-8-4-1
