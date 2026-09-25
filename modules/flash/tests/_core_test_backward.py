@@ -652,6 +652,10 @@ NONPOS_SCALES = [0.0, -1.2]
 
 
 def core_test_nonpositive_scale_symmetry(dtype, sm_scale, seqlen_q, seqlen_k):
+    if SKIP_BWD:
+        pytest.skip('SKIP_BWD=1 excludes backward checks')
+    if BWD_IMPL == 'aiter':
+        pytest.skip('AITER ASM does not support matrix bias')
     # Q = K = 0, so every score is `bias_val` regardless of sm_scale (including
     # 0 and negative). Softmax is uniform over seqlen_k keys. This is the
     # non-positive-scale analogue of core_test_matrix_bias_fwd_bwd_symmetry, with
