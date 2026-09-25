@@ -36,27 +36,31 @@ def _bind_checkout_aotriton():
     code. Binding here makes that true by construction, and leaves the
     pip-installed copy as the fallback for anyone importing webui some other
     way.
+
+    `aotriton` is a PEP 420 implicit namespace package: python/ deliberately
+    carries no __init__.py and setup.py ships none (see its header comment).
+    There is therefore nothing to execute -- the binding is a bare namespace
+    spec whose __path__ is python/, and that is what makes `aotriton.tune`,
+    `aotriton.codegen` and the rest resolve out of this checkout.
+
+    Do not reintroduce a `python/__init__.py` gate here. An earlier cut had
+    one, and the namespace migration turned it off for good: the function
+    returned None every time, silently, because falling back to the installed
+    copy looks like success right up until the interpreter running this script
+    has no install at all -- and then it is a bare
+    `ModuleNotFoundError: No module named 'aotriton'` out of webui/routes.py.
     """
+    import importlib.machinery
     import importlib.util
 
     pkg_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'python')
-    init_py = os.path.join(pkg_dir, '__init__.py')
-    if 'aotriton' in sys.modules or not os.path.isfile(init_py):
+    if 'aotriton' in sys.modules or not os.path.isdir(pkg_dir):
         return None
 
-    spec = importlib.util.spec_from_file_location(
-        'aotriton', init_py, submodule_search_locations=[pkg_dir])
-    module = importlib.util.module_from_spec(spec)
-    # Register before exec_module: the package must be findable under its own
-    # name while its __init__ runs, or any self-referential import inside it
-    # would miss and fall through to the installed copy this exists to shadow.
-    sys.modules['aotriton'] = module
-    try:
-        spec.loader.exec_module(module)
-    except BaseException:
-        del sys.modules['aotriton']
-        raise
+    spec = importlib.machinery.ModuleSpec('aotriton', None, is_package=True)
+    spec.submodule_search_locations = [pkg_dir]
+    sys.modules['aotriton'] = importlib.util.module_from_spec(spec)
     return pkg_dir
 
 
