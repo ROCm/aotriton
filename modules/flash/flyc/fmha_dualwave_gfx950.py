@@ -50,6 +50,7 @@ change:
 """
 
 import contextlib
+from dataclasses import fields as dataclass_fields
 from dataclasses import replace
 
 import fmha_common_gfx1201 as fmha
@@ -80,9 +81,53 @@ __all__ = [
     "ParityQLoader",
     "ParitySoftmaxHelper",
     "ParityStoreHelper",
+    "traits_cache_key",
     "wire_ptr",
     "wire_view",
 ]
+
+
+def traits_cache_key(traits):
+    """Every field of `traits`, for a builder's JIT disk-cache key.
+
+    **Not `traits.cache_tag`.** That property is upstream's and names a
+    hand-picked subset of its own fields, so an axis it does not name is
+    invisible to the cache: two builds differing only on one of them hash to
+    the same entry, and the second silently receives the *first one's binary*.
+    At the vendored commit it omits 46 of the 93 fields, among them
+
+    - every axis AOTriton added -- `BIAS_TYPE` (P5), `ENABLE_DROPOUT` (P6),
+      `WINDOW` (P3), `LPT_TILE_ORDER` (P7);
+    - `DUALWAVE_SWP_RESCALE_THRESHOLD`, and the `D_STAGES`/`QK_SHARDS`/
+      `VO_SHARDS` splits.
+
+    Measured: a `bias=True` build returns output **bit-identical** to a
+    `bias=False` build of the same shape -- for a zero bias, a constant bias, a
+    per-row bias and a key-varying one alike -- because it is running the
+    bias-free binary. Building the bias kernel alone against an empty cache
+    gives 3.7e-3 against an fp64 reference, so the kernel was never the
+    problem. Sweeping `DUALWAVE_SWP_RESCALE_THRESHOLD` over 2/4/8/12/15 is
+    likewise bit-identical at every value.
+
+    The three builders already carried a partial patch for this -- the geometry
+    -- and its comment describes exactly this failure ("two families of the
+    same shape would collide in the JIT disk cache"). A subset is the wrong
+    shape for the job, though: it has to be extended by hand every time an axis
+    is added, silently returns wrong binaries when someone forgets, and nothing
+    tests it. The traits are a frozen dataclass of hashable scalars that fully
+    determine the build, so naming all of them cannot go stale.
+
+    Only the *JIT* path is affected. The AOT build gives each functional its own
+    invocation and does not share this cache: every `BIAS_TYPE`,
+    `ENABLE_DROPOUT` and `CAUSAL_TYPE` pair in the shipped `flyc_attn_fwd.zip`
+    is a distinct binary (0 of 72, 0 of 108 and 0 of 72 groups collided). What
+    this breaks is in-process work -- `devtools/` sweeps, the JIT tests beside
+    them, and anything varying these axes in one session.
+
+    Field *names* as well as values: a rename or a reordering then changes the
+    key, and reading a stale entry across one is the same bug in a slower form.
+    """
+    return tuple((f.name, getattr(traits, f.name)) for f in dataclass_fields(traits))
 
 
 # --- the tensor operands are pointers on the wire --------------------------

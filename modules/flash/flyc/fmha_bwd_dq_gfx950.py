@@ -237,6 +237,7 @@ from fmha_dualwave_gfx950 import (
     ParityKvLdsToVgprLoader,
     ParityQLoader,
     ParitySoftmaxHelper,
+    traits_cache_key,
     ParityStoreHelper,
     _bias_slab_num_records_bytes,
     _score_column_runs,
@@ -1170,19 +1171,24 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
     M16 = traits.MFMA_N == 16
     BUILD_SM_SCALE = meta.sm_scale
 
-    # `traits.cache_tag` does not know about the tile geometry or `STORE_DB`,
-    # so everything the build depends on goes in here. Two builds colliding in
-    # the JIT disk cache is what a knob sweep hits first.
+    # Everything the build depends on, so that two builds differing anywhere
+    # cannot collide in the JIT disk cache -- which a knob sweep hits first.
+    # `traits_cache_key` is every trait field rather than `traits.cache_tag`'s
+    # subset; see there for what the subset was silently getting wrong. It
+    # subsumes `STORE_DB`, `HDIM_VO_FLOOR` and the MFMA shape, which this tag
+    # used to name individually and which are all `traits.` reads.
+    #
+    # `strides_constexpr` is **new** here and was a hole of the same kind:
+    # `abi.varlen_args` below reads it, so it changes the emitted kernel, and
+    # it appeared in neither half of the old key. The forward and dK/dV tags
+    # both had it.
     _cache_tag = (
-        traits.cache_tag,
+        traits_cache_key(traits),
         BLOCK_DMODEL,
         PADDED_HEAD,
         HDIM_QK_FLOOR,
-        traits.HDIM_VO_FLOOR,
-        STORE_DB,
+        knobs.strides_constexpr,
         BUILD_SM_SCALE,
-        (knobs.num_waves, knobs.block_m, knobs.block_n, knobs.head_dim_granule),
-        (traits.MFMA_M, traits.MFMA_N, traits.MFMA_K),
     )
 
     _lds_elem_dtype = dualwave.dtype_to_elem_type(traits.DTYPE_STR)

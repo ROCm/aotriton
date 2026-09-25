@@ -319,50 +319,56 @@ def test_qk_scale_under_causal(dtype_str, head_dim, sm_scale):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the flyc forward's bias build drops the bias entirely; pre-existing, "
-    "see the docstring",
-)
 @pytest.mark.parametrize("sm_scale", [0.0, 1.0], ids=["ScaleZero", "ScaleOne"])
-def test_bias_reaches_the_scores(sm_scale):
-    """A bias build must apply its bias. **It does not**, and that is pre-existing.
+def test_bias_survives_a_same_shape_bias_free_build(sm_scale):
+    """A bias build must apply its bias, **even after a bias-free one is built**.
 
-    The output of a `bias=True` build is bit-identical to the same shape run
-    through a `bias=False` build, for a zero bias, a constant bias, a per-row
-    bias *and* a bias that varies along the key axis. So `_add_bias_inplace` is
-    either not reached or its loads are returning zero -- the slab descriptor is
-    the first place to look. Unchanged by the `qk_scale` work: the same numbers
-    come out before and after it.
+    The second half is the whole test and is why the bias-free build is made
+    first rather than skipped. `traits.cache_tag` -- upstream's, and the thing
+    every builder's `_cache_tag` used to start from -- does not name
+    `BIAS_TYPE`, so these two builds hashed to the same FlyDSL disk-cache entry
+    and the bias one silently received the bias-free binary. The symptom was
+    output bit-identical to a `bias=False` run for a zero bias, a constant
+    bias, a per-row bias *and* a key-varying one, which reads exactly like a
+    kernel that never loads its bias. It is not: built alone against an empty
+    cache, the same kernel is accurate to 4e-3. `traits_cache_key` is the fix.
 
-    Not reachable from AOTriton today, which is why it has gone unnoticed: the
-    dispatcher hands every `BIAS_TYPE=1` forward to the Triton backend, and
-    that one is correct to 4e-3 against fp64. But 72 of the 216 flyc forward
-    kernels in the shipped `flyc_attn_fwd.zip` are `BIAS_TYPE=1`, so a tuning
-    table that starts selecting them would silently return dense attention to
-    every caller passing an `attn_mask`.
+    Not reachable from AOTriton's AOT path -- the dispatcher hands every
+    `BIAS_TYPE=1` forward to the Triton backend, and each functional is
+    compiled in its own invocation, so all 72 `BIAS_TYPE=1` entries in the
+    shipped `flyc_attn_fwd.zip` are distinct binaries. What it broke is
+    in-process work: `devtools/` sweeps, and tests like this one.
 
-    Both `sm_scale` ends are here because they fail for opposite reasons once
-    the bias *is* applied. At 1.0 the bias must survive whatever reintroduces
-    `qk_scale`. At **0.0** -- which `modules/flash/tests/test_forward.py`
-    parametrizes for every bias case -- the scores vanish and the softmax is
-    over the bias alone, which is the case that rules out ever expressing the
-    bias as `bias / sm_scale` in a raw-score domain. Keeping both pinned now
-    means whoever fixes the load does not have to rediscover that.
+    Both `sm_scale` ends are here because they constrain opposite things. At
+    1.0 the bias must survive whatever reintroduces `qk_scale`. At **0.0** --
+    which `modules/flash/tests/test_forward.py` parametrizes for every bias
+    case -- the scores vanish and the softmax is over the bias alone, which is
+    what rules out ever expressing the bias as `bias / sm_scale` in a raw-score
+    domain, as a free FMA fusion of `qk_scale` into `sub_m` would have needed.
 
     Bias excludes causal (`fmha_traits_gfx950.make_traits` rejects the pair),
     so this is the dense path only.
     """
     head_dim = 64
-    fn = _build(head_dim, "bf16", bias=True)
     q, k, v, out = _inputs(head_dim, torch.bfloat16, seed=7)
     bias = torch.randn(
         (BATCH, NUM_HEADS, SEQLEN_Q, SEQLEN_K), device="cuda", dtype=torch.bfloat16
     )
 
+    # First, and deliberately: this is the build whose binary a colliding key
+    # hands to the one below.
+    plain = _build(head_dim, "bf16")
+    plain_out = torch.full_like(out, float("nan"))
+    plain(q, k, v, plain_out, BATCH, SEQLEN_Q, seqlen_k=SEQLEN_K, scale=sm_scale)
+
+    fn = _build(head_dim, "bf16", bias=True)
     fn(q, k, v, out, BATCH, SEQLEN_Q, seqlen_k=SEQLEN_K, scale=sm_scale, bias=bias)
     torch.cuda.synchronize()
 
+    assert _max_err(out, plain_out.double()) > 0.0, (
+        f"sm_scale={sm_scale:g}: the bias build returned the bias-free build's "
+        f"output exactly -- the two collided in the JIT cache; see traits_cache_key"
+    )
     err = _max_err(out, _reference(q, k, v, sm_scale, bias=bias))
     assert err <= MAX_ABS_ERR, f"sm_scale={sm_scale:g}: bias max error {err:.4f}"
 

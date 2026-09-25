@@ -133,6 +133,7 @@ from fmha_dualwave_gfx950 import (
     ParityKernelContext,
     ParityKvGmemToLdsLoader,
     ParitySoftmaxHelper,
+    traits_cache_key,
     _bias_slab_num_records_bytes,
     _ds_read_tr_v4f16_imm,
     _score_column_runs,
@@ -1710,15 +1711,21 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
     TIGHT_REGISTERS = knobs.tight_registers
     MASKED_STEPS = tuple(_masked_ks_steps(traits, HDIM_QK_FLOOR)) if PADDED_HEAD else ()
 
+    # Everything the build depends on, so that two builds differing anywhere
+    # cannot collide in the JIT disk cache. `traits_cache_key` is every trait
+    # field rather than `traits.cache_tag`'s subset; see there for what the
+    # subset was silently getting wrong. It subsumes `NBUF` and `MFMA_ROWS`,
+    # which this tag used to name and which are both `traits.` reads.
+    # `TIGHT_REGISTERS` (a knob) and `LSE_TH` (from `meta`) reach the kernel
+    # without passing through the traits, so they stay.
     _cache_tag = (
-        traits.cache_tag,
+        traits_cache_key(traits),
         BLOCK_DMODEL,
         PADDED_HEAD,
         HDIM_QK_FLOOR,
         STRIDES_CONSTEXPR,
         BUILD_SM_SCALE,
-        (knobs.num_waves, knobs.block_kv, knobs.block_q, knobs.head_dim_granule),
-        (knobs.dkv_shards, NBUF, knobs.waves_per_eu, TIGHT_REGISTERS, traits.MFMA_ROWS, LSE_TH),
+        (TIGHT_REGISTERS, LSE_TH),
     )
 
     _lds_elem_dtype = dualwave.dtype_to_elem_type(traits.DTYPE_STR)

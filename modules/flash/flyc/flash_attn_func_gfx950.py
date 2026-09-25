@@ -135,6 +135,7 @@ from fmha_dualwave_gfx950 import (
     ParityKvLdsToVgprLoader,
     ParityQLoader,
     ParitySoftmaxHelper,
+    traits_cache_key,
     ParityStoreHelper,
     wire_ptr,
     wire_view,
@@ -384,18 +385,18 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
     # Precedence is per-call `scale` > `meta.sm_scale` > derived.
     BUILD_SM_SCALE = meta.sm_scale
 
-    # `traits.cache_tag` does not include the tile geometry, so two families
-    # of the same shape would collide in the JIT disk cache -- which a knob
-    # sweep hits immediately. Everything the build depends on goes in here.
+    # Everything the build depends on, so that two builds differing anywhere
+    # cannot collide in the JIT disk cache. `traits_cache_key` is all 93 trait
+    # fields rather than `traits.cache_tag`'s subset -- see there for what the
+    # subset was silently returning the wrong binary for. The rest are builder
+    # values with no trait of their own.
     _cache_tag = (
-        traits.cache_tag,
+        traits_cache_key(traits),
         BLOCK_DMODEL,
         PADDED_HEAD,
         HDIM_QK_FLOOR,
         STRIDES_CONSTEXPR,
         BUILD_SM_SCALE,
-        (knobs.num_waves, knobs.block_m, knobs.block_n, knobs.head_dim_granule),
-        (knobs.d_stages, knobs.qk_shards, knobs.vo_shards),
     )
 
     _lds_elem_dtype = dualwave.dtype_to_elem_type(traits.DTYPE_STR)
