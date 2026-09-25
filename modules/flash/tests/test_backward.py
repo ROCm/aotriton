@@ -32,6 +32,7 @@ from _core_test_backward import (
     core_test_op_bwd,
     core_test_large_bf16_nan_values,
     core_test_bottom_right_fully_masked_rows,
+    core_test_sm_scale_magnitude,
 )
 from _common_test import ALL_LAYOUTS, StorageLayout
 
@@ -269,6 +270,67 @@ def test_matrix_bias_fwd_bwd_symmetry(gpu_id, dtype, bias_val):
 def test_bottom_right_fully_masked_rows(gpu_id):
     with torch.cuda.device(gpu_id):
         core_test_bottom_right_fully_masked_rows(f'cuda:{gpu_id}')
+
+if FOR_RELEASE >= 0:
+    # The forward's precision as a function of `sm_scale`. See
+    # core_test_sm_scale_magnitude for what the defect is, what the measured
+    # numbers are, and why both the normal inputs and the absolute bound are
+    # required for this to catch anything.
+    #
+    # Ungated (level 0) on purpose, like test_bottom_right_fully_masked_rows
+    # above: it guards a silent wrong-answer path that the fudge factor by
+    # construction cannot see, and 24 small forwards cost ~10s.
+    #
+    # Not parametrized over BWDOP: the defect is in the forward, and the
+    # backward backend is irrelevant to it. Defined here rather than imported
+    # so conftest.py's _FILE_ORDER sees this file, and wrapped in
+    # torch.cuda.device(gpu_id) for the reason given at test_logsumexp_scaling.
+    #
+    # Axes, and why each is here:
+    #   - sm_scale: 'l2' (= 1/sqrt(hdim)) is the control that must keep
+    #     passing; 1.2 is the load-bearing value (and the one
+    #     test_forward.py::test_irregulars already uses), larger than the torch
+    #     UT's 1.0 and therefore strictly harder.
+    #   - D_HEAD: sqrt(hdim) is the other half of the product. 512 is the torch
+    #     UT's and the worst case; 64 is the mildest hdim that still shows it;
+    #     256 sits between and is a separate flyc tile ladder entry.
+    #   - dtype: f16 and bf16 round the folded scale differently (bf16 has the
+    #     coarser mantissa, f16 the narrower exponent) and are separate kernel
+    #     functionals. A literal list rather than DTYPES, and a strict subset of
+    #     it under every backend: f32 would need a third MAX_ADIFF entry to
+    #     measure a fold that costs it 2**-24, which is nothing.
+    #   - (seqlen_q, seqlen_k, causal): the two pairs the torch UT parametrises.
+    #
+    # 2 x 3 x 2 x 2 = 24 cases. BATCH/N_HEADS are fixed small -- neither is on
+    # the error's axis, and hdim 512 is the expensive part of the footprint.
+    #
+    # The bounds are per dtype and NOT per `sm_scale`, which is the property
+    # under test: a kernel that keeps `qk_scale` on the f32 accumulator has an
+    # output error set by the input dtype and the shape, not by the scale.
+    # Against the table in core_test_sm_scale_magnitude each bound sits 1.9x
+    # (bf16) / 7x (f16) above the worst correct value and 2.2x (bf16) / 2.6x
+    # (f16) below the smallest incorrect one, so it is not a threshold anybody
+    # should be tuning -- if it needs moving, the property stopped holding.
+    SM_SCALE_MAX_ADIFF = {torch.float16: 0.01, torch.bfloat16: 0.03}
+
+    @pytest.mark.parametrize('BATCH', [1])
+    @pytest.mark.parametrize('N_HEADS', [4])
+    @pytest.mark.parametrize('D_HEAD', [64, 256, 512], ids=fmt_hdim)
+    @pytest.mark.parametrize('seqlen_q,seqlen_k,causal',
+                             [(289, 289, False), (289, 400, True)],
+                             ids=['289x289-CausalOff', '289x400-CausalOn'])
+    @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
+    @pytest.mark.parametrize('sm_scale', ['l2', 1.2], ids=['ScaleL2', 'Scale1.2'])
+    # The torch UT's query is `randn(1, q_len, num_heads, head_dim).transpose(1, 2)`,
+    # i.e. BSHD storage read as BHSD -- storage_flip=True is that layout.
+    @pytest.mark.parametrize('storage_flip', [True])
+    def test_sm_scale_magnitude(gpu_id, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal,
+                                sm_scale, dtype, storage_flip):
+        with torch.cuda.device(gpu_id):
+            core_test_sm_scale_magnitude(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal,
+                                         sm_scale, dtype, storage_flip,
+                                         max_adiff=SM_SCALE_MAX_ADIFF[dtype],
+                                         device_str=f'cuda:{gpu_id}')
 
 def main2():
     # Memo: False-0.0-dtype0-0.0-False-4-256-8-4-1

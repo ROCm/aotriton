@@ -37,6 +37,7 @@ from _common_test import (
     fmt_hdim,
     fmt_nheads,
     narrow_to_prime,
+    refill_inputs_normal,
     cdiv,
 )
 
@@ -619,6 +620,121 @@ def core_test_bottom_right_fully_masked_rows(device_str='cuda'):
         assert n_nonzero == 0, \
             f'{ctx}: {n_nonzero} nonzero elements in fully-masked Out rows'
 
+
+def core_test_sm_scale_magnitude(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal,
+                                 sm_scale, dtype, storage_flip, max_adiff,
+                                 device_str='cuda'):
+    '''**The softmax scale magnitude, as a precision axis of the forward.**
+
+    `sm_scale` is a caller-supplied number, not necessarily `1/sqrt(hdim)`. A
+    kernel may fold `qk_scale = sm_scale * log2e` into Q before the QK GEMM
+    instead of applying it to the f32 QK accumulator afterwards; when Q is
+    f16/bf16 that fold rounds the product back to the input dtype, and the
+    ~2**-9 of relative error it costs lands in the *exponent* of
+    `exp2(S - m)`. The resulting output error is proportional to
+    `sm_scale * sqrt(hdim)`, so it is invisible at the usual
+    `sm_scale = 1/sqrt(hdim)` (where that product is 1) and grows without bound
+    as the caller raises the scale. Max |err| against an f32 reference,
+    measured on gfx950 over the exact cases test_backward.py parametrises
+    (`sm_scale=1.2`, normal inputs), with the fold and without:
+
+        dtype  hdim  shape        Q-folded   scale on f32 scores
+        bf16     64  289x289       0.0647          0.0158
+        bf16     64  289x400 C     0.0656          0.0128
+        bf16    256  289x289       0.1165          0.0158
+        bf16    256  289x400 C     0.1246          0.0156
+        bf16    512  289x289       0.1682          0.0139
+        bf16    512  289x400 C     0.1682          0.0120
+        f16     512  289x289       0.0299          0.0014
+        f16     512  289x400 C     0.0255          0.0014
+
+    At `sm_scale = 1/sqrt(hdim)` the same cases run 0.0016 - 0.0089 (bf16) and
+    0.0002 - 0.0010 (f16) either way: the fold is free where `|S|` is O(1).
+
+    Guarded implementation: modules/flash/flyc/fmha_dualwave_gfx950.py, where
+    `ParityQLoader.scale_all` refuses the fold and
+    `ParityGemmHelper.scale_scores` applies the scale to the f32 scores,
+    matching modules/flash/kernel/fwd_kernel_inner.py's
+    `qk += (Qk_scale * tl.dot(q0, k0))`.
+
+    Reported by
+    test/test_transformers.py::test_mem_eff_attention_single_query_tail, which
+    fails on gfx950 because it passes `scale=1.0` at `head_dim=512`. Its shapes
+    are reproduced here, but NOT because of its name: the CUDA "single-query
+    tail block" the UT is written about has no analogue on ROCm, and a q_len
+    sweep across every ROCm block boundary (63/64/65, 127/128/129, 255/256/257,
+    288/289, 320/321) is clean at `sm_scale = 1/sqrt(hdim)`. The tail shape is
+    here only to keep this test recognisable as that UT; the axis that actually
+    moves the error is `sm_scale * sqrt(hdim)`.
+
+    **The normal inputs and the `max_adiff` bound are both load-bearing.**
+    Neither is a preference; without either one this test passes on a kernel
+    that has the bug, and the two failures are independent:
+
+      * Inputs. Every other test in this suite takes `SdpaContext`'s default
+        uniform [0, 1). Re-measured on the same Q-folded kernel as the table
+        above but with uniform inputs, `sm_scale=1.2` gives 0.0031 - 0.0078
+        (bf16) and 0.0004 - 0.0009 (f16) -- a factor of 1.4 to 3.6 over the
+        control, i.e. nothing, and the f16 NaN below does not appear at all.
+        `refill_inputs_normal` explains the mechanism: a uniform, all-positive
+        K turns a Q-side perturbation into a common-mode row shift, which is
+        exactly what softmax subtracts away. The reporting UT uses `randn`.
+      * Bound. `validate_with_reference`'s threshold is
+        `OUT_FUDGE_FACTOR * ref_error`, and `ref_error` is how far torch's OWN
+        low-precision `sdpa_math` lands from the f32/f64 one on the same
+        inputs. That reference is a materialized P in the input dtype, so it
+        degrades far faster than a flash kernel with f32 accumulators does as
+        the softmax sharpens -- bf16, 289x289, hdim 512, normal inputs:
+
+            sm_scale   kernel adiff   ref_error   threshold (3x)
+            rsqrt(512)    0.0019       0.0050        0.0150
+            1.2           0.0139       0.5340        1.6021
+
+        The tolerance grows 100x while the kernel's error grows 7x, so at a
+        large `sm_scale` the fudge factor stops discriminating: it admits the
+        0.168 above with a factor of 9 to spare. A test of precision AT a large
+        `sm_scale` therefore has to bring its own absolute bound, which is what
+        `max_adiff` is. The fudge factor is still checked first -- it is the
+        one that catches a NaN.
+
+    Forward only, and self-contained rather than routed through
+    `core_test_op_bwd`: the property is a forward one, the backward backend is
+    irrelevant to it, and `_do_test_op_fwd` lives in test_forward.py, which
+    conftest.py excludes from directory collection.
+    '''
+    if sm_scale == 'l1':
+        sm_scale = 1.0 / D_HEAD
+    elif sm_scale == 'l2':
+        sm_scale = 1.0 / math.sqrt(D_HEAD)
+    torch.manual_seed(20)
+    transpose = (1, 2) if storage_flip else None
+    ctx = SdpaContext(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
+                      bias_type=None, storage_flip=transpose, device=device_str)
+    refill_inputs_normal(ctx)
+    ctx.create_ref_inputs()
+    ctx.set_require_grads(skip_dq=True, skip_dk_dv=True, skip_db=True)
+    q, k, v, b = ctx.dev_tensors
+    ext = AttentionExtraArgs(return_encoded_softmax=False,
+                             autotune=False,
+                             return_autotune=False)
+    tri_out, _, _ = attention(q, k, v, b, causal, sm_scale, 0.0, ext)
+    sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=0.0, dropout_mask=None)
+    ref_out, _ = ctx.compute_ref_forward(sdpa_params)
+
+    is_allclose, adiff, _, _, tfts = ctx.validate_with_reference(tri_out, None, no_backward=True,
+                                                                return_target_fudge_factors=True)
+    if not is_allclose:
+        import numpy as np
+        err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out.to(device=tri_out.device) - tri_out)).cpu().numpy(),
+                                   ref_out.shape)
+        print(f'{err_idx=}')
+        print(f'{tri_out[err_idx]=}')
+        print(f'{ref_out[err_idx]=}')
+    assert is_allclose, f'Forward pass {is_allclose=} {tfts=}'
+    assert adiff <= max_adiff, \
+        f'Forward pass {adiff=} exceeds the absolute bound {max_adiff=} at {sm_scale=} ' \
+        f'(the fudge factor {tfts=} did not catch it)'
+    print(f'{adiff=}')
 
 def core_test_logsumexp_scaling(dtype):
     REF_VALUE = 2.79018449783325195
