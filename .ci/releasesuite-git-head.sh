@@ -257,7 +257,7 @@ fi
 # GitHub -> local mirror volume. Each build container clones the requested
 # commit (GIT_COMMIT) from this local mirror; there is no shared worktree.
 MIRROR_VOLUME="aotriton-mirror"
-sync_mirror "${MIRROR_VOLUME}" "${GIT_HTTPS_ORIGIN}" "${BASE_DOCKER_IMAGE}"
+sync_mirror "${MIRROR_VOLUME}" "${GIT_HTTPS_ORIGIN}" "${BASE_DOCKER_IMAGE}" "" "${GIT_COMMIT}" >/dev/null || exit 1
 
 OUTPUT_DIR="$1"
 CACHE_DIR="${OUTPUT_DIR}/.cache"

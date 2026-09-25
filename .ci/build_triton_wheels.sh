@@ -53,7 +53,7 @@ TRITON_GIT_ORIGIN="${TRITON_GIT_ORIGIN:-https://github.com/ROCm/triton}"
 mkdir -p "${WHEEL_OUTPUT_DIR}"
 
 # hash_origin/hash_pat_environ are each called once per NEEDED_HASHES entry
-# from up to 3 separate loops below (the PAT pre-check, the mirror-sync
+# from up to 3 separate loops below (the PAT pre-check, the mirror fetch
 # loop, and the build loop) -- memoize per hash so a given hash's venv entry
 # is scanned out of the yaml at most once, instead of re-invoking yq on
 # every call.
@@ -98,21 +98,9 @@ hash_pat_environ() {
   echo "${_HASH_PAT_CACHE[$1]}"
 }
 
-# One mirror volume per distinct origin, named "triton-mirror" for the
-# default origin (unchanged from before) and a stable per-origin slug
-# otherwise -- a harmless local cache like the default mirror.
-mirror_volume_for_origin() {
-  local origin="$1"
-  if [[ "${origin}" == "${TRITON_GIT_ORIGIN}" ]]; then
-    echo "triton-mirror"
-  else
-    echo "triton-mirror-$(printf '%s' "${origin}" | md5sum | cut -c1-12)"
-  fi
-}
-
 # Check the wheel cache first -- only hashes that still need building
-# require their origin's mirror synced at all, avoiding a needless
-# git fetch (network round-trip) when everything is already cached.
+# need to be in the git mirror at all, avoiding a needless git fetch
+# (network round-trip) when everything is already cached.
 # Must match on PYVER's ABI tag too, not just the hash: WHEEL_OUTPUT_DIR can
 # hold wheels for more than one Python version (this script accepts
 # --python), and a wheel cached for a different venv is not a cache hit for
@@ -140,19 +128,20 @@ for HASH in "${NEEDED_HASHES[@]}"; do
   fi
 done
 
-declare -A SYNCED_VOLUMES
+# One mirror volume for every Triton origin: a fork's objects share the store
+# with its upstream's, so neither is downloaded twice.
+MIRROR_VOLUME="triton-mirror"
+
+# Make each hash available in the Triton mirror. A hash that is already
+# there costs no network at all; a missing one is fetched on its own, from
+# its own origin, downloading only the objects the mirror does not yet hold
+# from ANY origin (a fork's hash after its upstream's pulls just the delta).
 for HASH in "${NEEDED_HASHES[@]}"; do
-  origin="$(hash_origin "${HASH}")"
-  volume="$(mirror_volume_for_origin "${origin}")"
-  if [[ -z "${SYNCED_VOLUMES[${volume}]:-}" ]]; then
-    sync_mirror "${volume}" "${origin}" "${BASE_DOCKER_IMAGE}" "$(hash_pat_environ "${HASH}")"
-    SYNCED_VOLUMES[${volume}]=1
-  fi
+  sync_mirror "${MIRROR_VOLUME}" "$(hash_origin "${HASH}")" "${BASE_DOCKER_IMAGE}" "$(hash_pat_environ "${HASH}")" "${HASH}" >/dev/null || exit 1
 done
 
 # Build each hash that's still needed.
 for HASH in "${NEEDED_HASHES[@]}"; do
-  volume="$(mirror_volume_for_origin "$(hash_origin "${HASH}")")"
   pat_environ="$(hash_pat_environ "${HASH}")"
 
   # Forward the PAT by NAME only: Triton's own build (setup.py) may read it
@@ -169,7 +158,7 @@ for HASH in "${NEEDED_HASHES[@]}"; do
   fi
 
   docker run --network=host -i --rm \
-    -v "${volume}:/mirror:ro" \
+    -v "${MIRROR_VOLUME}:/mirror:ro" \
     --mount "type=bind,source=$(realpath ${WHEEL_OUTPUT_DIR}),target=/cache/wheels" \
     --mount "type=bind,source=$(realpath ${SCRIPT_DIR}/runc-build-triton-wheel.sh),target=/tmp/runc-build-triton-wheel.sh,readonly" \
     --tmpfs "/scratch:exec" \

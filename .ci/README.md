@@ -152,10 +152,14 @@ GPU's, so pass it the same arch as Step 1 if you built for anything else.
 AOTriton build. The wheels are cached in `<output_dir>/.cache/wheels/` and
 reused on subsequent runs (skipped if a matching wheel is already present).
 
-A `triton-mirror` Docker volume is maintained automatically as a bare clone of
-`https://github.com/ROCm/triton`. Each run fetches all remote branches to
-ensure the requested commit hashes are reachable, then performs a shallow clone
-per hash into a tmpfs for the actual wheel build.
+A `triton-mirror` Docker volume is maintained automatically as a bare git
+mirror shared by every Triton origin (`https://github.com/ROCm/triton` and any
+fork named in the altwheel YAML). Each run fetches only the requested hashes
+that are not already there -- offering everything already cached, from any
+origin, as common history, so a fork downloads only what it adds to its
+upstream -- then performs a shallow clone per hash into a tmpfs for the actual
+wheel build. Nothing is ever pruned or garbage-collected; see
+`.ci/CLAUDE.md`.
 
 The `--yaml` flag is still optional. When provided, its `.venvs` hashes are
 built in addition to the embedded `third_party/triton` submodule (unless the
@@ -270,7 +274,8 @@ is an error on `--runtime`.
 * That tarball name is the shape `.ci/triton-patch/docker-script-build.sh` already
   consumes, so one built here drops into `$HOME/.triton/llvm` unchanged.
 * Both pins can name a moving ref (`aotriton/0.14b/rc0`, `v0.3.1`), so each is
-  resolved to a SHA against the git mirror before the cache is consulted.
+  resolved to a SHA against its origin (`git ls-remote`) before the cache is
+  consulted.
 * The ABI tag is in the wheel key because flydsl wheels are ABI specific and CMake
   rejects a mismatched one; the LLVM commit is, because the wrong LLVM miscompiles
   rather than fails. Hence `--llvm_tarball` must be named `llvm-<sha12>-<...>.tar.gz`
@@ -281,7 +286,7 @@ is an error on `--runtime`.
   with `--flydsl_wheel`, but only ours can be a cache hit.
 
 The only Docker volumes are the bare git mirrors `llvm-mirror` and `flydsl-mirror`
-(`-<md5>` slug per non-default origin), never wiped, see `.ci/CLAUDE.md`. Both builds
+(each shared by all origins of its project), never wiped, see `.ci/CLAUDE.md`. Both builds
 run in `--tmpfs /scratch:exec` and keep nothing.
 
 ### Build environments

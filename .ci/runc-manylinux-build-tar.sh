@@ -95,8 +95,8 @@ export AOTRITON_INSTALL_PATH="${AOTRITON_INSTALL_PREFIX}/aotriton"
 
 # --- Materialize the AOTriton source from the local mirror ---
 # Shallow-fetch only the requested commit from the read-only /mirror volume
-# (offline, fast). The mirror sets uploadpack.allowReachableSHA1InWant, so a
-# reachable SHA is fetchable without cloning the full history. Non-recursive:
+# (offline, fast). The mirror sets uploadpack.allowAnySHA1InWant, so the SHA
+# is fetchable without cloning the full history. Non-recursive:
 # Triton (the only submodule) is installed from a pre-built wheel, so
 # third_party/triton is never checked out here.
 if [ -z "${AOTRITON_GIT_COMMIT}" ]; then

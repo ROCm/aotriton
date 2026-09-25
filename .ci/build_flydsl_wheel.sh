@@ -197,38 +197,14 @@ if [ -z "$(docker images -q "${BASE_DOCKER_IMAGE}" 2>/dev/null)" ]; then
     --build-arg "PYVER=${PYVER}" \
     -f base.Dockerfile .) >&2
 fi
-# One mirror volume per distinct origin, mirror_volume_for_origin()'s shape.
-if [[ "${FLYDSL_ORIGIN}" == "${FLYDSL_DEFAULT_ORIGIN}" ]]; then
-  MIRROR_VOLUME="flydsl-mirror"
-else
-  MIRROR_VOLUME="flydsl-mirror-$(printf '%s' "${FLYDSL_ORIGIN}" | md5sum | cut -c1-12)"
-fi
-# CHECKED, and this script has no `set -e` to check it for us. Same hazard
-# build_llvm_tarball.sh records: the mirror volume is never deleted, so a warm
-# one plus a swallowed fetch failure resolves the tag below against the STALE
-# tip and caches the resulting wheel under a name that claims otherwise.
-if ! sync_mirror "${MIRROR_VOLUME}" "${FLYDSL_ORIGIN}" "${BASE_DOCKER_IMAGE}" "${PAT_ENVIRON}" >&2; then
-  echo "Error: could not sync the git mirror ${MIRROR_VOLUME} from ${FLYDSL_ORIGIN}." >&2
-  echo "Refusing to resolve '${FLYDSL_COMMIT}' against a possibly stale mirror." >&2
-  exit 1
-fi
-
 # --flydsl_commit is normally a tag (v0.3.1), which is exactly the moving-ref
-# problem the LLVM pin has: resolve it against the mirror before the wheel
-# name -- and therefore the cache key -- depends on it.
-RESOLVED=$(docker run --rm -i \
-  -v "${MIRROR_VOLUME}:/mirror:ro" \
-  "${BASE_DOCKER_IMAGE}" \
-  bash -s "${FLYDSL_COMMIT}" <<'EOF'
-set -e
-git config --global --add safe.directory '*'
-git -C /mirror rev-parse --verify "$1^{commit}"
-EOF
-)
-if [[ ! "${RESOLVED}" =~ ^[0-9a-fA-F]{40}$ ]]; then
-  echo "Error: '${FLYDSL_COMMIT}' did not resolve to a commit in ${MIRROR_VOLUME} (origin ${FLYDSL_ORIGIN})." >&2
-  exit 1
-fi
+# problem the LLVM pin has: make it available in the git mirror and
+# resolve it against the origin before the wheel name -- and therefore the
+# cache key -- depends on it. CHECKED, and this script has no `set -e` to
+# check it for us: same hazard build_llvm_tarball.sh records, a swallowed
+# failure caches the resulting wheel under a name that claims otherwise.
+MIRROR_VOLUME="flydsl-mirror"
+RESOLVED=$(sync_mirror "${MIRROR_VOLUME}" "${FLYDSL_ORIGIN}" "${BASE_DOCKER_IMAGE}" "${PAT_ENVIRON}" "${FLYDSL_COMMIT}") || exit 1
 if [[ "${RESOLVED}" != "${FLYDSL_COMMIT}" ]]; then
   echo "Resolved ${FLYDSL_COMMIT} -> ${RESOLVED}" >&2
 fi
@@ -241,7 +217,7 @@ if [[ -n "${HIT}" ]]; then
 fi
 
 # Built HERE, below the cache check, not before it. Only the wheel build below
-# uses this image -- sync_mirror and the tag resolve above both run in
+# uses this image -- sync_mirror above runs in
 # BASE_DOCKER_IMAGE -- and it is by far the most expensive step in the script,
 # a whole ROCm install via pip. Building it first meant a run whose wheel was
 # already cached still paid for it, which is what made a cached FlyDSL look

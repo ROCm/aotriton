@@ -149,47 +149,19 @@ if [ -z "$(docker images -q "${BASE_DOCKER_IMAGE}" 2>/dev/null)" ]; then
     -f base.Dockerfile .) >&2
 fi
 
-# One mirror volume per distinct origin: "llvm-mirror" for the origin the pin
-# normally names, a stable per-origin slug otherwise. Lifted from
-# build_triton_wheels.sh's mirror_volume_for_origin(), which solves exactly
-# this and whose volumes are equally harmless local caches.
-LLVM_DEFAULT_ORIGIN="https://github.com/ROCm/llvm-project"
-if [[ "${LLVM_ORIGIN}" == "${LLVM_DEFAULT_ORIGIN}" ]]; then
-  MIRROR_VOLUME="llvm-mirror"
-else
-  MIRROR_VOLUME="llvm-mirror-$(printf '%s' "${LLVM_ORIGIN}" | md5sum | cut -c1-12)"
-fi
-
-# CHECKED, and this script has no `set -e` to check it for us. The mirror
-# volume is never deleted, so a warm one plus a swallowed fetch failure
-# resolves the moving branch below against the STALE tip -- and then builds,
-# names and caches the previous RC under an authoritative-looking
-# llvm-<sha12>-<distro> filename that nothing will ever invalidate. Failing here
-# costs a re-run; not failing costs a wrong tarball, forever.
-if ! sync_mirror "${MIRROR_VOLUME}" "${LLVM_ORIGIN}" "${BASE_DOCKER_IMAGE}" "${PAT_ENVIRON}" >&2; then
-  echo "Error: could not sync the git mirror ${MIRROR_VOLUME} from ${LLVM_ORIGIN}." >&2
-  echo "Refusing to resolve '${LLVM_COMMIT}' against a possibly stale mirror." >&2
-  exit 1
-fi
-
-# Resolve the ref against the freshly synced mirror. The pin names a moving
-# branch (aotriton/0.14b/rc0 advances as the RC does), and the cache key must
-# not: two different builds under one filename is a wrong tarball served
-# forever. The mirror fetches +refs/*:refs/*, so a branch or tag name resolves
-# here exactly as it would at the origin.
-RESOLVED=$(docker run --rm -i \
-  -v "${MIRROR_VOLUME}:/mirror:ro" \
-  "${BASE_DOCKER_IMAGE}" \
-  bash -s "${LLVM_COMMIT}" <<'EOF'
-set -e
-git config --global --add safe.directory '*'
-git -C /mirror rev-parse --verify "$1^{commit}"
-EOF
-)
-if [[ ! "${RESOLVED}" =~ ^[0-9a-fA-F]{40}$ ]]; then
-  echo "Error: '${LLVM_COMMIT}' did not resolve to a commit in ${MIRROR_VOLUME} (origin ${LLVM_ORIGIN})." >&2
-  exit 1
-fi
+# Make the pin available in the git mirror and resolve it to a SHA in
+# one step. The pin names a moving branch (aotriton/0.14b/rc0 advances as the
+# RC does), and the cache key must not: two different builds under one
+# filename is a wrong tarball served forever. So a name is always resolved
+# against the origin, never against what the mirror last saw.
+#
+# CHECKED, and this script has no `set -e` to check it for us: a swallowed
+# failure here would leave RESOLVED empty or stale, and the build below would
+# name and cache the result under an authoritative-looking
+# llvm-<sha12>-<distro> filename that nothing will ever invalidate. Failing
+# here costs a re-run; not failing costs a wrong tarball, forever.
+MIRROR_VOLUME="llvm-mirror"
+RESOLVED=$(sync_mirror "${MIRROR_VOLUME}" "${LLVM_ORIGIN}" "${BASE_DOCKER_IMAGE}" "${PAT_ENVIRON}" "${LLVM_COMMIT}") || exit 1
 if [[ "${RESOLVED}" != "${LLVM_COMMIT}" ]]; then
   echo "Resolved ${LLVM_COMMIT} -> ${RESOLVED}" >&2
 fi
