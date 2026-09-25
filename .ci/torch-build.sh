@@ -47,4 +47,4 @@ if [ -z "${ROCM_PATH}" ]; then
   ROCM_PATH="${ROCM_PATH:-/opt/rocm}"
 fi
 export ROCM_PATH
-USE_ROCM=1 python setup.py develop --user
+USE_ROCM_CK_SDPA=0 USE_ROCM=1 python -m build --wheel --no-isolation
