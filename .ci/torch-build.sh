@@ -32,5 +32,19 @@ fi
 export AOTRITON_INSTALLED_PREFIX
 export PYTORCH_ROCM_ARCH=${target_arch}
 python tools/amd_build/build_amd.py|grep -v skipped || true
-export ROCM_PATH=/opt/rocm
+# theRock installs ROCm inside a Python package, so `rocm-sdk path --root` is
+# the only thing that knows where it is; /opt/rocm is the classical layout and
+# the fallback when rocm-sdk is not installed. This used to be a hardcoded
+# /opt/rocm, which on a theRock machine points the torch build at an install
+# that is not there -- or, worse, at a stale one that is.
+#
+# An explicit ROCM_PATH from the caller wins over both, the same precedence
+# build-release.sh uses.
+if [ -z "${ROCM_PATH}" ]; then
+  if command -v rocm-sdk &>/dev/null; then
+    ROCM_PATH=$(rocm-sdk path --root 2>/dev/null) || ROCM_PATH=''
+  fi
+  ROCM_PATH="${ROCM_PATH:-/opt/rocm}"
+fi
+export ROCM_PATH
 USE_ROCM=1 python setup.py develop --user
