@@ -198,7 +198,15 @@ if LARGE_HEADDIM_ONLY:
     PRIME_HEADDIMS = remove_not_larger_than(PRIME_HEADDIMS, 192)
     M8_HEADDIMS = remove_not_larger_than(M8_HEADDIMS, 192)
 
-ALL_INT_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS + M8_HEADDIMS
+# gfx1250 is in preview, and its kernels are not built for hdim > 256 to avoid
+# hitting compiler bugs; there is nothing to test above 256.
+if AOTRITON_UT_ARCH == 'gfx1250':
+    POT_HEADDIMS = remove_larger_than(POT_HEADDIMS, 256)
+    NPOT_HEADDIMS = remove_larger_than(NPOT_HEADDIMS, 256)
+    PRIME_HEADDIMS = remove_larger_than(PRIME_HEADDIMS, 256)
+    M8_HEADDIMS = remove_larger_than(M8_HEADDIMS, 256)
+
+ALL_INT_HEADDIMS =POT_HEADDIMS + NPOT_HEADDIMS + M8_HEADDIMS
 ALL_INT_HEADDIMS = sorted(list(set(ALL_INT_HEADDIMS)))
 
 # Goal: for each hdim_1, find its POT decomposed hdims, and for each POT hdim
