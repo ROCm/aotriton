@@ -4,6 +4,19 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+
+class ImplNotAvailable(RuntimeError):
+    """
+    A selected candidate has no kernel in the functional that served the input.
+
+    Kernel-level candidates are selected by config, and every functional
+    sharing a tuning entry is generated from the same tuning representative,
+    so this means the tuning build itself is inconsistent. It must stop the
+    task instead of being recorded as an inaccurate kernel and silently
+    rejected.
+    """
+
+
 class KernelForTuneDescription(ABC):
     """
     PT_* can be class variable when subclassing
@@ -57,6 +70,24 @@ class KernelForTuneDescription(ABC):
     @abstractmethod
     def direct_call(self, direct_inputs, extargs):
         pass
+
+    def check_impl_available(self, err, which_impl, test_name: str = ''):
+        """
+        Called after direct_call() with a kernel-level selection.
+
+        In a tuning build, the shim returns hipErrorSharedObjectSymbolNotFound
+        only when the selection matched no kernel. A candidate whose hsaco
+        failed to compile is still selected (it fails later, with
+        hipErrorInvalidImage) and stays a regular, rejectable candidate.
+        """
+        from pyaotriton import hipError_t
+        if which_impl is None or which_impl.tuning_level != 'kernel':
+            return
+        if err == hipError_t.hipErrorSharedObjectSymbolNotFound:
+            where = f' for test case {test_name}' if test_name else ''
+            raise ImplNotAvailable(
+                f'{which_impl.as_text()} selected no kernel{where}: the functional serving '
+                f'this input does not have this candidate.')
 
     def check_early_reject_results(self, result: dict, err) -> dict | None:
         """

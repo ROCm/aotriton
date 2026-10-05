@@ -300,6 +300,30 @@ class FlashTune(TuningDescription):
         torch.save(d, pt)
         return tname, im, pt
 
+    def _selection_kwargs(self, pt, which_impl) -> dict:
+        """Extra create_extargs() keywords selecting `which_impl`.
+
+        A kernel-level impl_index is a position in the candidate list probed
+        on the entry's benchmark case (see probe_all_impls). It is turned into
+        that candidate's config once, and every test case selects the config:
+        the functional serving an irregular test case (e.g. PADDED_HEAD=True)
+        then runs the same kernel as the benchmark, wherever it sits in its
+        own list."""
+        if which_impl.tuning_level != 'kernel':
+            return {}
+        root = Path(pt).parent
+        key = (root, which_impl.iface_name, which_impl.impl_index)
+        cache = self.__dict__.setdefault('_candidate_configs', {})
+        if key not in cache:
+            from . import level_kernel
+            _, tests = self.get_entry(root, and_tests=True)
+            bench = tests[0]
+            im = self.INPUT_METADATA.from_dict(bench['input_metadata'])
+            cache[key] = level_kernel.candidate_config(im, which_impl.iface_name,
+                                                       Path(bench['pt_file']),
+                                                       which_impl.impl_index)
+        return {'config': cache[key]}
+
     def run_single_test(self,
                         im: FlashInputMetadata,
                         pt: Path,
@@ -310,12 +334,14 @@ class FlashTune(TuningDescription):
         from aotriton.tune.gpu_utils import device_ctx, default_device_string
         with device_ctx():
             kernel = self.get_impl(which_impl.dsl_name)
-            args = kernel.create_extargs(which_impl=which_impl, dtype=im.dtype)
+            args = kernel.create_extargs(which_impl=which_impl, dtype=im.dtype,
+                                         **self._selection_kwargs(pt, which_impl))
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
             direct_inputs = kernel.prepare_directs(im, inputs)
             kernel.fill_nan_to_outputs(direct_inputs)
             outputs, err = kernel.direct_call(direct_inputs, args)
+            kernel.check_impl_available(err, which_impl, Path(pt).stem)
             refs = from_dict(data_class=kernel.PT_REF_CLASS, data=d["bidi_outputs"], config=dacite_tuple)
             result = kernel.compare(outputs, refs)
             early = kernel.check_early_reject_results(result, err)
@@ -336,11 +362,13 @@ class FlashTune(TuningDescription):
         from aotriton.tune.gpu_utils import do_bench, device_ctx, default_device_string
         with device_ctx():
             kernel = self.get_impl(which_impl.dsl_name)
-            args = kernel.create_extargs(which_impl=which_impl, probe=True, dtype=im.dtype)
+            args = kernel.create_extargs(which_impl=which_impl, probe=True, dtype=im.dtype,
+                                         **self._selection_kwargs(pt, which_impl))
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
             direct_inputs = kernel.prepare_directs(im, inputs)
-            kernel.direct_call(direct_inputs, args)
+            _, err = kernel.direct_call(direct_inputs, args)
+            kernel.check_impl_available(err, which_impl, Path(pt).stem)
             impl_desc = self.probe_impl_desc(kernel, args)
             args.disable_probing()
             def fn():

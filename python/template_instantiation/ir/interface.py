@@ -25,6 +25,15 @@ from .axis import assign_godel, godel_of
 from .functional import Functional, _resolve
 
 
+def _fallback_choice(axis, value):
+    """The choice of `axis` that an @ati.tune.fallback value names."""
+    for tc in axis.choices:
+        if getattr(tc, 'json_value', tc.triton_compile_signature) == value:
+            return tc
+    raise ValueError(f'fallback {axis.signature_name}={value!r} is not one of '
+                     f'{[tc.triton_compile_signature for tc in axis.choices]}')
+
+
 class Interface(ABC):
     # --- identity / codegen wiring (subclasses set these) -------------------
     FAMILY = None              # e.g. 'flash'
@@ -77,6 +86,33 @@ class Interface(ABC):
     @property
     def partially_tuned_functionals(self) -> dict:
         return {}
+
+    def tuning_representative(self, f: Functional) -> Functional:
+        """The functional whose tuning entry also serves `f`: `f` with every
+        partially-tuned (fallback) axis pinned to its fallback value.
+
+        Functionals that differ only in fallback axes share one database row and
+        one tuning entry, so anything that defines that entry's candidates must
+        be computed from this representative, never from `f` itself."""
+        fallback = self.partially_tuned_functionals
+        if not fallback:
+            return f
+        axes, overrides = self._axes_overrides()
+        axes_all = sorted(axes, key=lambda a: a.anchor)
+        axes_multi = [a for a in axes_all if not a.is_trivial]
+        picked = dict(f.choice)
+        for ax in axes_multi:
+            if ax.signature_name in fallback:
+                picked[ax.var_name] = _fallback_choice(ax, fallback[ax.signature_name])
+        if all(picked[k] is f.choice[k] for k in picked):
+            return f
+        selection = [ax.choices.index(picked[ax.var_name]) for ax in axes_multi]
+        return Functional(meta_object=self, arch=f.arch,
+                          arch_number=f.arch_number,
+                          godel_number=godel_of(axes_multi, selection),
+                          choice=picked,
+                          resolved=_resolve(axes_all, overrides, picked, f.arch),
+                          optimized_for=f.optimized_for)
 
     # --- functional enumeration (classical: the Interface yields its functionals) -
 

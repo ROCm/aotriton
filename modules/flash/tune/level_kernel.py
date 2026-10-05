@@ -27,6 +27,8 @@ flash/module.py (torch-free) and flash/kernels.py (lazily imported only from
 Flash.get_impl()).
 """
 
+from pathlib import Path
+
 _KERNEL_DICT_CACHE = None
 
 
@@ -76,9 +78,21 @@ def _build_kernel_dict():
                 ctrl = ctrl | KernelControl.Query | KernelControl.Skip
             c.kernel_fine_control[slot].control_bits = ctrl
 
+        def set_config(self, psels: str, copts: str, probe: bool = False):
+            """Select the kernel whose psels/copts strings match, resolved by
+            each functional in its own candidate list (KernelControl::ByConfig)."""
+            kfc = self._c.kernel_fine_control[self._slot]
+            ctrl = KernelControl.Manual | KernelControl.ByConfig
+            if probe:
+                ctrl = ctrl | KernelControl.Query | KernelControl.Skip
+            kfc.preferred_psels = psels
+            kfc.preferred_copts = copts
+            kfc.control_bits = ctrl
+
         def disable_probing(self):
-            """Switch from probe mode to run mode (clear Query/Skip bits, keep Manual/hsaco)."""
-            self.update_hsaco(probe=False)
+            """Switch from probe mode to run mode (clear Query/Skip bits, keep the selection)."""
+            kfc = self._c.kernel_fine_control[self._slot]
+            kfc.control_bits = kfc.control_bits & ~(KernelControl.Query | KernelControl.Skip)
 
         '''
         Unlike set_hsaco, None means "don't change"
@@ -128,9 +142,16 @@ def _build_kernel_dict():
 
         # dtype accepted and ignored: one call site in desc.py serves every
         # level, and only the op level filters on it.
-        def create_extargs(self, *, which_impl=None, probe=False, dtype=None):
-            hsaco_index = which_impl.impl_index if which_impl is not None else None
+        #
+        # config: (psels, copts) strings of the selected candidate, see
+        # candidate_config(). When given it replaces impl_index, so every test
+        # case runs the same kernel whichever functional serves it.
+        def create_extargs(self, *, which_impl=None, probe=False, dtype=None, config=None):
             ext = self.EXT_CLASS(self.BACKEND_INDEX, self.KERNEL_SLOT)
+            if config is not None:
+                ext.set_config(*config, probe=probe)
+                return ext
+            hsaco_index = which_impl.impl_index if which_impl is not None else None
             ext.set_hsaco(hsaco=hsaco_index, probe=probe)
             return ext
 
@@ -195,6 +216,27 @@ def enumerate_variants(entry, im, which_impl: str, pt) -> list[dict]:
                 }
                 yield d
         return list(gen())
+
+
+def candidate_config(im, which_impl: str, pt, impl_index: int) -> tuple[str, str]:
+    """The raw (psels, copts) strings of candidate `impl_index`, as listed by the
+    functional serving the benchmark input `im`/`pt` -- the same list
+    enumerate_variants() reports, so impl_index keeps its recorded meaning."""
+    import torch
+    from dacite import from_dict
+    from aotriton.tune.gpu_utils import device_ctx, default_device_string
+    from aotriton.tune.utils import dacite_tuple
+    from aotriton.tune.tdesc import ImplSelector
+    selector = ImplSelector(tuning_level='kernel', iface_name=which_impl, impl_index=impl_index)
+    with device_ctx():
+        kernel = get_impl(which_impl)
+        args = kernel.create_extargs(probe=True)
+        args.set_hsaco(hsaco=impl_index, probe=True)
+        d = torch.load(pt, map_location=default_device_string(), mmap=True)
+        inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
+        _, err = kernel(im, inputs, args)
+        kernel.check_impl_available(err, selector, Path(pt).stem)
+        return args.selected_hsaco_psels, args.selected_hsaco_copts
 
 
 def impl_desc(kernel, args) -> dict:

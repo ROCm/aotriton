@@ -83,6 +83,19 @@ int CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
 #endif
     int preferred = context._has_preferred_kernel;
     int kernel_index = preferred < 0 ? kLutInTuningModeAlwaysReturnZero : preferred;
+    if (context._preferred_config_psels) {
+        // Resolve the config in this functional's own list. Functionals sharing
+        // a tuning entry may order (or, by mistake, populate) their lists
+        // differently; a config they lack selects no kernel.
+        kernel_index = -1;
+        for (int i = 0; i < kTotalNumKernels; i++) {
+            if (*context._preferred_config_psels == kernel_psels[i] &&
+                *context._preferred_config_copts == kernel_copts[i]) {
+                kernel_index = i;
+                break;
+            }
+        }
+    }
 #else
     auto kernel_index = [[deduplicated_lut_function]](*context.params, mod_number, lut);
 #endif

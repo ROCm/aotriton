@@ -65,9 +65,13 @@ hipError_t
             launch_condition = false;
         }
 
-        // Check Manual flag - use hsaco_index if set
+        // Check Manual flag - use hsaco_index (or the config with ByConfig) if set
         if (ctrl & KernelControl::Manual) {
             _has_preferred_kernel = kctl.hsaco_index;
+            if (ctrl & KernelControl::ByConfig) {
+                _preferred_config_psels = &kctl.preferred_psels;
+                _preferred_config_copts = &kctl.preferred_copts;
+            }
             peek_kernel_image = (ctrl & KernelControl::ExtractImage);
         }
     }

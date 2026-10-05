@@ -247,6 +247,8 @@ namespace pyaotriton::v3 {
       .def(py::init<>())
       .def_readwrite("control_bits", &aotriton::v3::KernelControl::control_bits)
       .def_readwrite("hsaco_index", &aotriton::v3::KernelControl::hsaco_index)
+      .def_readwrite("preferred_psels", &aotriton::v3::KernelControl::preferred_psels)
+      .def_readwrite("preferred_copts", &aotriton::v3::KernelControl::preferred_copts)
       .def_readonly("total_hsacos", &aotriton::v3::KernelControl::total_hsacos)
       .def_readonly("kernel_psels", &aotriton::v3::KernelControl::kernel_psels)
       .def_readonly("kernel_copts", &aotriton::v3::KernelControl::kernel_copts)
@@ -275,6 +277,7 @@ the original KernelControl instance or its backing resources are destroyed.)")
       .def_readonly_static("Skip", &aotriton::v3::KernelControl::Skip)
       .def_readonly_static("Query", &aotriton::v3::KernelControl::Query)
       .def_readonly_static("ExtractImage", &aotriton::v3::KernelControl::ExtractImage)
+      .def_readonly_static("ByConfig", &aotriton::v3::KernelControl::ByConfig)
       ;
 
     // Expose KernelFineControl with array-like interface

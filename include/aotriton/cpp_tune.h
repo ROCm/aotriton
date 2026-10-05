@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <stdint.h>
 #include <memory>
+#include <string>
 #include <vector>
 #include <stdexcept>
 
@@ -20,7 +21,8 @@ struct AOTRITON_API KernelControl {
     ManualBit = 1,
     SkipBit = 2,
     QueryBit = 3,
-    ExtractImageBit = 4
+    ExtractImageBit = 4,
+    ByConfigBit = 5
   };
   static constexpr uint16_t Default = 0;
 #define AOTRITON_U16_FROM_BIT_ENUM(x) static constexpr uint16_t x = (1 << x ## Bit)
@@ -29,6 +31,7 @@ struct AOTRITON_API KernelControl {
   AOTRITON_U16_FROM_BIT_ENUM(Skip);
   AOTRITON_U16_FROM_BIT_ENUM(Query);
   AOTRITON_U16_FROM_BIT_ENUM(ExtractImage);
+  AOTRITON_U16_FROM_BIT_ENUM(ByConfig);
 #undef AOTRITON_U16_FROM_BIT_ENUM
 
   // Control bits (input)
@@ -42,7 +45,16 @@ struct AOTRITON_API KernelControl {
                               // - ExtractImage: Extract kernel binary image.
                               //                 This flag will suppress kernel
                               //                 launching.
+                              // - ByConfig: With Manual, select the kernel whose
+                              //             psels/copts strings equal
+                              //             preferred_psels/preferred_copts
+                              //             instead of using hsaco_index.
+                              //             Every functional resolves the
+                              //             config in its own kernel list; no
+                              //             match selects no kernel.
   uint16_t hsaco_index = 0;   // Kernel index to use (only if Manual is set in control_bits)
+  std::string preferred_psels;  // Kernel psels string to select (only if Manual and ByConfig)
+  std::string preferred_copts;  // Kernel copts string to select (only if Manual and ByConfig)
 
   // Information bits (output, written by backend)
   mutable int32_t total_hsacos = -1;      // Total number of kernels (written if Query is set)

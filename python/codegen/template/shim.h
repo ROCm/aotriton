@@ -69,6 +69,9 @@ struct [[context_class_name]] {
     const char* _debug_kernel_name = nullptr;
 #if AOTRITON_BUILD_FOR_TUNING
     int _has_preferred_kernel = -1; // For C++ based autotune database generation
+    // KernelControl::ByConfig: select by psels/copts instead of _has_preferred_kernel
+    const std::string* _preferred_config_psels = nullptr;
+    const std::string* _preferred_config_copts = nullptr;
     int _total_number_of_kernels = -1;
     const char* _preferred_kernel_psels = nullptr;
     const char* _preferred_kernel_copts = nullptr;

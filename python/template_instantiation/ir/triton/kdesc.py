@@ -226,7 +226,11 @@ class KernelDescription(Interface):
 
     def gen_signatures_for_tuning(self, f):
         """Yield a KernelSignature per autotune config (the tuning-build path).
-        Ported from the legacy KernelDescription."""
+        Ported from the legacy KernelDescription.
+
+        The configs come from the tuning representative, not `f`: functionals
+        sharing a tuning entry (fallback axes) get the same candidates, in the
+        same order, by construction."""
         def perf_bind(cfg):
             # one perf bind row from an autotune config: struct instance of settled choices.
             return self._perf_struct(
@@ -235,7 +239,7 @@ class KernelDescription(Interface):
         def gen_copts(cfg):
             for copt, defopt in zip(COMPILER_OPTIONS, DEFAULT_COPT):
                 yield getattr(cfg, copt, defopt)
-        for cfg in self.gen_autotune_configs(f):
+        for cfg in self.gen_autotune_configs(self.tuning_representative(f)):
             yield KernelSignature(f, perf_bind(cfg), list(gen_copts(cfg)))
 
     def gen_autotune_configs(self, f):
