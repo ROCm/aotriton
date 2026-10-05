@@ -15,12 +15,18 @@ from ..utils import (
     log
 )
 from .common import codegen_struct_cfields, codegen_includes
-from .autotune import AutotuneCodeGenerator
+from .autotune import AutotuneCodeGenerator, check_shared_tuning_entries
 
 class KernelShimGenerator(InterfaceGenerator):
     HEADER_TEMPLATE = get_template('shim.h')
     SOURCE_TEMPLATE = get_template('shim.cc')
     PFX = 'shim'
+
+    def generate(self):
+        self._tuning_candidates = []
+        super().generate()
+        if self._args.build_for_tuning:
+            check_shared_tuning_entries(self._iface.NAME, self._tuning_candidates)
 
     def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame', sql : tuple):
         if functional.meta_object.is_functional_disabled(functional):
@@ -28,7 +34,10 @@ class KernelShimGenerator(InterfaceGenerator):
             use_this_functional = False
             return None, use_this_functional
         use_this_functional = True
-        return AutotuneCodeGenerator(self._args, functional, df, sql, self._this_repo), use_this_functional
+        subg = AutotuneCodeGenerator(self._args, functional, df, sql, self._this_repo)
+        if self._args.build_for_tuning:
+            self._tuning_candidates.append((functional, subg.tuning_candidates))
+        return subg, use_this_functional
 
     def write_shim_header(self, functionals, fout):
         kdesc = self._iface

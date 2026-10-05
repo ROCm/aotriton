@@ -23,6 +23,65 @@ from .basetune import BaseTuneCodeGenerator
 # import json  # ditto: only the disabled compile_status filter needed this
 import numpy as np
 
+
+def tuning_entry_key(f : Functional) -> tuple:
+    '''
+    Identity of the tuning entry that serves functional `f`.
+
+    @ati.tune.fallback(KEY=value) folds every value of KEY onto one database
+    row, so functionals that differ only in fallback keys share a tuning entry,
+    and the tuner runs the same impl_index on all of them.
+    '''
+    fallback = f.meta_object.partially_tuned_functionals
+    def normalize(name, tc):
+        if name in fallback:
+            return repr(fallback[name])
+        return tc.infotext
+    return (f.arch,) + tuple((name, normalize(name, tc)) for name, tc in f.compact_choices.items())
+
+
+class SharedTuningEntryMismatch(Exception):
+    '''
+    Functionals sharing a tuning entry have different tuning candidates.
+
+    impl_index would then select different kernels (or no kernel) depending
+    on which functional a test case lands on, and the tuner would silently
+    discard candidates or validate one kernel while benchmarking another.
+    '''
+    def __init__(self, kernel_name, f0, c0, f1, c1):
+        self.kernel_name = kernel_name
+        diverge = next((i for i, (a, b) in enumerate(zip(c0, c1)) if a != b),
+                       min(len(c0), len(c1)))
+        def at(c):
+            return ' '.join(c[diverge]) if diverge < len(c) else '<none>'
+        super().__init__(
+            f'{kernel_name}: functionals sharing a tuning entry must have identical tuning candidates.\n'
+            f'  {f0.tunecc_signature}: {len(c0)} candidates\n'
+            f'  {f1.tunecc_signature}: {len(c1)} candidates\n'
+            f'  first divergence at impl_index {diverge}:\n'
+            f'    {at(c0)}\n'
+            f'    {at(c1)}\n'
+            f'Make gen_autotune_configs independent of the @ati.tune.fallback keys '
+            f'{sorted(f0.meta_object.partially_tuned_functionals)}.')
+
+
+def check_shared_tuning_entries(kernel_name, candidates):
+    '''
+    candidates: iterable of (Functional, list of (psel_section, copt_section)).
+    Raises SharedTuningEntryMismatch unless every group of functionals with the
+    same tuning_entry_key() has the identical candidate list, in the same order.
+    '''
+    first_seen = {}
+    for f, cands in candidates:
+        key = tuning_entry_key(f)
+        if key not in first_seen:
+            first_seen[key] = (f, cands)
+            continue
+        f0, c0 = first_seen[key]
+        if c0 != cands:
+            raise SharedTuningEntryMismatch(kernel_name, f0, c0, f, cands)
+
+
 class AutotuneCodeGenerator(BaseTuneCodeGenerator):
     AUTOTUNE_TEMPLATE = get_template('autotune_table_entry.cc')
 
@@ -49,6 +108,8 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
                 #
                 # One tuning entry will test both PADDED_HEAD False and True,
                 # since it is supposed to work for both.
+                # (KernelShimGenerator checks that their signature lists are
+                # identical to begin with, see check_shared_tuning_entries.)
                 # If an hsaco compiled with PADDED_HEAD=False but failed with PADDED_HEAD=True
                 # the index will diverge. benchmark ... attn_fwd=X will test
                 # different copt/psel for different testing cases.
@@ -90,6 +151,11 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
                         for err in errors:
                             print("    ERROR:", err)
         assert all(isinstance(k, KernelSignature) for k in self._sigs)
+
+    @property
+    def tuning_candidates(self) -> list[tuple[str, str]]:
+        '''(psel_section, copt_section) per impl_index, in impl_index order.'''
+        return [(sig.psel_section, sig.copt_section) for sig in self._sigs]
 
     def generate(self):
         # Un "self._" section

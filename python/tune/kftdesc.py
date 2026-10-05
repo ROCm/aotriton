@@ -4,6 +4,19 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+
+class ImplNotAvailable(RuntimeError):
+    """
+    A forced impl_index has no kernel in the functional that served the input.
+
+    Functionals sharing a tuning entry (e.g. the PADDED_HEAD twins folded by
+    @ati.tune.fallback) must expose the same candidate list. When they do not,
+    the index is out of range for one of them. That is a tuner inconsistency,
+    not a property of the candidate, so it must stop the task instead of being
+    recorded as an inaccurate kernel and silently rejected.
+    """
+
+
 class KernelForTuneDescription(ABC):
     """
     PT_* can be class variable when subclassing
@@ -57,6 +70,25 @@ class KernelForTuneDescription(ABC):
     @abstractmethod
     def direct_call(self, direct_inputs, extargs):
         pass
+
+    def check_impl_available(self, err, which_impl, test_name: str = ''):
+        """
+        Called by run_single_test/run_single_benchmark after direct_call().
+
+        In a tuning build, the shim returns hipErrorSharedObjectSymbolNotFound
+        only when the forced impl_index selected no kernel. A candidate whose
+        hsaco failed to compile is still selected (it fails later, with
+        hipErrorInvalidImage) and stays a regular, rejectable candidate.
+        """
+        from pyaotriton import hipError_t
+        if which_impl is None or which_impl.tuning_level != 'kernel':
+            return
+        if err == hipError_t.hipErrorSharedObjectSymbolNotFound:
+            where = f' for test case {test_name}' if test_name else ''
+            raise ImplNotAvailable(
+                f'{which_impl.as_text()} selected no kernel{where}: impl_index is out of '
+                f'range for the functional serving this input. Functionals sharing a '
+                f'tuning entry have different candidate lists.')
 
     def check_early_reject_results(self, result: dict, err) -> dict | None:
         """

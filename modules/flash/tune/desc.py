@@ -316,6 +316,7 @@ class FlashTune(TuningDescription):
             direct_inputs = kernel.prepare_directs(im, inputs)
             kernel.fill_nan_to_outputs(direct_inputs)
             outputs, err = kernel.direct_call(direct_inputs, args)
+            kernel.check_impl_available(err, which_impl, Path(pt).stem)
             refs = from_dict(data_class=kernel.PT_REF_CLASS, data=d["bidi_outputs"], config=dacite_tuple)
             result = kernel.compare(outputs, refs)
             early = kernel.check_early_reject_results(result, err)
@@ -340,7 +341,8 @@ class FlashTune(TuningDescription):
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
             direct_inputs = kernel.prepare_directs(im, inputs)
-            kernel.direct_call(direct_inputs, args)
+            _, err = kernel.direct_call(direct_inputs, args)
+            kernel.check_impl_available(err, which_impl, Path(pt).stem)
             impl_desc = self.probe_impl_desc(kernel, args)
             args.disable_probing()
             def fn():
