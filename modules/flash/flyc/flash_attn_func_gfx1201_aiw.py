@@ -1442,11 +1442,18 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
             _off = k_ap.num_batches if K_PREFETCH_DIST else 0
             _v_vecs_init = [_pf[_off + _i] for _i in range_constexpr(V_LOADS)]
 
+        # bf16 P is truncated for GEMM2 (bf16_trunc_pack_v8). O is normalized by
+        # the sum of the truncated values, so numerator and denominator see the
+        # same weights and O carries no truncation bias. The logsumexp keeps the
+        # untruncated sum, which is what the backward pass recomputes P against.
+        RTZC = dtype_str == "bf16"
         # Loop-carried state layout:
-        #   [0 .. 2*ROW_SUBTILES)             m/l per Q row sub-tile, interleaved
+        #   [0 .. _MS*ROW_SUBTILES)           m/l (and the truncated sum lt under
+        #                                     RTZC) per Q row sub-tile, interleaved
         #   [_ML .. _ML + ROW_SUBTILES*O_ACCS) O accumulators per Q row sub-tile
         #   [_OFF ..)                         K vectors (distance 1 only), then V
-        _ML = 2 * ROW_SUBTILES
+        _MS = 3 if RTZC else 2
+        _ML = _MS * ROW_SUBTILES
         _OFF = _ML + ROW_SUBTILES * O_ACCS
         _KOFF = _OFF
         _VOFF = _OFF + (k_ap.num_batches if K_PREFETCH_DIST else 0)
@@ -1455,6 +1462,8 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         for _ in range_constexpr(ROW_SUBTILES):
             init_args.append(fx.as_ir_value(c_m_init))
             init_args.append(fx.as_ir_value(c_zero_f))
+            if const_expr(RTZC):
+                init_args.append(fx.as_ir_value(c_zero_f))
         for _ in range_constexpr(ROW_SUBTILES * O_ACCS):
             init_args.append(fx.as_ir_value(c_zero_v8f32))
         if const_expr(K_PREFETCH_DIST):
@@ -1476,8 +1485,10 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
             disjoint runs, so it passes the piecewise successor explicitly --
             getting that wrong fetches the wrong tile and is invisible to a
             correctness test whenever the value is overwritten before use."""
-            m_run = [inner_iter_args[2 * qt] for qt in range_constexpr(ROW_SUBTILES)]
-            l_run = [inner_iter_args[2 * qt + 1] for qt in range_constexpr(ROW_SUBTILES)]
+            m_run = [inner_iter_args[_MS * qt] for qt in range_constexpr(ROW_SUBTILES)]
+            l_run = [inner_iter_args[_MS * qt + 1] for qt in range_constexpr(ROW_SUBTILES)]
+            if const_expr(RTZC):
+                lt_run = [inner_iter_args[_MS * qt + 2] for qt in range_constexpr(ROW_SUBTILES)]
             o_accs_all = [
                 [inner_iter_args[_ML + qt * O_ACCS + i] for i in range_constexpr(O_ACCS)]
                 for qt in range_constexpr(ROW_SUBTILES)
@@ -1557,7 +1568,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
             # ==== Online softmax, per Q row sub-tile ====
             # Each row sub-tile keeps its own running max/sum and its own O
             # accumulators.
-            m_new_all, l_new_all, p_vals_all = [], [], []
+            m_new_all, l_new_all, lt_new_all, p_vals_all = [], [], [], []
             for qt in range_constexpr(ROW_SUBTILES):
                 s_accs = s_accs_all[qt]
                 q_row_i32 = q_row_i32s[qt]
@@ -1747,16 +1758,22 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
 
                 p_vals = []
                 local_sum = fx.as_ir_value(c_zero_f)
+                local_tsum = fx.as_ir_value(c_zero_f)
                 for r in range_constexpr(NUM_S_VALS):
                     diff = fastmath.add(s_raw[r], neg_m)
                     p = rocdl.exp2(ir.F32Type.get(), fx.as_ir_value(diff))
                     p_vals.append(p)
                     local_sum = fastmath.add(local_sum, p)
+                    if const_expr(RTZC):
+                        local_tsum = fastmath.add(local_tsum, fmha.bf16_trunc_f32(p))
 
                 peer_sum = reduction_peer(local_sum)
                 tile_sum = fastmath.add(local_sum, peer_sum)
                 l_corr = fastmath.mul(corr, l_running)
                 l_new = fastmath.add(l_corr, tile_sum)
+                if const_expr(RTZC):
+                    tile_tsum = fastmath.add(local_tsum, reduction_peer(local_tsum))
+                    lt_new_all.append(fastmath.add(fastmath.mul(corr, lt_run[qt]), tile_tsum))
 
                 corr_vec = Vec.from_elements([corr], fx.Float32).broadcast_to(8).ir_value()
                 for dc in range_constexpr(O_ACCS):
@@ -1897,6 +1914,8 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
             for qt in range_constexpr(ROW_SUBTILES):
                 _yield_args.append(m_new_all[qt])
                 _yield_args.append(l_new_all[qt])
+                if const_expr(RTZC):
+                    _yield_args.append(lt_new_all[qt])
             for qt in range_constexpr(ROW_SUBTILES):
                 for i in range_constexpr(O_ACCS):
                     _yield_args.append(o_accs_all[qt][i])
@@ -1995,8 +2014,8 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         for qt in range_constexpr(ROW_SUBTILES):
             _do_store = _lse_writer & q_in_bounds_all[qt]
             if _do_store:
-                _m = loop_results[2 * qt]
-                _l = loop_results[2 * qt + 1]
+                _m = loop_results[_MS * qt]
+                _l = loop_results[_MS * qt + 1]
                 _lse = fastmath.mul(fastmath.add(_m, rocdl.log(_f32_ty, fx.as_ir_value(_l))), fx.Float32(_LN2))
                 # A row with no live keys gets +inf, not -inf: the backward
                 # pass subtracts LSE from qk, so +inf makes exp(qk - inf)
@@ -2032,7 +2051,8 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
             _store_global_half(o_ptr, o_tbase(start_q), o_toff(row, col), val)
 
         for qt in range_constexpr(ROW_SUBTILES):
-            l_final = loop_results[2 * qt + 1]
+            # Under RTZC, the sum of the truncated P that GEMM2 consumed.
+            l_final = loop_results[_MS * qt + (2 if RTZC else 1)]
             # A row can legitimately see *no* keys: bottom-right causal with
             # seqlen_q > seqlen_k leaves the leading seqlen_q - seqlen_k rows
             # fully masked, and bias or a sliding window will do the same.

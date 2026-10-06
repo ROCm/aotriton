@@ -422,6 +422,19 @@ def pack_bf16_pair(lo, hi, shift, mask):
     return (hi_i32 & mask) | arith.shrui(lo_i32, shift)
 
 
+# Truncation to bf16 shrinks a value by 0.27% on average (half an ulp, measured
+# on softmax- and normal-shaped values). The backward multiplies each gradient
+# whose GEMM consumed a truncated operand by this, folded into an existing scale.
+TRUNC_BIAS = 1.0 / (1.0 - 0.0027)
+
+
+def bf16_trunc_f32(value):
+    """`value` with the low 16 bits cleared: the f32 that bf16_trunc_pack_v8
+    actually hands GEMM2 for it."""
+    return fx.Float32(arith.bitcast(ir.F32Type.get(),
+                                    fx.as_ir_value(bitcast_i32(value) & fx.Int32(0xFFFF0000))))
+
+
 def bf16_trunc_pack_v8(f32_vals, elem_dtype):
     """Pack 8 f32 values into v8bf16 via bitwise truncation (upper 16 bits).
 
@@ -449,6 +462,11 @@ def bf16_trunc_pack_v8(f32_vals, elem_dtype):
     exactly (2.79e-3) but costs 2-3% at distance 1 and 2.7-5.4% at
     ROW_SUBTILES=2, so it is deliberately not done. Truncation by
     decision, not oversight.
+
+    The forward and the backward instead correct truncation's one-sided
+    error at no measurable cost: the forward normalizes O by the sum of the
+    *truncated* P (bf16_trunc_f32), the backward scales dQ/dK/dV by
+    TRUNC_BIAS.
     """
     _c16 = fx.Int32(16)
     _cmask = fx.Int32(0xFFFF0000)

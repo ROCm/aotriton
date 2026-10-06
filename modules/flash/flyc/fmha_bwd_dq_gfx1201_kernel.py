@@ -821,7 +821,11 @@ def build_bwd_dq_module_primary(meta, knobs):
         # takes a row max, it reads the forward's logsumexp instead.
         c_neg_inf = fx.Float32(float("-inf"))
         c_zero_v8f32 = Vec.filled(8, 0.0, fx.Float32)
-        sm_scale_vec = Vec.from_elements([sm_scale], fx.Float32).broadcast_to(8).ir_value()
+        # dQ = dS K with dS truncated to bf16: undo truncation's mean shrink
+        # (fmha.TRUNC_BIAS) in the scale applied once at the end.
+        dq_scale = (fastmath.mul(sm_scale, fx.Float32(fmha.TRUNC_BIAS))
+                    if const_expr(dtype_str == "bf16") else sm_scale)
+        sm_scale_vec = Vec.from_elements([dq_scale], fx.Float32).broadcast_to(8).ir_value()
 
         # ---- The visible band ----
         if const_expr(CAUSAL):

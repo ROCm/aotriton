@@ -1158,7 +1158,14 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
             # dK carries the sm_scale AOTriton applies once at the end: the
             # accumulator is dS^T Q with dS taken against the *unscaled* score,
             # so the chain rule's factor lands here rather than per element.
-            _scale_vec = Vec.from_elements([fx.Float32(sm_scale)], fx.Float32).broadcast_to(8).ir_value()
+            # dK = dS^T Q and dV = P^T dO consume truncated bf16 dS and P: undo
+            # truncation's mean shrink (fmha.TRUNC_BIAS) in the final scale.
+            _rtzb = dtype_str == "bf16"
+            _dk_scale = (fastmath.mul(fx.Float32(sm_scale), fx.Float32(fmha.TRUNC_BIAS))
+                         if const_expr(_rtzb) else fx.Float32(sm_scale))
+            _scale_vec = Vec.from_elements([_dk_scale], fx.Float32).broadcast_to(8).ir_value()
+            if const_expr(_rtzb):
+                _dv_scale_vec = Vec.from_elements([fx.Float32(fmha.TRUNC_BIAS)], fx.Float32).broadcast_to(8).ir_value()
             # Under the split each wave stores only the head-dim half it
             # accumulated; the pair writes disjoint columns, hence no reduction.
             for dc in range_constexpr(D_STEPS_OWN):
@@ -1167,7 +1174,10 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
                 _gc = fx.Index((fx.Int32(dc) + _own_i32) * fx.Int32(WMMA_N)) + klane * WMMA_LANE_K
                 fmha.write_v8(dk_out_ap, write_dk, kv_row_in_tile, _gc, _t)
             for dc in range_constexpr(DV_STEPS_OWN):
-                _t = Vec(loop_results[D_STEPS_OWN + dc]).to(elem_dtype).ir_value()
+                _dv = loop_results[D_STEPS_OWN + dc]
+                if const_expr(_rtzb):
+                    _dv = fastmath.mul(_dv, _dv_scale_vec)
+                _t = Vec(_dv).to(elem_dtype).ir_value()
                 _gc = fx.Index((fx.Int32(dc) + _vown_i32) * fx.Int32(WMMA_N)) + klane * WMMA_LANE_K
                 fmha.write_v8(dv_out_ap, write_dv, kv_row_in_tile, _gc, _t)
 
