@@ -12,7 +12,7 @@ class ImplNotAvailable(RuntimeError):
     Either functionals sharing a tuning entry (e.g. the PADDED_HEAD twins folded
     by @ati.tune.fallback) have different candidate lists, or that functional
     has no candidates at all. That is a tuner inconsistency, not a property of
-    the candidate: testrun reports it as `IMPL_NOT_AVAILABLE: <message>` and
+    the candidate: testrun reports it as `ImplNotAvailable: <message>` and
     the task is marked failed, instead of the candidate being recorded as an
     inaccurate kernel and silently rejected.
 
