@@ -25,6 +25,21 @@ from .axis import assign_godel, godel_of
 from .functional import Functional, _resolve
 
 
+class FallbackAxisRead(RuntimeError):
+    """Tuning candidates depend on an @ati.tune.fallback axis. One tuning entry
+    serves every value of such an axis, so they must not."""
+
+
+def _fallback_choice(axis, value):
+    """The choice of `axis` that an @ati.tune.fallback value names."""
+    for tc in axis.choices:
+        sig = tc.triton_compile_signature
+        if sig == value and isinstance(sig, bool) == isinstance(value, bool):
+            return tc
+    raise ValueError(f'fallback {axis.signature_name}={value!r} is not one of '
+                     f'{[tc.triton_compile_signature for tc in axis.choices]}')
+
+
 class Interface(ABC):
     # --- identity / codegen wiring (subclasses set these) -------------------
     FAMILY = None              # e.g. 'flash'
@@ -78,6 +93,28 @@ class Interface(ABC):
     def partially_tuned_functionals(self) -> dict:
         return {}
 
+    def tuning_representative(self, f: Functional) -> Functional:
+        """The functional whose tuning entry also serves `f`: `f` with every
+        partially-tuned (fallback) axis pinned to its fallback value.
+
+        Functionals that differ only in fallback axes share one database row and
+        one tuning entry, so anything that defines that entry's candidates must
+        be computed from this representative, never from `f` itself."""
+        axes_all, axes_multi, overrides = self._ordered_axes()
+        fallback = self.partially_tuned_functionals
+        by_label = {ax.signature_name: ax for ax in axes_all}
+        unknown = set(fallback) - set(by_label)
+        if unknown:
+            raise ValueError(f'{self.NAME}: @ati.tune.fallback names no axis: {sorted(unknown)}')
+        picked = dict(f.choice)
+        for label, value in fallback.items():
+            picked[by_label[label].var_name] = _fallback_choice(by_label[label], value)
+        if picked == f.choice:
+            return f
+        godel = godel_of(axes_multi, [ax.choices.index(picked[ax.var_name]) for ax in axes_multi])
+        return self._functional(axes_all, overrides, picked, godel,
+                                f.arch, f.arch_number, f.optimized_for)
+
     # --- functional enumeration (classical: the Interface yields its functionals) -
 
     def _axes_overrides(self):
@@ -86,15 +123,28 @@ class Interface(ABC):
         its DEFAULT backend's axes while keeping meta_object = the operator."""
         return self._built.axes, self._built.overrides
 
+    def _ordered_axes(self):
+        """(axes_all, axes_multi, overrides): every axis in canonical anchor
+        order, and the multi-choice ones (the godel digits, strides assigned)."""
+        axes, overrides = self._axes_overrides()
+        axes_all = sorted(axes, key=lambda a: a.anchor)
+        axes_multi = [a for a in axes_all if not a.is_trivial]
+        assign_godel(axes_multi)
+        return axes_all, axes_multi, overrides
+
+    def _functional(self, axes_all, overrides, picked, godel, arch, arch_number, gpus):
+        return Functional(meta_object=self, arch=arch,
+                          arch_number=arch_number, godel_number=godel,
+                          choice=picked,
+                          resolved=_resolve(axes_all, overrides, picked, arch),
+                          optimized_for=gpus)
+
     def gen_functionals(self, target_arch):
         """Yield every Functional of this Interface (the classical enumeration:
         product over the multi-choice axes (godel), fan each variable's choice onto
         its arguments, apply overrides in declared order). `target_arch` is an
         ordered {arch -> gpus}; arch_number is its enumeration index."""
-        axes, overrides = self._axes_overrides()
-        axes_all = sorted(axes, key=lambda a: a.anchor)
-        axes_multi = [a for a in axes_all if not a.is_trivial]
-        assign_godel(axes_multi)
+        axes_all, axes_multi, overrides = self._ordered_axes()
         trivial_pick = {a.var_name: a.choices[0] for a in axes_all if a.is_trivial}
         for arch_number, (arch, gpus) in enumerate(target_arch.items()):
             for sel in itertools.product(*[range(a.radix) for a in axes_multi]):
@@ -102,11 +152,8 @@ class Interface(ABC):
                 picked = dict(trivial_pick)
                 picked.update({a.var_name: a.choices[i]
                                for i, a in zip(sel, axes_multi)})
-                resolved = _resolve(axes_all, overrides, picked, arch)
-                yield Functional(meta_object=self, arch=arch,
-                                 arch_number=arch_number, godel_number=godel,
-                                 choice=picked, resolved=resolved,
-                                 optimized_for=gpus)
+                yield self._functional(axes_all, overrides, picked, godel,
+                                       arch, arch_number, gpus)
 
     # --- functional surface (the contract the code generator consumes) -----
     #

@@ -14,8 +14,9 @@ from typing import Dict, Any, List
 import psycopg
 from psycopg.types.json import Jsonb
 
-from ..exaid import exaid_create, ExaidSubprocessNotOK
+from ..exaid import exaid_create, ExaidSubprocessNotOK, ExaidImplNotAvailable
 from ..tdesc import ImplSelector
+from ..kftdesc import IMPL_NOT_AVAILABLE
 from ..pq.queue import TaskQueue
 from ..pq.results import save_tuning_result
 
@@ -334,6 +335,11 @@ class TuneImplHandler(MessageHandler):
             report['result'] = 'NotOK'
             report['result_data'] = None
             report['error'] = {'stdout': e.stdout, 'stderr': e.stderr}
+        except ExaidImplNotAvailable as e:
+            logger.error(f"No kernel for {iface_name}[{impl_index}]: {e}")
+            report['result'] = IMPL_NOT_AVAILABLE
+            report['result_data'] = None
+            report['error'] = {'message': str(e)}
 
         return {
             'class': 'impl_result',
@@ -443,8 +449,20 @@ class PostprocessHandler(MessageHandler):
         task_config = message['task_config']
 
         arch = task_config.get('arch')
-        logger.info(f"PostprocessHandler: Marking task_id={task_id} as completed (arch={arch})")
-        TaskQueue(self.db_conn).mark_completed(task_id, arch)
+        unavailable = [f'{name}[{index}]'
+                       for name, reports in message.get('received_impls', {}).items()
+                       for index, report in reports.items()
+                       if report.get('result') == IMPL_NOT_AVAILABLE]
+        if unavailable:
+            # The impl lists of this tuning entry are inconsistent: its results
+            # cannot be trusted, so the task must not complete.
+            error = (f'{len(unavailable)} impl(s) selected no kernel, e.g. {unavailable[:4]}: '
+                     f'candidate lists of functionals sharing this tuning entry differ')
+            logger.error(f"PostprocessHandler: Marking task_id={task_id} as failed: {error}")
+            TaskQueue(self.db_conn).mark_failed(task_id, arch=arch, error_message=error)
+        else:
+            logger.info(f"PostprocessHandler: Marking task_id={task_id} as completed (arch={arch})")
+            TaskQueue(self.db_conn).mark_completed(task_id, arch)
 
         logger.info(f"Postprocess completed for task_id={task_id}")
 

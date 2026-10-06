@@ -49,6 +49,9 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
                 #
                 # One tuning entry will test both PADDED_HEAD False and True,
                 # since it is supposed to work for both.
+                # gen_signatures_for_tuning builds both from the same tuning
+                # representative; any per-functional filtering here (like the
+                # disabled one below) must keep their lists identical.
                 # If an hsaco compiled with PADDED_HEAD=False but failed with PADDED_HEAD=True
                 # the index will diverge. benchmark ... attn_fwd=X will test
                 # different copt/psel for different testing cases.

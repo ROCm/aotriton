@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS tuning_results (
     tuning_level TEXT NOT NULL CHECK (tuning_level IN ('kernel', 'op')),
     iface_name TEXT NOT NULL,
     impl_index INT NOT NULL,
-    result TEXT NOT NULL,  -- OK/NotOK/crash/ERROR
+    result TEXT NOT NULL,  -- OK/NotOK/crash/ERROR/ImplNotAvailable
     result_data JSONB,
     error JSONB,
     gpu_id INT,

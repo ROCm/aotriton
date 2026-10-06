@@ -32,7 +32,7 @@ from aotriton.autotune import BinningLessOrEqual, BinningExact
 from ..axis import assign_godel, TemplateParam
 from ..cfield import cfield
 from ..choices import ChoiceVarAbsent
-from ..interface import Interface
+from ..interface import FallbackAxisRead, Interface
 from ..override import VarRef, ValueFn
 from .ksignature import KernelSignature, COMPILER_OPTIONS, DEFAULT_COPT
 from ...builder import DescriptionError
@@ -226,21 +226,41 @@ class KernelDescription(Interface):
 
     def gen_signatures_for_tuning(self, f):
         """Yield a KernelSignature per autotune config (the tuning-build path).
-        Ported from the legacy KernelDescription."""
-        def perf_bind(cfg):
-            # one perf bind row from an autotune config: struct instance of settled choices.
-            return self._perf_struct(
-                **{n: self._perf_struct.choice_for(n, cfg.kwargs[n])
-                   for n in self._perf_struct.param_names()})
-        def gen_copts(cfg):
-            for copt, defopt in zip(COMPILER_OPTIONS, DEFAULT_COPT):
-                yield getattr(cfg, copt, defopt)
+        Ported from the legacy KernelDescription.
+
+        The configs are the tuning entry's (see gen_autotune_configs), so
+        functionals sharing an entry get the same candidates, in the same order."""
+        names = self._perf_struct.param_names()
         for cfg in self.gen_autotune_configs(f):
-            yield KernelSignature(f, perf_bind(cfg), list(gen_copts(cfg)))
+            perf, copts = self._effective_config(cfg)
+            # one perf bind row from an autotune config: struct instance of settled choices.
+            perf_bind = self._perf_struct(
+                **{n: self._perf_struct.choice_for(n, v) for n, v in zip(names, perf)})
+            yield KernelSignature(f, perf_bind, list(copts))
+
+    def _effective_config(self, cfg):
+        """(perf values, compiler options) of an autotune config: exactly what its
+        KernelSignature is built from, in a fixed order."""
+        perf = tuple(cfg.kwargs[n] for n in self._perf_struct.param_names())
+        copts = tuple(getattr(cfg, copt, defopt)
+                      for copt, defopt in zip(COMPILER_OPTIONS, DEFAULT_COPT))
+        return perf, copts
 
     def gen_autotune_configs(self, f):
-        cfg = self._built.tune.configs
-        return cfg(f)
+        """The tuning candidates of the entry serving `f`: the configs of its
+        tuning representative. Raises FallbackAxisRead if `f`'s own configs
+        differ, i.e. the generator depends on a fallback axis."""
+        gen = self._built.tune.configs
+        rep = self.tuning_representative(f)
+        configs = list(gen(rep))
+        effective = lambda cs: [self._effective_config(c) for c in cs]
+        if rep is not f and effective(gen(f)) != effective(configs):
+            raise FallbackAxisRead(
+                f'{self.NAME}: gen_autotune_configs gives {f.tunecc_signature} different '
+                f'configs than its tuning representative {rep.tunecc_signature}. One tuning '
+                f'entry serves every value of the @ati.tune.fallback axes '
+                f'{sorted(self.partially_tuned_functionals)}, so configs must not depend on them.')
+        return configs
 
     def _lut_sancheck(self):
         """This kernel's family-side `LutSancheck`, from modules/<family>/aot.

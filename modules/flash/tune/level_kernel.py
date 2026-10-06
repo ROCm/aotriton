@@ -35,7 +35,9 @@ def _build_kernel_dict():
     selection layered onto the plain SdpaCalls direct_call implementations).
     Called once, from get_impl(); cached at module scope so every caller
     shares one dict."""
+    from pyaotriton import hipError_t
     from pyaotriton.v3 import KernelControl
+    from aotriton.tune.kftdesc import ImplNotAvailable
     from pyaotriton.v3.flash import attn_options
     from .calls import (
         SdpaCalls,
@@ -44,6 +46,7 @@ def _build_kernel_dict():
         bwd_kernel_dq as _bwd_kernel_dq,
         bwd_kernel_fuse as _bwd_kernel_fuse,
     )
+    SYMBOL_NOT_FOUND = hipError_t.hipErrorSharedObjectSymbolNotFound
 
     class AttnOptionsWrapper:
         C_CLASS = attn_options
@@ -99,6 +102,12 @@ def _build_kernel_dict():
                 c.kernel_fine_control[slot].control_bits = KernelControl.Ignore
 
         @property
+        def forced_hsaco(self) -> int | None:
+            """The hsaco index forced by set_hsaco(), or None if the runtime picks."""
+            kfc = self._c.kernel_fine_control[self._slot]
+            return kfc.hsaco_index if kfc.control_bits & KernelControl.Manual else None
+
+        @property
         def selected_kernel_total_hsacos(self):
             return self._c.kernel_fine_control[self._slot].total_hsacos
 
@@ -133,6 +142,12 @@ def _build_kernel_dict():
             ext = self.EXT_CLASS(self.BACKEND_INDEX, self.KERNEL_SLOT)
             ext.set_hsaco(hsaco=hsaco_index, probe=probe)
             return ext
+
+        def direct_call(self, direct_inputs, extargs):
+            outputs, err = super().direct_call(direct_inputs, extargs)
+            if err == SYMBOL_NOT_FOUND and extargs.forced_hsaco is not None:
+                raise ImplNotAvailable.for_index(self.__class__.__name__, extargs.forced_hsaco)
+            return outputs, err
 
         @property
         def KERNEL_SLOT(self):

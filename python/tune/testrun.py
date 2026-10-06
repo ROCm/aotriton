@@ -10,6 +10,7 @@ import json
 from dataclasses import asdict
 import argparse
 from .defaults import set_default_device
+from .kftdesc import ImplNotAvailable, IMPL_NOT_AVAILABLE
 
 def parse_args():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -227,6 +228,16 @@ class CommandProcessor(object):
             return f"Unknown Command {command}"
         return getattr(self, attr)(tail)
 
+_IMPL_NOT_AVAILABLE_REPORTED = object()
+
+def _release_gpu_memory():
+    # run_single_test's own cleanup is skipped when it raises.
+    import gc
+    gc.collect()
+    torch = sys.modules.get('torch')
+    if torch is not None and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
 def main():
     args = parse_args()
     set_default_device(args.gpu)
@@ -265,7 +276,16 @@ def main():
             print("Error", flush=True)
             print(error, file=sys.stderr)
     for line in gen_line():
-        ret = cp.process_input(line)
+        try:
+            ret = cp.process_input(line)
+        except ImplNotAvailable as e:
+            # A tuner inconsistency, not a property of the candidate: report it
+            # distinctly (the task is then marked failed) and keep serving.
+            print(f'{IMPL_NOT_AVAILABLE}:', e, flush=True)
+            ret = _IMPL_NOT_AVAILABLE_REPORTED
+        if ret is _IMPL_NOT_AVAILABLE_REPORTED:
+            _release_gpu_memory()  # outside `except`, once its frames are gone
+            continue
         if isinstance(ret, str):
             report_error(ret)
         else:

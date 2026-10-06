@@ -402,7 +402,7 @@ def export(conn_params: dict, output_path: Path, arch: str | None = None) -> Non
                 SELECT b.task_id, b.arch, b.iface_name, b.task_config, b.impl_desc
                 FROM best_tuning_results b
                 JOIN task_queue t ON t.id = b.task_id AND t.arch = b.arch
-                WHERE t.status != 'cancelled' AND b.tuning_level = 'kernel'
+                WHERE t.status NOT IN ('cancelled', 'failed') AND b.tuning_level = 'kernel'
                   {arch_clause}
                 ORDER BY b.arch, b.iface_name
             """.format(arch_clause='AND b.arch = %s' if arch else ''),
