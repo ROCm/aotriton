@@ -10,6 +10,8 @@ treats the first whitespace-separated token as follows:
 
   * ``OK`` / ``OK <json>`` -- the reply it is waiting for.
   * ``OVERHEATING: ...``   -- forwarded to the log; it keeps reading.
+  * ``ImplNotAvailable: ...`` -- raises ``ExaidImplNotAvailable``; the impl is
+                             recorded as ``ImplNotAvailable`` and the task fails.
   * anything else          -- raises ``ExaidSubprocessNotOK``, failing the task.
 
 Two rules follow, and both have already been learned the hard way:

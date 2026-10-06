@@ -31,7 +31,7 @@ def save_tuning_result(task_id: str, report: dict, conn) -> None:
             - iface_name: Interface name (e.g. 'attn_fwd')
             - impl_index: Variant index (HSACO index for kernel level,
               backend index for op level)
-            - result: Result status (OK/NotOK/crash/ERROR)
+            - result: Result status (OK/NotOK/crash/ERROR/ImplNotAvailable)
             - result_data: Optional benchmark data (JSONB)
             - error: Optional error information (JSONB)
             - complete_on_gpu: GPU ID used for benchmark

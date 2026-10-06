@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from .testrun import main as testrun_entry
 from .utils import safe_readline
+from .kftdesc import IMPL_NOT_AVAILABLE
 import subprocess
 import errno
 from pathlib import Path
@@ -28,6 +29,9 @@ class ExaidSubprocessNotOK(RuntimeError):
     def __init__(self, stdout: str|None, stderr: str|None):
         self.stdout = stdout
         self.stderr = stderr
+
+class ExaidImplNotAvailable(RuntimeError):
+    """The worker reported kftdesc.ImplNotAvailable for the selected impl."""
 
 class ExaidProxy(object):
     ENTRY = testrun_entry
@@ -87,6 +91,9 @@ class ExaidProxy(object):
             if ret == "OVERHEATING:":
                 logger.warning(f"Worker overheating warning: {line}")
                 continue
+            if ret == f'{IMPL_NOT_AVAILABLE}:':
+                logger.error(f"Worker reported {line}")
+                raise ExaidImplNotAvailable(info)
             if ret != "OK":
                 logger.error(f"Worker returned non-OK status: {line}")
                 raise ExaidSubprocessNotOK(line, error_msg)

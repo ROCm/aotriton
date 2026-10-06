@@ -76,14 +76,16 @@ def extended_search_grid():
 
 def _use_extended_search(f, arch, dtype, head_dim, causal_type):
     """Whether `f` is one of the inference functionals the wider space targets.
+
+    No PADDED_HEAD condition: @ati.tune.fallback(PADDED_HEAD=False) makes
+    gen_autotune_configs only ever see the PADDED_HEAD=False representative.
     """
     return (arch in EXTENDED_SEARCH_ARCHS
             and '*fp32' not in dtype
             and head_dim in EXTENDED_SEARCH_HEAD_DIMS
             and causal_type == 0
             and f.choices.BIAS_TYPE == 0
-            and f.choices.ENABLE_DROPOUT is False
-            and f.choices.PADDED_HEAD is False)
+            and f.choices.ENABLE_DROPOUT is False)
 
 
 def gen_autotune_configs(f):

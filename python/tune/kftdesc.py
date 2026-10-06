@@ -4,6 +4,33 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+
+class ImplNotAvailable(RuntimeError):
+    """
+    A forced impl_index selected no kernel in the functional serving the input.
+
+    Either functionals sharing a tuning entry (e.g. the PADDED_HEAD twins folded
+    by @ati.tune.fallback) have different candidate lists, or that functional
+    has no candidates at all. That is a tuner inconsistency, not a property of
+    the candidate: testrun reports it as `IMPL_NOT_AVAILABLE: <message>` and
+    the task is marked failed, instead of the candidate being recorded as an
+    inaccurate kernel and silently rejected.
+
+    In a tuning build the shim returns hipErrorSharedObjectSymbolNotFound only
+    in this case. A candidate whose hsaco failed to compile is still selected
+    (it fails later, with hipErrorInvalidImage) and stays rejectable.
+    """
+    @classmethod
+    def for_index(cls, iface_name: str, impl_index: int) -> 'ImplNotAvailable':
+        return cls(f'{iface_name}={impl_index} selected no kernel: the functional serving '
+                   f'this input has no candidate at that index (candidate lists of '
+                   f'functionals sharing a tuning entry differ, or it has no candidates)')
+
+
+# testrun status word and tuning_results.result value for ImplNotAvailable.
+IMPL_NOT_AVAILABLE = 'ImplNotAvailable'
+
+
 class KernelForTuneDescription(ABC):
     """
     PT_* can be class variable when subclassing

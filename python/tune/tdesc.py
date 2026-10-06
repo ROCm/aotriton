@@ -10,6 +10,8 @@ from argparse import Namespace
 from pathlib import Path
 from dataclasses import asdict, dataclass, fields
 
+from .kftdesc import ImplNotAvailable
+
 '''
 A dual-purpose class for task dispatch and GPU worker execution.
 
@@ -387,8 +389,13 @@ class TuningDescription(ABC):
                 im = self.INPUT_METADATA.from_dict(t['input_metadata'])
                 pt = t['pt_file']
                 yield t['test_name'], im, pt
-        adiffs = {tname : self.run_single_test(im, pt, which_impl) for tname, im, pt in gen()}
-        for _, bim, pt in gen():
-            impl_desc, times = self.run_single_benchmark(bim, pt, which_impl)
+        def run(tname, fn, im, pt):
+            try:
+                return fn(im, pt, which_impl)
+            except ImplNotAvailable as e:
+                raise ImplNotAvailable(f'{e} [test case {tname}]') from e
+        adiffs = {tname: run(tname, self.run_single_test, im, pt) for tname, im, pt in gen()}
+        for tname, bim, pt in gen():
+            impl_desc, times = run(tname, self.run_single_benchmark, bim, pt)
             break
         return entry, impl_desc, adiffs, times, bim
