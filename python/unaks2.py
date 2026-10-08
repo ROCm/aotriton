@@ -7,7 +7,7 @@ import lzma
 from argparse import ArgumentParser
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
-from aks2 import AKS2_MAGIC, AKS2_DirectoryEntry, _AKS2_DirectoryEntry_BaseSize
+from .aks2 import AKS2_MAGIC, AKS2_DirectoryEntry, _AKS2_DirectoryEntry_BaseSize
 
 desc = """
 List or extract AOTriton Kernel Storage V2 (AKS2) files, like unzip.
