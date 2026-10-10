@@ -1,0 +1,96 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Wrapper script for aotriton.tune.dispatch_tasks
+# This script sets up the Python environment and calls the actual dispatch module
+
+if [ -z "$BASH_VERSION" ]; then
+  echo "This script requires Bash. Please run it with 'bash script_name.sh' or ensure /bin/sh points to /bin/bash." >&2
+  exit 1
+fi
+
+# Get the directory where this script resides
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+AOTRITON_ROOT="$(cd "$TUNE_ROOT/.." && pwd)"
+
+print_help_and_exit() {
+  echo "Error: Missing arguments" >&2
+  echo "Usage: $0 <module> <workdir> [module-options]" >&2
+  echo "       For more details, create a workdir and call $0 <module> <workdir> -h" >&2
+  exit 1
+}
+
+# Get module and workdir from first two arguments
+if [ "$#" -lt 2 ]; then
+  print_help_and_exit
+fi
+
+WORKDIR="$2"
+
+# Validate workdir
+if [ ! -d "$WORKDIR" ]; then
+  echo "Error: Working directory does not exist: $WORKDIR" >&2
+  exit 1
+fi
+
+# Convert to absolute path
+WORKDIR=$(cd "$WORKDIR" && pwd)
+
+# Set up venv path
+VENV_DIR="$WORKDIR/scratch/venv.devnode"
+VENV_PYTHON="$VENV_DIR/bin/python"
+
+# Create venv if it doesn't exist
+if [ ! -f "$VENV_PYTHON" ]; then
+  echo "Creating virtual environment at $VENV_DIR..."
+  mkdir -p "$WORKDIR/scratch"
+  python3 -m venv "$VENV_DIR"
+  if [ $? -ne 0 ]; then
+    echo "Error: Failed to create virtual environment" >&2
+    exit 1
+  fi
+fi
+
+# Install requirements if needed
+REQUIREMENTS_FILE="$AOTRITON_ROOT/requirements-tuning.txt"
+INSTALLED_MARKER="$VENV_DIR/.requirements_installed"
+
+if [ ! -f "$INSTALLED_MARKER" ] || [ "$REQUIREMENTS_FILE" -nt "$INSTALLED_MARKER" ]; then
+  echo "Installing requirements from $REQUIREMENTS_FILE..."
+  "$VENV_PYTHON" -m pip install -q --upgrade pip
+  "$VENV_PYTHON" -m pip install -q -r "$REQUIREMENTS_FILE"
+  if [ $? -ne 0 ]; then
+    echo "Error: Failed to install requirements" >&2
+    exit 1
+  fi
+  touch "$INSTALLED_MARKER"
+fi
+
+# Editable-install the 'aotriton' package (python/ -> aotriton, see repo-root
+# setup.py) into this private venv so `-m aotriton.tune.dispatch_tasks` can
+# find it below. requirements-tuning.txt does not install it (it has no
+# reference to this checkout's path), so this is a separate, dedicated step.
+AOTRITON_INSTALLED_MARKER="$VENV_DIR/.aotriton_installed"
+if [ ! -f "$AOTRITON_INSTALLED_MARKER" ] || [ "$AOTRITON_ROOT/setup.py" -nt "$AOTRITON_INSTALLED_MARKER" ]; then
+  echo "Installing 'aotriton' package (editable) from $AOTRITON_ROOT..."
+  "$VENV_PYTHON" -m pip install -q -e "$AOTRITON_ROOT" --no-deps
+  if [ $? -ne 0 ]; then
+    echo "Error: Failed to install 'aotriton' package" >&2
+    exit 1
+  fi
+  touch "$AOTRITON_INSTALLED_MARKER"
+fi
+
+# Source config.rc and export PostgreSQL credentials
+if [ -f "$WORKDIR/config.rc" ]; then
+  . "$WORKDIR/config.rc"
+  export POSTGRES_USER POSTGRES_PASSWORD CELERY_SERVICE_HOST POSTGRES_PORT
+fi
+
+# Execute the actual dispatch module with the venv python. `cd` first so
+# aotriton.tune.registry's modules_dir default (AOTRITON_MODULES_DIR env var,
+# else <cwd>/modules) resolves to $AOTRITON_ROOT/modules.
+cd "$AOTRITON_ROOT"
+exec "$VENV_PYTHON" -m aotriton.tune.dispatch_tasks "$@"

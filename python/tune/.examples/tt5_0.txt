@@ -1,0 +1,3 @@
+module flash
+prepare_data dtype='float16';hdim=32;seqlen_q=256;seqlen_k=128;causal=False;dropout_p=0.0;bias_type=0 /dev/shm/tt5
+probe /dev/shm/tt5

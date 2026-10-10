@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block title %}Deploy{% endblock %}
+
+{% block content %}
+<h2>Deployment</h2>
+
+<section>
+    <h3>Prepare Workdir</h3>
+    <p>Initialize the working directory structure and copy configuration templates.</p>
+    <button hx-post="/api/deploy/prepare"
+            hx-swap="none"
+            hx-indicator="#prepare-spinner">Prepare Workdir</button>
+    <span id="prepare-spinner" class="htmx-indicator">⏳ Preparing...</span>
+</section>
+
+<section>
+    <h3>Deploy to All Workers</h3>
+    <p>Sync the working directory and architecture-specific files to all registered workers.</p>
+    <button hx-post="/api/deploy/workdir"
+            hx-swap="none"
+            hx-indicator="#deploy-spinner">Deploy to Workers</button>
+    <span id="deploy-spinner" class="htmx-indicator">⏳ Deploying...</span>
+</section>
+
+<section>
+    <h3>Per-Host Deployment</h3>
+    <p>Deploy to a specific worker host.</p>
+    <form hx-post="/api/deploy/single"
+          hx-swap="none"
+          hx-indicator="#single-deploy-spinner">
+        <label for="deploy-hostname">Select Host:</label>
+        <select name="hostname" id="deploy-hostname">
+            <option value="">-- Select Host --</option>
+        </select>
+        <button type="submit">Deploy</button>
+        <span id="single-deploy-spinner" class="htmx-indicator">⏳ Deploying...</span>
+    </form>
+</section>
+
+<section>
+    <h3>Deployment Information</h3>
+    <table>
+        <tr>
+            <th>Item</th>
+            <th>Path/Value</th>
+        </tr>
+        <tr>
+            <td>Source Workdir</td>
+            <td><code>{{ config.WORKDIR }}</code></td>
+        </tr>
+        <tr>
+            <td>Default Worker Workdir</td>
+            <td><code>{{ config.DEFAULT_WORKDIR }}</code></td>
+        </tr>
+        <tr>
+            <td>SLURM Login Node</td>
+            <td><code>{{ config.SLURM_LOGIN_NODE or 'Not configured' }}</code></td>
+        </tr>
+        <tr>
+            <td>SLURM Worker Dir</td>
+            <td><code>{{ config.SLURM_WORKER_DIR or 'N/A' }}</code></td>
+        </tr>
+    </table>
+</section>
+
+<section>
+    <h3>Excluded from Deployment</h3>
+    <ul>
+        <li><code>/build/</code> - Build artifacts</li>
+        <li><code>/installed/</code> - Architecture-specific (deployed separately)</li>
+        <li><code>/run/</code> - Runtime state</li>
+        <li><code>/scratch/</code> - Temporary files</li>
+        <li><code>/secrets/</code> - TLS certificates (not deployed to workers)</li>
+    </ul>
+</section>
+{% endblock %}

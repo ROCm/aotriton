@@ -1,4 +1,0 @@
-test/test_backward.py::test_irregulars[V3-BiasOn-False-l1-dtype1-0.5-CausalOff-41-17-hdim64-5-3] (call)	{"adiff": 0.0610690712928772, "grads_adiff": [0.014635208994150162, 0.007620807737112045, 0.033259570598602295, 0.10808515548706055]}
-test/test_backward.py::test_irregulars[V3-BiasOn-True-l1-dtype1-0.5-CausalOff-41-17-hdim64-5-3] (call)	{"adiff": 0.06347215175628662, "grads_adiff": [0.01579233631491661, 0.0081375353038311, 0.034007251262664795, 0.11242443323135376]}
-test/test_backward.py::test_irregulars[Split-BiasOn-False-l1-dtype1-0.5-CausalOff-41-17-hdim64-5-3] (call)	{"adiff": 0.0610690712928772, "grads_adiff": [0.014635208994150162, 0.007620807737112045, 0.033259570598602295, 0.10808515548706055]}
-test/test_backward.py::test_irregulars[Split-BiasOn-True-l1-dtype1-0.5-CausalOff-41-17-hdim64-5-3] (call)	{"adiff": 0.06347215175628662, "grads_adiff": [0.01579233631491661, 0.0081375353038311, 0.034007251262664795, 0.11242443323135376]}

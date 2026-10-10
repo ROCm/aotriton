@@ -1,0 +1,75 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Build worker Docker images
+# Usage: imgbld [--host <hostname>]... <workdir>
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/db_query.sh"
+. "$TUNE_ROOT/lib/host_filter.sh"
+
+parse_host_filter "$@"
+
+# Remove --host (and its value) from args, leaving the positionals.
+# Must consume exactly what parse_host_filter consumed, or the two disagree
+# about which tokens are hostnames and which are the workdir.
+ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --host)
+            shift 2 || shift
+            ;;
+        *)
+            ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+WORKDIR="${ARGS[0]}"
+
+if [ -z "$WORKDIR" ]; then
+    echo "Usage: $0 [--host <hostname>]... <workdir>" >&2
+    exit 1
+fi
+
+load_config "$WORKDIR"
+
+mapfile -t HOSTNAMES < <(get_hostnames "$WORKDIR")
+
+BUILD_COUNT=0
+for hostname in "${HOSTNAMES[@]}"; do
+    if ! should_process_host "$hostname"; then
+        continue
+    fi
+
+    # Determine remote workdir and GPU arch for this worker
+    WORKER_INFO=$(get_worker_by_hostname "$WORKDIR" "$hostname")
+    IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
+    WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
+
+    echo "Queuing docker build on $hostname (workdir: $WORKER_WORKDIR, arch: ${arch:-<unset>})"
+
+    # Hand the registry's arch down explicitly rather than letting the remote
+    # work it out: the image's torch is selected by GPU arch
+    # (torch[device-<arch>]), and the remote may have neither amd-smi nor
+    # rocminfo on PATH to ask -- they can be absent, or buried in a TheRock
+    # venv at a location nothing here can predict. The registry already holds
+    # the answer for every worker, so it is the one authority worth using.
+    "$TUNE_ROOT/single/build_image.sh" "$WORKDIR" "$hostname" --arch "$arch"
+
+    BUILD_COUNT=$((BUILD_COUNT + 1))
+done
+
+if [ "$BUILD_COUNT" -eq 0 ]; then
+    echo "Warning: No workers matched the specified criteria" >&2
+    exit 1
+fi
+
+echo "Docker build jobs queued on $BUILD_COUNT worker(s). Monitor with: ssh <hostname> tsp"

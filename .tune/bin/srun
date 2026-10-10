@@ -1,0 +1,76 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Submit SLURM jobs
+# Usage: srun [--time <time>] [--gres <gres>...] <workdir>
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/db_query.sh"
+
+# Parse arguments
+TIME_LIMIT="24:00:00"
+GRES_OVERRIDE=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --time)
+            TIME_LIMIT="$2"
+            shift 2
+            ;;
+        --gres)
+            shift
+            while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; do
+                GRES_OVERRIDE+=("$1")
+                shift
+            done
+            ;;
+        *)
+            WORKDIR="$1"
+            shift
+            ;;
+    esac
+done
+
+if [ -z "$WORKDIR" ]; then
+    echo "Usage: $0 [--time <time>] [--gres <gres>...] <workdir>" >&2
+    exit 1
+fi
+
+load_config "$WORKDIR"
+
+if [ -z "$SLURM_LOGIN_NODE" ]; then
+    echo "Error: SLURM not configured" >&2
+    exit 1
+fi
+
+# Get GRES configurations
+if [ ${#GRES_OVERRIDE[@]} -gt 0 ]; then
+    GRES_ARRAY=("${GRES_OVERRIDE[@]}")
+else
+    mapfile -t GRES_ARRAY < <(get_slurm_batch "$WORKDIR" | cut -d'|' -f2)
+fi
+
+# Export time limit for submit_slurm_job.sh
+export SLURM_TIME_LIMIT="$TIME_LIMIT"
+
+# Record job IDs
+mkdir -p "$WORKDIR/run/slurm"
+JOB_LOG="$WORKDIR/run/slurm/jobs-$(date +%Y%m%d_%H%M%S).txt"
+
+# Submit jobs (treat GRES like hostname - one call per GRES)
+for gres in "${GRES_ARRAY[@]}"; do
+    echo "Submitting job with --gres=$gres"
+
+    JOB_ID=$("$TUNE_ROOT/single/submit_slurm_job.sh" "$WORKDIR" "$gres")
+
+    echo "  Job ID: $JOB_ID"
+    echo "$JOB_ID" >> "$JOB_LOG"
+done
+
+echo "All jobs submitted. Job IDs logged to $JOB_LOG"

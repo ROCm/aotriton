@@ -1,0 +1,148 @@
+// Copyright © 2026 Advanced Micro Devices, Inc.
+// SPDX-License-Identifier: MIT
+
+#include <aotriton/_internal/aiter_hip_common.h>
+#include <aotriton/_internal/log.h>
+#include <aotriton/_internal/util.h>
+#include <aotriton/runtime.h>
+#include <aotriton/util.h>
+#if defined(_WIN32)
+#include "utf8_to_wide.hh"
+#endif
+
+namespace AOTRITON_NS::v3::aiter {
+
+namespace {
+
+const std::unordered_map<uint32_t, std::string>
+AITER_KERNEL_ARCH_TO_STORAGE = {
+  {CAT32(GpuVendor::kAMD, 0x950), "amd-gfx950"},
+  {CAT32(GpuVendor::kAMD, 0x942), "amd-gfx942"},
+};
+
+const std::unordered_map<std::string, std::string>
+AITER_KERNEL_MODULE_TO_STORAGE = {
+  {"fmha_v3_bwd", "flash"},
+  {"fmha_v3_fwd", "flash"},
+};
+
+// Thread-local: two threads may dispatch different kernels at once, and a
+// refused launch belongs to the thread that hit it.
+thread_local hipError_t tls_launch_error = hipSuccess;
+
+}
+
+void
+record_launch_error(hipError_t err) {
+  tls_launch_error = err;
+}
+
+hipError_t
+take_launch_error() {
+  auto err = tls_launch_error;
+  tls_launch_error = hipSuccess;
+  return err;
+}
+
+hipError_t
+peek_hip_error() {
+  return hipPeekAtLastError();
+}
+
+AiterAsmKernel::AiterAsmKernel(const char* name, const char* hsaco)
+  : mangled_kernel_function_name_(name), hsaco_(hsaco)
+{
+}
+
+AiterAsmKernel::~AiterAsmKernel() {
+}
+
+void
+AiterAsmKernel::launch_kernel(const AiterAsmKernelArgs& kargs) {
+  void* config[] = { HIP_LAUNCH_PARAM_BUFFER_POINTER,
+                     kargs.args_ptr,
+                     HIP_LAUNCH_PARAM_BUFFER_SIZE,
+                     kargs.arg_size_ptr,
+                     HIP_LAUNCH_PARAM_END };
+  hipDevice_t device_id;
+  AOTRITON_HIP_CHECK_RETURN(hipStreamGetDevice(kargs.stream, &device_id));
+  pstring_type persistant_storage;
+  std::string  aiter_module;
+  auto lazy = [&]() -> OnDeviceKernel::OnDiskKernelInfo {
+    return { get_package_path(kargs.stream, persistant_storage, aiter_module),
+             aiter_module,
+             hsaco_,
+             mangled_kernel_function_name_ };
+  };
+  auto [kernel_func, essentials, err] = get_kernel(device_id, lazy);
+  if (err != hipSuccess) {
+    // kernel_func is null. Launching it would fail with hipErrorInvalidValue
+    // and latch that on the HIP context, so the next unrelated HIP call in the
+    // process -- typically a torch op, long after this point -- reports it.
+    AOTRITON_LOG(LOG_ERROR,
+                 "AiterAsmKernel: no kernel image for '%s' in '%s' -- refusing to launch",
+                 mangled_kernel_function_name_, hsaco_.c_str());
+    record_launch_error(err);
+    return;
+  }
+
+  AOTRITON_HIP_CHECK_RETURN(hipModuleLaunchKernel(kernel_func,
+                                                  kargs.gdx,
+                                                  kargs.gdy,
+                                                  kargs.gdz,
+                                                  kargs.bdx,
+                                                  kargs.bdy,
+                                                  kargs.bdz,
+                                                  0,
+                                                  kargs.stream,
+                                                  nullptr,
+                                                  (void**)&config));
+}
+
+pstring_view
+AiterAsmKernel::get_package_path(hipStream_t stream, pstring_type& persistant_storage, std::string& aiter_module) const {
+  if (path_cache_.empty()) {
+#if !defined(_WIN32)
+    path_cache_ = hsaco_;
+#else
+    path_cache_ = utf8_to_wide(hsaco_);
+#endif
+  }
+  auto gpu = getGpuFromStream(stream);
+  auto arch = Gpu2VendorArch(gpu);
+  try {
+    auto aks2_arch = AITER_KERNEL_ARCH_TO_STORAGE.at(arch);
+    // Example hsaco value: fmha_v3_bwd/bwd_hd64_dq_convert_fp16.co
+    aiter_module = path_cache_.begin()->string();
+    auto aks2_family = AITER_KERNEL_MODULE_TO_STORAGE.at(aiter_module);
+    // flatzip path example: amd-gfx942/flash/affine_kernels.zip
+#if !defined(_WIN32)
+    persistant_storage = aks2_arch + "/" + aks2_family + "/affine_kernels.zip";
+#else
+    persistant_storage = utf8_to_wide(aks2_arch) + L"/" + utf8_to_wide(aks2_family) + L"/affine_kernels.zip";
+#endif
+  } catch (std::out_of_range&) {
+    // TODO: return error?
+  }
+
+  return persistant_storage;
+}
+
+std::tuple<Gpu, std::string_view>
+get_gpu_arch(const ck_tile::stream_config& sc) {
+  auto gpu = sc.gpu_;
+  if (gpu == GPU_ARCH_UNKNOWN) {
+    gpu = AOTRITON_NS::getGpuFromStream(sc.stream_id_);
+  }
+  auto get_gpu_arch = [gpu]() -> std::string_view {
+    uint32_t vendor_arch = Gpu2VendorArch(gpu);
+    if (vendor_arch == CAT32(GpuVendor::kAMD, 0x950))
+      return "gfx950";
+    if (vendor_arch == CAT32(GpuVendor::kAMD, 0x942))
+      return "gfx942";
+    return "";
+  };
+  return {gpu, get_gpu_arch()};
+}
+
+}

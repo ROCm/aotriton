@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+"""
+Private helper for retry_broken_entries.
+
+Reads pytest2entry.py JSON output from stdin (one JSON object per line),
+looks up the matching task_queue row IDs in PostgreSQL, and inserts
+(pass, host, arch, module, tuning_level, entry_text, task_id) into
+broken_entries.db.
+
+Usage (called by retry_broken_entries, not directly):
+    <pytest2entry output> | broken_entries_to_db <workdir> <hostname> <arch> <pass_num> [--tuning_mode kernel|op]
+"""
+
+import argparse
+import json
+import os
+import sqlite3
+import sys
+from dataclasses import asdict
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+try:
+    import aotriton  # noqa: F401
+except ImportError:
+    sys.exit(
+        "Error: the 'aotriton' package is not importable by python3.\n"
+        f"  Install it with: pip install -e '{_REPO_ROOT}'"
+    )
+
+import psycopg
+from psycopg.rows import dict_row
+
+from aotriton.tune.registry import load_flash_entry_module
+from aotriton.tune.pq.queue import TaskQueue
+from aotriton.tune.utils import get_db_connection_params
+
+_flash_entry_module = load_flash_entry_module()
+FlashEntry = _flash_entry_module.FlashEntry
+FlashInputMetadata = _flash_entry_module.FlashInputMetadata
+
+# Module name is always the unified module now (modular-tune.md §4.3): there
+# is no more separate '<module>_op' module. --tuning_mode instead selects the
+# tuning_level column filter used when resolving task_queue rows.
+# TODO: extend when additional families (e.g. gemm) are added.
+_MODULE = 'flash'
+
+# Copied from modules/flash/aot/_common.py: AOTRITON_FLASH_BLOCK_DMODEL.
+# d_head values from pytest must be rounded up to the nearest compiled block size
+# because the tuning library only has kernels for these specific hdim values.
+_BLOCK_DMODEL_DEFAULT = '16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512'
+_BLOCK_DMODEL = sorted(
+    int(x.strip())
+    for x in os.getenv('AOTRITON_FLASH_BLOCK_DMODEL', _BLOCK_DMODEL_DEFAULT).split(',')
+)
+
+# Copied from modules/flash/tune/flash/module.py (no env var override for seqlen).
+# Uses BinningLessOrEqual, so seqlen is also ceiling-rounded to the nearest entry.
+_SEQLEN_ENTRIES = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
+
+
+def _round_up(value: int, table: list[int], name: str) -> int:
+    """Round value up to the nearest entry in table (ceiling rounding)."""
+    for entry in table:
+        if entry >= value:
+            return entry
+    raise ValueError(f'{name} {value} exceeds maximum tuning table entry {table[-1]}')
+
+def _migrate_broken_entries(db) -> None:
+    """Add tuning_level to a broken_entries table created before it existed.
+
+    CREATE TABLE IF NOT EXISTS leaves an older 6-column table untouched while
+    the INSERT below supplies 7 values, so reusing a workdir would fail with
+    "table broken_entries has 6 columns but 7 values were supplied", and
+    reset_broken_to_pending / compute_best_results --fix would fail on "no such
+    column: tuning_level". This file is workdir-local and survives the database
+    re-initialization the release notes call for, so it needs the migration the
+    PostgreSQL side deliberately does without. 'kernel' is the right backfill:
+    any row predating the column was written when that was the only level this
+    table recorded.
+    """
+    cols = {row[1] for row in db.execute('PRAGMA table_info(broken_entries)')}
+    if cols and 'tuning_level' not in cols:
+        db.execute("ALTER TABLE broken_entries "
+                   "ADD COLUMN tuning_level TEXT NOT NULL DEFAULT 'kernel'")
+
+
+_CREATE_TABLE = '''
+CREATE TABLE IF NOT EXISTS broken_entries (
+    pass          INTEGER NOT NULL,
+    host          TEXT    NOT NULL,
+    arch          TEXT    NOT NULL,
+    module        TEXT    NOT NULL,
+    tuning_level  TEXT    NOT NULL,
+    entry_text    TEXT    NOT NULL,
+    task_id       INTEGER NOT NULL,
+    PRIMARY KEY (pass, task_id)
+);
+CREATE TABLE IF NOT EXISTS extra_uts (
+    pass        INTEGER NOT NULL,
+    task_id     INTEGER NOT NULL,
+    im_text     TEXT    NOT NULL,
+    PRIMARY KEY (pass, task_id, im_text)
+)
+'''
+
+
+def _cfg_to_entry(cfg: dict) -> tuple[str, FlashEntry]:
+    """Translate a pytest2entry cfg dict to (arch, FlashEntry)."""
+    return cfg['arch'], FlashEntry(
+        dtype=cfg['dtype'],
+        hdim=_round_up(cfg['d_head'], _BLOCK_DMODEL, 'd_head'),
+        seqlen_q=_round_up(cfg['seqlen_q'], _SEQLEN_ENTRIES, 'seqlen_q'),
+        seqlen_k=_round_up(cfg['seqlen_k'], _SEQLEN_ENTRIES, 'seqlen_k'),
+        causal=bool(cfg['causal_type']),
+        dropout_p=cfg['dropout_p'],
+        bias_type=cfg['bias_type'],
+    )
+
+
+def _cfg_to_im(cfg: dict) -> FlashInputMetadata:
+    """Translate a pytest2entry cfg dict to a FlashInputMetadata im_text string."""
+    return FlashInputMetadata(
+        dtype=cfg['dtype'],
+        hdim=cfg['d_head'],
+        seqlen_q=cfg['seqlen_q'],
+        seqlen_k=cfg['seqlen_k'],
+        causal=bool(cfg['causal_type']),
+        dropout_p=cfg['dropout_p'],
+        bias_type=cfg['bias_type'],
+        N_HEADS=cfg.get('nheads', 5),
+        BATCH=cfg.get('batch', 3),
+        sm_scale=cfg.get('sm_scale', 'l1'),
+        storage_flip=bool(cfg.get('storage_flip', False)),
+    )
+
+
+def _fetch_task_id(conn, arch: str, entry: FlashEntry, module: str, tuning_level: str) -> int | None:
+    # module alone is no longer enough to pick the right row: 'flash' now
+    # covers both tuning levels, and iface_name collides across them, so
+    # tuning_level (a top-level task_queue column) must also be filtered.
+    rows = TaskQueue(conn).find_by_entry(
+        entry, arch=arch, module=module, tuning_level=tuning_level,
+        columns='id', limit=1)
+    return rows[0]['id'] if rows else None
+
+
+def _parse_stdin() -> list[tuple[str, FlashEntry, FlashInputMetadata]]:
+    """Parse JSON lines from stdin, return de-duplicated (arch, FlashEntry, FlashInputMetadata) list."""
+    seen: set[tuple] = set()
+    result: list[tuple[str, FlashEntry, FlashInputMetadata]] = []
+    raw_count = 0
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            cfg = json.loads(line)
+        except json.JSONDecodeError as e:
+            print(f'Warning: skipping malformed JSON line: {e}', file=sys.stderr)
+            continue
+        raw_count += 1
+        arch, entry = _cfg_to_entry(cfg)
+        key = (arch, tuple(asdict(entry).values()))
+        if key not in seen:
+            seen.add(key)
+            im = _cfg_to_im(cfg)
+            result.append((arch, entry, im))
+    print(f'Entries parsed: {raw_count}, unique: {len(result)}')
+    return result
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument('workdir', help='Project workdir containing config.rc')
+    parser.add_argument('hostname', help='Test host name (for SQLite record)')
+    parser.add_argument('arch', help='GPU arch of test host (for SQLite record)')
+    parser.add_argument('pass_num', type=int, help='Test pass number')
+    parser.add_argument(
+        '--tuning_mode',
+        choices=['kernel', 'op'],
+        default='kernel',
+        help='Selects the tuning_level filter used to resolve task_queue rows '
+             '(module is always the unified \'flash\' module)',
+    )
+    args = parser.parse_args()
+
+    module = _MODULE
+    tuning_level = args.tuning_mode
+
+    workdir = Path(args.workdir)
+    db_path = workdir / 'scratch' / 'broken_entries.db'
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    entries = _parse_stdin()
+    if not entries:
+        print('No entries from stdin. Nothing to do.')
+        return
+
+    conn_params = get_db_connection_params(workdir)
+    resolved: list[tuple[FlashEntry, FlashInputMetadata, int]] = []
+    not_found = 0
+
+    with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
+        for arch, entry, im in entries:
+            task_id = _fetch_task_id(conn, arch, entry, module, tuning_level)
+            if task_id is None:
+                print(
+                    f'Warning: no task_queue row for {arch} {entry.as_text()}',
+                    file=sys.stderr,
+                )
+                not_found += 1
+            else:
+                resolved.append((entry, im, task_id))
+
+    print(f'Resolved: {len(resolved)}, not found: {not_found}')
+
+    with sqlite3.connect(db_path) as db:
+        db.executescript(_CREATE_TABLE)
+        _migrate_broken_entries(db)
+        for entry, im, task_id in resolved:
+            db.execute(
+                # Columns named, not positional: a table migrated by
+                # _migrate_broken_entries has tuning_level appended last, while
+                # a freshly created one declares it fifth. A positional INSERT
+                # would silently write entry_text into task_id on the former --
+                # SQLite's loose typing accepts it without error.
+                'INSERT OR REPLACE INTO broken_entries '
+                '(pass, host, arch, module, tuning_level, entry_text, task_id) '
+                'VALUES (?,?,?,?,?,?,?)',
+                (args.pass_num, args.hostname, args.arch, module, tuning_level,
+                 entry.as_text(), task_id),
+            )
+            db.execute(
+                'INSERT OR REPLACE INTO extra_uts VALUES (?,?,?)',
+                (args.pass_num, task_id, im.as_text()),
+            )
+        db.commit()
+
+    print(f'Written {len(resolved)} entries to {db_path}')
+
+
+if __name__ == '__main__':
+    main()

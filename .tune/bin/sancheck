@@ -1,0 +1,181 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Run the LUT sanity check against a centralized tuning database without
+# triggering any code generation.
+#
+# Usage:
+#   sancheck <workdir> [extra generate.py args...]
+#
+# The tuning database is expected at:
+#   <workdir>/scratch/centraldb.sqlite3
+#
+# This is the file produced by .tune/bin/export_best_results.
+#
+# GPU targets are read from <workdir>/config.rc (SANCHECK_GPUS variable) if
+# present, otherwise all supported GPUs are used.
+#
+# Extra arguments are passed directly to generate.py.
+#
+# Examples:
+#   .tune/bin/sancheck ~/wkdir.v3.5
+#   .tune/bin/sancheck ~/wkdir.v3.5 --target_gpus gfx942_mod0 gfx90a_mod0
+
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+    echo "Usage: $0 <workdir> [--tuning_mode kernel|op] [extra generate.py args...]" >&2
+    exit 1
+fi
+
+WORKDIR="$1"
+shift
+TUNING_MODE="kernel"
+ARCH=""
+EXTRA_ARGS=()
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --tuning_mode) TUNING_MODE="$2"; shift 2 ;;
+        # Must come before the catch-all below. Anything unrecognised is
+        # forwarded verbatim to generate.py, which has no --arch and would
+        # abort on it.
+        --arch) ARCH="$2"; shift 2 ;;
+        *) EXTRA_ARGS+=("$1"); shift ;;
+    esac
+done
+
+if [ ! -d "$WORKDIR" ]; then
+    echo "Error: workdir does not exist: $WORKDIR" >&2
+    exit 1
+fi
+
+CENTRALDB="$WORKDIR/scratch/centraldb.sqlite3"
+if [ ! -f "$CENTRALDB" ]; then
+    echo "Error: tuning database not found: $CENTRALDB" >&2
+    echo "Run .tune/bin/export_best_results first." >&2
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+. "$SCRIPT_DIR/../lib/require_aotriton_pkg.sh"
+
+# Derive GPU targets from the gpu column in the centralized database.
+# This avoids any config.rc dependency — the database already knows
+# which GPUs have been tuned.
+GPUS=$(sqlite3 "$CENTRALDB" \
+    "SELECT DISTINCT gpu FROM \"FLASH\$attn_fwd\" \
+     UNION SELECT gpu FROM \"FLASH\$bwd_kernel_dk_dv\" \
+     UNION SELECT gpu FROM \"FLASH\$bwd_kernel_dq\" \
+     UNION SELECT gpu FROM \"FLASH\$bwd_kernel_fuse\"" \
+    2>/dev/null | tr '\n' ' ' | xargs)
+
+# --arch FILTERS the list derived above rather than constructing a gpu name.
+#
+# Deriving and filtering keeps two properties that "$ARCH_mod0" would lose. It
+# never invents a name generate.py would reject: --target_gpus is constrained by
+# choices=AOTRITON_SUPPORTED_GPUS, so a synthesised gpu for an architecture
+# outside that tuple dies in argparse. And an architecture can carry several
+# mods -- restricting to an architecture means all of its mods, which a prefix
+# match gives and a hardcoded _mod0 does not.
+if [ -n "$ARCH" ]; then
+    FILTERED=""
+    for gpu in $GPUS; do
+        [ "${gpu%%_mod*}" = "$ARCH" ] && FILTERED="$FILTERED $gpu"
+    done
+    GPUS="$(echo "$FILTERED" | xargs)"
+    if [ -z "$GPUS" ]; then
+        echo "Error: no gpu for arch $ARCH in $CENTRALDB." >&2
+        echo "       Run: .tune/bin/export_best_results $WORKDIR --arch $ARCH" >&2
+        exit 1
+    fi
+    echo "Sanity checking arch $ARCH only: $GPUS"
+fi
+
+GPU_ARGS=()
+if [ -n "$GPUS" ]; then
+    read -ra GPU_ARGS <<< "--target_gpus $GPUS"
+fi
+
+# Persistent build directory — survives across runs so the checked-in
+# op_database baseline only needs to be extracted once.
+#   <workdir>/build/sancheck/flash/database/tuning_database.sqlite3  (symlink)
+#   <workdir>/build/sancheck/flash/database/op_database.sqlite3      (copied from scratch/ in op
+#     mode, otherwise extracted from the checked-in .tar.xz baseline)
+# The build_dir's FAMILY subdir (flash/) is required: codegen's
+# DatabaseFactories.create_factory always resolves the Factory path as
+# <build_dir>/<family> (see python/codegen/interface.py).
+#
+# This mirrors what v3src/CMakeLists.txt does for a real build: it extracts
+# every modules/<family>/database/**.sqlite3.tar.xz into
+# <build_dir>/<family>/database/ *before* any codegen runs. sancheck bypasses
+# CMake, so it has to stage the same files itself — Factory never reads a
+# .tar.xz, and never looks outside <build_dir>/<family>/database/.
+TMPDIR_BUILD="$WORKDIR/build/sancheck"
+FAMILY_DB_DIR="$TMPDIR_BUILD/flash/database"
+mkdir -p "$FAMILY_DB_DIR"
+
+# tuning_database.sqlite3: always re-symlink in case the path changed.
+ln -sf "$(realpath "$CENTRALDB")" "$FAMILY_DB_DIR/tuning_database.sqlite3"
+
+# op_database.sqlite3: use the freshly tuned file in op mode; otherwise extract
+# the checked-in baseline. Factory ATTACHes it in both modes, so kernel mode
+# needs it staged too.
+OP_TARBALL="$REPO_ROOT/modules/flash/database/op_database.sqlite3.tar.xz"
+if [ "$TUNING_MODE" = "op" ]; then
+    cp "$WORKDIR/scratch/op_database.sqlite3" "$FAMILY_DB_DIR/op_database.sqlite3"
+else
+    if [ ! -f "$OP_TARBALL" ]; then
+        echo "Error: op database baseline not found: $OP_TARBALL" >&2
+        echo "Is this a partial checkout? (it is a normal tracked file, not LFS/a submodule)" >&2
+        exit 1
+    fi
+    # Re-extract when the tarball is newer: TMPDIR_BUILD outlives a branch
+    # switch or a pull that updates the tracked baseline. -m (--touch) stamps
+    # the extraction time on the output instead of restoring the archived
+    # mtime, which predates the tarball and would defeat this check.
+    if [ ! -f "$FAMILY_DB_DIR/op_database.sqlite3" ] \
+       || [ "$OP_TARBALL" -nt "$FAMILY_DB_DIR/op_database.sqlite3" ]; then
+        tar -xJmf "$OP_TARBALL" -C "$FAMILY_DB_DIR"
+    fi
+fi
+
+REPORT="$WORKDIR/scratch/dbreport.txt"
+mkdir -p "$WORKDIR/scratch"
+echo "Sanity check report: $REPORT"
+
+# generate.py has no --tuning_mode concept of its own: without --selective it
+# walks every family/codegen_module -- flash's kernels and its operators
+# alike -- in one pass. Scope it to just the one being checked, via
+# unique_path's <family>/<codegen_module>/<name> convention.
+# TODO: extend when additional families (e.g. gemm) are added.
+if [ "$TUNING_MODE" = "op" ]; then
+    SELECTIVE_ARGS=(--selective 'flash/op/*')
+else
+    SELECTIVE_ARGS=(--selective 'flash/triton/*')
+fi
+echo "Checking tuning_mode=$TUNING_MODE only (${SELECTIVE_ARGS[1]}) -- re-run with --tuning_mode $([ "$TUNING_MODE" = "op" ] && echo kernel || echo op) to check the other LUT surface."
+
+# Diagnostic output goes to stdout (bare print() calls, no logging framework).
+python3 -m aotriton.generate \
+    --build_dir "$TMPDIR_BUILD" \
+    --root_dir "$REPO_ROOT" \
+    --lut_sanity_check \
+    --sanity_check_only \
+    "${GPU_ARGS[@]}" \
+    "${SELECTIVE_ARGS[@]}" \
+    "${EXTRA_ARGS[@]}" > "$REPORT"
+
+echo "Done. Report written to $REPORT"
+
+MISSING=$(grep -c 'TUNE_V3BIS' "$REPORT" 2>/dev/null || true)
+echo "Missing LUT entries: $MISSING"
+
+if [ "$MISSING" -gt 0 ]; then
+    echo "Error: sancheck found $MISSING missing LUT entries." >&2
+    echo "  → Run retry_missing_entries to re-queue missing tasks, then bake_lut --incremental." >&2
+    echo "  → (bake_lut --fix is for entries present but failed in correctness tests.)" >&2
+    exit 1
+fi

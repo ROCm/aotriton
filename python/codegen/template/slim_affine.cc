@@ -1,0 +1,51 @@
+// Copyright © 2025 Advanced Micro Devices, Inc.
+// SPDX-License-Identifier: MIT
+
+#include "affine.[[affine_kernel_name]].h"
+#include <aotriton/_internal/kernel_cluster.h>
+#include <aotriton/_internal/log.h>
+#include <aotriton/util.h>
+#include <tuple>
+[[includes]]
+
+namespace AOTRITON_NS::v3::[[kernel_family_name]] {
+
+#if [[shared_iface]]
+using AOTRITON_NS::v3::[[shared_iface_family]]::[[param_class_name]];
+#endif
+
+std::tuple<int, int>
+[[context_class_name]]::get_archmod_number(Gpu gpu) {
+    [[get_archmod_number_body]];
+    // TODO: print warning about tuning for this GPU mod is not built.
+    // Note: if some mod does not have tuning info in the database at all, the
+    //       getGpuFromStream should not return that mod from beginning.
+    return std::make_tuple(-1, 0);
+}
+
+
+// A functional axis wired to a context helper has its godel digit read from
+// `scratch_params.` rather than `args.` (codegen/interface.py). Slim affine
+// kernels never compute a godel number at all -- no autotune_table, no
+// head-dim axis, no binning step to redirect -- so that redirection neither
+// helps nor breaks them; it simply does not reach here.
+hipError_t
+[[context_class_name]]::lookup_optimal(Gpu gpu) {
+    auto [arch_number, mod_number] = get_archmod_number(gpu);
+    if (arch_number < 0) {
+        return hipErrorNoBinaryForGpu;
+    }
+    const char* reject_reason = check_inputs_are_supported(gpu);
+    if (reject_reason) {
+        AOTRITON_LOG(LOG_INFO,
+                     "Unsupported inputs for backend [[context_class_name]] reason: %s",
+                     reject_reason);
+        return hipErrorPeerAccessUnsupported;
+    }
+    return hipSuccess;
+}
+
+// Users of Slim Affine Kernel are responsible to implement launch() function
+// hipError_t [[context_class_name]]::launch(hipStream_t stream) const;
+
+}

@@ -1,0 +1,35 @@
+From: AOTriton CI <noreply@amd.com>
+Subject: [PATCH] Runtime/ROCm: honour ROCM_PATH, so TheRock works
+
+`find_package(hip REQUIRED CONFIG PATHS ${_rocm_paths})` looked only at
+/opt/rocm*, which a TheRock (rocm-sdk) installation is not: its root is a
+Python site-packages directory reported by `rocm-sdk path --root`.
+
+When ROCM_PATH is set it names the installation to use, so use that one and
+nothing else -- searching /opt/rocm* as well would let a classical install
+present on the same machine answer first. The glob remains the behaviour when
+ROCM_PATH is unset. Same precedence, and the same two lines, as AOTriton's own
+CMakeLists.txt.
+
+--- a/lib/Runtime/ROCm/CMakeLists.txt
++++ b/lib/Runtime/ROCm/CMakeLists.txt
+@@ -3,9 +3,16 @@
+ #
+ # FlyJitRuntime — thin ROCm runtime with GPU module caching.
+ 
+-file(GLOB _rocm_paths LIST_DIRECTORIES true "/opt/rocm*")
+-list(SORT _rocm_paths ORDER DESCENDING)
+-find_package(hip REQUIRED CONFIG PATHS ${_rocm_paths})
++if(DEFINED ENV{ROCM_PATH})
++  # A TheRock (rocm-sdk) root is a site-packages directory, not /opt/rocm.
++  # ROCM_PATH names the one installation meant; do not search for others.
++  list(APPEND CMAKE_PREFIX_PATH "$ENV{ROCM_PATH}/lib/cmake")
++  find_package(hip REQUIRED CONFIG)
++else()
++  file(GLOB _rocm_paths LIST_DIRECTORIES true "/opt/rocm*")
++  list(SORT _rocm_paths ORDER DESCENDING)
++  find_package(hip REQUIRED CONFIG PATHS ${_rocm_paths})
++endif()
+ 
+ add_library(FlyJitRuntime SHARED FlyRocmRuntimeWrappers.cpp)
+ target_include_directories(FlyJitRuntime PRIVATE

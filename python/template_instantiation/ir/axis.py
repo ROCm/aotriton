@@ -1,0 +1,179 @@
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+"""
+Axis — a free dimension of a kernel's instantiation space
+Step 1.2.md §2.1, §4, §5).
+
+One Axis per choice variable (type_var / scalar_var / enumerated scalar). It
+owns the variable name (the public identity used by f.choices.<var_name>), the
+arguments it instantiates, the ordered concrete TypedChoices, and per-argument shape
+(rank, contiguous). Overrides are NOT axes — only choice variables create
+combinatorial dimensions.
+
+Godel numbering is mixed-radix, big-endian: the earliest-anchored axis is the
+most significant digit, mirroring the C++-side ladder that recomputes the number
+from the params struct. Both orderings must be reproducible and identical, so the
+canonical axis order is ascending `anchor` (earliest signature argument first).
+"""
+
+from .typed_choice import TypedChoice
+
+
+class Axis:
+    __slots__ = ('var_name', 'arg_names', 'choices', 'anchor',
+                 'ranks', 'contiguous', 'godel_stride', 'kind', 'stride_of',
+                 'signature_name')
+
+    # kind values: 'tensor' | 'scalar' | 'stride' | 'stride_unit'
+    def __init__(self, var_name, arg_names, choices, anchor,
+                 ranks=None, contiguous=None, kind='scalar', stride_of=None,
+                 signature_name=None):
+        self.var_name = var_name
+        self.arg_names = tuple(arg_names)
+        self.choices = tuple(choices)
+        assert len(self.choices) >= 1, \
+            f'Axis {var_name!r}: choices must be non-empty (got options=[])'
+        assert all(isinstance(c, TypedChoice) for c in self.choices), \
+            'Axis.choices must be TypedChoice objects'
+        self.anchor = anchor
+        # per-arg shape; only meaningful for tensor axes
+        self.ranks = dict(ranks) if ranks else {}
+        self.contiguous = dict(contiguous) if contiguous else {}
+        self.godel_stride = None   # assigned by assign_godel over multi-choice axes
+        self.kind = kind
+        # for stride axes: (tensor_arg, dim_index) the stride belongs to
+        self.stride_of = stride_of
+        # the argument recording this axis in persisted artifacts (compact
+        # signature, aks2/zip entry name, DB row key); explicit for shared
+        # multi-choice variables, else the first argument.
+        self.signature_name = signature_name or self.arg_names[0]
+
+    @property
+    def repr_arg(self) -> str:
+        """The representative REAL argument of this axis — the first-appearing
+        kernel argument it instantiates. This is the key used to look up the axis's
+        resolved value (all members of an axis share one choice per functional,
+        modulo per-arg overrides). It is ALWAYS a real argument, unlike
+        `signature_name`, which is only the LABEL recorded in persisted artifacts
+        and may be set to anything (e.g. 'dtype'). Never use `signature_name` to
+        index the resolved table."""
+        return self.arg_names[0]
+
+    @property
+    def is_stride(self) -> bool:
+        return self.kind in ('stride', 'stride_unit')
+
+    @property
+    def radix(self) -> int:
+        return len(self.choices)
+
+    @property
+    def repr_typed_choice(self) -> TypedChoice:
+        """The representative TypedChoice (the first) — read for its infotype when
+        emitting the compiled-in feature table for this axis."""
+        return self.choices[0]
+
+    @property
+    def is_trivial(self) -> bool:
+        """A single-choice axis: pins a type but adds no combinations, so it is
+        excluded from godel digits (a digit that is always 0)."""
+        return self.radix <= 1
+
+    @property
+    def is_launch_data(self) -> bool:
+        """Whether arguments of this axis are live launch data (passed at dispatch
+        time). Tensors and non-unit strides are live; unit (contiguous) strides are
+        constexpr 1 (not passed); feature scalars with a constexpr choice are baked
+        at compile time (not passed); perf scalars are also constexpr (not here)."""
+        if self.kind == 'tensor':
+            return True
+        if self.kind == 'stride':
+            return True
+        if self.kind == 'stride_unit':
+            return False
+        # scalar axis: live at runtime iff its choice is not a constexpr
+        return not self.choices[0].is_constexpr
+
+    def choice_for_arg(self, nth: int, arg_name: str) -> TypedChoice:
+        """The nth choice, specialized to a concrete rank for a tensor arg."""
+        c = self.choices[nth]
+        if c.is_tensor and arg_name in self.ranks:
+            return c.with_rank(self.ranks[arg_name])
+        return c
+
+    def __repr__(self):
+        return (f'Axis({self.var_name!r}, args={self.arg_names}, '
+                f'radix={self.radix}, anchor={self.anchor})')
+
+
+def assign_godel(axes_multi) -> int:
+    """Assign big-endian mixed-radix strides to the multi-choice axes (already in
+    canonical anchor order) and return TOTAL = product of radices = number of
+    functionals per arch.
+
+    stride_{n-1} = 1 ; stride_j = product of all less-significant radices.
+    """
+    strides = [0] * len(axes_multi)
+    acc = 1
+    for j in reversed(range(len(axes_multi))):
+        strides[j] = acc
+        acc *= axes_multi[j].radix
+    for axis, s in zip(axes_multi, strides):
+        axis.godel_stride = s
+    return acc
+
+
+def godel_of(axes_multi, selection) -> int:
+    """godel number for a selection (one nth per multi-choice axis, in the same
+    order). Requires assign_godel to have run."""
+    return sum(nth * axis.godel_stride
+               for nth, axis in zip(selection, axes_multi))
+
+
+from dataclasses import dataclass
+
+
+@dataclass(slots=True)
+class TemplateParam:
+    """The per-kernel view of one functional Axis for the compiled-in feature tables
+    (codegen.kernel get_<name>_choices). Named after the legacy `TemplateParameter`
+    (TP) it descends from — the codegen loops still call its instances `tp`. It is NOT
+    a re-shaping of Axis — it pairs the axis with this kernel's wiring/override state
+    that Axis cannot hold:
+      * `repr_name` / `all_names` — the APPAREL-mapped names (operator operands) for the
+        C++ surface, which depend on the kernel's wires_to map, not on the axis.
+      * `overridden_to_constexpr` — whether an override bakes the axis's representative
+        REAL argument to a constexpr (an argument property; a dtype variable shared by
+        several tensors is never baked even if one member tensor is). A baked axis is
+        excluded from the feature tables.
+    Intrinsic axis data (radix / godel_stride / choices / repr_typed_choice) is read
+    straight off the axis."""
+
+    axis: Axis
+    repr_name: str                  # apparel-mapped getter name (get_<repr_name>_choices)
+    all_names: list[str]            # apparel-mapped member arg names
+    overridden_to_constexpr: bool
+
+    @property
+    def radix(self) -> int:
+        return self.axis.radix
+
+    @property
+    def godel_stride(self) -> int:
+        # Trivial (single-choice) axes have no stride assigned; they contribute 0.
+        return self.axis.godel_stride or 0
+
+    @property
+    def choices(self):
+        return list(self.axis.choices)
+
+    @property
+    def repr_typed_choice(self) -> TypedChoice:
+        return self.axis.repr_typed_choice
+
+    @property
+    def emit_feature_table(self) -> bool:
+        """Whether this axis gets a compiled-in get_<name>_choices() table. A baked
+        (override->constexpr) axis is excluded; stride axes never reach here."""
+        return not self.overridden_to_constexpr

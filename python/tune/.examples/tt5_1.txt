@@ -1,0 +1,6 @@
+module flash
+benchmark /dev/shm/tt5 op.attn_fwd=0
+benchmark /dev/shm/tt5 op.attn_fwd=1
+benchmark /dev/shm/tt5 op.attn_bwd=0
+benchmark /dev/shm/tt5 op.attn_bwd=1
+benchmark /dev/shm/tt5 op.attn_bwd=2

@@ -26,7 +26,15 @@ struct LazyTensorInternal {
     return lazy_ || concrete_;
   }
 
-#define LAZY_INIT if (!concrete_) { concrete_ = (*lazy_.acquire)(lazy_.cookie); }
+#define LAZY_INIT do {                              \
+    if (!concrete_) {                           \
+      if (lazy_.eager) {                        \
+        concrete_ = lazy_.eager;                \
+      } else {                                  \
+        concrete_ = (*lazy_.acquire)(&lazy_);   \
+      }                                         \
+    }                                           \
+  } while(0)
 
   uint64_t size(int i) const {
     LAZY_INIT;
@@ -74,7 +82,7 @@ struct LazyTensorInternal {
   }
 #undef LAZY_INIT
 protected:
-  LazyTensor<Rank> lazy_;
+  mutable LazyTensor<Rank> lazy_;
   mutable TensorView<Rank> concrete_;
   LazyTensorInternal() { }
 };

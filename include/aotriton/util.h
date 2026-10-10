@@ -61,8 +61,10 @@ enum AOTRITON_API Gpu : uint64_t {
   GPU_AMD_ARCH_GFX1101_MOD0 = TRICAT(GpuVendor::kAMD, 0x1101, 0),
   GPU_AMD_ARCH_GFX1102_MOD0 = TRICAT(GpuVendor::kAMD, 0x1102, 0),
   GPU_AMD_ARCH_GFX1103_MOD0 = TRICAT(GpuVendor::kAMD, 0x1103, 0),
-  GPU_AMD_ARCH_GFX1151_MOD0 = TRICAT(GpuVendor::kAMD, 0x1151, 0),
   GPU_AMD_ARCH_GFX1150_MOD0 = TRICAT(GpuVendor::kAMD, 0x1150, 0),
+  GPU_AMD_ARCH_GFX1151_MOD0 = TRICAT(GpuVendor::kAMD, 0x1151, 0),
+  GPU_AMD_ARCH_GFX1152_MOD0 = TRICAT(GpuVendor::kAMD, 0x1152, 0),
+  GPU_AMD_ARCH_GFX1153_MOD0 = TRICAT(GpuVendor::kAMD, 0x1153, 0),
   GPU_AMD_ARCH_GFX950_MOD0  = TRICAT(GpuVendor::kAMD,  0x950, 0),
   GPU_AMD_ARCH_GFX1201_MOD0 = TRICAT(GpuVendor::kAMD, 0x1201, 0),
   GPU_AMD_ARCH_GFX1200_MOD0 = TRICAT(GpuVendor::kAMD, 0x1200, 0),
@@ -208,12 +210,14 @@ private:
   DType dtype_ = kUnknown;
 };
 
-#ifndef aotriton_v2_EXPORTS
+// Not aotriton_v2_EXPORTS: that is defined only for aotriton_v2's own sources,
+// so aotriton_common's would declare extern what they are meant to define.
+#ifndef AOTRITON_BUILDING_LIBRARY
 extern template class TensorView<1>;
 extern template class TensorView<2>;
 extern template class TensorView<3>;
 extern template class TensorView<4>;
-#endif // aotriton_v2_EXPORTS
+#endif // AOTRITON_BUILDING_LIBRARY
 
 // Lazy allocated Tensors
 // For tensors that are only needed by certain backend of arguments
@@ -223,19 +227,22 @@ extern template class TensorView<4>;
 template<int Rank>
 struct LazyTensor {
   void* cookie = nullptr;
-  TensorView<Rank> (*acquire)(void* cookie) = nullptr;
-  // Note for user: Remeber put necessary information to dispose this tensor to
+  TensorView<Rank> (*acquire)(LazyTensor<Rank>* self) = nullptr;
+  // Note for user: Remember put necessary information to dispose this tensor to
   //                "cookie" object in acquire.
-  void  (*dispose)(void* cookie) = nullptr;
+  void  (*dispose)(LazyTensor<Rank>* self) = nullptr;
+  // When eager is set (non-null base pointer), it contains an externally managed
+  // TensorView that should be used directly instead of calling acquire()
+  TensorView<Rank> eager;
 
   operator bool() const {
-    return cookie != nullptr || acquire != nullptr || dispose != nullptr;
+    return eager || cookie != nullptr || acquire != nullptr || dispose != nullptr;
   }
 
-  // FIXME: This design is prone to memory leaks.
+  // FIXME: This design is prone to memory leaks and double-free
   void free() {
     if (dispose && cookie) {
-      (*dispose)(cookie);
+      (*dispose)(this);
       cookie = nullptr;
     }
   }
@@ -244,6 +251,7 @@ struct LazyTensor {
 Gpu AOTRITON_API getGpuFromStream(hipStream_t);
 bool AOTRITON_API isArchExperimentallySupported(hipStream_t);
 int AOTRITON_API getMultiProcessorCount(hipStream_t stream);
+bool AOTRITON_API isArchTechPreview(hipStream_t);
 
 } // namespace AOTRITON_NS
 

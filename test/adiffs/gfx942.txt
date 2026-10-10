@@ -1,4 +1,0 @@
-test/test_backward.py::test_regular_bwd[Split-False-l2-dtype2-0.0-CausalOff-8192-2048-hdim32-5-3] (call)	{"adiff": 0.00016653114020082072, "grads_adiff": [4.335292964421488e-05, 4.702774325200665e-05, 0.00010002706441331055, 0.0]}
-test/test_backward.py::test_regular_bwd[Split-True-l2-dtype2-0.0-CausalOff-8192-2048-hdim32-5-3] (call)	{"adiff": 0.0001728539252889849, "grads_adiff": [4.390855156192488e-05, 4.972106155384792e-05, 0.00011052039099884725, 0.0]}
-test/test_backward.py::test_regular_bwd[V3-False-l2-dtype2-0.0-CausalOff-8192-2048-hdim32-5-3] (call)	{"adiff": 0.00016866967974715763, "grads_adiff": [3.83374440986456e-05, 4.4465852598554734e-05, 9.713350423803946e-05, 0.0]}
-test/test_backward.py::test_regular_bwd[V3-True-l2-dtype2-0.0-CausalOff-8192-2048-hdim32-5-3] (call)	{"adiff": 0.00018045899880203553, "grads_adiff": [4.142152007609865e-05, 4.691676064877415e-05, 0.00011312809420777059, 0.0]}

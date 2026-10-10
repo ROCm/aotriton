@@ -1,0 +1,89 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Download build artifacts from the remote build node to local installed/.
+#
+# Reads build node config from <workdir>/workers.db (config table):
+#   buildnode::hostname          SSH hostname of the build node
+#   buildnode::workdir_override  Remote workdir (resolved via get_buildnode_workdir)
+#
+#   --tuning (default)  Fetch tuning libraries: rsync installed/ from remote,
+#                       excluding installed/database/ and installed/test/.
+#   --test              Fetch testing libraries: rsync installed/test/ from remote.
+#
+# Usage:
+#   fetchbuild <workdir>          # fetch tuning build (default)
+#   fetchbuild <workdir> --test   # fetch test build
+#   fetchbuild --test <workdir>   # same, order-independent
+
+set -euo pipefail
+
+MODE="tuning"
+WORKDIR=""
+
+for arg in "$@"; do
+  case "$arg" in
+    --test)   MODE="test" ;;
+    --tuning) MODE="tuning" ;;
+    *)        WORKDIR="$arg" ;;
+  esac
+done
+
+if [ -z "$WORKDIR" ]; then
+  cat >&2 <<EOF
+Usage: $0 <workdir> [--tuning|--test]
+
+  --tuning (default)  Fetch tuning libraries from remote installed/ (excludes
+                      installed/database/ and installed/test/).
+  --test              Fetch testing libraries from remote installed/test/.
+
+Build node config (workers.db config table):
+  buildnode::hostname          SSH hostname of the build node.
+  buildnode::workdir_override  Remote workdir (falls back to default_workdir).
+EOF
+  exit 1
+fi
+
+if [ ! -d "$WORKDIR" ]; then
+  echo "Error: workdir does not exist: $WORKDIR" >&2
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/db_query.sh"
+
+load_config "$WORKDIR"
+
+BUILD_NODE_HOST=$(sqlite3 "$WORKDIR/workers.db" \
+  "SELECT COALESCE(value,'') FROM config WHERE key='buildnode::hostname'" 2>/dev/null || true)
+
+if [ -z "$BUILD_NODE_HOST" ]; then
+  echo "Error: remote build node hostname is not configured in workers.db" >&2
+  exit 1
+fi
+
+REMOTE_WORKDIR="$(get_buildnode_workdir "$WORKDIR")"
+
+# MUST NOT USE rsync --delete. `installed/` is a shared location for various artifacts.
+if [ "$MODE" = "test" ]; then
+  echo "Fetching test build from $BUILD_NODE_HOST:$REMOTE_WORKDIR/installed/test/ ..."
+  mkdir -p "$WORKDIR/installed/test"
+  rsync -az --checksum --info=progress2 \
+    "$BUILD_NODE_HOST:$REMOTE_WORKDIR/installed/test/" \
+    "$WORKDIR/installed/test/"
+else
+  echo "Fetching tuning build from $BUILD_NODE_HOST:$REMOTE_WORKDIR/installed/ ..."
+  mkdir -p "$WORKDIR/installed"
+  rsync -az --checksum --info=progress2 \
+    --exclude '/database/' \
+    --exclude '/test/' \
+    "$BUILD_NODE_HOST:$REMOTE_WORKDIR/installed/" \
+    "$WORKDIR/installed/"
+fi
+
+echo ""
+echo "Fetch complete: $WORKDIR/installed/"

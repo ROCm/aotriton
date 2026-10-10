@@ -1,0 +1,6 @@
+{% if running %}
+<span class="status-badge status-running">Running</span>
+{% if container_name %}<br><small style="color: gray;">{{ container_name }}</small>{% endif %}
+{% else %}
+<span class="status-badge status-stopped">Stopped</span>
+{% endif %}

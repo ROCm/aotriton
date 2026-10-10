@@ -1,0 +1,101 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# (Re)populate the most_accurate_tuning_results plain table for one tuning
+# level.
+#
+# One table holds both 'kernel' and 'op' tuning_level rows, so this script
+# must NOT DROP it -- that would destroy the other level's rows along with
+# this one's. It only ensures the table and index exist (idempotent CREATE
+# ... IF NOT EXISTS), then delegates the replace to populate_most_accurate.py,
+# which scopes its DELETE+INSERT to this run's tuning_level via a
+# session-local CTAS-into-temp-table swap.
+#
+# Usage:
+#   recreate_materialized_view <workdir> [--tuning_mode kernel|op]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$TUNE_ROOT/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/require_aotriton_pkg.sh"
+
+if [ "$#" -lt 1 ]; then
+    echo "Usage: $0 <workdir> [--tuning_mode kernel|op] [--arch <arch>]" >&2
+    exit 1
+fi
+
+WORKDIR="$1"
+shift
+TUNING_MODE="kernel"
+ARCH=""
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --tuning_mode) TUNING_MODE="$2"; shift 2 ;;
+        --arch) ARCH="$2"; shift 2 ;;
+        *) echo "Unknown argument: $1" >&2; exit 1 ;;
+    esac
+done
+
+# Only this architecture's rows are rebuilt; every other architecture's are left
+# exactly as they were. populate_most_accurate narrows its DELETE to match, so
+# the rebuild cannot drop what it is not going to re-insert.
+ARCH_ARGS=()
+[ -n "$ARCH" ] && ARCH_ARGS=(--arch "$ARCH")
+
+if [ ! -d "$WORKDIR" ]; then
+    echo "Error: workdir does not exist: $WORKDIR" >&2
+    exit 1
+fi
+
+load_config "$WORKDIR"
+
+if [ -z "$POSTGRES_USER" ] || [ -z "$POSTGRES_PASSWORD" ]; then
+    echo "Error: POSTGRES_USER or POSTGRES_PASSWORD not set in config.rc" >&2
+    exit 1
+fi
+
+if [ -z "$POSTGRES_DOCKER_IMAGE" ]; then
+    echo "Error: POSTGRES_DOCKER_IMAGE not set in config.rc" >&2
+    exit 1
+fi
+
+POSTGRES_VERSION=$(echo "$POSTGRES_DOCKER_IMAGE" | cut -d: -f2)
+PSQL_IMAGE="alpine/psql:${POSTGRES_VERSION}"
+POSTGRES_HOST="${CELERY_SERVICE_HOST:-localhost}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+
+# One table serves every tuning_level; --tuning_mode selects rows, not tables.
+TABLE_NAME="most_accurate_tuning_results"
+
+SQL_FILE="$REPO_ROOT/python/tune/pq/materialized_views.sql"
+if [ ! -f "$SQL_FILE" ]; then
+    echo "Error: SQL file not found: $SQL_FILE" >&2
+    exit 1
+fi
+
+echo "Ensuring $TABLE_NAME table/index exist..."
+echo "Host: $POSTGRES_HOST"
+echo "Port: $POSTGRES_PORT"
+echo "User: $POSTGRES_USER"
+
+# CREATE TABLE/INDEX IF NOT EXISTS only -- never DROP, $TABLE_NAME is shared
+# by both tuning levels and dropping it would discard the other level's rows.
+docker run --rm \
+    --network=host \
+    -e PGPASSWORD="$POSTGRES_PASSWORD" \
+    -v "$REPO_ROOT:/repo:ro" \
+    "$PSQL_IMAGE" \
+    postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
+    -f "/repo/python/tune/pq/materialized_views.sql"
+
+echo "Table ready. Populating $TABLE_NAME (full, tuning_level=$TUNING_MODE${ARCH:+, arch=$ARCH})..."
+python3 -m aotriton.tune.pq.populate_most_accurate "$WORKDIR" --tuning_mode "$TUNING_MODE" \
+    "${ARCH_ARGS[@]}"
+
+echo "$TABLE_NAME (tuning_level=$TUNING_MODE) recreated successfully"

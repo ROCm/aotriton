@@ -1,22 +1,13 @@
-// Copyright © 2023-2025 Advanced Micro Devices, Inc.
+// Copyright © 2023-2026 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
 #ifndef AOTRITON_V2_API_TRITON_KERNEL_H
 #define AOTRITON_V2_API_TRITON_KERNEL_H
 
 #include "../runtime.h"
-#include <aotriton/config.h>
+#include "on_device_kernel.h"
 #include <memory>
-#include <string_view>
-#include <shared_mutex>
-#include <tuple>
-#include <unordered_map>
 #include <vector>
-
-#include <filesystem>
-
-using pstring_type = std::filesystem::path::string_type;
-using pstring_view = std::basic_string_view<std::filesystem::path::value_type>;
 
 namespace AOTRITON_NS {
 
@@ -65,17 +56,8 @@ struct TritonKernelCompactMeta {
 //                        objects.
 //
 
-class PackedKernel;
-
-class TritonKernel {
+class TritonKernel : public OnDeviceKernel {
 public:
-  struct Essentials {
-    const void* image = nullptr;
-    size_t size = 0;
-    int shared_memory_size = 0;
-    dim3 block { 0, 0, 0 };
-  };
-
   TritonKernel() {
   }
 
@@ -85,7 +67,8 @@ public:
                     const char* copt);
 
   hipError_t invoke(std::string_view kernel_name,
-                    pstring_view package_path,
+                    pstring_view flatzip_path,
+                    std::string_view aks2_entry,
                     std::string_view func_name,
                     std::string_view arch_name,
                     dim3 grid,
@@ -94,6 +77,10 @@ public:
                     bool peek_kernel_image,
 #endif
                     hipStream_t stream);
+  // UNMAINTAINED: original affine kernel path is no longer built; kept for
+  // reference only. Signature still references the legacy package_path layout
+  // and has not been migrated to the flatzip + aks2_entry scheme.
+  [[maybe_unused]]
   hipError_t direct_invoke(std::string_view mangled_kernel_function_name,
                            pstring_view package_path,
                            std::string_view func_name,
@@ -104,38 +91,19 @@ public:
                            size_t sizeof_struct,
                            hipStream_t stream);
 
-  void clear_decompressed_image();
+  // The perf/copt knob set is a PON (Plain / Python Object Notation)
+  // ';'-separated string, not a C struct. These read-only views let a shim
+  // build a `Pon` (aotriton/_internal/pon.h) over the selected kernel's
+  // psel/copt component once, in `lookup_optimal()`, without exposing the
+  // underlying storage.
+  std::string_view psel() const { return ksig_psel_; }
+  std::string_view copt() const { return ksig_copt_; }
 
-#if AOTRITON_BUILD_FOR_TUNING
-  // Will not work unless invoke is called at least once, i.e., If-and-only-iF decompressed
-  Essentials get_image_info_iff_decompressed() const;
-#endif
 private:
-  std::tuple<hipFunction_t, hipError_t> load_for_device(int device_id,
-                                                        std::string_view kernel_function_name,
-                                                        std::string_view stem_name,
-                                                        pstring_view package_path);
-  hipFunction_t cfind_function(int device_id) const;
 
   uint64_t blake2b_; // TODO: sanity check of assemblied stem name
   std::string_view ksig_psel_; // psel_name component
   std::string_view ksig_copt_; // copt_name component
-  struct DeviceFunction {
-    DeviceFunction(int device_id_, hipModule_t mod_, hipFunction_t func_);
-    ~DeviceFunction();
-    int device_id = -1;
-    hipModule_t mod = nullptr;
-    hipFunction_t func = nullptr;
-  };
-  std::unordered_map<int, DeviceFunction> funcache_;
-  std::shared_mutex funcache_mutex_;
-
-  Essentials essentials_;
-  bool kernel_loaded_ = false;
-  void decompress_kernel(pstring_view package_path,
-                         std::string_view stem_name);
-  std::shared_ptr<PackedKernel> packed_kernel_ = nullptr;
-  std::shared_mutex packedkernel_mutex_;
 };
 
 struct TritonAuxiliaryArguments {

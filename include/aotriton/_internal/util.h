@@ -1,4 +1,4 @@
-// Copyright © 2023-2025 Advanced Micro Devices, Inc.
+// Copyright © 2023-2026 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
 #ifndef AOTRITON_V2_INTERNAL_UTIL_H
@@ -9,6 +9,17 @@
 #include <cstdint>
 #include <algorithm>
 #include <vector>
+#include <stdexcept>
+
+#define STRINGIFICATION(s) STRINGIFICATION_I(s)
+#define STRINGIFICATION_I(s) #s
+
+#define AOTRITON_HIP_CHECK_RETURN(expr)                                                                      \
+  do {                                                                                                       \
+    auto r = (expr);                                                                                         \
+    if (r != hipSuccess)                                                                                     \
+      throw std::runtime_error("FAILURE at Line " STRINGIFICATION(__LINE__));                                \
+  } while (0)
 
 namespace AOTRITON_NS {
 

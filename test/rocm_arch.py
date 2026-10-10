@@ -1,1 +1,0 @@
-../tritonsrc/rocm_arch.py

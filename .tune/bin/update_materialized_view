@@ -1,0 +1,117 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Incrementally update most_accurate_tuning_results.
+#
+# Default mode: reads task_ids from <workdir>/scratch/retry_task_ids.txt
+#   (written by retry_missing_entries).
+#
+# Fix mode (--fix [hostname:]<pass>): reads task_ids from broken_entries.db
+#   for the given hostname and pass, then updates most_accurate_tuning_results.
+#   hostname is optional; if omitted, all hosts for that pass are included.
+#
+# Usage:
+#   update_materialized_view <workdir>
+#   update_materialized_view <workdir> --fix <pass>
+#   update_materialized_view <workdir> --fix <hostname>:<pass>
+#   update_materialized_view <workdir> --tuning_mode kernel|op
+
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+    echo "Usage: $0 <workdir> [--tuning_mode kernel|op] [--fix [hostname:]<pass>]" >&2
+    exit 1
+fi
+
+WORKDIR="$1"
+shift
+FIX_SPEC=""
+TUNING_MODE="kernel"
+ARCH=""
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --fix)
+            FIX_SPEC="$2"
+            shift 2
+            ;;
+        --tuning_mode)
+            TUNING_MODE="$2"
+            shift 2
+            ;;
+        --arch)
+            ARCH="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# --arch goes to BOTH sides, and both are necessary.
+#
+# query_broken_entries --arch narrows which task_ids come out (fix path only).
+# That alone is not enough: retry_task_ids.txt on the default path spans the
+# whole fleet, and populate_most_accurate DELETEs the ids it is handed before
+# re-inserting. Without --arch reaching populate as well, it would delete the
+# other architectures' rows for those ids and re-insert only this one's.
+ARCH_ARGS=()
+ARCH_QBE=()
+if [ -n "$ARCH" ]; then
+    ARCH_ARGS=(--arch "$ARCH")
+    ARCH_QBE=(--arch "$ARCH")
+fi
+
+if [ ! -d "$WORKDIR" ]; then
+    echo "Error: workdir does not exist: $WORKDIR" >&2
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$TUNE_ROOT/.." && pwd)"
+
+# This script runs the standalone ~/venv interpreter, not the ambient
+# python3 -- require_aotriton_pkg.sh only checks the latter, so check this
+# interpreter directly instead of sourcing it.
+UMV_PYTHON="$HOME/venv/bin/python"
+if ! "$UMV_PYTHON" -c "import aotriton" &>/dev/null; then
+    echo "Error: the 'aotriton' package is not importable by $UMV_PYTHON." >&2
+    echo "  Install it with: $UMV_PYTHON -m pip install -e '$REPO_ROOT'" >&2
+    exit 1
+fi
+
+if [ -n "$FIX_SPEC" ]; then
+    # --fix [hostname:]<pass>
+    if [[ "$FIX_SPEC" == *:* ]]; then
+        FIX_HOST="${FIX_SPEC%%:*}"
+        FIX_PASS="${FIX_SPEC##*:}"
+        HOST_ARG="--host $FIX_HOST"
+    else
+        FIX_PASS="$FIX_SPEC"
+        HOST_ARG=""
+    fi
+
+    echo "Updating most_accurate_tuning_results (fix broken, pass=$FIX_PASS${FIX_HOST:+, host=$FIX_HOST})..."
+    # shellcheck disable=SC2086
+    "$SCRIPT_DIR/query_broken_entries" "$WORKDIR" --pass "$FIX_PASS" $HOST_ARG "${ARCH_QBE[@]}" \
+    | "$UMV_PYTHON" -m aotriton.tune.pq.populate_most_accurate \
+        "$WORKDIR" --task_ids_file - --tuning_mode "$TUNING_MODE" "${ARCH_ARGS[@]}"
+else
+    TASK_IDS_FILE="$WORKDIR/scratch/retry_task_ids.txt"
+
+    if [ ! -f "$TASK_IDS_FILE" ]; then
+        echo "Error: task_ids file not found: $TASK_IDS_FILE" >&2
+        echo "Run .tune/bin/retry_missing_entries first." >&2
+        exit 1
+    fi
+
+    echo "Updating most_accurate_tuning_results (incremental)..."
+    echo "Task IDs file: $TASK_IDS_FILE"
+
+    "$UMV_PYTHON" -m aotriton.tune.pq.populate_most_accurate \
+        "$WORKDIR" --task_ids_file "$TASK_IDS_FILE" --tuning_mode "$TUNING_MODE" "${ARCH_ARGS[@]}"
+fi

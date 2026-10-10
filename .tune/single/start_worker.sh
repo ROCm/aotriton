@@ -1,0 +1,140 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Start worker on one host
+# Usage: start_worker.sh <workdir> <hostname> [-- <extra args>]
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/db_query.sh"
+
+WORKDIR="$1"
+HOSTNAME="$2"
+shift 2
+
+# Collect extra args. The '--' separator is OPTIONAL and may appear more than
+# once, because callers disagree about it and always have:
+#
+#   wkctl:90,111          emits TWO   (MULTI_GPU_ARGS already starts with one)
+#   stopstart_worker.sh   emits NONE  (it strips the one it was given)
+#   webui tasks.py:341    emits one only when it also has --multi_gpu
+#
+# The old rule -- take the extras only if $1 is exactly '--' -- had no else
+# branch, so a caller that omitted it had every extra SILENTLY DISCARDED. That
+# is how `-- --multi_gpu -1 --tuning_mode op` reached the remote as plain
+# defaults and a worker logged tuning_mode=kernel with no error anywhere. The
+# doubled form failed differently: the surviving '--' travelled all the way to
+# worker_service.sh's arg loop, which rejects it as an unknown option.
+#
+# So separators are accepted anywhere and dropped; no extra arg is ever a bare
+# '--' (they are --multi_gpu/--tuning_mode and their values).
+EXTRA_ARGS=()
+for _arg in "$@"; do
+  [ "$_arg" = "--" ] || EXTRA_ARGS+=("$_arg")
+done
+
+if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
+  echo "Usage: $0 <workdir> <hostname> [-- <extra args>]" >&2
+  echo "" >&2
+  echo "  Start a worker container on <hostname> via SSH." >&2
+  echo "" >&2
+  echo "  WARNING: This script does NOT read GPU selection from the workers DB." >&2
+  echo "  GPU assignment must be passed explicitly via extra args (e.g. -- --multi_gpu 0 1)." >&2
+  echo "  Use wkctl start to apply GPU selection automatically." >&2
+  exit 1
+fi
+
+load_config "$WORKDIR"
+
+# Get arch and workdir_override for this hostname
+WORKER_INFO=$(get_worker_by_hostname "$WORKDIR" "$HOSTNAME")
+IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
+
+WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
+
+# Add --hostname to extra args
+EXTRA_ARGS=(--hostname "$HOSTNAME" "${EXTRA_ARGS[@]}")
+
+ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$CELERY_WORKER_IMAGE" "${EXTRA_ARGS[@]}" <<'EOF'
+WORKER_WORKDIR="$1"
+ARCH="$2"
+CELERY_WORKER_IMAGE="$3"
+shift 3
+EXTRA_ARGS=("$@")
+
+# Parse --tuning_mode from EXTRA_ARGS; strip it, set WORKER_PYTHONPATH, re-append explicitly.
+TUNING_MODE="kernel"
+REMAINING_ARGS=()
+set -- "${EXTRA_ARGS[@]}"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tuning_mode)
+      TUNING_MODE="$2"
+      shift 2
+      ;;
+    *)
+      REMAINING_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+EXTRA_ARGS=("${REMAINING_ARGS[@]}" --tuning_mode "$TUNING_MODE")
+
+if [ "$TUNING_MODE" = "op" ]; then
+  WORKER_PYTHONPATH="/wkdir/installed/test/$ARCH/lib"
+else
+  WORKER_PYTHONPATH="/wkdir/installed/$ARCH/lib"
+fi
+
+RUNFILE="$WORKER_WORKDIR/run/worker.containerid"
+
+mkdir -p "$WORKER_WORKDIR/run"
+
+if [ -f "$RUNFILE" ]; then
+  echo "Worker already running or stale run file exists. Run stop first." >&2
+  exit 1
+fi
+
+# `bash -lc`, never plain `bash -c`. Every shell that enters this image must be
+# a LOGIN shell, because /etc/profile.d/aotriton.sh -- which activates the venv
+# and exports ROCM_PATH along with ROCm's bin/ and lib/ -- is read by
+# /etc/profile and by nothing else. A non-login shell skips it entirely and
+# gets no ROCM_PATH, so anything it launches has to find HIP by luck.
+#
+# This is exactly how the worker and testrun_direct diverged: the same image,
+# the same payload, but testrun_direct ran `bash -l -c` and worked while the
+# worker ran `bash -c` and its testrun children died on arrival, reporting
+# nothing more than a broken pipe back to the task handler.
+#
+# `source .../activate` below is not a substitute. It brings the venv and
+# nothing else -- ROCM_PATH is not the venv's business -- which is why the
+# worker looked correctly set up right until something needed ROCm.
+set -x
+WORKER_CONTAINER_ID=$(docker run -d \
+  --init \
+  --device=/dev/kfd \
+  --device=/dev/dri \
+  --group-add video \
+  --cap-add=SYS_PTRACE \
+  --security-opt seccomp=unconfined \
+  --ipc=host \
+  --network=host \
+  -e PYTHONPATH=$WORKER_PYTHONPATH \
+  -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
+  --mount type=bind,source=$(realpath $WORKER_WORKDIR),target=/wkdir \
+  "$CELERY_WORKER_IMAGE" \
+  bash -lc "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/install_aotriton_pkg.sh && bash .tune/remote/worker_service.sh start /wkdir $ARCH ${EXTRA_ARGS[*]} && exec sleep infinity")
+
+if [ -z "$WORKER_CONTAINER_ID" ]; then
+  echo "Failed to start container" >&2
+  exit 1
+fi
+
+echo "$WORKER_CONTAINER_ID" > "$RUNFILE"
+echo "Started container: $WORKER_CONTAINER_ID"
+EOF

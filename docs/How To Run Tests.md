@@ -8,16 +8,26 @@ cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRI
 # Optionally only build for one arch
 # cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 -G Ninja -DAOTRITON_NAME_SUFFIX=123 -DAOTRITON_TARGET_ARCH=gfx942
 ninja install
-FOR_RELEASE=1 PYTHONPATH=install_dir/lib/ pytest ../test/test_backward.py -v
+FOR_RELEASE=1 PYTHONPATH=install_dir/lib/ pytest ../modules/flash/tests/test_backward.py -v
 # Optionally starting from AOTriton >= 0.10.0
 # it is possible to run tests in parallel on multi-GPUs
 # NGPUS=$(amd-smi list --json|jq length)
-# FOR_RELEASE=1 PYTHONPATH=install_dir/lib/ pytest -n $NGPUS ../test/test_backward.py -v
+# FOR_RELEASE=1 PYTHONPATH=install_dir/lib/ pytest -n $NGPUS ../modules/flash/tests/test_backward.py -v
 ```
 
 # Pre-requisites
 
-* `pip install -r requirements-dev.txt`
+* `pip install -r requirements-dev.txt`, run from the **repo root**. The TL;DR
+  block above `cd`s into `build-test` first — go back to the repo root before
+  running this, since `requirements-dev.txt` installs `pytest-gpu-lease` from a
+  path (`./python/pytest-gpu-lease`) resolved against the current working
+  directory, not the requirements file's location.
+* The tune-infra tests (`python/tune/tests/test_tune_infra.py`,
+  `python/tune/tests/test_gpu_utils_amdsmi.py`) additionally require
+  `pip install -e .` (the main distribution -- e.g. `modules/flash/tune/entry.py`
+  imports `aotriton.utils`) and `pip install -e ./python/tune`: `aotriton.tune`
+  is a separate distribution, and neither is pulled in by
+  `requirements-dev.txt`.
 
 # Pre-requisites for parallel testing on multi-GPUs
 

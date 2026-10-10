@@ -1,0 +1,442 @@
+# Copyright © 2023-2025 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+import os
+IGNORE_BACKWARD_IMPORT = bool(int(os.getenv('IGNORE_BACKWARD_IMPORT', default='0')))
+
+from pyaotriton.v2.flash import debug_simulate_encoded_softmax as fa_debug_simulate_encoded_softmax
+from pyaotriton.v3.flash import (
+    attn_fwd as fa_forward_op,
+    attn_fwd_params as fa_forward_op_params,
+    attn_options,
+)
+if not IGNORE_BACKWARD_IMPORT:
+    from pyaotriton.v3.flash import (
+        attn_bwd as fa_backward_op,
+        attn_bwd_params as fa_backward_op_params,
+    )
+
+# Note: we don't use Enum class because accessing the integer requires using
+#       `.value` property, which makes the code verbose.
+class CausalType:
+    NONE = 0
+    TOP_LEFT = 1
+    BOTTOM_RIGHT = 2
+    WINDOWED = 3
+
+class WindowValue:
+    NONE = 0
+    TOP_LEFT_ALIGNED = -2147483647       # 0x80000001. Special value for varlen
+    BOTTOM_RIGHT_ALIGNED = -2147483646   # 0x80000002. Special value for varlen
+
+# The three per-side axes (VarlenStacked / VarlenLength / VarlenPosition in
+# include/aotriton/flash.h), as the four configurations the retired VarlenType
+# enum used to name. Both sides are set identically; the enum could not express
+# an asymmetric pair, and neither does any caller here yet.
+#
+# Written as axis values rather than as 0x0B0B and friends: the hex is a result,
+# not a definition, and `stacked/CUMULATIVE/REUSE` says what actually differs
+# between compact and padded where `0x0B0B` against `0x0202` does not.
+# Per SIDE, because the interesting configuration is asymmetric: torch's
+# seqused_k takes K's LENGTH from an (N,) array and K's POSITION from a
+# separate (N+1,) one, while Q stays classical compact varlen. No VarlenType
+# could spell that, which is the whole reason varlen_bits replaced it.
+VARLEN_AXES = {
+    #             Q side               K side
+    'compact': ((1, 1, 1), (1, 1, 1)),  # THD, CUMULATIVE, REUSE
+    'padded':  ((0, 1, 0), (0, 1, 0)),  # BHSD, CUMULATIVE, IMPLIED
+    'strided': ((1, 1, 2), (1, 1, 2)),  # THD, CUMULATIVE, ARRAY
+    'seqused': ((1, 1, 1), (1, 2, 2)),  # Q compact; K INDIVIDUAL len + ARRAY pos
+}
+
+# The logsumexp memory arrangement (VarlenLseLayout in include/aotriton/flash.h).
+# HT is AOTriton's own and the default; TH is what Transformer Engine requires.
+ILSE_LAYOUT = {
+    'HT': 0,
+    'TH': 1,
+}
+
+def set_varlen_bits(params, varlen_type, lse_layout):
+    """Fill params.varlen_bits in place.
+
+    In place because pybind returns the member by reference; rebinding a local
+    copy would be silently dropped.
+    """
+    for mode, (stacked, length, position) in zip(
+            (params.varlen_bits.qmode, params.varlen_bits.kmode),
+            VARLEN_AXES[varlen_type]):
+        mode.stacked = stacked
+        mode.length = length
+        mode.position = position
+    params.varlen_bits.lse_layout = ILSE_LAYOUT[lse_layout]
+
+def translate_causal(causal, v3_api):
+    window_left, window_right = 0, 0
+    if isinstance(causal, tuple):
+        assert v3_api, 'Only V3_API supports windowed attention (causal = tuple([window_left, window_right]))'
+        window_left, window_right = causal
+        causal_type = CausalType.WINDOWED
+    elif isinstance(causal, bool):
+        # causal_type = CausalType.TOP_LEFT if causal else CausalType.NONE
+        causal_type = CausalType.WINDOWED if causal else CausalType.NONE
+        if causal:
+            window_left = WindowValue.TOP_LEFT_ALIGNED
+            window_right = WindowValue.TOP_LEFT_ALIGNED
+    else:
+        assert causal in [CausalType.NONE, CausalType.TOP_LEFT, CausalType.BOTTOM_RIGHT]
+        assert v3_api, 'CausalType.TOP_LEFT/BOTTOM_RIGHT variant is supported thru windowed attention, which requires V3 API'
+        if causal == CausalType.TOP_LEFT:
+            causal_type = CausalType.WINDOWED
+            window_left = WindowValue.TOP_LEFT_ALIGNED
+            window_right = WindowValue.TOP_LEFT_ALIGNED
+        elif causal == CausalType.BOTTOM_RIGHT:
+            causal_type = CausalType.WINDOWED
+            window_left = WindowValue.BOTTOM_RIGHT_ALIGNED
+            window_right = WindowValue.BOTTOM_RIGHT_ALIGNED
+        else:
+            causal_type = causal
+    return causal_type, window_left, window_right
+
+from pyaotriton import T1, T2, T4, DType, Stream, hipError_t, get_name_suffix, hipGetLastError
+assert get_name_suffix() != "", ("To run tests, AOTriton must be compiled with suffixes "
+                                 "by passing -DAOTRITON_NAME_SUFFIX=SOME_SUFFIX to cmake. "
+                                 "Otherwise the AOTriton in-development may have conflicts with "
+                                 "AOTriton shipped with PyTorch.")
+try:
+    from pyaotriton import T0
+    PASS_PHILOX_AS_TENSOR = True
+except:
+    PASS_PHILOX_AS_TENSOR = False
+
+AOTRITON_TORCH_ONLY_USE_CPU = bool(int(os.getenv('AOTRITON_TORCH_ONLY_USE_CPU', default='0')))
+if AOTRITON_TORCH_ONLY_USE_CPU:
+    from pyaotriton import HipMemory, hipDeviceSynchronize
+else:
+    # Let user import HipMemory unconditionally but its usage should be guarded with AOTRITON_TORCH_ONLY_USE_CPU
+    HipMemory = None
+
+def cast_dtype(dtype):
+    assert not dtype.is_complex
+    bits = dtype.itemsize * 8
+    if dtype.is_floating_point:
+        maintype = 'Float' if 'bfloat' not in str(dtype) else 'BFloat'
+    else:
+        maintype = 'Int' if 'uint' not in str(dtype) else 'UInt'
+    typename = f'k{maintype}{bits}'
+    return getattr(DType, typename)
+
+def _do_mk_aotensor(q, if_empty_then_like=None, force_data_ptr=None):
+    rank = len(q.shape) if q is not None else len(if_empty_then_like.shape)
+    def lazy_data_ptr():
+        return q.data_ptr() if force_data_ptr is None else force_data_ptr
+    if q is not None and len(q.shape) == 1 and q.numel() in [0, 1]:
+        if PASS_PHILOX_AS_TENSOR:
+            return T0(lazy_data_ptr(), cast_dtype(q.dtype))
+        else:
+            return q[0]
+    elif rank == 1:
+        klass = T1
+    elif rank == 2:
+        klass = T2
+    elif rank == 4:
+        klass = T4
+    else:
+        assert False, f'Unsupported tensor rank {rank}, shape {q.shape}'
+    if q is None:
+        return klass(0, [0] * rank, [0] * rank, cast_dtype(if_empty_then_like.dtype))
+    if q is not None:
+        assert q.stride(-1) == 1, "AOTriton assumes the last stride of Tensors be 1"
+    return klass(lazy_data_ptr(), tuple(q.size()), q.stride(), cast_dtype(q.dtype))
+
+if not AOTRITON_TORCH_ONLY_USE_CPU:
+    def mk_aotensor(q, if_empty_then_like=None):
+        return _do_mk_aotensor(q, if_empty_then_like=if_empty_then_like), q
+else:
+    def mk_aotensor(q, if_empty_then_like=None):
+        if q is None or q.device.type != 'cpu':
+            return _do_mk_aotensor(q, if_empty_then_like=if_empty_then_like), q
+        devm = HipMemory()
+        nbytes = q.untyped_storage().nbytes()
+        devm.alloc(nbytes)
+        devm.load_from_host(q.data_ptr(), nbytes)
+        qview = _do_mk_aotensor(q,
+                                if_empty_then_like=if_empty_then_like,
+                                force_data_ptr=devm.get_pointer())
+        return qview, devm
+
+    def _torch_cpu_only_copy_back(cputensors, devms):
+        hipDeviceSynchronize()
+        for cput, devm in zip(cputensors, devms):
+            if cput is None or devm is None:
+                continue
+            nbytes = cput.untyped_storage().nbytes()
+            devm.store_to_host(cput.data_ptr(), nbytes)
+        hipDeviceSynchronize()
+
+def attn_fwd(q, k, v, b, sm_scale, M, o,
+             dropout_p, philox_seed, philox_offset1, philox_offset2,
+             philox_seed_output, philox_offset_output,
+             encoded_softmax, causal, atomic,
+             extargs=None):
+    extargs = attn_options() if extargs is None else extargs
+    qview, qdevm = mk_aotensor(q)
+    kview, kdevm = mk_aotensor(k)
+    vview, vdevm = mk_aotensor(v)
+    bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
+    Mview, Mdevm = mk_aotensor(M)
+    oview, odevm = mk_aotensor(o)
+    seedview, seeddevm = mk_aotensor(philox_seed)
+    offset1view, offset1devm = mk_aotensor(philox_offset1)
+    seedoutview, seedoutdevm = mk_aotensor(philox_seed_output)
+    offsetoutview, offsetoutdevm = mk_aotensor(philox_offset_output)
+    esmview, esmdevm = mk_aotensor(encoded_softmax, if_empty_then_like=q)
+    atomicview, atomicdevm = mk_aotensor(atomic)
+    causal_type, window_left, window_right = translate_causal(causal, v3_api=True)
+    if AOTRITON_TORCH_ONLY_USE_CPU:
+        hipDeviceSynchronize()
+    params = fa_forward_op_params()
+    params.Q = qview
+    params.K = kview
+    params.V = vview
+    params.B = bview
+    params.Sm_scale = float(sm_scale)
+    params.L = Mview
+    params.Out = oview
+    # params.seqinfo_q0
+    # params.seqinfo_k0
+    # params.Max_seqlen_q
+    # params.Max_seqlen_k
+    params.dropout_p = float(dropout_p)
+    params.philox_seed_ptr = seedview
+    params.philox_offset1 = offset1view
+    params.philox_offset2 = philox_offset2
+    params.philox_seed_output = seedoutview
+    params.philox_offset_output = offsetoutview
+    params.encoded_softmax = esmview
+    params.persistent_atomic_counter = atomicview
+    params.causal_type = causal_type
+    params.window_left = window_left
+    params.window_right = window_right
+    err = fa_forward_op(params,
+                        fa_forward_op_params.kVersion,
+                        Stream(),
+                        extargs
+                        )
+    if AOTRITON_TORCH_ONLY_USE_CPU:
+        _torch_cpu_only_copy_back([M, o, philox_seed_output, philox_offset_output, encoded_softmax],
+                                  [Mdevm, odevm, seedoutdevm, offsetoutdevm, esmdevm])
+    # print(f'{err=}')
+    return err
+
+def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
+             dropout_p, philox_seed, philox_offset1, philox_offset2, causal,
+             extargs=None):
+    extargs = attn_options() if extargs is None else extargs
+    qview, qdevm = mk_aotensor(q)
+    kview, kdevm = mk_aotensor(k)
+    vview, vdevm = mk_aotensor(v)
+    bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
+    oview, odevm = mk_aotensor(o)
+    doutview, doutdevm = mk_aotensor(dout)
+    dqview, dqdevm = mk_aotensor(dq)
+    dkview, dkdevm = mk_aotensor(dk)
+    dvview, dvdevm = mk_aotensor(dv)
+    dbview, dbdevm = mk_aotensor(db, if_empty_then_like=q)
+    Lview, Ldevm = mk_aotensor(L)
+    deltaview = delta
+    seedview, seeddevm = mk_aotensor(philox_seed)
+    offset1view, offset1devm = mk_aotensor(philox_offset1)
+    if AOTRITON_TORCH_ONLY_USE_CPU:
+        hipDeviceSynchronize()
+    causal_type, window_left, window_right = translate_causal(causal, v3_api=True)
+    params = fa_backward_op_params()
+    params.Q = qview;
+    params.K = kview;
+    params.V = vview;
+    params.B = bview;
+    params.Sm_scale = float(sm_scale);
+    params.Out = oview;
+    params.DO = doutview;
+    params.DK = dkview;
+    params.DV = dvview;
+    params.DQ = dqview;
+    params.DB = dbview;
+    params.DQ_ACC = dq_acc;
+    params.L = Lview;
+    params.D = deltaview;
+    # params.seqinfo_q0
+    # params.seqinfo_k0
+    # params.Max_seqlen_q
+    # params.Max_seqlen_k
+    params.dropout_p = float(dropout_p);
+    params.philox_seed_ptr = seedview;
+    params.philox_offset1 = offset1view;
+    params.philox_offset2 = philox_offset2;
+    params.causal_type = causal_type
+    params.window_left = window_left
+    params.window_right = window_right
+    err = fa_backward_op(params,
+                         fa_backward_op_params.kVersion,
+                         Stream(),
+                         extargs)
+    if AOTRITON_TORCH_ONLY_USE_CPU:  # FIXME: V3+CPU
+        _torch_cpu_only_copy_back([dq, dk, dv, db, delta],
+                                  [dqdevm, dkdevm, dvdevm, dbdevm, deltadevm])
+    return err
+
+# def debug_fill_dropout_rng(R, philox_seed, philox_offset):
+#     Rview, Rdevm = mk_aotensor(R)
+#     err = fa_debug_fill_dropout_rng(Rview,
+#                                     philox_seed,
+#                                     philox_offset,
+#                                     Stream())
+#     # print(f'debug_fill_dropout_rng {err=}')
+#     return err
+
+def debug_simulate_encoded_softmax(R, dropout_p, philox_seed, philox_offset1, philox_offset2):
+    Rview, Rdevm = mk_aotensor(R)
+    seedview, seeddevm = mk_aotensor(philox_seed)
+    offsetview, offsetdevm = mk_aotensor(philox_offset1)
+    err = fa_debug_simulate_encoded_softmax(Rview,
+                                            dropout_p,
+                                            seedview,
+                                            offsetview,
+                                            philox_offset2,
+                                            Stream())
+    return err
+
+def attn_fwd_varlen(q, k, v,
+        seqinfo_q0, seqinfo_k0, max_seqlen_q, max_seqlen_k,
+        seqinfo_q1, seqinfo_k1,
+        b, sm_scale, M, o,
+        dropout_p, philox_seed, philox_offset1, philox_offset2,
+        philox_seed_output, philox_offset_output,
+        encoded_softmax, causal, atomic, varlen_type, lse_layout='HT', extargs=None):
+    extargs = attn_options() if extargs is None else extargs
+    qview, qdevm = mk_aotensor(q)
+    kview, kdevm = mk_aotensor(k)
+    vview, vdevm = mk_aotensor(v)
+    cuqview, cuqdevm = mk_aotensor(seqinfo_q0)
+    cukview, cukdevm = mk_aotensor(seqinfo_k0)
+    ssqview, ssqdevm = mk_aotensor(seqinfo_q1, if_empty_then_like=seqinfo_q0)
+    sskview, sskdevm = mk_aotensor(seqinfo_k1, if_empty_then_like=seqinfo_k0)
+    bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
+    Mview, Mdevm = mk_aotensor(M)
+    oview, odevm = mk_aotensor(o)
+    seedview, seeddevm = mk_aotensor(philox_seed)
+    offset1view, offset1devm = mk_aotensor(philox_offset1)
+    seedoutview, seedoutdevm = mk_aotensor(philox_seed_output)
+    offsetoutview, offsetoutdevm = mk_aotensor(philox_offset_output)
+    esmview, esmdevm = mk_aotensor(encoded_softmax, if_empty_then_like=q)
+    atomicview, atomicdevm = mk_aotensor(atomic)
+    causal_type, window_left, window_right = translate_causal(causal, v3_api=True)
+    params = fa_forward_op_params()
+    params.Q = qview
+    params.K = kview
+    params.V = vview
+    params.B = bview
+    params.Sm_scale = float(sm_scale)
+    params.L = Mview
+    params.Out = oview
+    params.seqinfo_q0 = cuqview
+    params.seqinfo_k0 = cukview
+    params.Max_seqlen_q = max_seqlen_q
+    params.Max_seqlen_k = max_seqlen_k
+    params.seqinfo_q1 = ssqview
+    params.seqinfo_k1 = sskview
+    params.dropout_p = float(dropout_p)
+    params.philox_seed_ptr = seedview
+    params.philox_offset1 = offset1view
+    params.philox_offset2 = philox_offset2
+    params.philox_seed_output = seedoutview
+    params.philox_offset_output = offsetoutview
+    params.encoded_softmax = esmview
+    params.persistent_atomic_counter = atomicview
+    params.causal_type = causal_type
+    params.window_left = window_left
+    params.window_right = window_right
+    set_varlen_bits(params, varlen_type, lse_layout)
+    err = fa_forward_op(params,
+                        fa_forward_op_params.kVersion,
+                        Stream(),
+                        extargs
+                        )
+    # print(f'{err=}')
+    return err
+
+def attn_bwd_varlen(q, k, v,
+        seqinfo_q0, seqinfo_k0, max_seqlen_q, max_seqlen_k,
+        seqinfo_q1, seqinfo_k1,
+        b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
+        dropout_p, philox_seed, philox_offset1, philox_offset2,
+        causal, varlen_type, lse_layout='HT', extargs=None):
+    extargs = attn_options() if extargs is None else extargs
+    qview, qdevm = mk_aotensor(q)
+    kview, kdevm = mk_aotensor(k)
+    vview, vdevm = mk_aotensor(v)
+    cuqview, cuqdevm = mk_aotensor(seqinfo_q0)
+    cukview, cukdevm = mk_aotensor(seqinfo_k0)
+    ssqview, ssqdevm = mk_aotensor(seqinfo_q1, if_empty_then_like=seqinfo_q0)
+    sskview, sskdevm = mk_aotensor(seqinfo_k1, if_empty_then_like=seqinfo_k0)
+    bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
+    oview, odevm = mk_aotensor(o)
+    doutview, doutdevm = mk_aotensor(dout)
+    dqview, dqdevm = mk_aotensor(dq)
+    dkview, dkdevm = mk_aotensor(dk)
+    dvview, dvdevm = mk_aotensor(dv)
+    dbview, dbdevm = mk_aotensor(db, if_empty_then_like=q)
+    Lview, Ldevm = mk_aotensor(L)
+    deltaview = delta
+    seedview, seeddevm = mk_aotensor(philox_seed)
+    offset1view, offset1devm = mk_aotensor(philox_offset1)
+    causal_type, window_left, window_right = translate_causal(causal, v3_api=True)
+    # print(f'{b=}')
+    params = fa_backward_op_params()
+    params.Q = qview;
+    params.K = kview;
+    params.V = vview;
+    params.B = bview;
+    params.Sm_scale = float(sm_scale);
+    params.Out = oview;
+    params.DO = doutview;
+    params.DK = dkview;
+    params.DV = dvview;
+    params.DQ = dqview;
+    params.DB = dbview;
+    params.DQ_ACC = dq_acc;
+    params.L = Lview;
+    params.D = deltaview;
+    params.seqinfo_q0 = cuqview
+    params.seqinfo_k0 = cukview
+    params.Max_seqlen_q = max_seqlen_q
+    params.Max_seqlen_k = max_seqlen_k
+    params.seqinfo_q1 = ssqview
+    params.seqinfo_k1 = sskview
+    params.dropout_p = float(dropout_p);
+    params.philox_seed_ptr = seedview;
+    params.philox_offset1 = offset1view;
+    params.philox_offset2 = philox_offset2;
+    params.causal_type = causal_type
+    params.window_left = window_left
+    params.window_right = window_right
+    # lse_layout must match the forward's: bwd_preprocess WRITES Delta and the two
+    # key kernels READ both L and Delta through the same lse_row_addressing(), so a
+    # backward that disagrees with the forward reads rows the forward never wrote.
+    set_varlen_bits(params, varlen_type, lse_layout)
+    err = fa_backward_op(params,
+                         fa_backward_op_params.kVersion,
+                         Stream(),
+                         extargs
+                         )
+    # print(f'{err=}')
+    return err
+
+def lazy_dq_acc(dq : 'torch.Tensor'):
+    from pyaotriton import lazy_tensor
+    dq_view = T4(dq.data_ptr(), tuple(dq.size()), dq.stride(), cast_dtype(dq.dtype))
+    return lazy_tensor.dq_acc(dq_view, dq.device.index)
+
+def lazy_delta(L : 'torch.Tensor'):
+    from pyaotriton import lazy_tensor
+    L_view = T2(L.data_ptr(), tuple(L.size()), L.stride(), cast_dtype(L.dtype))
+    return lazy_tensor.delta(L_view, L.device.index)

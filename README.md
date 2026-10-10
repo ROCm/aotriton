@@ -2,35 +2,49 @@
 
 ```
 pip install -r requirements.txt
+# Preferred since 0.12; build inside a container if possible to avoid https://github.com/ROCm/aotriton/issues/166
+pip wheel third_party/triton -w /tmp/triton_wheel/
 mkdir build
 cd build
 export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:${CONDA_PREFIX}/lib/pkgconfig"
-cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 -G Ninja
+# See https://github.com/ROCm/FlyDSL for build instructions
+cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 -DAOTRITON_USE_LOCAL_TRITON_WHEEL=/tmp/triton_wheel/<triton_wheel>.whl -DAOTRITON_USE_LOCAL_FLYDSL_WHEEL=<absolute path to flydsl>.whl -G Ninja
 # Use ccmake to tweak options
 ninja install/strip  # Use `ninja install` to keep symbols
 ```
 
 The library and the header file can be found under `build/install_dir` afterwards.
-You may ignore the `export PKG_CONFIG_PATH` part if you're not building with conda
+You may ignore the `export PKG_CONFIG_PATH` part if you're not building with conda.
 
 Note: do not run `ninja` separately, due to the limit of the current build
 system, `ninja install` will run the whole build process unconditionally.
 
+The FlyDSL wheel must be compiled from `third_party/flydsl-compiler.txt` with
+LLVM from `third_party/flydsl-llvm.txt`. Image-mode builds only:
+`AOTRITON_NOIMAGE_MODE` needs neither the FlyDSL nor the Triton wheel.
+
+* As of 0.14b development cycle, LLVM used by FlyDSL wheels suffers from https://github.com/llvm/llvm-project/pull/223465
+
 ### Prerequisites
 
 * `python >= 3.10`
+  - For `python >= 3.14`, Triton needs patch https://github.com/triton-lang/triton/commit/c44b870bdd9e1ea8933fd4057b6b59a5e6e5407b
+    to fix `ast.Num` error.
 * `gcc >= 8` or `clang >= 10`
   - For Designated initializers, but only gcc >= 9 is tested.
   - The binary delivery is compiled with gcc13
-* `cmake >= 3.26`
+* `cmake >= 3.27`
   - Only `cmake >= 3.30` is tested
 * `ninja`
   - Only `ninja >= 1.11` is tested
   - `ninja >= 1.13.1` on Windows due to https://github.com/ninja-build/ninja/issues/2616
 * `liblzma`
   - Common names are `liblzma-dev` or `xz-devel`.
-* [`dlfcn-win32`](https://github.com/dlfcn-win32/dlfcn-win32) (**WINDOWS ONLY**)
-  - Windows version of the `dl` library.
+* `pkg-config`
+  - Required by the build system to find `liblzma`.
+  - On RHEL and its derivatives this dependency is ensured by `xz-devel`.
+  - On Debian and its derivatives this dependency is met by installing `pkgconf`
+    or `pkg-config` in older releases.
 
 ## Generation
 
@@ -47,6 +61,16 @@ against.
 The archive file and header files are installed in the path specified by
 `CMAKE_INSTALL_PREFIX`.
 
+## Debugging
+
+Set `AOTRITON_DEBUG_LEVEL=<n>` to enable runtime logging: 1=ERROR,
+2=WARNING, 3=INFO, 4=DEBUG, 5=EXTRA_DEBUG (default: 0, silent).
+
+**Windows limitation:** log messages that include file paths (e.g. at
+`LOG_DEBUG` level) use UTF-8 encoding. If your kernel package path contains
+non-ASCII characters, ensure your terminal and console code page support UTF-8
+(e.g. `chcp 65001`) to avoid garbled output.
+
 ## Kernel Support
 
 Currently the first kernel supported is FlashAttention as based on the
@@ -60,7 +84,7 @@ The precompiled binaries will be downloaded and shipped with PyTorch during [bui
 
 CAVEAT: As a fast moving target, AOTriton's FlashAttention API changes over
 time. Hence, a specific PyTorch release is only compatible with a few versions
-of AOTriton. The compatibility matrix is shown below
+of AOTriton. The compatibility matrix is shown below.
 
 |  PyTorch Upstream     |           AOTriton Feature Release              |
 |-----------------------|-------------------------------------------------|
@@ -94,7 +118,7 @@ of AOTriton. The compatibility matrix is shown below
    has changed drastically.
 
 ROCm's PyTorch release/\<version\> branch is slightly different from PyTorch
-upstream and may support more recent version of AOTriton
+upstream and may support more recent versions of AOTriton.
 
 |  PyTorch ROCm Fork    |           AOTriton Feature Release              |
 |-----------------------|-------------------------------------------------|
@@ -116,7 +140,5 @@ replacement of their corresponding feature releases.
 
 1. AOTriton on Windows currently isn't able to build kernel images by itself.
    This is because triton is not officially available on Windows yet.
-2. To build on Windows, set AOTRITON_NOIMAGE_MODE and use the `aotriton.images`
+2. To build on Windows, set `AOTRITON_NOIMAGE_MODE` and use the `aotriton.images`
    folder from a Linux build.
-3. The Windows version uses dlfcn-win32 which doesn't support file paths with
-   unicode characters in them. A fix for this is planned.

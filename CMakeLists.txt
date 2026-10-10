@@ -1,13 +1,13 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.27 FATAL_ERROR)
 
 project(AOTriton CXX C ASM)
 
 # Version numbers
 set(AOTRITON_VERSION_MAJOR_INT 0)
-set(AOTRITON_VERSION_MINOR_INT 12)
+set(AOTRITON_VERSION_MINOR_INT 15)
 set(AOTRITON_VERSION_PATCH_INT 0)
 # Must have integer-suffix, other 0 generates
 # /* #undef AOTRITON_VERSION_MAJOR */
@@ -28,7 +28,23 @@ endif()
 if(AOTRITON_GIT_SHA1)
   message(STATUS "[AOTriton] Use SHA1 ${AOTRITON_GIT_SHA1}.")
 else()
-  message(FATAL_ERROR "[AOTriton] Cannot idenfity Git Commit SHA1 from command `git rev-parse HEAD`.\nIf you are building AOTriton without git clone, define AOTRITON_CI_SUPPLIED_SHA1.")
+  message(FATAL_ERROR "[AOTriton] Cannot identify Git Commit SHA1 from command `git rev-parse HEAD`.\nIf you are building AOTriton without git clone, define AOTRITON_CI_SUPPLIED_SHA1.")
+endif()
+
+if(DEFINED ENV{AOTRITON_GIT_TREESHA1})
+  set(AOTRITON_GIT_TREESHA1 $ENV{AOTRITON_GIT_TREESHA1})
+else()
+  execute_process(
+    COMMAND git rev-parse HEAD^{tree}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    OUTPUT_VARIABLE AOTRITON_GIT_TREESHA1
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+endif()
+if(AOTRITON_GIT_TREESHA1)
+  message(STATUS "[AOTriton] Use tree SHA1 ${AOTRITON_GIT_TREESHA1}.")
+else()
+  message(FATAL_ERROR "[AOTriton] Cannot identify Git tree SHA1 from command `git rev-parse HEAD^{tree}`.\nIf you are building AOTriton without git clone, define AOTRITON_GIT_TREESHA1.")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -37,25 +53,42 @@ set(CMAKE_CXX_USE_RESPONSE_FILE_FOR_OBJECTS ON)
 set(CMAKE_NINJA_FORCE_RESPONSE_FILE         ON)
 set(CMAKE_CXX_USE_RESPONSE_FILE_FOR_LIBRARIES ON)
 
-if(WIN32)
-  # See https://github.com/ccache/ccache/issues/1619.
-  # TODO: `find_program(ccache [version] ...)` once fixed
-  message(STATUS "[AOTriton] ccache is disabled due to lack of multi-byte character support in filenames on Windows.")
-else()
-  find_program(CCACHE_FOUND ccache)
-  if(CCACHE_FOUND)
-    set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_FOUND})
-    set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_FOUND})
-    message(STATUS "[AOTriton] ccache found and enabled")
+
+function(check_ccache CCACHE_FOUND item)
+  if(WIN32)
+    execute_process(COMMAND ${item} --print-version OUTPUT_VARIABLE CCACHE_VERSION)
+	if(CCACHE_VERSION VERSION_LESS "4.12")
+      set(${CCACHE_FOUND} FALSE PARENT_SCOPE)
+	  message(STATUS "[AOTriton] skipping ccache version ${CCACHE_VERSION}")
+    else()
+	  set(${CCACHE_FOUND} TRUE PARENT_SCOPE)
+	  message(STATUS "[AOTriton] using ccache version ${CCACHE_VERSION}")
+    endif()
   else()
-    message(STATUS "[AOTriton] ccache not found")
+	# keep original behavior when not Windows
+    set(${CCACHE_FOUND} TRUE PARENT_SCOPE)
   endif()
+endfunction()
+
+find_program(CCACHE_FOUND ccache VALIDATOR check_ccache)
+if(CCACHE_FOUND)
+  set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_FOUND})
+  set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_FOUND})
+  message(STATUS "[AOTriton] ccache found and enabled")
+else()
+  message(STATUS "[AOTriton] ccache not found")
 endif()
 message(STATUS "[AOTriton] Triton's caching system is parallel to ccache and always enabled.")
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -finput-charset=UTF-8")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -finput-charset=UTF-8")
-message(STATUS "[AOTriton] UTF-8 input character is set for all C/C++ source files.")
+if(MSVC)
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /utf-8 /Zc:preprocessor")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /utf-8 /Zc:preprocessor")
+  message(STATUS "[AOTriton] MSVC: /utf-8 and /Zc:preprocessor set for all C/C++ source files.")
+else()
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -finput-charset=UTF-8")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -finput-charset=UTF-8")
+  message(STATUS "[AOTriton] UTF-8 input character is set for all C/C++ source files.")
+endif()
 
 set(AOTRITON_MIN_PYTHON 3.10 CACHE STRING "Minimal Python version for find_package.")
 if(AOTRITON_MIN_PYTHON VERSION_LESS "3.10")
@@ -63,42 +96,183 @@ if(AOTRITON_MIN_PYTHON VERSION_LESS "3.10")
 endif()
 
 find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter REQUIRED)
-# Must set this otherwise hip-config-amd.cmake cannot find AMDDeviceLibs
-list(APPEND CMAKE_PREFIX_PATH "/opt/rocm")
+# Must set this otherwise hip-config-amd.cmake cannot find AMDDeviceLibs.
+# Prefer ROCM_PATH (e.g. theRock SDK from `rocm-sdk path --root`) when set, so
+# find_package(hip) does not pick up a stale /opt/rocm install.
+if(DEFINED ENV{ROCM_PATH})
+  list(APPEND CMAKE_PREFIX_PATH "$ENV{ROCM_PATH}/lib/cmake")
+else()
+  message(WARNING "[AOTriton] ROCM_PATH is not set, falling back to /opt/rocm. "
+                  "Set ROCM_PATH (e.g. `export ROCM_PATH=$(rocm-sdk path --root)`) "
+                  "to select a specific ROCm/theRock installation.")
+  list(APPEND CMAKE_PREFIX_PATH "/opt/rocm")
+endif()
 find_package(hip REQUIRED)
 
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
 option(AOTRITON_NO_PYTHON "Disable python binding build" OFF)
 option(AOTRITON_USE_TORCH "Enable functions in python binding that requires libtorch" ON)
-option(AOTRITON_ENABLE_ASAN "Enable Address Sanitizer. Implies -g" OFF)
+option(AOTRITON_ENABLE_ASAN "Enable Address Sanitizer (g++). Implies -g" OFF)
+option(AOTRITON_ENABLE_ASAN_CLANG "Enable Address Sanitizer using Clang (e.g. theRock clang++). Implies -g" OFF)
 option(AOTRITON_BUILD_FOR_TUNING "Build all GPU kernels and set -DAOTRITON_BUILD_FOR_TUNING=1 (=0 otherwise)" OFF)
 set(AOTRITON_BUILD_FOR_TUNING_BUT_SKIP_KERNEL "" CACHE STRING "Use tuning database for certain kernels when AOTRITON_BUILD_FOR_TUNING=ON")
 option(AOTRITON_ENABLE_FP32_INPUTS "Enable FP32 support." ON)
 option(AOTRITON_NOIMAGE_MODE "Only build C++ Shim part. Kernel image builds are disabled" OFF)
+option(AOTRITON_COMMON_LIBRARY_ONLY_MODE "Only build v3src/common/, the half of the runtime calling no real HIP function. Implies AOTRITON_NOIMAGE_MODE=ON and AOTRITON_NO_PYTHON=ON" OFF)
+if(AOTRITON_COMMON_LIBRARY_ONLY_MODE)
+  # Normal variables, not FORCEd cache entries. A cache entry would outlive the
+  # mode that set it: reconfiguring the same build tree with
+  # AOTRITON_COMMON_LIBRARY_ONLY_MODE=OFF leaves ON behind, because option()
+  # never overwrites an existing cache entry -- and that build then silently
+  # produces no kernel images and no Python bindings.
+  set(AOTRITON_NOIMAGE_MODE ON)
+  set(AOTRITON_NO_PYTHON ON)
+endif()
+set(AOTRITON_COMMON_LIBRARY "" CACHE PATH "Path to a prebuilt aotriton_common static library to link into aotriton_v2, instead of compiling v3src/common/")
+if(AOTRITON_COMMON_LIBRARY_ONLY_MODE AND AOTRITON_COMMON_LIBRARY)
+  # Contradictory: the first builds and installs aotriton_common, the second
+  # reuses a prebuilt one as an IMPORTED target -- which install(TARGETS)
+  # rejects, with an error naming neither option.
+  message(FATAL_ERROR
+    "AOTRITON_COMMON_LIBRARY_ONLY_MODE builds aotriton_common; "
+    "AOTRITON_COMMON_LIBRARY reuses a prebuilt one. Set at most one of them.")
+endif()
+# Checked here rather than in v3src/ so they fire before the (much slower)
+# image-build prerequisites, which would otherwise report first.
+if(AOTRITON_COMMON_LIBRARY AND NOT AOTRITON_NOIMAGE_MODE)
+  message(FATAL_ERROR
+    "AOTRITON_COMMON_LIBRARY reuses a prebuilt archive and so skips the code "
+    "generator, but kernel image builds need the rules it emits. Set "
+    "AOTRITON_NOIMAGE_MODE=ON, or unset AOTRITON_COMMON_LIBRARY.")
+endif()
+if(AOTRITON_COMMON_LIBRARY AND AOTRITON_BUILD_FOR_TUNING)
+  message(FATAL_ERROR
+    "AOTRITON_BUILD_FOR_TUNING regenerates and recompiles the shim, which a "
+    "prebuilt AOTRITON_COMMON_LIBRARY already contains. Set at most one.")
+endif()
+# Allow setting AOTRITON_DEBUG_SKIP_TRITON_KERNELS from env var, accept CMake values
+# (1/ON/TRUE), overridden by explicit -D
+set(_AOTRITON_SKIP_TRITON_DEFAULT OFF)
+if(DEFINED ENV{AOTRITON_DEBUG_SKIP_TRITON_KERNELS})
+  set(_AOTRITON_SKIP_TRITON_ENV "$ENV{AOTRITON_DEBUG_SKIP_TRITON_KERNELS}")
+  if(_AOTRITON_SKIP_TRITON_ENV)
+    set(_AOTRITON_SKIP_TRITON_DEFAULT ON)
+  endif()
+endif()
+option(AOTRITON_DEBUG_SKIP_TRITON_KERNELS "DEBUG ONLY. Make the code generator emit no Triton image rules, so other backends (flyc, aiter) can be iterated on without paying for tens of thousands of Triton compiles. C++ shims and the Triton wheel install are unaffected; other backends still reach aotriton.images normally. Settable via -D or the environment variable of the same name. Produces an INCOMPLETE image set: do not ship the result." ${_AOTRITON_SKIP_TRITON_DEFAULT})
+# Reported AFTER option() resolves, and reporting the EFFECTIVE value: printing the
+# environment's contribution beforehand reads as "this is what you are getting" in
+# precisely the case where it is not -- `AOTRITON_DEBUG_SKIP_TRITON_KERNELS=1 cmake
+# -DAOTRITON_DEBUG_SKIP_TRITON_KERNELS=OFF`, where the -D wins and the env is inert.
+if(DEFINED ENV{AOTRITON_DEBUG_SKIP_TRITON_KERNELS})
+  message(STATUS
+    "[AOTriton] AOTRITON_DEBUG_SKIP_TRITON_KERNELS is "
+    "${AOTRITON_DEBUG_SKIP_TRITON_KERNELS} (environment supplied "
+    "'${_AOTRITON_SKIP_TRITON_ENV}' as the default; -D or a value cached by an "
+    "earlier configure of this build directory takes precedence).")
+endif()
 option(AOTRITON_INHERIT_SYSTEM_SITE_TRITON "Use system site packages and verify triton availability instead of building from source" OFF)
 # No plan to support network based pip install
 set(AOTRITON_USE_LOCAL_TRITON_WHEEL "" CACHE STRING "Substitute install from third_party/triton with install from local pip wheel package.")
+set(AOTRITON_USE_LOCAL_FLYDSL_WHEEL "" CACHE STRING "Substitute the install from third_party/flydsl-compiler.txt with an install from a local flydsl wheel file. Must be an absolute path to an existing .whl.")
 set(AOTRITON_GPU_BUILD_TIMEOUT "8.0" CACHE STRING "GPU kernel compiler times out after X minutes. 0 for indefinite. Highly recommended if AOTRITON_BUILD_FOR_TUNING=On.")
 option(AOTRITON_TERMINATE_WHEN_GPU_BUILD_TIMEOUT "compile.py will return error when GPU built timeout. Defensive option for CI" OFF)
-set(AOTRITON_TARGET_ARCH "gfx908;gfx90a;gfx942;gfx950;gfx1100;gfx1101;gfx1102;gfx1103;gfx1151;gfx1150;gfx1201;gfx1200" CACHE STRING "Target GPU Architecture. Select all GPUs within the given list")
+set(AOTRITON_TARGET_ARCH "gfx908;gfx90a;gfx942;gfx950;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1201;gfx1200;gfx1250" CACHE STRING "Target GPU Architecture. Select all GPUs within the given list")
 set(TARGET_GPUS "OBSOLETE" CACHE STRING "OBSOLETE. To select only one GPU, use AOTRITON_TARGET_ARCH or AOTRITON_OVERRIDE_TARGET_GPUS.")
 set(AOTRITON_OVERRIDE_TARGET_GPUS "" CACHE STRING "Override AOTRITON_TARGET_ARCH, and only build for GPUs within this list.")
-set(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE "" CACHE STRING "Specify how to use alternative Triton wheels for different architectures in a YAML config file.")
+set(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE "" CACHE STRING "Specify how to use alternative Triton wheels for different architectures in a YAML config file (resolved format -- see docs/AltWheelExample.yaml).")
+set(AOTRITON_TUNING_DATABASE_ROOT "" CACHE PATH "Root directory containing per-family tuning database trees (<family>/database/amd/<arch>/..., same shape as modules/<family>/database). When set, used instead of modules/*/database as the source of tuning data.")
 
 if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
   cmake_path(IS_ABSOLUTE AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE altwheel_yaml_is_absolute)
   if(NOT ${altwheel_yaml_is_absolute})
     message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE must be absolute path, but configured as ${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}")
   endif()
+  if(AOTRITON_USE_LOCAL_TRITON_WHEEL)
+    message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE and AOTRITON_USE_LOCAL_TRITON_WHEEL are mutually exclusive -- the altwheel config's own .venvs.default entry supplies the default Triton wheel.")
+  endif()
 endif()
+
+# Validate the local flydsl wheel before the venv is built, not four minutes into
+# ninja. The ABI-tag check needs VENV_BIN_PYTHON and so lives with the rest of the
+# flydsl handling further down.
+if(AOTRITON_USE_LOCAL_FLYDSL_WHEEL)
+  cmake_path(IS_ABSOLUTE AOTRITON_USE_LOCAL_FLYDSL_WHEEL flydsl_wheel_is_absolute)
+  if(NOT flydsl_wheel_is_absolute)
+    # The pip install runs with the build directory as cwd, so a relative path
+    # would resolve against the wrong root instead of failing loudly.
+    message(FATAL_ERROR "AOTRITON_USE_LOCAL_FLYDSL_WHEEL must be an absolute path, but configured as ${AOTRITON_USE_LOCAL_FLYDSL_WHEEL}")
+  endif()
+  if(NOT EXISTS "${AOTRITON_USE_LOCAL_FLYDSL_WHEEL}")
+    message(FATAL_ERROR "AOTRITON_USE_LOCAL_FLYDSL_WHEEL does not exist: ${AOTRITON_USE_LOCAL_FLYDSL_WHEEL}")
+  endif()
+  # A wheel file and nothing else. third_party/flydsl-compiler.txt is a pip
+  # requirements file and may hold any requirement pip accepts; this variable is
+  # interpolated bare into `pip install`, so accepting a requirement string here
+  # would let the two channels drift into each other. Same reasoning as the
+  # scalar altwheel entry, docs/AltWheelExample.yaml.
+  if(NOT AOTRITON_USE_LOCAL_FLYDSL_WHEEL MATCHES "\\.whl$")
+    message(FATAL_ERROR "AOTRITON_USE_LOCAL_FLYDSL_WHEEL must name a .whl file, not a pip requirement. To move the pinned version instead, edit third_party/flydsl-compiler.txt. Configured as ${AOTRITON_USE_LOCAL_FLYDSL_WHEEL}")
+  endif()
+endif()
+
+# third_party/flydsl-llvm.txt is a TRIPWIRE, not a script input, and it is the one
+# of the three pins that is expected to be empty. It is non-empty only while
+# upstream LLVM is known to miscompile something the released flydsl wheel was
+# built with -- today, AMDGPU register spills, which go wrong precisely at the head
+# dimensions that spill and come back as wrong numbers rather than a build failure.
+#
+# So a non-empty pin plus the pinned wheel is the one combination that must not
+# proceed: no gate short of a numerical test would notice. "Empty" means no
+# non-comment, non-blank line, which lets the steady state keep the comment that
+# says what the file is for.
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/third_party/flydsl-llvm.txt" FLYDSL_LLVM_LINES ENCODING UTF-8)
+set(FLYDSL_LLVM_PIN "")
+foreach(_line IN LISTS FLYDSL_LLVM_LINES)
+  string(STRIP "${_line}" _line)
+  if(_line AND NOT _line MATCHES "^#")
+    set(FLYDSL_LLVM_PIN "${_line}")
+    break()
+  endif()
+endforeach()
+if(FLYDSL_LLVM_PIN AND NOT AOTRITON_NOIMAGE_MODE AND NOT AOTRITON_USE_LOCAL_FLYDSL_WHEEL)
+  message(FATAL_ERROR
+    "third_party/flydsl-llvm.txt pins ${FLYDSL_LLVM_PIN}, which means the FlyDSL "
+    "wheel this release needs cannot be the one third_party/flydsl-compiler.txt "
+    "names: that wheel is built against an LLVM known to miscompile register "
+    "spills, and the result is wrong kernels rather than absent ones. Build a "
+    "wheel against the pinned LLVM with\n"
+    "    bash .ci/build_flydsl_wheel.sh --wheel_output_dir <dir> --flydsl_commit <sha>\n"
+    "and pass it as -DAOTRITON_USE_LOCAL_FLYDSL_WHEEL=<abs path to .whl> "
+    "(.ci/build-test.sh: --flydsl_wheel). Once upstream LLVM is fixed and "
+    "flydsl-compiler.txt moves to a wheel built against it, empty this file.")
+endif()
+
+# The compiler pin itself, read the same way, for the checks beside the
+# `pip install -r` that consumes it. Read here rather than there so both pins
+# are parsed in one place and by identical rules.
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/third_party/flydsl-compiler.txt" FLYDSL_COMPILER_LINES ENCODING UTF-8)
+set(FLYDSL_COMPILER_PIN "")
+foreach(_line IN LISTS FLYDSL_COMPILER_LINES)
+  string(STRIP "${_line}" _line)
+  if(_line AND NOT _line MATCHES "^#")
+    set(FLYDSL_COMPILER_PIN "${_line}")
+    break()
+  endif()
+endforeach()
 
 # Early failure for python binding
 if(NOT AOTRITON_NO_PYTHON)
+  cmake_policy(SET CMP0148 NEW)  # Disable outdated FindPythonInterp/FindPythonLibs
   find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Development REQUIRED)
-  add_subdirectory(third_party/pybind11)
-  if(NOT EXISTS ${CMAKE_SOURCE_DIR}/third_party/pybind11/CMakeLists.txt)
-    message(FATAL_ERROR "third_party/pybind11 is not initialized\nRun `git submodule sync && git submodule update --init --recursive --force` to fix it.")
-  endif()
+
+  # Must use Python3_EXECUTABLE (the cmake-invoking python), NOT VENV_BIN_PYTHON.
+  # Workflow: (user's python env) -> cmake & ninja -> test aotriton.
+  # pyaotriton must be ABI-compatible with the test environment, which also supplies
+  # torch (required for GPU memory and reference). VENV_DIR must never have torch.
+  # Check torch BEFORE pybind11: when a fresh env has neither installed, torch
+  # is the heavier/more consequential one to set up, so surface that error
+  # first instead of making the user fix pybind11 only to immediately hit torch.
   if(AOTRITON_USE_TORCH)
     message(STATUS "Python3_EXECUTABLE: ${Python3_EXECUTABLE}")
     execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import torch; from pathlib import Path; print(str(Path(torch.__file__).parent))"
@@ -107,6 +281,12 @@ if(NOT AOTRITON_NO_PYTHON)
     message(STATUS "TORCH SITE: ${TORCH_SITE}")
     find_package(Torch REQUIRED HINTS ${TORCH_SITE})
   endif(AOTRITON_USE_TORCH)
+
+  # heuristics to find pybind11 from python site
+  execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import pybind11; from pathlib import Path; print(str(Path(pybind11.__file__).parent / 'share' / 'cmake' / 'pybind11'))"
+                  OUTPUT_STRIP_TRAILING_WHITESPACE
+                  OUTPUT_VARIABLE pybind11_DIR)
+  find_package(pybind11 CONFIG REQUIRED)
 endif()
 
 # Resolve name conflicts with suffix
@@ -145,8 +325,19 @@ else()
   target_link_libraries(lzma_interface INTERFACE liblzma::liblzma)
 endif()
 
+if(AOTRITON_ENABLE_ASAN AND AOTRITON_ENABLE_ASAN_CLANG)
+  message(FATAL_ERROR "AOTRITON_ENABLE_ASAN and AOTRITON_ENABLE_ASAN_CLANG are mutually exclusive.")
+endif()
 if(AOTRITON_ENABLE_ASAN)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fsanitize=address -fno-omit-frame-pointer")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fsanitize=address -fno-omit-frame-pointer")
+endif()
+if(AOTRITON_ENABLE_ASAN_CLANG)
+  # theRock clang++ flags: shared libasan avoids link-order issues with HIP;
+  # asan-use-private-alias avoids false ODR violations across DSOs.
+  add_compile_options(-g -fsanitize=address -shared-libasan -fno-omit-frame-pointer
+                      -Wno-cast-function-type-strict -fclang-abi-compat=17
+                      -mllvm -asan-use-private-alias=1)
+  add_link_options(-fsanitize=address -shared-libasan -fno-omit-frame-pointer)
 endif()
 
 set(Python_ARTIFACTS_INTERACTIVE TRUE)
@@ -178,7 +369,18 @@ message("VENV_SITE ${VENV_SITE}")
 
 execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt")
 
+# Install the `aotriton` code-generation package (python/ -> aotriton) into the venv
+# so `python -m aotriton.<tool>` resolves. A full install (NOT -e): the build venv is
+# disposable and a non-editable install avoids leaking a .pth into the user's tree.
+# Configure-time (execute_process) because aotriton.generate is invoked at configure
+# time below (it must already be importable).
+execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install "${CMAKE_CURRENT_LIST_DIR}"
+  COMMAND_ERROR_IS_FATAL ANY)
+
 set(ALL_TRITON_SOS "")
+# Triton is needed ONLY to compile the GPU kernel images: the ATI code generator is
+# triton-free (@ati.source AST-parses the kernel sources, see
+# agent-plans/ati_triton-free_exec0.md), so noimage builds skip triton entirely.
 if(AOTRITON_NOIMAGE_MODE)
   message(STATUS "[AOTriton] Skipping triton due to AOTRITON_NOIMAGE_MODE")
 elseif(AOTRITON_INHERIT_SYSTEM_SITE_TRITON)
@@ -210,10 +412,24 @@ else()
       COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install ${AOTRITON_USE_LOCAL_TRITON_WHEEL}
     )
   else()
-    add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
-      COMMAND ${CMAKE_COMMAND} -E env TRITON_BUILD_PROTON=OFF VIRTUAL_ENV=${VENV_DIR} TRITON_BUILD_DIR=${TRITON_BUILD_DIR} "${VENV_BIN_PYTHON}" -m pip install .
-      WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/"
+    # Check if pip is available at configure time
+    execute_process(
+      COMMAND "${VENV_BIN_PYTHON}" -m pip --version
+      RESULT_VARIABLE _PIP_RESULT
+      OUTPUT_QUIET ERROR_QUIET
     )
+    if(_PIP_RESULT EQUAL 0)
+      add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
+        COMMAND ${CMAKE_COMMAND} -E env TRITON_BUILD_PROTON=OFF VIRTUAL_ENV=${VENV_DIR} TRITON_BUILD_DIR=${TRITON_BUILD_DIR} "${VENV_BIN_PYTHON}" -m pip install .
+        WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/"
+      )
+    else()
+      message(STATUS "[AOTriton] pip not available, falling back to setup.py develop for triton")
+      add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
+        COMMAND ${CMAKE_COMMAND} -E env TRITON_BUILD_PROTON=OFF VIRTUAL_ENV=${VENV_DIR} TRITON_BUILD_DIR=${TRITON_BUILD_DIR} "${VENV_BIN_PYTHON}" setup.py develop
+        WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/"
+      )
+    endif()
   endif()
   LIST(APPEND ALL_TRITON_SOS "${AOTRITON_TRITON_SO}")
 endif()
@@ -247,6 +463,105 @@ endif(NOT AOTRITON_NOIMAGE_MODE AND AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
 if(ALL_TRITON_SOS)
   add_custom_target(aotriton_venv_triton ALL DEPENDS "${ALL_TRITON_SOS}")
 endif(ALL_TRITON_SOS)
+
+# Two independent pins: the COMPILER wheel (flydsl-compiler.txt, overridden by
+# AOTRITON_USE_LOCAL_FLYDSL_WHEEL) and the kernel SOURCE TREE (flydsl-kernel.txt).
+if(NOT AOTRITON_NOIMAGE_MODE)
+  # Not the bundled-MLIR extension: its filename carries an LLVM version.
+  set(AOTRITON_FLYDSL_STAMP "${VENV_SITE}/flydsl/__init__.py")
+  if(AOTRITON_USE_LOCAL_FLYDSL_WHEEL)
+    # flydsl wheels are CPython-ABI specific; pip would reject a mismatch, but
+    # only once ninja gets here. Check up front.
+    execute_process(COMMAND "${VENV_BIN_PYTHON}" -c
+      "import sysconfig; print('cp' + sysconfig.get_config_var('py_version_nodot'), end='')"
+      OUTPUT_VARIABLE VENV_ABI_TAG)
+    cmake_path(GET AOTRITON_USE_LOCAL_FLYDSL_WHEEL FILENAME FLYDSL_WHEEL_NAME)
+    # py3-none-any carries no cp tag and is not a mismatch.
+    if(FLYDSL_WHEEL_NAME MATCHES "-(cp[0-9]+)-" AND NOT CMAKE_MATCH_1 STREQUAL "${VENV_ABI_TAG}")
+      message(FATAL_ERROR "AOTRITON_USE_LOCAL_FLYDSL_WHEEL is built for ${CMAKE_MATCH_1} but the build venv is ${VENV_ABI_TAG}: ${AOTRITON_USE_LOCAL_FLYDSL_WHEEL}")
+    endif()
+    message(STATUS "[AOTriton] Using local FlyDSL wheel ${AOTRITON_USE_LOCAL_FLYDSL_WHEEL} "
+                   "instead of third_party/flydsl-compiler.txt")
+    # --force-reinstall: a rebuilt wheel keeps its version, so pip would call it
+    # already satisfied. DEPENDS catches an overwrite of the same path.
+    add_custom_command(OUTPUT "${AOTRITON_FLYDSL_STAMP}"
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+      "${VENV_BIN_PYTHON}" -m pip install --force-reinstall
+      "${AOTRITON_USE_LOCAL_FLYDSL_WHEEL}"
+      DEPENDS "${AOTRITON_USE_LOCAL_FLYDSL_WHEEL}"
+      VERBATIM)
+  else()
+    # Unreachable while the tripwire beside the pin holds; asserted here so a
+    # drift in its conditions fails loudly instead of installing a bad wheel.
+    if(FLYDSL_LLVM_PIN)
+      message(FATAL_ERROR
+        "third_party/flydsl-llvm.txt pins ${FLYDSL_LLVM_PIN}, so the wheel "
+        "third_party/flydsl-compiler.txt names must not be installed: it must be "
+        "built against an unmainlined LLVM to fix known bugs. Use "
+        "-DAOTRITON_USE_LOCAL_FLYDSL_WHEEL=<abs path to .whl> instead.")
+    endif()
+    # A VCS direct reference makes pip build from source
+    if(FLYDSL_COMPILER_PIN MATCHES "git\\+" AND NOT FLYDSL_COMPILER_PIN MATCHES "\\.whl$")
+      message(WARNING
+        "third_party/flydsl-compiler.txt is a VCS direct reference "
+        "(${FLYDSL_COMPILER_PIN}), so pip will build FlyDSL FROM SOURCE, which takes time. "
+        "Consider prebuilding the wheel and using -DAOTRITON_USE_LOCAL_FLYDSL_WHEEL=<abs path to .whl>.")
+    endif()
+    # DEPENDS on the pin, or an edit leaves the old version installed.
+    add_custom_command(OUTPUT "${AOTRITON_FLYDSL_STAMP}"
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+      "${VENV_BIN_PYTHON}" -m pip install -r
+      "${CMAKE_CURRENT_LIST_DIR}/third_party/flydsl-compiler.txt"
+      DEPENDS "${CMAKE_CURRENT_LIST_DIR}/third_party/flydsl-compiler.txt"
+      VERBATIM)
+  endif()
+  add_custom_target(aotriton_venv_flydsl ALL DEPENDS "${AOTRITON_FLYDSL_STAMP}")
+
+  ## flydsl-kernel.txt, same shape as third_party/aiter.txt. Supplies kernels/common
+  ## and kernels/attention, which modules/flash/flyc/ imports and the wheel omits.
+  find_package(Git REQUIRED)
+  file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/third_party/flydsl-kernel.txt" FLYDSL_GIT_TAG
+       LIMIT_COUNT 1 ENCODING UTF-8)
+  set(AOTRITON_FLYDSL_KERNEL_ROOT "${CMAKE_CURRENT_BINARY_DIR}/flydsl" CACHE PATH
+      "Root of a FlyDSL source tree supplying kernels/common and kernels/attention. OPTIONAL: defaults to a shallow clone at the third_party/flydsl-kernel.txt tag, so no build has to set it. Point it at an existing checkout to build against local kernel changes.")
+  if(AOTRITON_FLYDSL_KERNEL_ROOT STREQUAL "${CMAKE_CURRENT_BINARY_DIR}/flydsl")
+    # CAVEAT: MUST USE GIT TAG OTHERWISE --depth 1 --branch WILL NOT WORK
+    if(NOT EXISTS "${AOTRITON_FLYDSL_KERNEL_ROOT}/.git")
+      execute_process(
+        COMMAND ${GIT_EXECUTABLE} clone --depth 1 --branch ${FLYDSL_GIT_TAG}
+        https://github.com/ROCm/FlyDSL.git flydsl
+        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+        COMMAND_ERROR_IS_FATAL ANY)
+    else()
+      # Check current HEAD tag to avoid unnecessary network fetches on every configure
+      execute_process(
+        COMMAND ${GIT_EXECUTABLE} describe --tags --exact-match HEAD
+        WORKING_DIRECTORY "${AOTRITON_FLYDSL_KERNEL_ROOT}"
+        RESULT_VARIABLE FLYDSL_DESCRIBE_RESULT
+        OUTPUT_VARIABLE FLYDSL_CURRENT_TAG
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+      if(NOT FLYDSL_DESCRIBE_RESULT EQUAL 0 OR NOT FLYDSL_CURRENT_TAG STREQUAL "${FLYDSL_GIT_TAG}")
+        execute_process(
+          COMMAND ${GIT_EXECUTABLE} fetch origin --depth 1 "tag" "${FLYDSL_GIT_TAG}"
+          WORKING_DIRECTORY "${AOTRITON_FLYDSL_KERNEL_ROOT}"
+          COMMAND_ERROR_IS_FATAL ANY)
+        execute_process(
+          COMMAND ${GIT_EXECUTABLE} checkout ${FLYDSL_GIT_TAG}
+          WORKING_DIRECTORY "${AOTRITON_FLYDSL_KERNEL_ROOT}"
+          COMMAND_ERROR_IS_FATAL ANY)
+      endif()
+    endif()
+  else()
+    message(STATUS "[AOTriton] Using existing FlyDSL source tree ${AOTRITON_FLYDSL_KERNEL_ROOT} "
+                   "instead of cloning ${FLYDSL_GIT_TAG}")
+  endif()
+  if(NOT EXISTS "${AOTRITON_FLYDSL_KERNEL_ROOT}/kernels/common")
+    message(FATAL_ERROR "[AOTriton] AOTRITON_FLYDSL_KERNEL_ROOT=${AOTRITON_FLYDSL_KERNEL_ROOT} "
+                        "has no kernels/common. It must be the ROOT of a FlyDSL source tree.")
+  endif()
+  message(STATUS "AOTRITON_FLYDSL_KERNEL_ROOT ${AOTRITON_FLYDSL_KERNEL_ROOT}")
+endif()
 
 add_subdirectory(v3src)
 

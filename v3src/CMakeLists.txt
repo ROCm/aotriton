@@ -14,35 +14,74 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${AOTRITON_KERNEL_ST
 
 execute_process(COMMAND ${CMAKE_COMMAND}
   -E env VIRTUAL_ENV=${VENV_DIR}
-  "${VENV_BIN_PYTHON}" -m v3python.gpu_targets
+  "${VENV_BIN_PYTHON}" -m aotriton.gpu_targets
   --target_arch ${AOTRITON_TARGET_ARCH}
   --target_gpus ${AOTRITON_OVERRIDE_TARGET_GPUS}
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
   OUTPUT_VARIABLE EFFECTIVE_TARGET_GPUS
-  OUTPUT_STRIP_TRAILING_WHITESPACE)
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  COMMAND_ERROR_IS_FATAL ANY)
 message(STATUS "AOTRITON_TARGET_ARCH ${AOTRITON_TARGET_ARCH}")
 message(STATUS "AOTRITON_OVERRIDE_TARGET_GPUS ${AOTRITON_OVERRIDE_TARGET_GPUS}")
 message(STATUS "EFFECTIVE_TARGET_GPUS ${EFFECTIVE_TARGET_GPUS}")
 
-set(DBXZ_BASE "${CMAKE_SOURCE_DIR}/v3python")
-file(GLOB_RECURSE DB_TARS CONFIGURE_DEPENDS "${DBXZ_BASE}/database/*.sqlite3.tar.xz")
-foreach(DBXZ IN LISTS DB_TARS)
-  cmake_path(RELATIVE_PATH DBXZ BASE_DIRECTORY "${DBXZ_BASE}" OUTPUT_VARIABLE REL_DBXZ)
-  cmake_path(REMOVE_FILENAME REL_DBXZ)
-  file(ARCHIVE_EXTRACT INPUT "${DBXZ}" DESTINATION "${AOTRITON_V2_BUILD_DIR}/${REL_DBXZ}")
-  message(STATUS "Extracting ${DBXZ} to ${AOTRITON_V2_BUILD_DIR}/${REL_DBXZ}")
-endforeach(DBXZ)
+# A reuse build compiles none of the generated shim -- it is already inside the
+# archive -- so the database and the generator that consume it are dead work.
+# The one output still needed, <family>/backends.h, comes from the archive too.
+set(AOTRITON_GENERATED_INCLUDE_DIR "${AOTRITON_V2_BUILD_DIR}/include")
+if(AOTRITON_COMMON_LIBRARY)
+  # <prefix>/lib/libaotriton_common.a -> <prefix>: the layout of both an
+  # AOTRITON_COMMON_LIBRARY_ONLY_MODE install tree and the CI cache tarball.
+  cmake_path(GET AOTRITON_COMMON_LIBRARY PARENT_PATH AOTRITON_COMMON_PREFIX)
+  cmake_path(GET AOTRITON_COMMON_PREFIX PARENT_PATH AOTRITON_COMMON_PREFIX)
+  set(AOTRITON_GENERATED_INCLUDE_DIR "${AOTRITON_COMMON_PREFIX}/include")
+  if(NOT EXISTS "${AOTRITON_GENERATED_INCLUDE_DIR}/aotriton")
+    message(FATAL_ERROR
+      "AOTRITON_COMMON_LIBRARY=${AOTRITON_COMMON_LIBRARY} has no generated "
+      "headers at ${AOTRITON_GENERATED_INCLUDE_DIR}/aotriton. It must point at "
+      "<prefix>/lib/libaotriton_common.a of an "
+      "AOTRITON_COMMON_LIBRARY_ONLY_MODE install tree.")
+  endif()
+  message(STATUS "Reusing ${AOTRITON_COMMON_LIBRARY}; skipping database compose and codegen")
+endif()
 
-message(STATUS "Assembling Central Database...")
-execute_process(
-    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
-    "${VENV_BIN_PYTHON}" -m v3python.database_compose
-    --database_file "${AOTRITON_V2_BUILD_DIR}/database/tuning_database.sqlite3"
-    --decomposed "${AOTRITON_V2_BUILD_DIR}/database"
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
-    COMMAND_ERROR_IS_FATAL ANY)
+if(NOT AOTRITON_COMMON_LIBRARY)
+if(AOTRITON_TUNING_DATABASE_ROOT)
+  # External override: same per-family shape as modules/*/database
+  # (<family>/database/amd/<arch>/...), just rooted elsewhere.
+  file(GLOB DBXZ_BASES "${AOTRITON_TUNING_DATABASE_ROOT}/*/database")
+  message(STATUS "Using external tuning database root: ${AOTRITON_TUNING_DATABASE_ROOT}")
+else()
+  # Per-family databases: each modules/<family>/database is its own base. A new
+  # family drops in modules/<fam>/database, no edit here.
+  file(GLOB DBXZ_BASES "${PROJECT_SOURCE_DIR}/modules/*/database")
+endif()
+foreach(DBXZ_BASE IN LISTS DBXZ_BASES)
+  # Compose independently into build_dir/<family>/database/ - matching the
+  # per-family Factory lookup (DatabaseFactories.create_factory(build_dir /
+  # family)). No cross-family merge: each family's tuning_database/op_database
+  # stays self-contained.
+  cmake_path(GET DBXZ_BASE PARENT_PATH DBXZ_FAMILY_DIR)
+  cmake_path(GET DBXZ_FAMILY_DIR FILENAME DBXZ_FAMILY)
+  set(FAMILY_DB_DIR "${AOTRITON_V2_BUILD_DIR}/${DBXZ_FAMILY}/database")
+  file(GLOB_RECURSE DB_TARS CONFIGURE_DEPENDS "${DBXZ_BASE}/*.sqlite3.tar.xz")
+  foreach(DBXZ IN LISTS DB_TARS)
+    cmake_path(RELATIVE_PATH DBXZ BASE_DIRECTORY "${DBXZ_BASE}" OUTPUT_VARIABLE REL_DBXZ)
+    cmake_path(REMOVE_FILENAME REL_DBXZ)
+    file(ARCHIVE_EXTRACT INPUT "${DBXZ}" DESTINATION "${FAMILY_DB_DIR}/${REL_DBXZ}")
+    message(STATUS "Extracting ${DBXZ} to ${FAMILY_DB_DIR}/${REL_DBXZ}")
+  endforeach(DBXZ)
+  message(STATUS "Assembling ${DBXZ_FAMILY} Database...")
+  execute_process(
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+      "${VENV_BIN_PYTHON}" -m aotriton.database_compose
+      --database_file "${FAMILY_DB_DIR}/tuning_database.sqlite3"
+      --decomposed "${FAMILY_DB_DIR}"
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+      COMMAND_ERROR_IS_FATAL ANY)
+endforeach(DBXZ_BASE)
 
-get_filename_component(AOTRITON_COMPILER "${CMAKE_CURRENT_LIST_DIR}/../v3python/compile.py" ABSOLUTE)
+get_filename_component(AOTRITON_COMPILER "${CMAKE_CURRENT_LIST_DIR}/../python/compile.py" ABSOLUTE)
 message("AOTRITON_COMPILER ${AOTRITON_COMPILER}")
 
 set(HSACO_COMPILE_OPTION "")
@@ -73,30 +112,92 @@ if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
   list(APPEND GENERATE_OPTION "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}")
 endif()
 
-if(WIN32)
-  find_package(dlfcn-win32 REQUIRED)
-  set(CMAKE_DL_LIBS dlfcn-win32::dl)
-endif()
-
 if(AOTRITON_ENABLE_FP32_INPUTS)
   set(AOTRITON_ENABLE_FP32 1)
 else()
   set(AOTRITON_ENABLE_FP32 0)
 endif()
 
+# Normalise ON/OFF to 1/0 here to make python `bool(int(os.getenv(...)))`
+# idiom work.
+if(AOTRITON_DEBUG_SKIP_TRITON_KERNELS)
+  set(AOTRITON_DEBUG_SKIP_TRITON_KERNELS_ENV 1)
+  message(WARNING
+    "[AOTriton] AOTRITON_DEBUG_SKIP_TRITON_KERNELS=ON: the generator will emit no Triton "
+    "image rules, so aotriton.images is INCOMPLETE and the resulting library cannot serve "
+    "any Triton-backed operator at runtime. Debugging aid for iterating on other backends; "
+    "never ship the result.")
+else()
+  set(AOTRITON_DEBUG_SKIP_TRITON_KERNELS_ENV 0)
+endif()
+
+if(NOT AOTRITON_NOIMAGE_MODE)
+  find_package(Git REQUIRED)
+  ## Handle aiter.txt
+  # CAVEAT: MUST USE GIT TAG OTHERWISE GIT_SHALLOW WILL NOT WORK
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} -E cat "${CMAKE_CURRENT_SOURCE_PARENT_DIR}/third_party/aiter.txt"
+    OUTPUT_VARIABLE AITER_GIT_TAG
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  # CAVEAT: FetchContent_Declare is buggy and unsuitable for our needs
+  #         See https://stackoverflow.com/questions/78237952
+  set(AITER_DIR "${AOTRITON_V2_BUILD_DIR}/aiter")
+  if(NOT EXISTS "${AITER_DIR}/.git")
+    execute_process(
+      COMMAND ${GIT_EXECUTABLE} clone --depth 1 --branch ${AITER_GIT_TAG}
+      https://github.com/ROCm/aiter.git
+      WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}"
+      COMMAND_ERROR_IS_FATAL ANY
+    )
+  else()
+    # Check current HEAD tag to avoid unnecessary network fetches on every configure
+    execute_process(
+      COMMAND ${GIT_EXECUTABLE} describe --tags --exact-match HEAD
+      WORKING_DIRECTORY "${AITER_DIR}"
+      RESULT_VARIABLE AITER_DESCRIBE_RESULT
+      OUTPUT_VARIABLE AITER_CURRENT_TAG
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET
+    )
+    if(NOT AITER_DESCRIBE_RESULT EQUAL 0 OR NOT AITER_CURRENT_TAG STREQUAL "${AITER_GIT_TAG}")
+      execute_process(
+        COMMAND ${GIT_EXECUTABLE} fetch origin --depth 1 "tag" "${AITER_GIT_TAG}"
+        WORKING_DIRECTORY "${AITER_DIR}"
+        COMMAND_ERROR_IS_FATAL ANY
+      )
+      # cmake doc: "For sequential execution of multiple commands use multiple
+      # execute_process calls each with a single COMMAND argument."
+      execute_process(
+        COMMAND ${GIT_EXECUTABLE} checkout ${AITER_GIT_TAG}
+        WORKING_DIRECTORY "${AITER_DIR}"
+        COMMAND_ERROR_IS_FATAL ANY
+      )
+    endif()
+  endif()
+endif()
+
 ## Generate Bare.* files and shim files
+# AOTRITON_DEBUG_SKIP_TRITON_KERNELS is passed to the generator rather than acted on
+# here: it makes the generator omit Triton image rules from Bare.compile/Bare.cluster,
+# so the rule files this build reads below are simply empty and every loop over them
+# does nothing. No build-system special-casing, and the flatzip stage keeps working for
+# whatever non-Triton backends did emit rules.
 execute_process(
 COMMAND ${CMAKE_COMMAND}
 -E env VIRTUAL_ENV=${VENV_DIR}
 AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
-"${VENV_BIN_PYTHON}" -X utf8 -m v3python.generate
+AOTRITON_DEBUG_SKIP_TRITON_KERNELS=${AOTRITON_DEBUG_SKIP_TRITON_KERNELS_ENV}
+"${VENV_BIN_PYTHON}" -X utf8 -m aotriton.generate
 --target_gpus ${EFFECTIVE_TARGET_GPUS}
 --build_dir "${AOTRITON_V2_BUILD_DIR}"
+--root_dir "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
 ${GENERATE_OPTION}
 COMMAND_ECHO STDOUT
 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
 COMMAND_ERROR_IS_FATAL ANY
 )
+endif(NOT AOTRITON_COMMON_LIBRARY)
 
 # Compile HSACO Kernels
 if(NOT AOTRITON_NOIMAGE_MODE)
@@ -104,9 +205,11 @@ if(NOT AOTRITON_NOIMAGE_MODE)
   add_custom_command(OUTPUT "${SIGNATURE_FILE}"
     COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
     "${VENV_BIN_PYTHON}"
-    -m v3python.write_image_signature
+    -m aotriton.write_image_signature
     --build_dir "${AOTRITON_V2_BUILD_DIR}"
+    --root_dir "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
     --git_sha1 ${AOTRITON_GIT_SHA1}
+    --git_treesha1 ${AOTRITON_GIT_TREESHA1}
     --target_arch ${AOTRITON_TARGET_ARCH}
     --output_file "${SIGNATURE_FILE}"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
@@ -158,12 +261,74 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     file(APPEND "${AOTRITON_HSACO_RECORD}" "${HSACO}" "\n")
     message(CONFIGURE_LOG "hsaco progress ${I}/${NUM_HSACO_RULES}")
   endforeach(RULE)
+
+  # flyc: kernels compiled during the build from a FlyDSL description, via a separate
+  # driver (`aotriton.flyc_compile`) and a disjoint rule file (`Fly.compile`, not
+  # `Bare.compile`) with its own row shape -- see codegen/root.py:write_flyc_hsaco.
+  # Deliberately NOT gated by AOTRITON_DEBUG_SKIP_TRITON_KERNELS: that flag only
+  # silences the Triton image pipeline above, and flyc rows are how a skipping build
+  # exercises the rest of the packaging pipeline cheaply.
+  #
+  # No TRITON_* env vars here -- flyc_bootstrap.setup() (invoked by flyc_compile
+  # itself) resolves ROCM_PATH and sets ARCH/COMPILE_ONLY/FLYDSL_RUNTIME_ENABLE_CACHE.
+  # AOTRITON_FLYDSL_KERNEL_ROOT is passed explicitly because, unlike ROCM_PATH, it has
+  # NO fallback (flyc_bootstrap._find_flydsl_checkout_root raises if unset) and a ninja
+  # build subprocess is not guaranteed to inherit the configure-time environment.
+  #
+  # Each flyc HSACO is also appended to the SAME AOTRITON_HSACO_RECORD (Bare.targets)
+  # the Triton loop wrote above, so the existing aotriton_v2_compile target (DEPENDS
+  # ${ALL_HSACOS}, defined below) covers both backends' hsacos -- required because
+  # ADD_FROM_CLUSTER_RULES gives every per-functional .aks2 rule a blanket
+  # `DEPENDS aotriton_v2_compile`, including flyc's own .aks2 rows, which are folded
+  # into the EXISTING Bare.cluster/Bare.flatzip files rather than into rule files of
+  # their own.
+  set(ALL_FLYC_HSACOS "")
+  if(EXISTS "${AOTRITON_V2_BUILD_DIR}/Fly.compile")
+    file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Fly.compile" FLYC_RULES ENCODING UTF-8)
+    list(LENGTH FLYC_RULES NUM_FLYC_RULES)
+    message("Fly.compile ${NUM_FLYC_RULES} rules read")
+    foreach(RULE IN LISTS FLYC_RULES)
+      list(POP_FRONT RULE VENVPYTHON)
+      list(POP_FRONT RULE HSACO)
+      list(POP_FRONT RULE DESC)
+      list(POP_FRONT RULE KERNEL_NAME)
+      list(POP_FRONT RULE TGTGPU)
+      list(POP_FRONT RULE SIGNATURE)
+      list(POP_FRONT RULE HINTS)
+      add_custom_command(OUTPUT "${HSACO}"
+        COMMAND ${CMAKE_COMMAND} -E env
+        VIRTUAL_ENV=${VENV_DIR}
+        AOTRITON_FLYDSL_KERNEL_ROOT=${AOTRITON_FLYDSL_KERNEL_ROOT}
+        "${VENVPYTHON}" -m aotriton.flyc_compile
+        "${DESC}" --kernel_name "${KERNEL_NAME}" --target "${TGTGPU}"
+        --signature "${SIGNATURE}" --hints "${HINTS}"
+        --out_path "${HSACO}" --timeout "${AOTRITON_GPU_BUILD_TIMEOUT}"
+        # Same switch the Triton loop passes, and for the same reason: without
+        # it the driver answers a timeout or an exception by writing a
+        # zero-length .hsaco and exiting 0, aks2 packs the empty blob, and the
+        # failure surfaces only as hipModuleLoadData on hardware.
+        ${HSACO_COMPILE_OPTION}
+        DEPENDS aotriton_venv_flydsl
+        VERBATIM)
+      list(APPEND ALL_FLYC_HSACOS "${HSACO}")
+      # DO NOT USE list(APPEND) on the on-disk record. Same quadratic-growth
+      # caveat as the Triton loop above.
+      file(APPEND "${AOTRITON_HSACO_RECORD}" "${HSACO}" "\n")
+    endforeach()
+    add_custom_target(aotriton_v3_flyc_compile ALL DEPENDS ${ALL_FLYC_HSACOS})
+  endif()
+
   ## Add a virtual target
   ### FIXME: AOTRITON_HSACO_RECORD file is duplicated from Bare.compile
   file(STRINGS "${AOTRITON_HSACO_RECORD}" ALL_HSACOS ENCODING UTF-8)
   add_custom_target(aotriton_v2_compile ALL DEPENDS ${ALL_HSACOS})
 
-  # Kernel Storage V2
+  # AKS2 intermediate output directory (not installed; used only during build).
+  set(AOTRITON_AKS2_DIR "${AOTRITON_V2_BUILD_DIR}/aks2")
+  execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${AOTRITON_AKS2_DIR}")
+
+  # Kernel Storage V2: build per-functional AKS2 files under aks2/ intermediate dir.
+  # Bare.cluster format: <vendor-arch> <family> <kernel> <sha256> <abs_hsaco>...
   set(ALL_AKS2 "")
   set(ALL_ARCH_DIRS "")
   macro(ADD_FROM_CLUSTER_RULES)
@@ -171,52 +336,112 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       list(POP_FRONT RULE DIR_ARCH)
       list(POP_FRONT RULE DIR_FAMILY)
       list(POP_FRONT RULE DIR_KERNEL)
-      list(POP_FRONT RULE FONLY)
+      list(POP_FRONT RULE SHA256)
       string(JOIN "/" AKS2
-        ${AOTRITON_KERNEL_STORAGE_V2_DIR}
+        ${AOTRITON_AKS2_DIR}
         ${DIR_ARCH}
         ${DIR_FAMILY}
         ${DIR_KERNEL}
-        "${FONLY}.aks2")
+        "${SHA256}.aks2")
+      string(JOIN "/" HSACO_MANIFEST
+        ${AOTRITON_AKS2_DIR}
+        ${DIR_ARCH}
+        ${DIR_FAMILY}
+        ${DIR_KERNEL}
+        "${SHA256}.nsv")
       # message(STATUS "Add AKS2 ${AKS2}")
       add_custom_command(OUTPUT "${AKS2}"
         COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
         "${VENV_BIN_PYTHON}"
-        -m v3python.aks2
+        -m aotriton.aks2
         -o "${AKS2}"
         ${AKS2_OPTIONS}
-        --
-        ${RULE}
-        DEPENDS aotriton_v2_compile
+        --hsaco_manifest "${HSACO_MANIFEST}"
+        DEPENDS aotriton_v2_compile "${HSACO_MANIFEST}"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
         COMMAND_EXPAND_LISTS)
       list(APPEND ALL_AKS2 "${AKS2}")
-      # Add signature file as part of build process to avoid race conditions
-      if(NOT "${DIR_ARCH}" IN_LIST ALL_ARCH_DIRS)
-        string(JOIN "/" IMAGE_ARCH_SIGNATURE
-          ${AOTRITON_KERNEL_STORAGE_V2_DIR}
-          ${DIR_ARCH}
-          "__signature__")
-        add_custom_command(OUTPUT "${IMAGE_ARCH_SIGNATURE}"
-          COMMAND ${CMAKE_COMMAND} -E copy "${SIGNATURE_FILE}" "${IMAGE_ARCH_SIGNATURE}"
-          DEPENDS "${AKS2}" "${SIGNATURE_FILE}"
-          VERBATIM
-        )
-        list(APPEND ALL_AKS2 "${IMAGE_ARCH_SIGNATURE}")
-        list(APPEND ALL_ARCH_DIRS "${DIR_ARCH}")
-      endif()
     endforeach(RULE)
   endmacro()
   file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.cluster" CLUSTER_RULES ENCODING UTF-8)
   set(AKS2_OPTIONS "")
   ADD_FROM_CLUSTER_RULES()
-  # Affine kernels
+  # Affine kernels: emit AKS2 blobs to the intermediate aks2/ tree (same as Bare),
+  # then pack them into the per-family affine_kernels.zip below.
   if(EXISTS "${AOTRITON_V2_BUILD_DIR}/Affine.cluster")
-    file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Affine.cluster" CLUSTER_RULES ENCODING UTF-8)
-    set(AKS2_OPTIONS "--ignore_json")
-    ADD_FROM_CLUSTER_RULES()
+    file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Affine.cluster" AFFINE_CLUSTER_RULES ENCODING UTF-8)
+    foreach(RULE IN LISTS AFFINE_CLUSTER_RULES)
+      list(POP_FRONT RULE DIR_ARCH)
+      list(POP_FRONT RULE DIR_FAMILY)
+      list(POP_FRONT RULE DIR_KERNEL)
+      list(POP_FRONT RULE FONLY)
+      string(JOIN "/" AKS2
+        ${AOTRITON_AKS2_DIR}
+        ${DIR_ARCH}
+        ${DIR_FAMILY}
+        ${DIR_KERNEL}
+        "${FONLY}.aks2")
+      string(JOIN "/" HSACO_MANIFEST
+        ${AOTRITON_AKS2_DIR}
+        ${DIR_ARCH}
+        ${DIR_FAMILY}
+        ${DIR_KERNEL}
+        "${FONLY}.nsv")
+      add_custom_command(OUTPUT "${AKS2}"
+        COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+        "${VENV_BIN_PYTHON}"
+        -m aotriton.aks2
+        -o "${AKS2}"
+        --ignore_json
+        --hsaco_manifest "${HSACO_MANIFEST}"
+        DEPENDS aotriton_v2_compile "${HSACO_MANIFEST}"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+        COMMAND_EXPAND_LISTS)
+      list(APPEND ALL_AKS2 "${AKS2}")
+    endforeach(RULE)
   endif()
-  add_custom_target(aotriton_kernel_storage_v3 ALL DEPENDS ${ALL_AKS2})
+  add_custom_target(aotriton_v3_aks2 ALL DEPENDS ${ALL_AKS2})
+
+  # Pack AKS2 files into per-kernel uncompressed ZIP archives under aotriton.images/.
+  # Bare.flatzip format: <vendor-arch> <family> <kernel> <abs_aks2>...
+  # ZIP is STORED (no compression) so entries are readable via lseek+read at fixed offsets.
+  set(ALL_ZIPS "")
+  if(EXISTS "${AOTRITON_V2_BUILD_DIR}/Bare.flatzip")
+    file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.flatzip" FLATZIP_RULES ENCODING UTF-8)
+    foreach(RULE IN LISTS FLATZIP_RULES)
+      list(POP_FRONT RULE DIR_ARCH)
+      list(POP_FRONT RULE DIR_FAMILY)
+      list(POP_FRONT RULE DIR_KERNEL)
+      # Remaining RULE entries are the absolute paths of the .aks2 files that
+      # feed this ZIP (see python/codegen/root.py write_cluster()). Depending
+      # on the concrete inputs ensures the ZIP is rebuilt when any contributing
+      # .aks2 changes, even if the .nsv manifest text is unchanged.
+      set(ZIP_AKS2_DEPS ${RULE})
+      set(ZIP_OUT "${AOTRITON_KERNEL_STORAGE_V2_DIR}/${DIR_ARCH}/${DIR_FAMILY}/${DIR_KERNEL}.zip")
+      set(ZIP_MANIFEST "${AOTRITON_KERNEL_STORAGE_V2_DIR}/${DIR_ARCH}/${DIR_FAMILY}/${DIR_KERNEL}.nsv")
+      # ZIP_MANIFEST is written by write_cluster() at generate time alongside Bare.flatzip.
+      add_custom_command(OUTPUT "${ZIP_OUT}"
+        COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+        "${VENV_BIN_PYTHON}" -m aotriton.flatzip
+        --manifest "${ZIP_MANIFEST}"
+        -o "${ZIP_OUT}"
+        DEPENDS aotriton_v3_aks2 "${ZIP_MANIFEST}" ${ZIP_AKS2_DEPS}
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+        COMMAND_EXPAND_LISTS)
+      list(APPEND ALL_ZIPS "${ZIP_OUT}")
+      # Place __signature__ alongside the first ZIP in each arch dir.
+      if(NOT "${DIR_ARCH}" IN_LIST ALL_ARCH_DIRS)
+        set(IMAGE_ARCH_SIGNATURE "${AOTRITON_KERNEL_STORAGE_V2_DIR}/${DIR_ARCH}/__signature__")
+        add_custom_command(OUTPUT "${IMAGE_ARCH_SIGNATURE}"
+          COMMAND ${CMAKE_COMMAND} -E copy "${SIGNATURE_FILE}" "${IMAGE_ARCH_SIGNATURE}"
+          DEPENDS "${ZIP_OUT}" "${SIGNATURE_FILE}"
+          VERBATIM)
+        list(APPEND ALL_ZIPS "${IMAGE_ARCH_SIGNATURE}")
+        list(APPEND ALL_ARCH_DIRS "${DIR_ARCH}")
+      endif()
+    endforeach(RULE)
+  endif()
+  add_custom_target(aotriton_kernel_storage_v3 ALL DEPENDS ${ALL_ZIPS})
 endif(NOT AOTRITON_NOIMAGE_MODE)
 
 # The build logic is slightly different when AOTRITON_BUILD_FOR_TUNING=ON
@@ -227,9 +452,11 @@ if(AOTRITON_BUILD_FOR_TUNING)
     COMMAND ${CMAKE_COMMAND}
     -E env VIRTUAL_ENV=${VENV_DIR}
     AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
-    "${VENV_BIN_PYTHON}" -m v3python.generate
+    AOTRITON_DEBUG_SKIP_TRITON_KERNELS=${AOTRITON_DEBUG_SKIP_TRITON_KERNELS_ENV}
+    "${VENV_BIN_PYTHON}" -m aotriton.generate
     --target_gpus ${EFFECTIVE_TARGET_GPUS}
     --build_dir "${AOTRITON_V2_BUILD_DIR}"
+    --root_dir "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
     ${GENERATE_OPTION}
     --build_for_tuning_second_pass
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}")
@@ -244,88 +471,7 @@ if(AOTRITON_NAME_SUFFIX)
 endif()
 message(STATUS "AOTRITON_SHIM_FLAGS ${AOTRITON_SHIM_FLAGS}")
 
-file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES ENCODING UTF-8)
-
-aux_source_directory(. CC_FILES)
-aux_source_directory(flash/ FLASH_CC_FILES)
-add_library(aotriton_v2 SHARED ${SHIM_CC_FILES} ${CC_FILES} ${FLASH_CC_FILES})
-set_target_properties(aotriton_v2 PROPERTIES LINKER_LANGUAGE CXX)
-target_link_libraries(aotriton_v2 PRIVATE ${CMAKE_DL_LIBS})
-if(AOTRITON_ENABLE_SUFFIX)
-  set_target_properties(aotriton_v2 PROPERTIES OUTPUT_NAME "aotriton${AOTRITON_NAME_SUFFIX}_v2")
+add_subdirectory(common)
+if(NOT AOTRITON_COMMON_LIBRARY_ONLY_MODE)
+  add_subdirectory(hip-dependent)
 endif()
-
-target_include_directories(aotriton_v2 PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/../include>)
-# for <build>/include/aotriton/config.h. Code should use <aotriton/config.h>
-target_include_directories(aotriton_v2 PUBLIC $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include>)
-target_include_directories(aotriton_v2 INTERFACE $<INSTALL_INTERFACE:include>)
-target_include_directories(aotriton_v2 PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-set_target_properties(aotriton_v2 PROPERTIES
-  POSITION_INDEPENDENT_CODE ON
-)
-if(AOTRITON_BUILD_FOR_TUNING)
-  target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_BUILD_FOR_TUNING=1)
-  add_dependencies(aotriton_v2 aotriton_v2_regen_shim)
-else(AOTRITON_BUILD_FOR_TUNING)
-  target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_BUILD_FOR_TUNING=0)
-endif(AOTRITON_BUILD_FOR_TUNING)
-target_link_libraries(aotriton_v2 PRIVATE lzma_interface)
-target_link_libraries(aotriton_v2 PUBLIC hip::host hip::amdhip64)
-set_target_properties(aotriton_v2 PROPERTIES VERSION
-  ${AOTRITON_VERSION_MAJOR_INT}.${AOTRITON_VERSION_MINOR_INT}.${AOTRITON_VERSION_PATCH_INT})
-
-if(NOT WIN32)
-  execute_process(
-    COMMAND ${CMAKE_COMMAND}
-    -E env VIRTUAL_ENV=${VENV_DIR}
-    "${VENV_BIN_PYTHON}" -m v3python.comment_only_asm
-    -o "${AOTRITON_V2_BUILD_DIR}/set_aotriton_version.s"
-    ${AOTRITON_VERSION_MAJOR_INT}
-    ${AOTRITON_VERSION_MINOR_INT}
-    ${AOTRITON_VERSION_PATCH_INT}
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
-    COMMAND_ERROR_IS_FATAL ANY
-  )
-  target_sources(aotriton_v2 PRIVATE "${AOTRITON_V2_BUILD_DIR}/set_aotriton_version.s")
-else()
-  # FIXME: Add version string to Windows binaries.
-endif()
-# Otherwise the binary size blows up
-# FIXME: Properly export symbols
-set_target_properties(aotriton_v2 PROPERTIES CXX_VISIBILITY_PRESET hidden)
-
-include(GNUInstallDirs)
-message("CMAKE_INSTALL_INCLUDEDIR ${CMAKE_INSTALL_INCLUDEDIR}")
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}/include/aotriton"
-        DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}
-        FILES_MATCHING PATTERN "*.h")
-install(TARGETS aotriton_v2
-        EXPORT aotriton-targets
-        DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
-install(EXPORT aotriton-targets
-  DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/cmake/aotriton)
-
-# Packages
-include(CMakePackageConfigHelpers)
-configure_package_config_file(${CMAKE_CURRENT_SOURCE_DIR}/config.cmake.in
-  "${CMAKE_CURRENT_BINARY_DIR}/aotriton-config.cmake"
-  INSTALL_DESTINATION "lib/cmake/aotriton"
-  NO_SET_AND_CHECK_MACRO
-  NO_CHECK_REQUIRED_COMPONENTS_MACRO)
-write_basic_package_version_file(
-  "${CMAKE_CURRENT_BINARY_DIR}/aotriton-config-version.cmake"
-  VERSION "${AOTRITON_VERSION_MAJOR_INT}.${AOTRITON_VERSION_MINOR_INT}.${AOTRITON_VERSION_PATCH_INT}"
-  COMPATIBILITY AnyNewerVersion)
-install(FILES
-  ${CMAKE_CURRENT_BINARY_DIR}/aotriton-config.cmake
-  ${CMAKE_CURRENT_BINARY_DIR}/aotriton-config-version.cmake
-  DESTINATION lib/cmake/aotriton)
-
-if(NOT AOTRITON_NOIMAGE_MODE)
-  install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/aotriton.images"
-          DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
-endif(NOT AOTRITON_NOIMAGE_MODE)
-
-# Python binding only available for AOTriton V2 API
-add_library(aotriton INTERFACE)
-target_link_libraries(aotriton INTERFACE aotriton_v2)

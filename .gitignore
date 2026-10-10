@@ -1,7 +1,9 @@
 __pycache__/
-*build*/
+# Out-of-source CMake build dirs at the repo root only (so it never catches a
+# nested source dir like python/template_instantiation/builder/).
+/*build*/
 *.swp
-tritonsrc/tune-*.json
+modules/flash/kernel/tune-*.json
 *.csv
 *.png
 1
@@ -12,3 +14,12 @@ tritonsrc/tune-*.json
 *.err
 *.log
 *.cfg
+agent-plans
+
+# Python packaging artifacts
+*.egg-info/
+
+# Session review artifacts (not repo content)
+ati-code-quality.md
+ati-ccreview-*.md
+agent-files/

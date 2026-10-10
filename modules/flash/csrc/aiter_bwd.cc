@@ -1,0 +1,285 @@
+// Copyright © 2025 Advanced Micro Devices, Inc.
+// SPDX-License-Identifier: MIT
+
+#include <aotriton/config.h>
+#include <aotriton/_internal/util.h>
+#include <aotriton/_internal/flash/aiter.h>
+#include <aotriton/flash.h>
+#include <aotriton/util.h>
+#include <aotriton/_internal/lazy_tensor_internal.h>
+#include <flash/iface.op_attn_bwd.h>
+#include <flash/affine.aiter_fmha_v3_bwd.h>
+#include <algorithm>
+#include <limits>
+#include <aotriton/_internal/log.h>
+
+namespace AOTRITON_NS::v3::flash {
+
+static aiter::mha_bwd_args
+construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx);
+
+const char*
+AiterFmhaV3BwdContext::check_inputs_are_supported(Gpu gpu) {
+  const auto& args = *params;
+#define RETURN_IF(COND)                                               \
+  do {                                                                \
+    if (COND) {                                                       \
+      return "Input unsupported due to " STRINGIFICATION(COND);       \
+    }                                                                 \
+  } while(0)
+  // AITER ASM does not support dropout
+  RETURN_IF(args.ENABLE_DROPOUT);
+  // No bias support
+  RETURN_IF(args.BIAS_TYPE);
+  // FIXME: Varlen support disabled for now.
+  // Tested UNMASKED, unlike the persistent fallback in attn_fwd.cc: the ASM
+  // kernels implement neither varlen addressing nor the _TH logsumexp layout,
+  // so any non-dense word is out of scope here, not just the addressing bytes.
+  RETURN_IF(args.varlen_bits != 0);
+  // FIXME: Disable MQA/GQA
+  RETURN_IF(args.num_head_q != args.num_head_k);
+  // GQA only supported in varlen (aka. group mode)
+  if (args.num_head_q != args.num_head_k) {
+    RETURN_IF(!args.seqinfo_q0 || !*args.seqinfo_q0);
+    RETURN_IF(!args.seqinfo_k0 || !*args.seqinfo_k0);
+  }
+  // Must provide seqinfo_q0/k0 (the cu_seqlens arrays) at the same time
+  if (args.seqinfo_q0 && *args.seqinfo_q0) {
+    RETURN_IF(!args.seqinfo_k0 || !*args.seqinfo_k0);
+  }
+  // Only support hdim <= 192
+  RETURN_IF(args.hdim_qk > 192 || args.hdim_vo > 192);
+  // Always use A32 kernel for accuracy.
+  RETURN_IF(!args.DQ_ACC || !*args.DQ_ACC);
+  // ASM BWD does not support SWA
+  if (args.CAUSAL_TYPE != CausalType::None) {
+    // Invalid assignment
+    RETURN_IF(args.Window_left != args.Window_right);
+    if (args.Window_left != WindowValue::TopLeftAligned &&
+        args.Window_left != WindowValue::BottomRightAligned) {
+      AOTRITON_LOG(LOG_DEBUG,
+                   "Input unsupported due to args.CAUSAL_TYPE = %d and args.Window_left = %d args.Window_right = %d",
+                   int(args.CAUSAL_TYPE), int(args.Window_left), int(args.Window_right));
+      return "Input unsupported due to SWA";
+    }
+  }
+#undef RETURN_IF
+  // AITER ASM kernel only reads u32 strides.
+#define CHECK_STRIDE(T)                                               \
+  do {                                                                \
+    auto strides = T->strides();                                      \
+    size_t max_e = *std::max_element(strides.begin(), strides.end()); \
+    if (max_e * 2 > std::numeric_limits<uint32_t>::max()) {           \
+      return "Input unsupported due to large tensor " STRINGIFICATION(T);           \
+    }                                                                 \
+  } while(0)
+#if 0
+      std::cerr << "Input unsupported due to large tensor " << #T << std::endl;
+      std::cerr << "strides: "; for (auto s : strides) std::cerr << s << " "; std::cerr << std::endl;
+      std::cerr << "max_e * 2: " << max_e * 2 << std::endl;
+#endif
+  CHECK_STRIDE(args.Q);
+  CHECK_STRIDE(args.K);
+  CHECK_STRIDE(args.V);
+  CHECK_STRIDE(args.Out);
+  CHECK_STRIDE(args.DO);
+  CHECK_STRIDE(args.DK);
+  CHECK_STRIDE(args.DV);
+  CHECK_STRIDE(args.DB);
+#undef CHECK_STRIDE
+  cookie = construct_mha_bwd_args(*this);
+  cookie.v3_api_check = true;
+  AOTRITON_NS::v3::aiter::ck_tile::stream_config sc {
+    .gpu_ = gpu,
+  };
+  if (fmha_v3_bwd(cookie, sc) != 1)
+    return "v3_api_check report failure";
+
+  return nullptr;
+}
+
+aiter::mha_bwd_args
+static construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx) {
+  const auto& args = *ctx.params;
+  int batch = static_cast<int>(args.Q->size(0));
+  int nhead_q = static_cast<int>(args.Q->size(1));
+  int nhead_k = static_cast<int>(args.K->size(1));
+  int hdim_qk = static_cast<int>(args.Q->size(3));
+  int hdim_vo = static_cast<int>(args.V->size(3));
+  auto scale = args.sm_scale;
+  int stride_q = static_cast<int>(args.Q->stride(2));
+  int stride_k = static_cast<int>(args.K->stride(2));
+  int stride_v = static_cast<int>(args.V->stride(2));
+  int stride_o = static_cast<int>(args.Out->stride(2));
+  int stride_do = static_cast<int>(args.DO->stride(2));
+  int stride_dq_acc = static_cast<int>(args.DQ_ACC->stride(2));
+  int stride_dq = static_cast<int>(args.DQ->stride(2));
+  int stride_dk = static_cast<int>(args.DK->stride(2));
+  int stride_dv = static_cast<int>(args.DV->stride(2));
+
+  int nhead_stride_q = static_cast<int>(args.Q->stride(1));
+  int nhead_stride_k = static_cast<int>(args.K->stride(1));
+  int nhead_stride_v = static_cast<int>(args.V->stride(1));
+  int nhead_stride_o = static_cast<int>(args.Out->stride(1));
+  int nhead_stride_do = static_cast<int>(args.DO->stride(1));
+  int64_t nhead_stride_dq_acc = static_cast<int64_t>(args.DQ_ACC->stride(1));
+  int nhead_stride_dq = static_cast<int>(args.DQ->stride(1));
+  int nhead_stride_dk = static_cast<int>(args.DK->stride(1));
+  int nhead_stride_dv = static_cast<int>(args.DV->stride(1));
+  // FIXME: Use Rank-3 tensor for LSE
+  // then:
+  // nhead_stride_lsed = args.L->stride(1);
+  // batch_stride_lsed = args.L->stride(0);
+  int seqlen_q = static_cast<int>(args.Q->size(2));
+  int nhead_stride_lsed = seqlen_q;
+
+  int batch_stride_q = static_cast<int>(args.Q->stride(0));
+  int batch_stride_k = static_cast<int>(args.K->stride(0));
+  int batch_stride_v = static_cast<int>(args.V->stride(0));
+  int batch_stride_o = static_cast<int>(args.Out->stride(0));
+  int batch_stride_do = static_cast<int>(args.DO->stride(0));
+  int64_t batch_stride_dq_acc = static_cast<int64_t>(args.DQ_ACC->stride(0));
+  int batch_stride_dq = static_cast<int>(args.DQ->stride(0));
+  int batch_stride_dk = static_cast<int>(args.DK->stride(0));
+  int batch_stride_dv = static_cast<int>(args.DV->stride(0));
+  int batch_stride_lsed = nhead_q * seqlen_q;
+
+  auto data_type = [&args]() {
+    if (args.Q->dtype() == DType::kFloat16)
+      return "fp16";
+    return "bf16";
+  };
+  // AITER ASM TopLeftAligned/BottomRightAligned logic:
+  // 1. a.mask_type == None: fast accept
+  // 2. a.mask_type == Window: fast reject
+  // 3. Check window_size == (-1, 0), then use a.mask_type to tell TL/BR
+  // 4. Return none when window_size == (-1, -1)
+  // 4. Return 3 elsewhere
+  auto [mask_type, window_size_left, window_size_right] = [&args]() -> std::tuple<int, int, int> {
+    if (args.CAUSAL_TYPE == CausalType::None)
+      return {0, -1, -1};
+    if (args.Window_left == WindowValue::TopLeftAligned)
+      return {1, -1, 0};
+    if (args.Window_left == WindowValue::BottomRightAligned)
+      return {2, -1, 0};
+    return {3, args.Window_left, args.Window_right};
+  }();
+
+  auto pointer_with_default = [](const void* pref, const void* def) {
+    return pref ? pref : def;
+  };
+  auto seqstart_q_ptr = pointer_with_default(args.seqinfo_q1->data_ptr(), args.seqinfo_q0->data_ptr());
+  auto seqstart_k_ptr = pointer_with_default(args.seqinfo_k1->data_ptr(), args.seqinfo_k0->data_ptr());
+
+  // TODO: use .v3_api_check for lookup_optimal
+  aiter::mha_bwd_args ret = {
+    // aiter args
+    .use_asm_v3           = true,                                               // bool
+    .v3_atomic_fp32       = true,                                               // bool
+    .v3_bf16_cvt          = 0,                                                  // int
+    .v3_api_check         = false,                                              // bool
+    // From ck  fmha_bwd_traits                                                 
+    .hdim_q               = hdim_qk,                                            // int
+    .hdim_v               = hdim_vo,                                            // int
+    .data_type            = data_type(),                                        // std::string
+    .is_group_mode        = static_cast<bool>(args.seqinfo_q0->data_ptr()),  // bool
+    .mask_type            = mask_type,                                          // int
+    .bias_type            = args.BIAS_TYPE,                                     // int
+    .has_dbias            = 0,                                                  // bool
+    .has_dropout          = args.ENABLE_DROPOUT,                                // bool
+    .is_store_randval     = false,                                              // bool
+    .is_deterministic     = false,                                              // bool
+    // From ck  fmha_bwd_args                                                   
+    .q_ptr                = args.Q->data_ptr(),                                 // const void*
+    .k_ptr                = args.K->data_ptr(),                                 // const void*
+    .v_ptr                = args.V->data_ptr(),                                 // const void*
+    .bias_ptr             = args.B->data_ptr(),                                 // const void*
+    .o_ptr                = args.Out->data_ptr(),                               // const void*
+    .lse_ptr              = args.L->data_ptr(),                                 // const void*
+    .do_ptr               = args.DO->data_ptr(),                                // const void*
+    .d_ptr                = args.D->data_ptr(),                                 // void*
+    .rand_val_ptr         = nullptr,                                            // void*
+    .dq_ptr               = args.DQ->data_ptr(),                                // void*
+    .dk_ptr               = args.DK->data_ptr(),                                // void*
+    .dv_ptr               = args.DV->data_ptr(),                                // void*
+    .dbias_ptr            = nullptr,                                            // void*
+    .dq_acc_ptr           = args.DQ_ACC->data_ptr(),                            // void*
+    // Key precedence difference from triton kernel:
+    // Triton:
+    //   logical cu_seqlen -> physical cu_seqlen if supplied
+    // ASM:
+    //   physical cu_seqlen -> logical cu_seqlen if supplied
+    .seqstart_q_ptr       = seqstart_q_ptr,                                     // const void*  // "Physical" cu_seqlen
+    .seqstart_k_ptr       = seqstart_k_ptr,                                     // const void*  // "Physical" cu_seqlen
+    .seqlen_q_ptr         = nullptr,                                            // const void*  // unused in ASM
+    .seqlen_k_ptr         = nullptr,                                            // const void*  // unused in ASM
+    .cu_seqlen_q_ptr      = args.seqinfo_q0->data_ptr(),                      // const void*  // "Logical" cu_seqlen
+    .cu_seqlen_k_ptr      = args.seqinfo_k0->data_ptr(),                      // const void*  // "Logical" cu_seqlen
+    .seqlen_q             = args.max_seqlen_q,                                  // int
+    .seqlen_k             = args.max_seqlen_k,                                  // int
+    .batch                = batch,                                              // int
+    .max_seqlen_q         = args.max_seqlen_q,                                  // int
+    .max_seqlen_k         = args.max_seqlen_k,                                  // int
+    .nhead_q              = nhead_q,                                            // int
+    .nhead_k              = nhead_k,                                            // int
+    .scale                = scale,                                              // float
+    .stride_q             = stride_q,                                           // int
+    .stride_k             = stride_k,                                           // int
+    .stride_v             = stride_v,                                           // int
+    .stride_bias          = 0,                                                  // int
+    .stride_o             = stride_o,                                           // int
+    .stride_randval       = 0,                                                  // int
+    .stride_do            = stride_do,                                          // int
+    .stride_dq_acc        = stride_dq_acc,                                      // int
+    .stride_dq            = stride_dq,                                          // int
+    .stride_dk            = stride_dk,                                          // int
+    .stride_dv            = stride_dv,                                          // int
+    .stride_dbias         = 0,                                                  // int
+    .nhead_stride_q       = nhead_stride_q,                                     // int
+    .nhead_stride_k       = nhead_stride_k,                                     // int
+    .nhead_stride_v       = nhead_stride_v,                                     // int
+    .nhead_stride_bias    = 0,                                                  // int
+    .nhead_stride_o       = nhead_stride_o,                                     // int
+    .nhead_stride_randval = 0,                                                  // int
+    .nhead_stride_do      = nhead_stride_do,                                    // int
+    .nhead_stride_lsed    = nhead_stride_lsed,                                  // int
+    .nhead_stride_dq_acc  = nhead_stride_dq_acc,                                // int64_t
+    .nhead_stride_dq      = nhead_stride_dq,                                    // int
+    .nhead_stride_dk      = nhead_stride_dk,                                    // int
+    .nhead_stride_dv      = nhead_stride_dv,                                    // int
+    .nhead_stride_dbias   = 0,                                                  // int
+    .batch_stride_q       = batch_stride_q,                                     // int
+    .batch_stride_k       = batch_stride_k,                                     // int
+    .batch_stride_v       = batch_stride_v,                                     // int
+    .batch_stride_bias    = 0,                                                  // int
+    .batch_stride_o       = batch_stride_o,                                     // int
+    .batch_stride_randval = 0,                                                  // int
+    .batch_stride_do      = batch_stride_do,                                    // int
+    .batch_stride_lsed    = batch_stride_lsed,                                  // int
+    .batch_stride_dq_acc  = batch_stride_dq_acc,                                // int64_t
+    .batch_stride_dq      = batch_stride_dq,                                    // int
+    .batch_stride_dk      = batch_stride_dk,                                    // int
+    .batch_stride_dv      = batch_stride_dv,                                    // int
+    .batch_stride_dbias   = 0,                                                  // int
+    .split_stride_dq_acc  = 0,                                                  // int
+    .window_size_left     = window_size_left,                                   // int
+    .window_size_right    = window_size_right,                                  // int
+    .p_drop               = 0.0,                                                // float
+    .p_undrop             = 0.0,                                                // float
+    .drop_seed_offset     = std::make_pair<uint64_t, uint64_t>(0, 0),
+  };
+
+  return ret;
+}
+
+hipError_t
+AiterFmhaV3BwdContext::launch(hipStream_t stream) const {
+  cookie.v3_api_check = false;
+  AOTRITON_NS::v3::aiter::ck_tile::stream_config sc {
+    .stream_id_ = stream,
+  };
+  // FIXME: hipErrorPeerAccessUnsupported
+  return fmha_v3_bwd(cookie, sc) == 0 ? hipSuccess : hipErrorPeerAccessUnsupported;
+}
+
+}

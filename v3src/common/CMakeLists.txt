@@ -1,0 +1,64 @@
+# Copyright © 2023-2025 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# No .cc here calls a real hip*() function -- that is what the directory means.
+# HIP headers, for hipError_t/hipStream_t as types, are fine; see hip::host below.
+aux_source_directory(. COMMON_CC_FILES)
+
+# Static so one build (AOTRITON_COMMON_LIBRARY_ONLY_MODE=ON) can be reused unmodified as
+# AOTRITON_COMMON_LIBRARY across every ROCm version in the release matrix.
+if(AOTRITON_COMMON_LIBRARY)
+  # Reuse a previously-built archive: skip compiling the sources entirely.
+  add_library(aotriton_common STATIC IMPORTED GLOBAL)
+  set_target_properties(aotriton_common PROPERTIES
+    IMPORTED_LOCATION "${AOTRITON_COMMON_LIBRARY}")
+else()
+  # Only the generating path reads these: a reuse build never runs the code
+  # generator, so Bare.shim does not exist for it.
+  file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES ENCODING UTF-8)
+  # Modular family C++ sources: every modules/<family>/csrc/**.cc (recursively, so
+  # per-family subdirs like csrc/aiter are picked up). Convention over hardcoding —
+  # adding a family needs no edit here. CONFIGURE_DEPENDS re-globs when files change.
+  file(GLOB_RECURSE MODULE_CC_FILES CONFIGURE_DEPENDS
+       "${PROJECT_SOURCE_DIR}/modules/*/csrc/*.cc")
+
+  add_library(aotriton_common STATIC ${SHIM_CC_FILES} ${COMMON_CC_FILES} ${MODULE_CC_FILES})
+  set_target_properties(aotriton_common PROPERTIES LINKER_LANGUAGE CXX)
+  target_include_directories(aotriton_common PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>)
+  # for <build>/include/aotriton/config.h. Code should use <aotriton/config.h>
+  target_include_directories(aotriton_common PUBLIC $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include>)
+  target_include_directories(aotriton_common PRIVATE ${AOTRITON_V2_BUILD_DIR})
+  # for <build>/v3src/include/aotriton/<family>/backends.h -- the per-operator
+  # backend-index constants aotriton.generate emits. Public because the index is:
+  # attn_options::force_backend_index takes it.
+  target_include_directories(aotriton_common PUBLIC $<BUILD_INTERFACE:${AOTRITON_V2_BUILD_DIR}/include>)
+  set_target_properties(aotriton_common PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden
+  )
+  target_compile_definitions(aotriton_common PRIVATE AOTRITON_BUILDING_LIBRARY)
+  if(AOTRITON_BUILD_FOR_TUNING)
+    target_compile_definitions(aotriton_common PRIVATE -DAOTRITON_BUILD_FOR_TUNING=1)
+    add_dependencies(aotriton_common aotriton_v2_regen_shim)
+  else(AOTRITON_BUILD_FOR_TUNING)
+    target_compile_definitions(aotriton_common PRIVATE -DAOTRITON_BUILD_FOR_TUNING=0)
+  endif(AOTRITON_BUILD_FOR_TUNING)
+  target_link_libraries(aotriton_common PRIVATE lzma_interface)
+  # PUBLIC only to propagate HIP's include dir; a static lib links nothing until
+  # aotriton_v2 (or a downstream consumer) pulls the archive in.
+  target_link_libraries(aotriton_common PUBLIC hip::host)
+endif()
+
+if(AOTRITON_COMMON_LIBRARY_ONLY_MODE)
+  # Static lib + headers only: no aotriton_v2, no GPU images (forced off via
+  # AOTRITON_NOIMAGE_MODE, which AOTRITON_COMMON_LIBRARY_ONLY_MODE implies).
+  include(GNUInstallDirs)
+  install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/aotriton"
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}
+          FILES_MATCHING PATTERN "*.h")
+  install(DIRECTORY "${AOTRITON_V2_BUILD_DIR}/include/aotriton"
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}
+          FILES_MATCHING PATTERN "*.h")
+  install(TARGETS aotriton_common
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+endif()

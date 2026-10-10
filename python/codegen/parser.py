@@ -1,0 +1,426 @@
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+"""
+ATI build — Pass 1: COMPILE (parser).
+
+The ATI decorators are PASSIVE: they only RECORD specs onto the `def` objects
+(`fn.__ati__` / `fn.__ati_node__` / `fn.__ati_node__` / `fn.__ati_node__`).
+This module parses those passive records into lightweight IR SHELLS the linker
+(Pass 2) builds + resolves, and also owns family discovery / module loading
+(absorbed from the old `aotriton.rules` aggregator).
+
+Compile vs link (the compiler framing):
+  * COMPILE (here) parses each passive declaration and records its cross-object
+    references as deferred "relocations" stored DIRECTLY ON the shell (the metro shell
+    keeps its sub-kernel name list; the operator shell keeps its backend refs; the
+    kernel shell keeps its un-cite-resolved spec). No build_kernel / build_operator /
+    build_metro is run here — a citing kernel still has gap arguments at this point.
+  * LINK (linker.py) resolves the relocations (cites, backend binding, SHARED_IFACE),
+    builds every IR object, and derives each operator's struct + default kernel.
+
+Family discovery (interim protocol, pre-`--module_dir`): each kernel family lives in
+`<repo>/modules/<family>/aot`, a python package whose `__init__` exposes `operators`
+(the roots). Each `aot` package is loaded by EXPLICIT file path under a synthetic
+top-level name so its relative imports resolve without a `<family>` namespace pkg and
+its `kernel/` sources keep importing each other by bare name.
+"""
+
+import hashlib
+import sys
+import importlib.util
+from pathlib import Path
+
+
+# family NAME -> the one `aot` package loaded for it in this process. Not
+# sys.modules directly: two module trees can supply the same family (the real
+# modules/ and python/test/fakefamily/ both have a `flash`), and they must not
+# share a cache entry. Parser.load_family_aot keys sys.modules by tree as well
+# as family and records the result here.
+_LOADED_AOT = {}
+
+
+def _register_loaded_aot(family, mod):
+    """Bind `family` to its `aot` package, once per process.
+
+    A second TREE supplying the same family is rejected rather than allowed to
+    win the binding. Both can be parsed, but only one can be generated: every
+    generated path is keyed by family alone, so the second tree would overwrite
+    the first's output. Before this raised, the binding was last-writer-wins,
+    and a description from the first tree reaching back through
+    `load_family_aot` (ir/triton/kdesc.py's sancheck) silently got the second
+    tree's package.
+    """
+    prev = _LOADED_AOT.get(family)
+    if prev is not None and prev is not mod:
+        raise RuntimeError(
+            f'family {family!r} is already loaded from {getattr(prev, "__file__", prev)!r}; '
+            f'refusing to also load {getattr(mod, "__file__", mod)!r}. Generated '
+            f'files are keyed by family alone, so one process generates from one tree.')
+    _LOADED_AOT[family] = mod
+    return mod
+
+
+def reset_loaded_aot():
+    """Drop every family -> tree binding. For a process that links several trees
+    in sequence to INSPECT them (the unit tests); never during generation."""
+    _LOADED_AOT.clear()
+
+
+def load_family_aot(family):
+    """Fetch an already-loaded family's `aot` package from the import cache.
+
+    Returns the module (or None) for the few consumers that need the loaded
+    package but do not have a Parser handle — e.g. ir/triton/kdesc.py's flash
+    sancheck back-edge, which runs after the family was loaded during linking.
+    It never loads: the family must already be loaded by a Parser.
+
+    Unambiguous because a family binds to one tree per process; see
+    `_register_loaded_aot`."""
+    return _LOADED_AOT.get(family)
+
+
+# --- Pass-1 shells (relocations stored on the shell) -------------------------
+#
+# Each shell is the minimal representation of ONE description node that is knowable
+# at parse time, before the linker resolves cross-object references.  They are the
+# compiler analogue of object-file symbol-table entries: they record the exported
+# name and the list of unresolved external references ("relocations").
+#
+# WHY NOT merge shells into the IR classes (KernelDescription / MetroKernel / Operator)?
+# Because the IR constructors require fully-resolved inputs that do not exist yet:
+#   • KernelDescription needs a lowered BuiltKernel (cite gaps filled, Axis IR built,
+#     Godel strides assigned). Cite resolution requires every cite target to already be
+#     built — which requires a global topological sort over the whole family.
+#   • MetroKernel needs live KernelDescription objects for its sub-kernels (the plan
+#     only carries names-as-strings at parse time).
+#   • Operator needs its default_kdesc and struct_cfields derived from all fully-built
+#     backends; there is no partial result until every backend is materialized.
+#
+# A two-phase IR init would work, but it leaves IR objects in a broken intermediate
+# state — every consumer would need guards. The shell/IR split makes incompleteness
+# unrepresentable: an IR object that exists is always fully constructed.
+#
+# NOTE: KernelDecl plays the same passive-record role as OperatorDecl / AffineDecl,
+# with one difference underneath the shared name: cite resolution still needs a
+# per-link mutable copy of it (`KernelDecl.clone()`), because gap
+# tensors/scalars/overrides/dtype_vars have to be appended somewhere before the
+# builder can read them, and that must never touch the module-level declared
+# KernelDecl every test/description reads directly. OperatorDecl / AffineDecl carry
+# no unresolved cross-kernel references, so the linker reads them verbatim with no
+# clone. The declared KernelDecl itself, though, is exactly as passive as the other
+# three -- resolve_cites writes only the per-link clone's `resolved_disables`
+# (see specs/kernel.py), never mutating the declared record in place.
+
+class KernelShell:
+    """A parsed triton-kernel description: its un-cite-resolved KernelDecl + identity.
+    NAME / triton_kernel_name / the family-scoped key are all the def __name__ (== the
+    Triton kernel symbol name, since @ati.source loads that symbol); source_path rides
+    on the spec. The linker resolves @ati.cite gaps then builds the KernelDescription."""
+
+    __slots__ = ('name', 'spec', 'source_path')
+
+    def __init__(self, name, spec, source_path):
+        self.name = name
+        self.spec = spec
+        self.source_path = source_path
+
+    @property
+    def cites(self):
+        return self.spec.cites
+
+
+class MetroShell:
+    """A parsed @ati.metro_kernel backend: its MetroSpec + the backend enum-name. The
+    sub-kernel NAMES (plan Call strings) are the relocation the linker binds.
+
+    `name` is the DECLARED backend name (`@ati.backend(i, metro_fwd, 'triton')` ->
+    'triton'), which becomes the MetroKernel's NAME and hence its `kMetro_*` enum
+    member. It is NOT this shell's registry key: the declared name is per-OPERATOR
+    and two operators may reasonably use the same one, while `compiled.metros` is
+    per-FAMILY. `visit_metro` keys on the metro def's own name instead; see
+    `_metro_shell` in linker.py for how a cite target's `<op>.<backend>` pair maps
+    back to it.
+
+    `precedence` is the optional @ati.hints.union_precedence order (highest priority
+    first) used when sub-kernel bindings collide — for a whole-metro @ati.cite gap
+    donor and the operator params-struct union. When absent it is the call order."""
+
+    __slots__ = ('name', 'plan', 'subkernel_names', 'precedence')
+
+    def __init__(self, name, plan, subkernel_names, precedence=None):
+        self.name = name
+        self.plan = plan
+        self.subkernel_names = subkernel_names
+        self.precedence = precedence
+
+    def donor_order(self):
+        """Sub-kernel names in donor priority: the union_precedence order (filtered to
+        this metro's sub-kernels, then any unlisted ones in call order), else call
+        order."""
+        if not self.precedence:
+            return list(self.subkernel_names)
+        subs = set(self.subkernel_names)
+        ordered = [n for n in self.precedence if n in subs]
+        ordered += [n for n in self.subkernel_names if n not in self.precedence]
+        return ordered
+
+
+class OperatorShell:
+    """A parsed @ati.operator: the passive OperatorDecl + its backend refs as
+    (index, kind, key, name), where kind is 'metro' | 'kernel' | 'affine' | 'flyc'.
+
+    `key` is what the linker looks the built object up by -- the metro/kernel/
+    affine/flyc's own name. `name` is what @ati.backend DECLARED, and is the
+    user-facing vocabulary.
+
+    The two were one field until it emerged that only visit_metro used the
+    declared name at all; visit_kernel/affine/flyc silently substituted the
+    object's own, so `@ati.backend(1, aiter_fmha_v3_fwd, 'aiter')` produced
+    'aiter_fmha_v3_fwd' and a rename of a non-metro backend did nothing.
+
+    default_kdesc + struct are DERIVED by the linker (A1/A3); the surface
+    declares neither."""
+
+    __slots__ = ('name', 'decl', 'backend_refs')
+
+    def __init__(self, name, decl, backend_refs):
+        self.name = name
+        self.decl = decl
+        self.backend_refs = backend_refs      # index-sorted (index, kind, name)
+
+
+class CompiledFamily:
+    """Pass-1 output for one family: parsed shells keyed by NAME, plus declared order."""
+
+    def __init__(self, family):
+        self.family = family
+        self.kernels = {}      # def-name -> KernelShell
+        self.metros = {}       # metro def-name -> MetroShell (see MetroShell.name)
+        self.affines = {}      # affine NAME -> AffineDecl
+        self.flycs = {}        # flyc NAME -> FlycDecl, reached as an @ati.backend
+        self.operators = {}    # op-name -> OperatorShell
+        self.op_order = []     # operator NAMEs in declared order
+
+
+# --- backend-kind classifier (single source for 'what kinds of backend exist') ---
+
+def _node_kind(ref):
+    """The visit_* method suffix for a backend ref — dispatched by isinstance on the
+    AtiNode subclass stored as fn.__ati_node__."""
+    from aotriton.template_instantiation.specs.node import AtiNode
+    from aotriton.template_instantiation.specs.metro import MetroSpec
+    from aotriton.template_instantiation.specs.kernel import KernelDecl
+    from aotriton.template_instantiation.specs.affine import AffineDecl
+    from aotriton.template_instantiation.specs.flyc import FlycDecl
+    node = getattr(ref, '__ati_node__', None)
+    if not isinstance(node, AtiNode):
+        raise AssertionError(
+            f'backend ref {ref!r} has no __ati_node__ '
+            f'(not a metro, kernel, nor affine description)')
+    if isinstance(node, MetroSpec):  return 'metro'
+    if isinstance(node, KernelDecl): return 'kernel'
+    if isinstance(node, AffineDecl): return 'affine'
+    if isinstance(node, FlycDecl):   return 'flyc'
+    raise AssertionError(f'unrecognised AtiNode type {type(node)!r} on {ref!r}')
+
+
+class FamilyCompiler:
+    """Pass-1 visitor that walks the ATI description tree and accumulates a
+    CompiledFamily. Replaces the monolithic compile_family if/elif chain with
+    named visit_* methods dispatched through _node_kind — one method per node
+    kind, one method per metro-step kind. Adding a new backend kind = adding a
+    visit_<kind> method; no other edits needed.
+
+    Dispatch uses isinstance() on fn.__ati_node__ (an AtiNode subclass), not string
+    attribute probing. 3 backend kinds + 2 metro step kinds; no reflective machinery."""
+
+    def __init__(self, aot_module, family):
+        self.aot = aot_module
+        self.family = family
+        self.compiled = CompiledFamily(family)
+
+    def run(self):
+        for op_def in getattr(self.aot, 'operators', []):
+            self.visit_operator(op_def)
+        return self.compiled
+
+    # --- operator + backend dispatch -----------------------------------------
+
+    def visit_operator(self, op_def):
+        from aotriton.template_instantiation.specs.operator import OperatorDecl
+        node = getattr(op_def, '__ati_node__', None)
+        assert isinstance(node, OperatorDecl), (
+            f'{self.family}: operators entry {op_def!r} has no OperatorDecl '
+            f'(not a passive @ati.operator def)')
+        decl = node
+        backend_refs = []
+        for b in decl.backends:
+            backend_refs.append(getattr(self, f'visit_{_node_kind(b.obj)}')(b))
+        backend_refs.sort(key=lambda t: t[0])
+        self.compiled.operators[decl.name] = OperatorShell(decl.name, decl,
+                                                           backend_refs)
+        self.compiled.op_order.append(decl.name)
+
+    def visit_metro(self, b):
+        plan = b.obj.__ati_node__   # MetroSpec
+        sub_names = list(self._iter_plan_subkernels(plan.steps))
+        for sub_name in sub_names:
+            sub_def = getattr(self.aot, sub_name, None)
+            assert sub_def is not None, (
+                f'{self.family}: metro {b.name!r} calls sub-kernel '
+                f'{sub_name!r} not found in the aot module')
+            # Dispatched, not assumed: a metro step is whatever kind of
+            # kernel the def describes. Calling the triton recorder directly
+            # would assert on a KernelDecl, so a metro with a flyc step failed
+            # on that assert rather than anywhere informative.
+            self.record(sub_def, f'metro {b.name!r} sub-kernel')
+        # Keyed by the metro DEF's name, not the declared backend name: the
+        # registry is per-family while a declared name is per-operator, so two
+        # operators each declaring a backend called 'flyc' would otherwise
+        # collide -- and collide SILENTLY, because the `not in` guard below
+        # would keep the first registration and hand the second operator the
+        # first one's metro. Returned as the ref's `key` so _backend_objs
+        # resolves the right shell; `b.name` stays the ref's `name`, which is
+        # what becomes the MetroKernel's NAME and its kMetro_* enum member.
+        key = plan.name
+        if key not in self.compiled.metros:
+            self.compiled.metros[key] = MetroShell(b.name, plan, sub_names,
+                                                   precedence=plan.precedence)
+        return (b.index, 'metro', key, b.name)
+
+    def visit_kernel(self, b):
+        return (b.index, 'kernel', self.record_kernel(b.obj), b.name)
+
+    def visit_affine(self, b):
+        return (b.index, 'affine', self.record_affine(b.obj), b.name)
+
+    def visit_flyc(self, b):
+        return (b.index, 'flyc', self.record_flyc(b.obj), b.name)
+
+    # --- recording, dispatched by node kind ----------------------------------
+    #
+    # Two shapes reach a description: an operator BACKEND (a Backend record with
+    # an index, handled by visit_*) and a metro STEP (a bare def, handled here).
+    # Both need the same recording, so it lives in record_* and both dispatch on
+    # _node_kind. Keeping the two apart is what let visit_metro hard-code the
+    # triton recorder.
+
+    def record(self, def_obj, what):
+        """Record `def_obj` as whatever kind it is; return its NAME."""
+        kind = _node_kind(def_obj)
+        recorder = getattr(self, f'record_{kind}', None)
+        assert recorder is not None, (
+            f'{self.family}: {what} is a {kind!r} description, which cannot be '
+            f'recorded in this position')
+        return recorder(def_obj)
+
+    def record_metro(self, _def_obj):
+        raise AssertionError(
+            'a metro cannot be a step of another metro; @ati.metro_kernel '
+            'bodies call concrete kernels only')
+
+    def record_affine(self, def_obj):
+        adecl = def_obj.__ati_node__   # AffineDecl
+        if adecl.name not in self.compiled.affines:
+            self.compiled.affines[adecl.name] = adecl
+        return adecl.name
+
+    def record_flyc(self, def_obj):
+        node = def_obj.__ati_node__   # FlycDecl
+        if node.name not in self.compiled.flycs:
+            self.compiled.flycs[node.name] = node
+        return node.name
+
+    # --- metro sub-plan descent (Call | Cond tree) ---------------------------
+
+    def _iter_plan_subkernels(self, steps):
+        """Yield every concrete sub-kernel NAME in a metro plan, descending into
+        Cond branches — the Pass-1 analogue of ir/ops/infer._iter_subkernels."""
+        from aotriton.template_instantiation.specs.metro import Call, Cond
+        for s in steps:
+            if isinstance(s, Call):
+                yield s.kernel
+            elif isinstance(s, Cond):
+                yield from self._iter_plan_subkernels(s.then)
+                yield from self._iter_plan_subkernels(s.orelse)
+
+    # --- kernel recording (dedup by name) ------------------------------------
+
+    def record_kernel(self, def_obj):
+        """Record a triton-kernel def as a KernelShell (no-op if already recorded).
+        Returns the kernel def-name."""
+        from aotriton.template_instantiation.specs.finalize import get_kernel_decl
+        spec = get_kernel_decl(def_obj)
+        assert spec is not None, (
+            f'{getattr(def_obj, "__name__", def_obj)!r} has no @ati.* kernel spec')
+        name = getattr(spec.kernel, '__name__', None)
+        assert name, f'kernel {def_obj!r} has no __name__'
+        if name not in self.compiled.kernels:
+            self.compiled.kernels[name] = KernelShell(name, spec, spec.source_path)
+        return name
+
+
+class Parser:
+    """Pass 1 — COMPILE. Owns the `modules/` root (the per-family kernel/operator
+    descriptions) and turns each family's passive `@ati.*` records into IR shells.
+
+    `module_dir` is `<root_dir>/modules`, given explicitly by the generator
+    (--root_dir). `modules/` is DATA beside the package source, NOT inside the
+    importable `aotriton` package (a non-editable install copies the package out of
+    the checkout but never ships modules/), so its location is passed in — never
+    derived from `__file__` or the cwd."""
+
+    def __init__(self, module_dir):
+        self.module_dir = Path(module_dir)
+
+    # --- family discovery / loading (absorbed from python/rules) -------------
+
+    def discover_families(self):
+        """Family names = subdirs of module_dir that contain an `aot` package."""
+        if not self.module_dir.is_dir():
+            return []
+        return [child.name for child in sorted(self.module_dir.iterdir())
+                if (child / 'aot' / '__init__.py').is_file()]
+
+    def load_family_aot(self, family):
+        """Import <module_dir>/<family>/aot/__init__.py by path under a synthetic
+        unique package name so its relative imports work without a <family> namespace
+        pkg. `modules/<family>` must stay a plain directory (not a package) so its
+        `kernel/` sources keep importing each other by bare name; loading `aot` by
+        name would require `<family>` to be a clean namespace package, which any
+        sys.path entry containing a `<family>.py` (e.g. a stray `flash.py` on sys.path) would
+        shadow. Loading by path sidesteps that entirely. Cached in sys.modules.
+
+        The cache key includes a digest of `module_dir`, not just the family
+        name. Two trees can supply the same family -- the real `modules/` and
+        `python/test/fakefamily/` both have a `flash` -- and keying on the name
+        alone meant whichever loaded first served both. That is invisible while
+        the two describe the same thing, and silently wrong the moment they
+        diverge: adding a third backend to the real op_attn_fwd made a fakefamily
+        test see three backends in a full-suite run and two in isolation.
+
+        Distinct module objects are also what lets `_register_loaded_aot` see a
+        second tree and refuse it."""
+        digest = hashlib.blake2b(str(self.module_dir.resolve()).encode(),
+                                 digest_size=6).hexdigest()
+        modname = f'_aotriton_modules_{digest}_{family}_aot'
+        cached = sys.modules.get(modname)
+        if cached is not None:
+            return _register_loaded_aot(family, cached)
+        aot_dir = self.module_dir / family / 'aot'
+        spec = importlib.util.spec_from_file_location(
+            modname, aot_dir / '__init__.py',
+            submodule_search_locations=[str(aot_dir)])
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[modname] = mod
+        spec.loader.exec_module(mod)
+        return _register_loaded_aot(family, mod)
+
+    # --- compile ------------------------------------------------------------
+
+    def compile_family(self, aot_module, family):
+        """Pass 1 for one family: walk the `operators` roots, parse every reachable
+        kernel / metro / affine into a shell, and record cross-references as
+        relocations on the shells. Returns a CompiledFamily (nothing is built yet)."""
+        return FamilyCompiler(aot_module, family).run()

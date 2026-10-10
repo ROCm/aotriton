@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AOTriton Tuning Dashboard (Guest)</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/water.min.css') }}">
+    <script src="{{ url_for('static', filename='js/htmx.min.js') }}"></script>
+    <style>
+        body { max-width: 960px; margin: 0 auto; padding: 2rem; }
+        code, pre, kbd { font-size: max(12pt, 1em) !important; }
+        .status-badge { padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.9em; }
+        .status-running { background: #28a745; color: white; }
+        .status-stopped { background: #dc3545; color: white; }
+        .last-refresh { font-size: 0.85em; color: #888; font-weight: normal; margin-left: 1rem; }
+        footer { margin-top: 2rem; padding: 1rem; text-align: center; border-top: 1px solid #ccc; font-size: 0.9em; color: #666; }
+        table { width: 100%; table-layout: auto; }
+        table th, table td { padding: 0.5rem; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>AOTriton Tuning Dashboard <small style="font-size:0.6em; color:#888;">(read-only)</small></h1>
+    </header>
+
+    <main>
+        <h2>Dashboard Overview</h2>
+
+        <section>
+            <h3>Status Summary</h3>
+            <table>
+                <tr><th>Metric</th><th>Value</th></tr>
+                <tr>
+                    <td>Total Workers</td>
+                    <td><strong>{{ status.worker_count }}</strong></td>
+                </tr>
+                <tr>
+                    <td>Architectures</td>
+                    <td><strong>{{ status.architecture_count }}</strong> ({{ status.architectures|join(', ') }})</td>
+                </tr>
+                <tr>
+                    <td>PostgreSQL</td>
+                    <td><span class="status-badge status-{{ status.postgres_status }}">{{ status.postgres_status }}</span></td>
+                </tr>
+            </table>
+        </section>
+
+        <section>
+            <div id="tuning-progress-container"
+                 hx-get="/api/tuning-progress"
+                 hx-trigger="every {{ client_interval }}s"
+                 hx-swap="innerHTML">
+                {% include '_tuning_progress_table.html' %}
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>AOTriton Tuning Dashboard | Workdir: <code>{{ config.WORKDIR }}</code> | Guest view refreshes every {{ client_interval }}s</p>
+    </footer>
+</body>
+</html>

@@ -1,0 +1,6 @@
+venvs:
+  navi3x: 4280ed1150881bab98c4ecb3e5becb1b3c70fabe
+rules:
+  - rmatches:  # Regex Matching
+      arch: gfx110.
+    venv: navi3x
