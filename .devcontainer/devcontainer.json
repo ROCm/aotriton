@@ -1,0 +1,36 @@
+{
+  "name": "AOTriton gfx908 (Coder / Envbuilder)",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "containerUser": "root",
+  "remoteUser": "root",
+  "containerEnv": {
+    "CODEX_HOME": "/workspaces/.codex",
+    "AOTRITON_TARGET_ARCH": "gfx908",
+    "PYTORCH_ROCM_ARCH": "gfx908",
+    "ROCM_PATH": "/opt/rocm",
+    "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": "1",
+    "MAX_JOBS": "8"
+  },
+  "postCreateCommand": [
+    "bash",
+    ".devcontainer/bootstrap.sh"
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools",
+        "openai.chatgpt"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/aotriton-venv/bin/python",
+        "cmake.configureOnOpen": false,
+        "C_Cpp.default.compilerPath": "/opt/rocm/llvm/bin/clang++"
+      }
+    }
+  }
+}
