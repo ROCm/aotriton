@@ -4,6 +4,7 @@
 from collections import defaultdict
 
 AOTRITON_SUPPORTED_GPUS = (
+    'gfx908_mod0',
     'gfx90a_mod0',
     'gfx942_mod0',
     # 'gfx942_mod1',
@@ -37,6 +38,7 @@ AOTRITON_TUNING_DATABASE_REUSE = {
 }
 
 AOTRITON_ARCH_TO_PACK = {
+    'gfx908'    : 'gfx908',
     'gfx90a'    : 'gfx90a',
     'gfx942'    : 'gfx942',
     'gfx950'    : 'gfx950',
@@ -58,6 +60,7 @@ AOTRITON_ARCH_TO_DIRECTORY = {
 }
 
 AOTRITON_ARCH_WARPSIZE = {
+    'gfx908'     : 64,
     'gfx90a'     : 64,
     'gfx942'     : 64,
     'gfx950'     : 64,
