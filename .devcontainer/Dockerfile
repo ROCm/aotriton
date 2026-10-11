@@ -28,18 +28,22 @@ RUN python3 -c 'import site; print("\n".join(site.getsitepackages()))' > /tmp/ro
     && /opt/aotriton-venv/bin/python -m pip install --no-cache-dir \
         'cmake>=3.30,<4' 'setuptools>=77,<81' packaging wheel pybind11
 
-ENV PATH=/opt/aotriton-venv/bin:/opt/rocm/bin:/opt/rocm/llvm/bin:${PATH} \
+ENV PATH=/opt/aotriton-venv/bin:${PATH} \
     VIRTUAL_ENV=/opt/aotriton-venv \
     CODEX_HOME=/workspaces/.codex \
-    ROCM_PATH=/opt/rocm \
     LLVM_TARBALL_DISTRO=ubuntu26.04 \
     AOTRITON_TARGET_ARCH=gfx908 \
     PYTORCH_ROCM_ARCH=gfx908 \
     TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1 \
     MAX_JOBS=8
 
+# Discover the pip-installed SDK for login and interactive Bash sessions.
+COPY rocm-env.sh /etc/profile.d/aotriton-rocm.sh
+RUN printf '\n. /etc/profile.d/aotriton-rocm.sh\n' >> /etc/bash.bashrc
+
 # These checks need no GPU and fail image creation if essential tools are absent.
-RUN command -v hipcc && command -v llvm-objdump && command -v llvm-mc \
+RUN . /etc/profile.d/aotriton-rocm.sh \
+    && command -v hipcc && command -v llvm-objdump && command -v llvm-mc \
     && command -v ld.lld && command -v ninja && command -v pkg-config \
     && pkg-config --exists liblzma && codex --version \
     && python -c 'import torch; assert torch.version.hip, "ROCm PyTorch required"'

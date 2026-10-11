@@ -10,7 +10,6 @@
     "CODEX_HOME": "/workspaces/.codex",
     "AOTRITON_TARGET_ARCH": "gfx908",
     "PYTORCH_ROCM_ARCH": "gfx908",
-    "ROCM_PATH": "/opt/rocm",
     "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": "1",
     "MAX_JOBS": "8"
   },
@@ -29,7 +28,7 @@
       "settings": {
         "python.defaultInterpreterPath": "/opt/aotriton-venv/bin/python",
         "cmake.configureOnOpen": false,
-        "C_Cpp.default.compilerPath": "/opt/rocm/llvm/bin/clang++"
+        "C_Cpp.default.compilerPath": "/usr/local/bin/amdclang++"
       }
     }
   }

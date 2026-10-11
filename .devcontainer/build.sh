@@ -3,6 +3,8 @@ set -euo pipefail
 
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_dir"
+# shellcheck source=.devcontainer/rocm-env.sh
+source "$repo_dir/.devcontainer/rocm-env.sh"
 build_dir="$(realpath -m "${AOTRITON_BUILD_DIR:-$repo_dir/build-gfx908}")"
 install_dir="$build_dir/install"
 

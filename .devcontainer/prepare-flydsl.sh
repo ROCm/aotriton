@@ -6,6 +6,8 @@ set -euo pipefail
 # Build logs go to stderr; stdout contains only the resulting wheel path.
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_dir"
+# shellcheck source=.devcontainer/rocm-env.sh
+source "$repo_dir/.devcontainer/rocm-env.sh"
 # shellcheck source=.ci/common-pin.sh
 source "$repo_dir/.ci/common-pin.sh"
 

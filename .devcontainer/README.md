@@ -5,6 +5,12 @@ This environment runs as root with the checkout and Codex state on the
 2.14.0 / Python 3.14 image and adds AOTriton's CMake, Ninja, ccache, Python
 headers, and compression/compiler build dependencies.
 
+The SDK environment comes from `rocm-sdk path --root` and `rocm-sdk path --bin`.
+Shell initialization sets `ROCM_PATH` to the installed SDK and adds its tools
+and `lib/llvm/bin` to `PATH`. The build and bootstrap helpers load the same
+environment for noninteractive commands. The editor uses the SDK's
+`/usr/local/bin/amdclang++` launcher.
+
 PyTorch supplies tensor allocation and test references. The local AOTriton
 library is built with Python bindings and the namespace/library suffix `123`,
 so the tests load it alongside the AOTriton shipped with PyTorch. Building this
@@ -60,6 +66,12 @@ and FP32/FP16/BF16 GEMM on the exposed MI100. Use `--static` to skip GPU access.
 Set `AOTRITON_DEV_INSTALL=0` in `containerEnv` to skip dependency/submodule
 setup while troubleshooting, then rerun `bash .devcontainer/bootstrap.sh`
 when ready.
+
+For other noninteractive commands, load the SDK environment explicitly:
+
+```bash
+. .devcontainer/rocm-env.sh
+```
 
 ## Build gfx908 kernels and bindings
 

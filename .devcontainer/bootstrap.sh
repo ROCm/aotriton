@@ -6,6 +6,8 @@ cd "$repo_dir"
 
 # /workspaces must already be a writable PVC mount.
 bash .devcontainer/configure-trust.sh
+# shellcheck source=.devcontainer/rocm-env.sh
+source "$repo_dir/.devcontainer/rocm-env.sh"
 install -d -m 700 "${CODEX_HOME:-/workspaces/.codex}"
 python .devcontainer/doctor.py --static
 
