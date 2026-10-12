@@ -6,6 +6,7 @@ from .codegen import (
     RootGenerator
 )
 from .codegen.linker import Linker
+from .codegen.tuning_filter import TuningFilter
 from .utils import LazyFile
 import argparse
 from pathlib import Path
@@ -34,6 +35,8 @@ def parse():
     # p.add_argument("--bare_mode", action='store_true', help="Instead of generating a proper Makefile, only generate a list of source files and leave the remaining tasks to cmake.")
     p.add_argument("--noimage_mode", action='store_true', help="Expect the GPU kernel images are built separately.")
     p.add_argument("--build_for_tuning", action='store_true', help="Include all GPU kernels in the dispatcher for performance tuning.")
+    p.add_argument("--tuning_filter", type=Path, default=None,
+                   help="JSON selector limiting extra tuning variants while preserving normal kernel images. Requires --build_for_tuning.")
     p.add_argument("--build_for_tuning_second_pass", action='store_true', help="Only re-generate autotune files. Ignore HSACO kernels in the autotune files that failed to compile.")
     p.add_argument("--build_for_tuning_but_skip_kernel", type=str, default='', nargs='*',
                    help="Excluse certain GPU kernels for performance tuning when --build_for_tuning=True.")
@@ -52,6 +55,10 @@ def parse():
     # Handled by CMake
     # p.add_argument("--timeout", type=float, default=8.0, help='Maximal time the compiler can run. Passing < 0 for indefinite. No effect in bare mode (handled separately)')
     args = p.parse_args()
+    if args.tuning_filter is not None:
+        if not args.build_for_tuning:
+            p.error('--tuning_filter requires --build_for_tuning')
+        args.tuning_filter = TuningFilter.from_file(args.tuning_filter)
     if args.sanity_check_only:
         args.lut_sanity_check = True
         LazyFile.suppress_writes = True

@@ -171,15 +171,19 @@ class KernelDescription(Interface):
             col = f'tuned_kernel${name}'
             if col not in df.columns:
                 df[col] = self.perf_value(name, f)
-        sparse_keys = [f'inputs${key}' for key, _ in self.autotune_keys]
+        exact_tuning = self.exact_tuning(f)
+        autotune_keys = ([(key, BinningExact) for key, _ in self.autotune_keys]
+                         if exact_tuning is not None else self.autotune_keys)
+        sparse_keys = [f'inputs${key}' for key, _ in autotune_keys]
         nkeys = len(sparse_keys)
         def sorted_unique_key(key):
             return np.unique(df[key].to_numpy()).tolist()
         sparse_key_possible_values = {key: sorted_unique_key(key) for key in sparse_keys}
         binning_dict = {key: algo(sparse_key_possible_values[spk])
-                        for spk, (key, algo) in zip(sparse_keys, self.autotune_keys)}
+                        for spk, (key, algo) in zip(sparse_keys, autotune_keys)}
         lut_shape = [f.noptimized_for] + [len(sparse_key_possible_values[key]) for key in sparse_keys]
-        lut_tensor = np.full(lut_shape, -1, dtype=np.int32)
+        lut_tensor = np.full(lut_shape, 0 if exact_tuning is not None else -1,
+                             dtype=np.int32)
         perf_names = self._perf_struct.param_names()
         perf_keys = [f'tuned_kernel${n}' for n in perf_names]
         copt_keys = [f'compiler_options${key}' for key in COMPILER_OPTIONS]
@@ -195,6 +199,20 @@ class KernelDescription(Interface):
         def create_sig(nprow):
             return KernelSignature(f, perf_bind(nprow), nprow[nperfs:].tolist())
         sigs = [create_sig(nprow) for nprow in np_sigs]
+        if exact_tuning is not None:
+            # Keep the generic image at a stable index for uncovered inputs.
+            # A measured row may itself select that image (e.g. a tiny shape).
+            defaults = self.translate_empty_dataframe(f)[1]
+            indices = {sig.hsaco_entry_name: i for i, sig in enumerate(defaults)}
+            remap = []
+            for sig in sigs:
+                key = sig.hsaco_entry_name
+                if key not in indices:
+                    indices[key] = len(defaults)
+                    defaults.append(sig)
+                remap.append(indices[key])
+            sigs = defaults
+            df['$$sig_num'] = np.asarray(remap)[revind]
         # Bucket autotune indices and fill the LUT (df's gpu column comes from the DB,
         # so iterate database_gpus).
         for i, ind_key in enumerate(sparse_keys):
@@ -262,6 +280,11 @@ class KernelDescription(Interface):
 
     def sancheck_lut_tensor(self, f, lut_tensor):
         return self._lut_sancheck().sancheck_lut_tensor(self, f, lut_tensor)
+
+    def exact_tuning(self, f):
+        """Optional family policy for a partially measured, exact-match LUT."""
+        policy = getattr(self._lut_sancheck(), 'exact_tuning', None)
+        return policy(self, f) if policy is not None else None
 
     def _gen_missing_entries(self, *args, **kwargs):
         return self._lut_sancheck()._gen_missing_entries(self, *args, **kwargs)

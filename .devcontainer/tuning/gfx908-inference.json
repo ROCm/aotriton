@@ -1,0 +1,10 @@
+{
+  "kernel": "flash/triton/attn_fwd",
+  "arch": "gfx908",
+  "choices": {
+    "T_io": ["*fp16:16", "*bf16:16"],
+    "BLOCK_DMODEL": [64, 128],
+    "ENABLE_DROPOUT": [false],
+    "BIAS_TYPE": [0]
+  }
+}

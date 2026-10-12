@@ -3,9 +3,11 @@
 
 from .config import Config
 from .binning import BinningLessOrEqual, BinningExact
+from .partial import ExactTuning
 
 __all__ = [
     "Config",
     "BinningLessOrEqual",
     "BinningExact",
+    "ExactTuning",
 ]

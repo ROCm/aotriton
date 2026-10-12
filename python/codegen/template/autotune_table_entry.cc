@@ -73,16 +73,15 @@ namespace AOTRITON_NS::v3::[[kernel_family_name]]::autotune {
 // AOTRITON_LOG machinery is not duplicated across every generated autotune TU.
 int CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
 #if AOTRITON_BUILD_FOR_TUNING
-    constexpr int kLutInTuningModeAlwaysReturnZero = 0;
     AOTRITON_LOG(LOG_DEBUG,
                  "Autotune_[[shim_kernel_name]]__A[[arch_number]]__F[[godel_number]] "
                  "kTotalNumKernels = %d _has_preferred_kernel = %d",
                  kTotalNumKernels, context._has_preferred_kernel);
-#ifndef NDEBUG
-    assert([[deduplicated_lut_function]](*context.params, mod_number, lut) == kLutInTuningModeAlwaysReturnZero);
-#endif
     int preferred = context._has_preferred_kernel;
-    int kernel_index = preferred < 0 ? kLutInTuningModeAlwaysReturnZero : preferred;
+    // Scoped builds retain the production LUT; full tuning builds have a zero LUT.
+    int kernel_index = preferred < 0
+        ? [[deduplicated_lut_function]](*context.params, mod_number, lut)
+        : preferred;
 #else
     auto kernel_index = [[deduplicated_lut_function]](*context.params, mod_number, lut);
 #endif

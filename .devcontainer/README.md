@@ -123,6 +123,89 @@ AOTRITON_BUILD_DIR="$PWD/build-gfx908-tune" \
   bash .devcontainer/build.sh -DAOTRITON_BUILD_FOR_TUNING=ON
 ```
 
+For MI100 inference experiments, use the optional
+[`gfx908-inference.json`](tuning/gfx908-inference.json) selector. It appends
+tuning variants for Triton forward attention with FP16/BF16, compiled head
+dimensions 64/128, no dropout, and no bias. Both causal modes and padded heads
+are included, so irregular head dimensions using those compiled blocks can
+also be tested. All normal kernel images, lookup tables, and existing image
+indices are retained. This generates 3,047 images. The initial sweep used the
+original 1,767 generic images plus 1,280 forward candidates; the selected profile
+images are already among those candidates.
+
+After completing the baseline build above, run this in a separate build tree:
+
+```bash
+(
+  set -euo pipefail
+  cd /workspaces/aotriton
+  mkdir -p build-gfx908-logs
+  export VIRTUAL_ENV=/opt/aotriton-venv
+  export PATH="$VIRTUAL_ENV/bin:$PATH"
+  AOTRITON_FLYDSL_WHEEL="$(sed -n 's/^AOTRITON_USE_LOCAL_FLYDSL_WHEEL:STRING=//p' build-gfx908/CMakeCache.txt)"
+  test -f "$AOTRITON_FLYDSL_WHEEL"
+  test -x "$PWD/build-gfx908/venv/bin/python"
+  test -d "$PWD/build-gfx908/flydsl"
+  export AOTRITON_FLYDSL_WHEEL
+
+  AOTRITON_BUILD_DIR="$PWD/build-gfx908-inference-tune" MAX_JOBS=8 \
+    bash .devcontainer/build.sh \
+      -DAOTRITON_BUILD_FOR_TUNING=ON \
+      -DAOTRITON_TUNING_FILTER="$PWD/.devcontainer/tuning/gfx908-inference.json" \
+      -DVENV_DIR="$PWD/build-gfx908/venv" \
+      -DAOTRITON_FLYDSL_KERNEL_ROOT="$PWD/build-gfx908/flydsl" \
+      -DAOTRITON_GPU_BUILD_TIMEOUT=8 \
+      -DAOTRITON_TERMINATE_WHEN_GPU_BUILD_TIMEOUT=OFF \
+    2>&1 | tee build-gfx908-logs/inference-tuning-build.log
+)
+```
+
+This reuses the baseline compiler environment (refreshing its code generator)
+and installs the tuning library under `build-gfx908-inference-tune/install`.
+Full kernel-image generation remains enabled. Experimental candidates that
+exceed resource limits or the eight-minute compile timeout are recorded as
+failed images with their indices retained; exclude them from GPU measurements.
+Check that every original image still compiles successfully before tuning.
+Leaving `AOTRITON_TUNING_FILTER` empty preserves the existing unrestricted
+tuning behavior. Changing the JSON selector triggers CMake regeneration.
+
+The validated [MI100 forward profile](../modules/flash/database/amd/gfx908/README.md)
+is included in normal builds. GPU checks passed all 66 automatic-dispatch cases
+and 7,802 split/fused regression tests. The measured aligned decode and causal
+prefill speedups average 1.55× and 2.52× respectively (geometric means); the
+profile documentation records the exact supported shapes and measurement limits.
+To reproduce the normal build, preserve the baseline and tuning installs and
+use a separate build directory:
+
+```bash
+(
+  set -euo pipefail
+  cd /workspaces/aotriton
+  mkdir -p build-gfx908-logs
+  export VIRTUAL_ENV=/opt/aotriton-venv
+  export PATH="$VIRTUAL_ENV/bin:$PATH"
+  AOTRITON_FLYDSL_WHEEL="$(sed -n 's/^AOTRITON_USE_LOCAL_FLYDSL_WHEEL:STRING=//p' build-gfx908/CMakeCache.txt)"
+  test -f "$AOTRITON_FLYDSL_WHEEL"
+  test -x "$PWD/build-gfx908/venv/bin/python"
+  test -d "$PWD/build-gfx908/flydsl"
+  export AOTRITON_FLYDSL_WHEEL
+
+  AOTRITON_BUILD_DIR="$PWD/build-gfx908-profiled" MAX_JOBS=8 \
+    bash .devcontainer/build.sh \
+      -DAOTRITON_BUILD_FOR_TUNING=OFF \
+      -DAOTRITON_TUNING_FILTER= \
+      -DVENV_DIR="$PWD/build-gfx908/venv" \
+      -DAOTRITON_FLYDSL_KERNEL_ROOT="$PWD/build-gfx908/flydsl" \
+    2>&1 | tee build-gfx908-logs/inference-profiled-build.log
+)
+```
+
+This builds all 1,783 kernel images with compile errors treated as failures and
+installs to `build-gfx908-profiled/install`. Use that install for the next GPU
+correctness and automatic-dispatch timing checks. Rebuilding a tuning library
+with updated profiles can change manual candidate indices; use its reported
+performance/compiler options when comparing runs.
+
 ## Test the local AOTriton build
 
 Expose the installed Python binding, then check that it and the gfx908 kernel
