@@ -1,0 +1,126 @@
+name: AOTriton CI
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - 'steranoc/*'
+
+env:
+  DOCKER_IMAGE: "rocm/pytorch:rocm7.0_ubuntu24.04_py3.12_pytorch_release_2.8.0"
+  PYTORCH_ROCM_ARCH: 'gfx942'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: aotriton-build-${{ github.run_id }}-${{ github.run_attempt }}
+    env:
+      BUILD_CONTAINER: "aotriton-builder-${{ github.run_id }}-${{ github.run_attempt }}"
+      AOTRITON_CI_SUPPLIED_SHA1: "${{ github.sha }}"
+    timeout-minutes: 120
+    runs-on: build-only
+    steps:
+      - name: 📜 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+          fetch-depth: 3
+
+      - name: 🚀 Run Build Container
+        run: |
+          docker pull ${{ env.DOCKER_IMAGE }}
+          echo "Starting build Container..."
+          docker run -dt \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            --name ${{ env.BUILD_CONTAINER }} \
+            -e PYTORCH_ROCM_ARCH=${{ env.PYTORCH_ROCM_ARCH }} \
+            -e AOTRITON_CI_SUPPLIED_SHA1=${{ env.AOTRITON_CI_SUPPLIED_SHA1 }} \
+            ${{ env.DOCKER_IMAGE }}
+
+      - name: 📦 Build aotriton inside container
+        run: |
+          set -ex
+          echo "Setting up AOTriton..."
+          docker exec \
+            -w /workspace \
+            ${{ env.BUILD_CONTAINER }} \
+            ./.github/scripts/build_aotriton.sh
+
+      - name: ⬆️ Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aotriton-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build-*/install_dir
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: 🧹 Cleanup container
+        if: always()
+        run: docker rm -f ${{ env.BUILD_CONTAINER }} || true
+
+  test:
+    name: aotriton-test-${{ github.run_id }}-${{ github.run_attempt }}
+    needs: build
+    env:
+      TEST_CONTAINER: "aotriton-tester-${{ github.run_id }}-${{ github.run_attempt }}"
+    timeout-minutes: 120
+    runs-on: test-gpu
+    continue-on-error: true
+    steps:
+      - name: 📜 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+          fetch-depth: 3
+      - name: ⬇️ Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: aotriton-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ github.workspace }}/aotriton
+      - name: 🚀 Run Test Container
+        run: |
+          docker pull ${{ env.DOCKER_IMAGE }}
+          docker run -dt \
+            --device=/dev/dri \
+            --device=/dev/kfd \
+            --shm-size=16G \
+            --group-add $(getent group render | cut -d: -f3) \
+            --group-add $(getent group video | cut -d: -f3) \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            --name ${{ env.TEST_CONTAINER }} \
+            ${{ env.DOCKER_IMAGE }}
+      - name: 🧪 Run tests
+        run: |
+          docker exec -i ${{ env.TEST_CONTAINER }} bash -se <<'SCRIPT'
+          set -Eeuo pipefail
+          export PYTORCH_ROCM_ARCH=${{ env.PYTORCH_ROCM_ARCH }}
+          export AOTRITON_CI_SUPPLIED_SHA1=${{ env.AOTRITON_CI_SUPPLIED_SHA1 }}
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update && \
+          apt-get install -y --no-install-recommends \
+          mold \
+          ninja-build \
+          cmake && \
+          apt-get clean && \
+          rm -rf /var/lib/apt/lists/*
+          pip install -r requirements-dev.txt
+          bash .ci/run-ci-test.sh 0 0 v3
+          SCRIPT
+      - name: ⬆️ Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PYTORCH_ROCM_ARCH }}-${{ github.run_id }}-${{ github.run_attempt }}-logs
+          path: "*.log"
+          if-no-files-found: ignore
+
+      - name: 🧹 Cleanup container
+        if: always()
+        run: docker rm -f ${{ env.TEST_CONTAINER }} || true
