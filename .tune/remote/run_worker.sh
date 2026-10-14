@@ -38,6 +38,9 @@ Options:
     --hostname <name>        Node hostname for heartbeat (default: auto-detect)
     --nreader <n>            Number of PG reader workers (default: 4)
     --ncpu <n>               Number of CPU workers (default: 4)
+    --category <category>    Required. Task category for the PG readers, e.g. tune,kernel
+                             or tune,op; its first level is the application to run
+    --subpool <name>         Machine group inside the arch
     --time_limit <sec>       Stop automatically after this many seconds
     --grace_period <sec>     Seconds before time_limit to begin graceful stop;
                              anything still running at time_limit is force-killed
@@ -47,10 +50,10 @@ NOTE: GPU selection is not read from the workers DB. Pass --multi_gpu
 explicitly, or use wkctl start for automatic GPU assignment.
 
 Examples:
-    $0 /path/to/workdir gfx942 interactive
-    $0 /path/to/workdir gfx942 slurm-job-42 --multi_gpu 0 1 2 3
-    $0 /path/to/workdir gfx942 slurm-job-42 --multi_gpu -1 --time_limit 3600
-    $0 /path/to/workdir gfx942 run1 --time_limit 7200 --grace_period 300
+    $0 /path/to/workdir gfx942 interactive --category tune,kernel
+    $0 /path/to/workdir gfx942 slurm-job-42 --category tune,kernel --multi_gpu 0 1 2 3
+    $0 /path/to/workdir gfx942 slurm-job-42 --category tune,kernel --multi_gpu -1 --time_limit 3600
+    $0 /path/to/workdir gfx942 run1 --category tune,kernel --time_limit 7200 --grace_period 300
 EOF
     exit 1
 }
@@ -91,6 +94,10 @@ while [ $# -gt 0 ]; do
             ;;
         --ncpu)
             SERVICE_ARGS+=("--ncpu" "$2")
+            shift 2
+            ;;
+        --category|--subpool)
+            SERVICE_ARGS+=("$1" "$2")
             shift 2
             ;;
         --time_limit)

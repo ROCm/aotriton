@@ -6,7 +6,7 @@
 Private helper for retry_broken_entries.
 
 Reads pytest2entry.py JSON output from stdin (one JSON object per line),
-looks up the matching task_queue row IDs in PostgreSQL, and inserts
+looks up the matching pgdef.task row IDs in PostgreSQL, and inserts
 (pass, host, arch, module, tuning_level, entry_text, task_id) into
 broken_entries.db.
 
@@ -36,8 +36,8 @@ import psycopg
 from psycopg.rows import dict_row
 
 from aotriton.tune.registry import load_flash_entry_module
-from aotriton.tune.pq.queue import TaskQueue
-from aotriton.tune.utils import get_db_connection_params
+from aotriton.tune.pq import tasks as tune_tasks
+from aotriton.pgdef.workdir import get_db_connection_params
 
 _flash_entry_module = load_flash_entry_module()
 FlashEntry = _flash_entry_module.FlashEntry
@@ -45,7 +45,7 @@ FlashInputMetadata = _flash_entry_module.FlashInputMetadata
 
 # Module name is always the unified module now (modular-tune.md §4.3): there
 # is no more separate '<module>_op' module. --tuning_mode instead selects the
-# tuning_level column filter used when resolving task_queue rows.
+# tuning-level filter used when resolving pgdef.task rows.
 # TODO: extend when additional families (e.g. gemm) are added.
 _MODULE = 'flash'
 
@@ -142,10 +142,9 @@ def _cfg_to_im(cfg: dict) -> FlashInputMetadata:
 def _fetch_task_id(conn, arch: str, entry: FlashEntry, module: str, tuning_level: str) -> int | None:
     # module alone is no longer enough to pick the right row: 'flash' now
     # covers both tuning levels, and iface_name collides across them, so
-    # tuning_level (a top-level task_queue column) must also be filtered.
-    rows = TaskQueue(conn).find_by_entry(
-        entry, arch=arch, module=module, tuning_level=tuning_level,
-        columns='id', limit=1)
+    # the tuning level must also be filtered.
+    rows = tune_tasks.find_by_entry(
+        conn, entry, arch=arch, module=module, tuning_level=tuning_level, limit=1)
     return rows[0]['id'] if rows else None
 
 
@@ -187,13 +186,13 @@ def main() -> None:
         '--tuning_mode',
         choices=['kernel', 'op'],
         default='kernel',
-        help='Selects the tuning_level filter used to resolve task_queue rows '
+        help='Selects the tuning-level filter used to resolve pgdef.task rows '
              '(module is always the unified \'flash\' module)',
     )
     args = parser.parse_args()
+    tuning_level = args.tuning_mode
 
     module = _MODULE
-    tuning_level = args.tuning_mode
 
     workdir = Path(args.workdir)
     db_path = workdir / 'scratch' / 'broken_entries.db'
@@ -213,7 +212,7 @@ def main() -> None:
             task_id = _fetch_task_id(conn, arch, entry, module, tuning_level)
             if task_id is None:
                 print(
-                    f'Warning: no task_queue row for {arch} {entry.as_text()}',
+                    f'Warning: no pgdef.task row for {arch} {entry.as_text()}',
                     file=sys.stderr,
                 )
                 not_found += 1

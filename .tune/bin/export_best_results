@@ -2,7 +2,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Export best_tuning_results (unified for both tuning levels, selected via
+# Export tune.best_tuning_results (unified for both tuning levels, selected via
 # --tuning_mode) from PostgreSQL to SQLite. Reads connection parameters from
 # <workdir>/config.rc.
 #

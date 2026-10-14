@@ -2,8 +2,16 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Tuner v3.5 Worker Service Management Script
-# SysV-style init script for managing multiple worker processes
+# DEF (pgdef) worker service: the generic node starter.
+# SysV-style init script for managing one node's worker processes.
+#
+# This script is application-independent. It starts the processes of ONE
+# application on this node: the broker, the GPU and CPU workers and the PG
+# readers, each as `python -m aotriton.<app>.node <role>`. It uses only engine
+# vocabulary: --category <app>[,<level1>], whose first level is the application,
+# and --subpool. It must never take application-specific flags such as
+# tune's --tuning_mode. Those belong to the application's own tools (e.g.
+# .tune/bin/bake_lut), not to the engine's node starter.
 
 set -euo pipefail
 
@@ -44,19 +52,22 @@ cd "$AOTRITON_ROOT"
 # it lives in it.
 export AOTRITON_MODULES_DIR="$AOTRITON_ROOT/modules"
 
-BROKER_MODULE="aotriton.tune.localq.broker_main"
-GPU_WORKER_MODULE="aotriton.tune.localq.gpu_worker_socket"
-PG_READER_MODULE="aotriton.tune.localq.pg_reader_worker"
-CPU_WORKER_MODULE="aotriton.tune.localq.cpu_worker"
+# Every process of the node is `python -m aotriton.<app>.node <role> ...`: the
+# application's own entry point, which hands its handlers to the engine
+# (pgdef.localq.node.run_node_role). <app> is the category's first level; that
+# module-name convention is the only thing this script knows about an
+# application. One application per node.
 
 # Load config utilities
 . "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/manifest.sh"
+. "$TUNE_ROOT/lib/category.sh"
 
 usage() {
     cat <<EOF
 Usage: $0 <command> <workdir> <arch> [options...]
 
-Manage Tuner v3.5 local queue processes (SysV-style init script)
+Manage one DEF (pgdef) application's node processes (SysV-style init script)
 
 Commands:
     start       Start broker and all workers
@@ -80,17 +91,27 @@ Options:
     --ncpu <n>                    Number of CPU workers to start (default: 4)
     --graceful                    (stop only) Stop PG readers first, wait for in-flight
                                   tasks to drain, then stop remaining workers
-    --tuning_mode kernel|op       Tuning mode passed to PG reader workers (default: kernel)
+    --category <category>         Task category served by the PG readers, <app>[,<level1>],
+                                  e.g. tune,kernel or tune,op. Required for start and
+                                  restart. Its first level is the application: runs
+                                  `python -m aotriton.<app>.node <role>`.
+    --subpool <name>              Machine group inside the arch this node's readers belong to
+                                  (they claim generic tasks plus tasks for this subpool)
+    --no_gpu                      Start no GPU workers (a CPU-only application)
+                                  (--ncpu 0 likewise starts no CPU workers)
 
 Components started:
     - 1 broker (message router)
     - GPU workers (auto-detected or selected via --multi_gpu)
     - N PG reader workers (fetch tasks from PostgreSQL; --nreader, default 4)
-    - N CPU workers (postprocess, write results; --ncpu, default 4)
+    - N CPU workers (the application's CPU handlers, e.g. writing results; --ncpu, default 4)
 
 Examples:
-    # Start all GPU workers (auto-detected)
-    $0 start /path/to/workdir gfx942
+    # Start all GPU workers (auto-detected) for tune's kernel-level tasks
+    $0 start /path/to/workdir gfx942 --category tune,kernel
+
+    # Start a node restricted to one machine group
+    $0 start /path/to/workdir gfx950 --category tune,kernel --subpool MI355
 
     # Start specific GPU workers
     $0 start /path/to/workdir gfx942 --multi_gpu 0 1
@@ -132,7 +153,9 @@ NODE_HOSTNAME=""
 SESSION_NAME=""
 NUM_READERS=4
 NUM_CPU=4
-TUNING_MODE="kernel"
+CATEGORY=""
+SUBPOOL=""
+NO_GPU=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -174,9 +197,18 @@ while [ $# -gt 0 ]; do
             GRACEFUL=true
             shift
             ;;
-        --tuning_mode)
+        --category)
             shift
-            TUNING_MODE="$1"
+            CATEGORY="$1"
+            shift
+            ;;
+        --subpool)
+            shift
+            SUBPOOL="$1"
+            shift
+            ;;
+        --no_gpu)
+            NO_GPU=true
             shift
             ;;
         *)
@@ -190,6 +222,20 @@ if [ -z "$COMMAND" ] || [ -z "$WORKDIR" ] || [ -z "$ARCH" ]; then
     usage
 fi
 
+# Only start and restart run an application's processes, so only they need
+# --category. stop, status and force-stop act on whatever this node is running.
+# This is the endpoint of the forwarding chain (and may be run by hand), so it
+# validates the category. Level 0 picks the node module; the category goes to
+# the readers as it is.
+NODE_MODULE=""
+CAT_LEVEL0=""
+CAT_LEVEL1=""
+if [ -n "$CATEGORY" ] || [ "$COMMAND" = start ] || [ "$COMMAND" = restart ]; then
+    validate_category "$CATEGORY" || exit 1
+    parse_category "$CATEGORY"
+    NODE_MODULE="aotriton.$CAT_LEVEL0.node"
+fi
+
 # Validate workdir
 if [ ! -d "$WORKDIR" ]; then
     echo "Error: Workdir does not exist: $WORKDIR"
@@ -198,20 +244,31 @@ fi
 
 load_config_container "$WORKDIR" || exit 1
 
-# Determine final GPU IDs list
-if [ "$USE_ALL_GPUS" = true ] || [ ${#GPU_IDS[@]} -eq 0 ]; then
+# The engine reads the connection parameters from PG* variables (never a
+# database name); sourcing config.rc is this infrastructure's job, not its.
+export PGHOST="${CELERY_SERVICE_HOST:-localhost}"
+export PGPORT="${POSTGRES_PORT:-5432}"
+export PGUSER="${POSTGRES_USER:-aotriton}"
+export PGPASSWORD="${POSTGRES_PASSWORD:-}"
+
+# Determine final GPU IDs list. Zero GPU workers is a valid configuration (an
+# application that is all-CPU): --no_gpu.
+if [ "$NO_GPU" = true ]; then
+    GPU_IDS=()
+elif [ "$USE_ALL_GPUS" = true ] || [ ${#GPU_IDS[@]} -eq 0 ]; then
     # Auto-detect all GPUs
     NUM_GPUS=$(rocm_agent_enumerator | grep -v gfx000 | wc -l)
     GPU_IDS=($(seq 0 $((NUM_GPUS - 1))))
 fi
 
-echo "Using GPU IDs: ${GPU_IDS[*]}"
+echo "Using GPU IDs: ${GPU_IDS[*]:-(none)}"
 
-# Validate localq modules exist
-if [ ! -f "python/tune/localq/broker_main.py" ]; then
-    echo "Error: localq modules not found in python/tune/localq/"
-    exit 1
-fi
+# The broker must know which queues have workers on this node: a message for a
+# queue with none fails its task instead of waiting forever.
+QUEUES=()
+[ ${#GPU_IDS[@]} -gt 0 ] && QUEUES+=(gpu)
+[ "$NUM_CPU" -gt 0 ] && QUEUES+=(cpu)
+QUEUES_ARG=$(IFS=,; echo "${QUEUES[*]}")
 
 # Directories
 PID_DIR="$WORKDIR/run/pids${SESSION_NAME:+/$SESSION_NAME}"
@@ -222,7 +279,7 @@ mkdir -p "$PID_DIR" "$LOG_DIR"
 # Set broker socket path (used by all localq components)
 # All entry points (broker_main, gpu_worker_socket, pg_reader_worker, cpu_worker)
 # default --broker_socket to this env var, so we don't need to pass it explicitly
-export AOTRITON_TUNER_BROKER_SOCKET="$WORKDIR/run/broker.sock"
+export AOTRITON_BROKER_SOCKET="$WORKDIR/run/broker.sock"
 
 # Helper functions
 
@@ -325,7 +382,7 @@ start_single_process() {
 start_process_group() {
     local group_name="$1"
     local name_prefix="$2"
-    local module="$3"
+    local role="$3"      # node role: gpu_worker | reader | cpu_worker
     local arg_type="$4"  # "gpu" | "pg" | "cpu"
     shift 4
     local ids=("$@")     # sequence of IDs to start
@@ -342,15 +399,17 @@ start_process_group() {
                 module_args=("--gpu_id" "$id")
                 ;;
             pg)
-                module_args=("--worker_id" "$name" "--arch" "$ARCH" "--workdir" "$WORKDIR" "--tuning_mode" "$TUNING_MODE")
+                module_args=("--worker_id" "reader-$id" "--pool" "$ARCH" "--category" "$CATEGORY")
+                [ -n "$SUBPOOL" ] && module_args+=("--subpool" "$SUBPOOL")
+                [ -n "$NODE_HOSTNAME" ] && module_args+=("--hostname" "$NODE_HOSTNAME")
                 ;;
             cpu)
-                module_args=("--worker_id" "$name" "--workdir" "$WORKDIR")
+                module_args=("--worker_id" "$name")
                 ;;
         esac
 
         if ! start_single_process "$display" "$name" \
-            "$CELERY_WORKER_PYTHON" -m "$module" "${module_args[@]}"; then
+            "$CELERY_WORKER_PYTHON" -m "$NODE_MODULE" "$role" "${module_args[@]}"; then
             failed=$((failed + 1))
         fi
     done
@@ -478,38 +537,14 @@ process_status() {
 # Main command handlers
 
 cmd_start() {
-    echo "Starting local queue system for $ARCH..."
+    echo "Starting local queue system for $ARCH (application: $CAT_LEVEL0, category: $CATEGORY)..."
     echo ""
 
     local failed=0
 
-    # 0. Start heartbeat monitor FIRST
-    if [ -z "$NODE_HOSTNAME" ]; then
-        echo "Warning: NODE_HOSTNAME not set, skipping heartbeat monitor"
-    else
-        echo "Starting heartbeat monitor..."
-        HEARTBEAT_PID="$PID_DIR/heartbeat-${ARCH}.pid"
-        daemonize \
-            /dev/null \
-            "$HEARTBEAT_PID" \
-            "$CELERY_WORKER_PYTHON" -m aotriton.tune.localq.heartbeat_main \
-                --workdir "$WORKDIR" \
-                --hostname "$NODE_HOSTNAME" \
-                --arch "$ARCH" \
-                --check_interval 30
-
-        sleep 0.5
-        if is_running "$HEARTBEAT_PID"; then
-            echo "Heartbeat monitor started (PID: $(cat "$HEARTBEAT_PID"))"
-        else
-            echo "Warning: Failed to start heartbeat monitor"
-        fi
-        echo ""
-    fi
-
     # 1. Start broker
     if ! start_single_process "Broker" "broker" \
-        "$CELERY_WORKER_PYTHON" -m "$BROKER_MODULE"; then
+        "$CELERY_WORKER_PYTHON" -m "$NODE_MODULE" broker --queues "$QUEUES_ARG"; then
         echo "Error: Failed to start broker"
         exit 1
     fi
@@ -519,21 +554,29 @@ cmd_start() {
     sleep 1
 
     # 2. Start GPU workers
-    echo "Starting ${#GPU_IDS[@]} GPU workers for GPUs: ${GPU_IDS[*]}..."
-    start_process_group "GPU worker" "gpu-worker" "$GPU_WORKER_MODULE" "gpu" "${GPU_IDS[@]}"
-    failed=$?
+    if [ ${#GPU_IDS[@]} -gt 0 ]; then
+        echo "Starting ${#GPU_IDS[@]} GPU workers for GPUs: ${GPU_IDS[*]}..."
+        start_process_group "GPU worker" "gpu-worker" gpu_worker "gpu" "${GPU_IDS[@]}"
+        failed=$?
+    else
+        echo "No GPU workers (zero-GPU node)"
+    fi
     echo ""
 
     # 3. Start PG readers
     echo "Starting $NUM_READERS PG reader workers for arch=$ARCH..."
-    start_process_group "PG reader" "pg-reader-$ARCH" "$PG_READER_MODULE" "pg" $(seq 0 $((NUM_READERS - 1)))
+    start_process_group "PG reader" "pg-reader-$ARCH" reader "pg" $(seq 0 $((NUM_READERS - 1)))
     failed=$((failed + $?))
     echo ""
 
     # 4. Start CPU workers
-    echo "Starting $NUM_CPU CPU workers..."
-    start_process_group "CPU worker" "cpu-worker" "$CPU_WORKER_MODULE" "cpu" $(seq 0 $((NUM_CPU - 1)))
-    failed=$((failed + $?))
+    if [ "$NUM_CPU" -gt 0 ]; then
+        echo "Starting $NUM_CPU CPU workers..."
+        start_process_group "CPU worker" "cpu-worker" cpu_worker "cpu" $(seq 0 $((NUM_CPU - 1)))
+        failed=$((failed + $?))
+    else
+        echo "No CPU workers (zero-CPU node)"
+    fi
     echo ""
 
     if [ $failed -eq 0 ]; then
@@ -590,16 +633,8 @@ cmd_stop() {
     stop_process_group "Broker" "broker"
     echo ""
 
-    # 6. Stop heartbeat monitor LAST
-    HEARTBEAT_PID="$PID_DIR/heartbeat-${ARCH}.pid"
-    if is_running "$HEARTBEAT_PID"; then
-        echo "Stopping heartbeat monitor..."
-        stop_process_group "Heartbeat monitor" "heartbeat-${ARCH}"
-        echo ""
-    fi
-
     # Clean up socket file
-    rm -f "$AOTRITON_TUNER_BROKER_SOCKET"
+    rm -f "$AOTRITON_BROKER_SOCKET"
 
     echo "All processes stopped"
 }
@@ -678,7 +713,7 @@ cmd_force_stop() {
     force_stop_process_group "Broker" "broker"
 
     # Clean up socket file
-    rm -f "$AOTRITON_TUNER_BROKER_SOCKET"
+    rm -f "$AOTRITON_BROKER_SOCKET"
 
     echo ""
     echo "All processes force stopped"

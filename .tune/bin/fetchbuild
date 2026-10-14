@@ -8,35 +8,37 @@
 #   buildnode::hostname          SSH hostname of the build node
 #   buildnode::workdir_override  Remote workdir (resolved via get_buildnode_workdir)
 #
-#   --tuning (default)  Fetch tuning libraries: rsync installed/ from remote,
-#                       excluding installed/database/ and installed/test/.
-#   --test              Fetch testing libraries: rsync installed/test/ from remote.
+# A shared DEF tool: it serves every application and takes only the category,
+# <app>[,<level1>]. The application is the category's first level (cat_level0),
+# so there is no separate --apps. What to fetch is the application manifest's
+# business (fetchbuild.path and fetchbuild.exclude, per category level). For
+# example:
+#   --category tune,kernel   tuning libraries: installed/, excluding
+#                            installed/database/ and installed/test/
+#   --category tune,op       testing libraries: installed/test/
 #
 # Usage:
-#   fetchbuild <workdir>          # fetch tuning build (default)
-#   fetchbuild <workdir> --test   # fetch test build
-#   fetchbuild --test <workdir>   # same, order-independent
+#   fetchbuild <workdir> --category <category>
 
 set -euo pipefail
 
-MODE="tuning"
+CATEGORY=""
 WORKDIR=""
 
-for arg in "$@"; do
-  case "$arg" in
-    --test)   MODE="test" ;;
-    --tuning) MODE="tuning" ;;
-    *)        WORKDIR="$arg" ;;
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --category) CATEGORY="$2"; shift 2 ;;
+    *)          WORKDIR="$1"; shift ;;
   esac
 done
 
-if [ -z "$WORKDIR" ]; then
+if [ -z "$WORKDIR" ] || [ -z "$CATEGORY" ]; then
   cat >&2 <<EOF
-Usage: $0 <workdir> [--tuning|--test]
+Usage: $0 <workdir> --category <category>
 
-  --tuning (default)  Fetch tuning libraries from remote installed/ (excludes
-                      installed/database/ and installed/test/).
-  --test              Fetch testing libraries from remote installed/test/.
+  --category <app>[,<level1>]  What to fetch, e.g. tune,kernel (tuning libraries),
+                               tune,op (testing libraries).
+                               The application is the first level.
 
 Build node config (workers.db config table):
   buildnode::hostname          SSH hostname of the build node.
@@ -55,6 +57,17 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 . "$TUNE_ROOT/lib/config_load.sh"
 . "$TUNE_ROOT/lib/db_query.sh"
+. "$TUNE_ROOT/lib/manifest.sh"
+. "$TUNE_ROOT/lib/category.sh"
+
+# Entry script and endpoint: the levels pick what to fetch.
+validate_category "$CATEGORY" || exit 1
+parse_category "$CATEGORY"
+FETCH_PATH="$(app_manifest "$CAT_LEVEL0" fetchbuild.path ${CAT_LEVEL1:+--cat_level1 "$CAT_LEVEL1"})"
+FETCH_EXCLUDES=()
+while IFS= read -r _pat; do
+  [ -n "$_pat" ] && FETCH_EXCLUDES+=(--exclude "$_pat")
+done < <(app_manifest "$CAT_LEVEL0" fetchbuild.exclude ${CAT_LEVEL1:+--cat_level1 "$CAT_LEVEL1"})
 
 load_config "$WORKDIR"
 
@@ -69,21 +82,12 @@ fi
 REMOTE_WORKDIR="$(get_buildnode_workdir "$WORKDIR")"
 
 # MUST NOT USE rsync --delete. `installed/` is a shared location for various artifacts.
-if [ "$MODE" = "test" ]; then
-  echo "Fetching test build from $BUILD_NODE_HOST:$REMOTE_WORKDIR/installed/test/ ..."
-  mkdir -p "$WORKDIR/installed/test"
-  rsync -az --checksum --info=progress2 \
-    "$BUILD_NODE_HOST:$REMOTE_WORKDIR/installed/test/" \
-    "$WORKDIR/installed/test/"
-else
-  echo "Fetching tuning build from $BUILD_NODE_HOST:$REMOTE_WORKDIR/installed/ ..."
-  mkdir -p "$WORKDIR/installed"
-  rsync -az --checksum --info=progress2 \
-    --exclude '/database/' \
-    --exclude '/test/' \
-    "$BUILD_NODE_HOST:$REMOTE_WORKDIR/installed/" \
-    "$WORKDIR/installed/"
-fi
+echo "Fetching $CATEGORY build from $BUILD_NODE_HOST:$REMOTE_WORKDIR/installed/$FETCH_PATH ..."
+mkdir -p "$WORKDIR/installed/$FETCH_PATH"
+rsync -az --checksum --info=progress2 \
+  ${FETCH_EXCLUDES[@]+"${FETCH_EXCLUDES[@]}"} \
+  "$BUILD_NODE_HOST:$REMOTE_WORKDIR/installed/$FETCH_PATH" \
+  "$WORKDIR/installed/$FETCH_PATH"
 
 echo ""
 echo "Fetch complete: $WORKDIR/installed/"

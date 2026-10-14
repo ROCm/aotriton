@@ -4,6 +4,14 @@
 
 # Sync workdir to one host (main files + architecture-specific files)
 # Usage: sync_workdir.sh <workdir> <hostname> [--remote_workdir <path>|--buildnode]
+#                        [--category <app>[,<level1>]]
+#
+# --category <app>[,<level1>]
+#   Which build to sync to a worker host; required in that mode. The
+#   application is the category's first level, and its manifest says where the
+#   build is installed (install.subtree, e.g. installed/<arch> for tune,kernel,
+#   installed/test/<arch> for tune,op).
+#   --buildnode and --remote_workdir do not use it.
 #
 # --remote_workdir <path>
 #   Override the remote workdir instead of looking it up from workers.db.
@@ -22,6 +30,8 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 . "$TUNE_ROOT/lib/config_load.sh"
 . "$TUNE_ROOT/lib/db_query.sh"
+. "$TUNE_ROOT/lib/manifest.sh"
+. "$TUNE_ROOT/lib/category.sh"
 
 WORKDIR="$1"
 HOSTNAME="$2"
@@ -29,18 +39,18 @@ shift 2
 
 REMOTE_WORKDIR_OVERRIDE=""
 BUILDNODE_MODE=0
-TESTNODE_MODE=0
+CATEGORY=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --remote_workdir) REMOTE_WORKDIR_OVERRIDE="$2"; shift 2 ;;
     --buildnode)      BUILDNODE_MODE=1; shift ;;
-    --testnode)       TESTNODE_MODE=1; shift ;;
+    --category)       CATEGORY="$2"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
 
 if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
-  echo "Usage: $0 <workdir> <hostname> [--remote_workdir <path>]" >&2
+  echo "Usage: $0 <workdir> <hostname> [--category <app>[,<level1>] | --remote_workdir <path> | --buildnode]" >&2
   echo "" >&2
   echo "  Rsync workdir and arch-specific installed/ files to <hostname>." >&2
   echo "  Excludes build/, run/, scratch/, secrets/. Uses --delete on installed/ and aotriton.src/." >&2
@@ -50,6 +60,16 @@ if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
 fi
 
 load_config "$WORKDIR"
+
+# Only a sync to a registered worker host picks a build, so only it needs the
+# category. That is where its levels get their meaning (the install tree), so it
+# is validated here.
+CAT_LEVEL0=""
+CAT_LEVEL1=""
+if [ -z "$REMOTE_WORKDIR_OVERRIDE" ] && [ "$BUILDNODE_MODE" -eq 0 ]; then
+  validate_category "$CATEGORY" || exit 1
+  parse_category "$CATEGORY"
+fi
 
 if [ -n "$REMOTE_WORKDIR_OVERRIDE" ]; then
   arch="ALL"
@@ -83,12 +103,13 @@ rsync -az --checksum --info=progress2 \
 # TODO: Re-use SSH connection between multiple rsyncs (e.g., SSH ControlMaster)
 if [ "$BUILDNODE_MODE" -eq 1 ]; then
   SUBDIR="/database"
-elif [ "$TESTNODE_MODE" -eq 1 ]; then
-  SUBDIR="/test/$arch"
 elif [ "$arch" = "ALL" ]; then
   SUBDIR=""
 else
-  SUBDIR="/$arch"
+  # The application's manifest says where its build is installed, relative to the
+  # workdir (installed/<arch> or installed/test/<arch>); rsync works under installed/.
+  SUBTREE="$(app_manifest "$CAT_LEVEL0" install.subtree --arch "$arch" ${CAT_LEVEL1:+--cat_level1 "$CAT_LEVEL1"})"
+  SUBDIR="/${SUBTREE#installed/}"
 fi
 
 # Always use --delete so aotriton.src is an exact copy.

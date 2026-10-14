@@ -4,7 +4,7 @@
 
 """
 Parse a dbreport.txt produced by .tune/bin/sancheck, find the corresponding
-task_queue rows, and reset them to 'pending' so they are re-tuned.
+pgdef.task rows, and reset them to 'pending' so they are re-tuned.
 
 Report lines are identified by the marker "TUNE_V3BIS testrun Item:" and have
 the format:
@@ -12,7 +12,7 @@ the format:
     <kernel_name> TUNE_V3BIS testrun Item:  arch=<arch> <FlashEntry.as_text()>
 
 Entries are de-duplicated on (arch, FlashEntry) before any DB queries are made
-(multiple kernels for the same task_queue row share the same entry).
+(multiple kernels for the same task row share the same entry).
 
 Usage:
     .tune/bin/retry_missing_entries <workdir> [<dbreport.txt>] [--tuning_mode kernel|op]
@@ -23,7 +23,7 @@ Usage:
 The report defaults to <workdir>/scratch/dbreport.txt (the fixed output location
 produced by .tune/bin/sancheck). --tuning_mode must match the tuning_mode the
 report was generated with (.tune/bin/sancheck <workdir> --tuning_mode op), since
-tuning_results/most_accurate_tuning_results are shared by both tuning levels and
+the reports and most_accurate_tuning_results are shared by both levels and
 iface_name collides across them. The script shows a summary and asks for
 confirmation before making any changes.
 """
@@ -49,7 +49,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from aotriton.tune.registry import load_flash_entry_module
-from aotriton.tune.utils import get_db_connection_params
+from aotriton.pgdef.workdir import get_db_connection_params
 from pq_helpers import fetch_matches, print_summary, reset_to_pending
 
 FlashEntry = load_flash_entry_module().FlashEntry
@@ -87,9 +87,10 @@ def main() -> None:
                              '(default: <workdir>/scratch/dbreport.txt)')
     parser.add_argument('--tuning_mode', choices=['kernel', 'op'], default='kernel',
                         help='Must match the tuning_mode the report was generated '
-                             'with; selects the tuning_level slice of the unified '
-                             'tuning_results/most_accurate_tuning_results tables to reset')
+                             'with; selects the kernel or op slice (tuning_level) of the '
+                             'reports/most_accurate_tuning_results to reset')
     args = parser.parse_args()
+    tuning_level = args.tuning_mode
 
     workdir = Path(args.workdir)
     report_path = Path(args.report) if args.report else workdir / 'scratch' / 'dbreport.txt'
@@ -107,8 +108,8 @@ def main() -> None:
 
     conn_params = get_db_connection_params(workdir)
     with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
-        print('Querying task_queue …')
-        matches = fetch_matches(conn, entries, tuning_level=args.tuning_mode)
+        print('Querying pgdef.task …')
+        matches = fetch_matches(conn, entries, tuning_level=tuning_level)
         print_summary('Report entries', len(entries), matches)
 
         if not matches:
@@ -122,7 +123,7 @@ def main() -> None:
             return
 
         row_ids = [r['id'] for r in matches]
-        affected = reset_to_pending(conn, row_ids, tuning_level=args.tuning_mode,
+        affected = reset_to_pending(conn, row_ids, tuning_level=tuning_level,
                                    delete_results=True)
         conn.commit()
         print(f'Done: {affected} rows reset to pending.')

@@ -3,10 +3,13 @@
 # SPDX-License-Identifier: MIT
 
 # Deploy workdir to all workers
-# Usage: deploy <workdir> [--tuning_mode kernel|op]
+# Usage: deploy <workdir> --category <app>[,<level1>]
 #
-# --tuning_mode kernel (default)  Deploy to Tuner-role hosts; sync installed/<arch>/.
-# --tuning_mode op                Deploy to Tuner-role hosts; sync installed/test/<arch>/.
+# The application is the category's first level. Which hosts and which build to
+# sync come from its manifest (python/<app>/manifest.py): deploy.role and
+# install.subtree. For example:
+#   --category tune,kernel  Deploy to Tuner-role hosts; sync installed/<arch>/.
+#   --category tune,op      Deploy to Tuner-role hosts; sync installed/test/<arch>/.
 
 set -e
 
@@ -15,33 +18,38 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 . "$TUNE_ROOT/lib/config_load.sh"
 . "$TUNE_ROOT/lib/db_query.sh"
+. "$TUNE_ROOT/lib/manifest.sh"
+. "$TUNE_ROOT/lib/category.sh"
 
 WORKDIR="$1"
 shift
 
-TUNING_MODE="kernel"
+CATEGORY=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --tuning_mode) TUNING_MODE="$2"; shift 2 ;;
+    --category) CATEGORY="$2"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
 
 if [ -z "$WORKDIR" ]; then
-    echo "Usage: $0 <workdir> [--tuning_mode kernel|op]" >&2
+    echo "Usage: $0 <workdir> --category <app>[,<level1>]" >&2
     exit 1
 fi
 
+# Entry script: validate early so a typo fails before any rsync (the endpoint,
+# sync_workdir.sh, checks it again). Only level 0 is used here.
+validate_category "$CATEGORY" || exit 1
+parse_category "$CATEGORY"
+
 load_config "$WORKDIR"
 
-echo "Deploying from $WORKDIR (tuning_mode=$TUNING_MODE)"
+echo "Deploying from $WORKDIR (application=$CAT_LEVEL0, category=$CATEGORY)"
 
-if [ "$TUNING_MODE" = "op" ]; then
-    SYNC_FLAG="--testnode"
-else
-    SYNC_FLAG=""
-fi
-mapfile -t WORKER_DATA < <(get_workers "$WORKDIR" Tuner)
+# What to sync is the application's manifest's business (sync_workdir.sh reads it).
+SYNC_ARGS=(--category "$CATEGORY")   # forwarded as it is
+ROLE="$(app_manifest "$CAT_LEVEL0" deploy.role)"
+mapfile -t WORKER_DATA < <(get_workers "$WORKDIR" "$ROLE")
 
 for worker in "${WORKER_DATA[@]}"; do
     IFS='|' read -r hostname arch workdir_override <<< "$worker"
@@ -49,14 +57,14 @@ for worker in "${WORKER_DATA[@]}"; do
 
     echo "Deploying to $hostname ($arch) at $WORKER_WORKDIR"
 
-    "$TUNE_ROOT/single/sync_workdir.sh" "$WORKDIR" "$hostname" $SYNC_FLAG
+    "$TUNE_ROOT/single/sync_workdir.sh" "$WORKDIR" "$hostname" "${SYNC_ARGS[@]}"
 done
 
 # SLURM deployment if configured
 if [ -n "$SLURM_LOGIN_NODE" ]; then
     echo "Deploying to SLURM: $SLURM_LOGIN_NODE at $SLURM_WORKER_DIR"
 
-    "$TUNE_ROOT/single/sync_workdir.sh" "$WORKDIR" "$SLURM_LOGIN_NODE" $SYNC_FLAG
+    "$TUNE_ROOT/single/sync_workdir.sh" "$WORKDIR" "$SLURM_LOGIN_NODE" "${SYNC_ARGS[@]}"
 fi
 
 echo "Deployment complete"

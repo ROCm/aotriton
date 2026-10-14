@@ -2,13 +2,13 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Incrementally update most_accurate_tuning_results.
+# Incrementally update tune.most_accurate_tuning_results.
 #
 # Default mode: reads task_ids from <workdir>/scratch/retry_task_ids.txt
 #   (written by retry_missing_entries).
 #
 # Fix mode (--fix [hostname:]<pass>): reads task_ids from broken_entries.db
-#   for the given hostname and pass, then updates most_accurate_tuning_results.
+#   for the given hostname and pass, then updates tune.most_accurate_tuning_results.
 #   hostname is optional; if omitted, all hosts for that pass are included.
 #
 # Usage:
@@ -95,7 +95,7 @@ if [ -n "$FIX_SPEC" ]; then
         HOST_ARG=""
     fi
 
-    echo "Updating most_accurate_tuning_results (fix broken, pass=$FIX_PASS${FIX_HOST:+, host=$FIX_HOST})..."
+    echo "Updating tune.most_accurate_tuning_results (fix broken, pass=$FIX_PASS${FIX_HOST:+, host=$FIX_HOST})..."
     # shellcheck disable=SC2086
     "$SCRIPT_DIR/query_broken_entries" "$WORKDIR" --pass "$FIX_PASS" $HOST_ARG "${ARCH_QBE[@]}" \
     | "$UMV_PYTHON" -m aotriton.tune.pq.populate_most_accurate \
@@ -109,7 +109,7 @@ else
         exit 1
     fi
 
-    echo "Updating most_accurate_tuning_results (incremental)..."
+    echo "Updating tune.most_accurate_tuning_results (incremental)..."
     echo "Task IDs file: $TASK_IDS_FILE"
 
     "$UMV_PYTHON" -m aotriton.tune.pq.populate_most_accurate \

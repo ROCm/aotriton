@@ -63,6 +63,15 @@ get_buildnode_workdir() {
     fi
 }
 
+# The subpool (machine group inside the arch, e.g. MI355) of a worker, or empty.
+# Empty on a workers.db made before the column existed.
+get_worker_subpool() {
+    local workdir="$1"
+    local hostname="$2"
+    sqlite3 "$workdir/workers.db" \
+        "SELECT COALESCE(subpool, '') FROM workers WHERE hostname = '$hostname' LIMIT 1" 2>/dev/null || true
+}
+
 get_worker_gpu_selection() {
     local workdir="$1"
     local hostname="$2"

@@ -3,17 +3,17 @@
 # SPDX-License-Identifier: MIT
 
 """
-Move task_queue rows back to 'pending' so they are picked up and run again.
+Move pgdef.task rows (tune's) back to 'pending' so they are picked up and run again.
 
 Rows are chosen either by a rule (--select) or by naming them (--id).
 
 --select covers the two states nothing retries on its own:
 
-    --select stale    status='running' with started_at older than the stale
-                      timeout. A worker that died, was killed, or lost its
-                      container leaves its claim behind; nothing reaps it, so
-                      the task stays 'running' forever and no other worker will
-                      take it.
+    --select stale    status='running' with a start older than the stale
+                      timeout. Readers reap tasks whose LEASE lapsed on their
+                      own (a dead worker or container stops renewing it); this
+                      finds claims that are still leased -- a live but wedged
+                      reader -- and are therefore never reaped.
     --select failed   status='failed'. These are terminal until something moves
                       them, which is this.
 
@@ -22,15 +22,15 @@ covers -- a task wedged in a state you have just diagnosed, or a handful picked
 out of a report. Ids that are not in the table are listed and skipped. End the
 id list with `--` before the workdir.
 
-By default the tasks' existing measurements in tuning_results and
-most_accurate_tuning_results are deleted, so the re-run starts clean rather
+By default the tasks' existing measurements (their pgdef.report rows, and
+tune.most_accurate_tuning_results which cascades from them) are deleted, so the re-run starts clean rather
 than mixing new results with the ones that are already there. --keep_results
 spares them, for when the rows are believed good and only the queue state is
 wrong -- a worker that finished the work but died before reporting it.
 
 Both tuning levels are handled. A selection is made across the whole queue and
 the ids are grouped by their own tuning_level before resetting, because
-tuning_results is shared between levels and the delete has to be scoped to the
+the reports are shared between levels and the reset has to be scoped to the
 level each id actually belongs to.
 
 Shows what it matched and asks before changing anything.
@@ -81,12 +81,12 @@ def print_summary(what: str, rows: list[dict]) -> None:
     for r in rows:
         by_arch[r['arch']] += 1
         by_level[r['tuning_level']] += 1
-        by_host[r['node_hostname'] or '(none)'] += 1
+        by_host[r['lease_owner'] or '(none)'] += 1
 
     print('\nBy arch:')
     for k, n in sorted(by_arch.items()):
         print(f'  {k}: {n}')
-    print('\nBy tuning level:')
+    print('\nBy tuning level (kernel/op):')
     for k, n in sorted(by_level.items()):
         print(f'  {k}: {n}')
 
@@ -106,7 +106,7 @@ def print_summary(what: str, rows: list[dict]) -> None:
         ages = sorted((r['age_s'] or 0) for r in rows)
         print(f'\nRunning for (hours): min {ages[0]/3600:.1f}, '
               f'max {ages[-1]/3600:.1f}')
-        print('\nBy worker host:')
+        print('\nBy lease owner (reader):')
         for k, n in sorted(by_host.items()):
             print(f'  {k}: {n}')
 
@@ -126,7 +126,7 @@ def main() -> None:
                      help='Reset these task ids, whatever their status. '
                           'Ids that do not exist are reported and skipped.')
     parser.add_argument('--keep_results', action='store_true',
-                        help="Keep the tasks' existing tuning_results and "
+                        help="Keep the tasks' existing reports and "
                              'most_accurate_tuning_results rows. Default is to '
                              'delete them so the re-run starts clean.')
     args = parser.parse_args()
@@ -143,8 +143,8 @@ def main() -> None:
     sys.path.insert(0, str(_TUNE_ROOT / 'libexec'))
     try:
         import psycopg
-        from aotriton.tune.pq.queue import TaskQueue
-        from aotriton.tune.utils import get_db_connection_params
+        from aotriton.tune.pq import tasks as tune_tasks
+        from aotriton.pgdef.workdir import get_db_connection_params
         from pq_helpers import (find_resettable, find_resettable_by_ids,
                                 reset_to_pending)
     except ImportError as exc:
@@ -157,24 +157,24 @@ def main() -> None:
     # imports perfectly and then fails on the first attribute it does not have.
     # Check once, here, and say what to do -- rather than surfacing an
     # AttributeError from whichever call happened to come first.
-    for _needed in ('find_resettable', 'find_resettable_by_ids',
+    for _needed in ('find_resettable', 'find_resettable_by_ids', 'reset',
                     'STALE_TIMEOUT_SECONDS'):
-        if not hasattr(TaskQueue, _needed):
+        if not hasattr(tune_tasks, _needed):
             sys.exit(
                 f"Error: the installed 'aotriton' package is out of date "
-                f"(TaskQueue has no {_needed}).\n"
-                f"  Loaded from: {sys.modules[TaskQueue.__module__].__file__}\n"
+                f"(aotriton.tune.pq.tasks has no {_needed}).\n"
+                f"  Loaded from: {tune_tasks.__file__}\n"
                 f"  Refresh it with: pip install -e '{_REPO_ROOT}'")
 
     delete_results = not args.keep_results
     conn_params = get_db_connection_params(workdir)
     if args.select == 'stale':
-        print(f'Stale timeout: {TaskQueue.STALE_TIMEOUT_SECONDS}s')
+        print(f'Stale timeout: {tune_tasks.STALE_TIMEOUT_SECONDS}s')
 
     with psycopg.connect(**conn_params, autocommit=False) as conn:
         if args.id:
             label = 'ids'
-            print(f'Querying task_queue for {len(args.id)} id(s) …')
+            print(f'Querying pgdef.task for {len(args.id)} id(s) …')
             rows = find_resettable_by_ids(conn, args.id)
             # Named ids that are not in the table are the caller's typo or a
             # stale list; say which rather than silently resetting fewer rows
@@ -184,7 +184,7 @@ def main() -> None:
                 print(f'  not found: {", ".join(str(i) for i in missing)}')
         else:
             label = args.select
-            print(f'Querying task_queue for {args.select} tasks …')
+            print(f'Querying pgdef.task for {args.select} tasks …')
             rows = find_resettable(conn, args.select)
         print_summary(label, rows)
 
@@ -193,7 +193,7 @@ def main() -> None:
             return
 
         if delete_results:
-            print('\nExisting tuning_results and most_accurate_tuning_results '
+            print('\nExisting reports and most_accurate_tuning_results '
                   'rows for these tasks WILL BE DELETED (--keep_results spares them).')
         else:
             print('\n--keep_results: existing results are kept; the re-run '
@@ -204,7 +204,7 @@ def main() -> None:
             print('Aborted.')
             return
 
-        # Grouped by level, one call each: reset_to_pending scopes every
+        # Grouped by level, one call each: tasks.reset scopes every
         # statement by tuning_level, so a mixed id list handed to a single call
         # would silently reset only the part matching the level passed.
         by_level: dict[str, list[int]] = defaultdict(list)

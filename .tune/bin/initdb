@@ -2,7 +2,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Initialize PostgreSQL database schema for Tuner v3.5
+# Initialize the PostgreSQL schemas (pgdef, tune, ...) for Tuner v3.5
 # Usage: initdb <workdir> [--recreate]
 
 set -e
@@ -35,13 +35,26 @@ fi
 
 load_config "$WORKDIR"
 
-# Path to schema SQL file
-SCHEMA_SQL="$AOTRITON_ROOT/python/tune/pq/schema.sql"
-
-if [ ! -f "$SCHEMA_SQL" ]; then
-    echo "Error: Schema file not found: $SCHEMA_SQL" >&2
+# Every layer ships an idempotent schema.sql next to its pq package. The
+# engine's (pgdef) is applied FIRST because the applications' schemas reference
+# its tables; then every other python/<app>/pq/schema.sql, sorted. The list is
+# the files themselves: a new application needs no edit here. Each layer's
+# PostgreSQL schema is named after its directory (pgdef, tune, ...).
+PGDEF_SCHEMA_SQL="$AOTRITON_ROOT/python/pgdef/pq/schema.sql"
+if [ ! -f "$PGDEF_SCHEMA_SQL" ]; then
+    echo "Error: Schema file not found: $PGDEF_SCHEMA_SQL" >&2
     exit 1
 fi
+SCHEMA_FILES=("$PGDEF_SCHEMA_SQL")
+for f in "$AOTRITON_ROOT"/python/*/pq/schema.sql; do
+    [ -f "$f" ] || continue
+    [ "$f" = "$PGDEF_SCHEMA_SQL" ] && continue
+    SCHEMA_FILES+=("$f")
+done
+SCHEMA_NAMES=()
+for f in "${SCHEMA_FILES[@]}"; do
+    SCHEMA_NAMES+=("$(basename "$(dirname "$(dirname "$f")")")")
+done
 
 # Validate required config variables
 if [ -z "$POSTGRES_USER" ] || [ -z "$POSTGRES_PASSWORD" ]; then
@@ -65,24 +78,32 @@ PSQL_IMAGE="alpine/psql:${POSTGRES_VERSION}"
 POSTGRES_HOST="${CELERY_SERVICE_HOST:-localhost}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 
-# Drop all tables if --recreate flag is set
+# Drop every layer's schema if --recreate flag is set. Applications first,
+# the engine last (the applications' tables reference the engine's); CASCADE
+# takes the tables, views, indexes and partitions with them. `public` is not
+# touched: nothing lives there any more.
 if [ "$RECREATE_FLAG" = "--recreate" ]; then
-    echo "WARNING: Recreating schema - dropping all tables first..."
+    echo "WARNING: Recreating schemas (${SCHEMA_NAMES[*]}) - dropping all their tables first..."
 
-    # Drop all tables in public schema
+    DROP_SQL=""
+    for ((i = ${#SCHEMA_NAMES[@]} - 1; i >= 0; i--)); do
+        DROP_SQL+="DROP SCHEMA IF EXISTS ${SCHEMA_NAMES[$i]} CASCADE; "
+    done
+
     docker run --rm \
         --network=host \
         -e PGPASSWORD="$POSTGRES_PASSWORD" \
         "$PSQL_IMAGE" \
         postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
-        -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO $POSTGRES_USER; GRANT ALL ON SCHEMA public TO public;"
+        -v ON_ERROR_STOP=1 \
+        -c "$DROP_SQL"
 
     if [ $? -ne 0 ]; then
-        echo "Error: Failed to drop existing schema" >&2
+        echo "Error: Failed to drop existing schemas" >&2
         exit 1
     fi
 
-    echo "All tables dropped successfully"
+    echo "All schemas dropped successfully"
 fi
 
 echo "Initializing database schema..."
@@ -95,45 +116,29 @@ echo "Using psql: $PSQL_IMAGE"
 echo "Pulling psql image: $PSQL_IMAGE"
 docker pull "$PSQL_IMAGE"
 
-# Execute schema SQL via containerized psql
-# Mount schema file into container and execute it
-docker run --rm \
-    --network=host \
-    -v "$SCHEMA_SQL:/schema.sql:ro" \
-    -e PGPASSWORD="$POSTGRES_PASSWORD" \
-    "$PSQL_IMAGE" \
-    postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
-    -f /schema.sql
+# Execute each schema SQL via containerized psql, in order.
+# Mount the schema file into the container and execute it.
+# ON_ERROR_STOP=1 is what makes the exit-status checks mean anything: without it
+# psql runs every remaining statement after a failure and still exits 0, so a
+# half-applied schema was reported as "initialized successfully".
+for f in "${SCHEMA_FILES[@]}"; do
+    echo "Applying $f"
+    docker run --rm \
+        --network=host \
+        -v "$f:/schema.sql:ro" \
+        -e PGPASSWORD="$POSTGRES_PASSWORD" \
+        "$PSQL_IMAGE" \
+        postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
+        -v ON_ERROR_STOP=1 \
+        -f /schema.sql
 
-if [ $? -ne 0 ]; then
-    echo "Error: Failed to initialize database schema" >&2
-    exit 1
-fi
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to apply $f" >&2
+        exit 1
+    fi
+done
 
 echo "Database schema initialized successfully"
 
-# Create partitions for all architectures in workers.db
-echo "Creating partitions for architectures in workers.db..."
-ARCHS=$(sqlite3 "$WORKDIR/workers.db" "SELECT DISTINCT arch FROM workers;" 2>/dev/null)
-
-if [ -z "$ARCHS" ]; then
-    echo "Warning: No workers found in workers.db, no partitions created"
-else
-    for ARCH in $ARCHS; do
-        echo "Creating partition for architecture: $ARCH"
-        docker run --rm \
-            --network=host \
-            -e PGPASSWORD="$POSTGRES_PASSWORD" \
-            "$PSQL_IMAGE" \
-            postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
-            -c "SELECT create_arch_partition('$ARCH');"
-
-        if [ $? -eq 0 ]; then
-            echo "  ✓ Partition task_queue_$ARCH created"
-        else
-            echo "  ✗ Failed to create partition for $ARCH" >&2
-            exit 1
-        fi
-    done
-    echo "All partitions created successfully"
-fi
+# Pool partitions (pgdef.task_<pool>) are NOT created here: dispatch creates
+# them on demand with pgdef.pq.tasks.ensure_partition.
