@@ -10,12 +10,14 @@ and what the function does with canned rows. It cannot check that PostgreSQL
 accepts the statement; the `pg`-marked tests do that.
 """
 
+import contextlib
 import re
 
 
 class FakeCursor:
     def __init__(self, conn, row_factory=None):
         self.conn = conn
+        self.row_factory = row_factory
         self.rowcount = 1
         self._rows = []
 
@@ -28,6 +30,7 @@ class FakeCursor:
     def execute(self, query, params=None):
         text = query if isinstance(query, str) else query.as_string(None)
         self.conn.calls.append((text, params))
+        self.conn.row_factories.append(self.row_factory)
         self._rows = list(self.conn.next_rows())
         self.rowcount = self.conn.rowcount
 
@@ -47,6 +50,8 @@ class FakeCursor:
 class FakeConn:
     def __init__(self, rows=(), rowcount=1):
         self.calls = []
+        self.row_factories = []     # the row_factory each execute() ran with
+        self.transactions = 0
         self._queue = list(rows)
         self.rowcount = rowcount
 
@@ -55,6 +60,10 @@ class FakeConn:
 
     def cursor(self, **kwargs):
         return FakeCursor(self, kwargs.get('row_factory'))
+
+    def transaction(self):
+        self.transactions += 1
+        return contextlib.nullcontext()
 
 
 _NAMED = re.compile(r'%\((\w+)\)s')

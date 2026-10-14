@@ -39,7 +39,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from psycopg.rows import dict_row
+from psycopg.rows import dict_row, tuple_row
 from psycopg.types.json import Jsonb
 
 from . import category as _category
@@ -345,7 +345,7 @@ def fail(conn, task_ref, error: str, *, permanent: bool = False) -> str | None:
     retried, 'failed' if the attempts are used up or `permanent`; None if the
     task was not running."""
     task_id, pool = task_ref
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute(fail_sql(), {'id': task_id, 'pool': pool, 'permanent': bool(permanent),
                                  'reason': 'error', 'detail': str(error)[:2000]})
         row = cur.fetchone()
@@ -362,7 +362,7 @@ def release(conn, task_ref) -> bool:
 def reap_expired(conn, pool: str) -> list[tuple[int, str]]:
     """Move running tasks whose lease lapsed back to pending (or to failed when
     out of attempts). Returns [(task_id, new_status), ...]."""
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute(reap_sql(), {'pool': pool, 'reason': 'lease_expired', 'detail': ''})
         return [(r[0], r[1]) for r in cur.fetchall()]
 

@@ -399,12 +399,16 @@ def test_schema_sql_is_plain_and_idempotent():
 # ---------------------------------------------------------------------------
 
 def test_report_replace_deletes_the_same_rkey_in_the_same_statement():
-    conn = FakeConn(rows=[[(5,)], [(6,)]])
+    conn = FakeConn(rows=[[(1,)], [(5,)], [(6,)]])
     reports.insert(conn, (1, 'gfx950'), cat_level0='tune', attempt=2,
                    rkey={'iface': 'a', 'impl': 0}, status='OK', replace=True)
     reports.insert(conn, (1, 'gfx950'), cat_level0='tune', attempt=1,
                    rkey={'iface': 'a', 'impl': 0}, status='OK')
-    (text, params), (plain, plain_params) = conn.calls
+    (lock, lock_params), (text, params), (plain, plain_params) = conn.calls
+    # Replacements are serialized by locking the task row, in one transaction.
+    assert conn.transactions == 1
+    assert 'FROM pgdef.task WHERE id = %s AND pool = %s FOR UPDATE' in lock
+    assert lock_params == (1, 'gfx950')
     check_statement(text, list(params))
     assert text.startswith('WITH replaced AS (DELETE FROM pgdef.report') and 'rkey = %s' in text
     assert 'DELETE' not in plain
@@ -516,3 +520,19 @@ def test_drive_requires_a_category_unless_the_source_has_a_default():
 def test_drive_rejects_a_bad_category():
     with pytest.raises(SystemExit):
         _drive(_Source(), ['--pool', 'p', '--category', 'a,b,c'], FakeConn())
+
+
+# ---------------------------------------------------------------------------
+# helpers that read rows by position work on dict_row connections too
+# ---------------------------------------------------------------------------
+
+def test_positional_readers_ask_for_tuple_rows():
+    # CPU workers and the webui use dict_row connections; a helper that reads
+    # `row[0]` must not inherit that factory.
+    from psycopg.rows import tuple_row
+    conn = FakeConn(rows=[[(7,)], [(3,)], [('pending',)], [(9, 'pending')]])
+    reports.insert(conn, (1, 'gfx950'), cat_level0='tune', attempt=1, rkey={}, status='OK')
+    tasks.count(conn, tasks.TaskSelector(pool='gfx950'))
+    lg.fail(conn, (1, 'gfx950'), 'boom')
+    lg.reap_expired(conn, 'gfx950')
+    assert conn.row_factories == [tuple_row] * 4

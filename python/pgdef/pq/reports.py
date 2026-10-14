@@ -13,7 +13,7 @@ them with ON DELETE CASCADE.
 
 from typing import Any
 
-from psycopg.rows import dict_row
+from psycopg.rows import dict_row, tuple_row
 from psycopg.types.json import Jsonb
 
 from .tasks import TaskRef
@@ -45,9 +45,20 @@ def insert(conn, task_ref: TaskRef, *, cat_level0: str, attempt: int, rkey: dict
     else:
         query = ('INSERT INTO pgdef.report (task_id, pool, cat_level0, attempt, rkey, status, payload, error, worker) '
                  'VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id')
-    with conn.cursor() as cur:
-        cur.execute(query, params)
-        return cur.fetchone()[0]
+        with conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(query, params)
+            return cur.fetchone()[0]
+    # Replacements of the same task are serialized: lock the task row first, in
+    # one transaction, so a second replacer waits and then, with a fresh
+    # snapshot, sees (and deletes) the first one's row. Without the lock, an
+    # expired attempt and its retry could both find nothing to delete and
+    # leave two rows for one item.
+    with conn.transaction():
+        with conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute('SELECT 1 FROM pgdef.task WHERE id = %s AND pool = %s FOR UPDATE',
+                        (task_id, pool))
+            cur.execute(query, params)
+            return cur.fetchone()[0]
 
 
 def for_task(conn, task_ref: TaskRef, *, rkey_contains: dict | None = None) -> list[dict]:

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterable, Sequence
 
-from psycopg.rows import dict_row
+from psycopg.rows import dict_row, tuple_row
 from psycopg.types.json import Jsonb
 
 from . import category as _category
@@ -233,7 +233,7 @@ def get(conn, task_ref: TaskRef) -> Task | None:
 
 def count(conn, selector: TaskSelector) -> int:
     where, params = selector.where('t')
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute(f'SELECT COUNT(*) FROM pgdef.task t WHERE {where}', params)
         return cur.fetchone()[0]
 

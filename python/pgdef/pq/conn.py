@@ -76,6 +76,13 @@ class ReconnectableConn:
             self._connect()
         return self._conn.cursor(**kwargs)
 
+    def transaction(self):
+        """psycopg's transaction context manager, on the live connection."""
+        if self._conn.closed:
+            logger.warning("Database connection was closed; reconnecting...")
+            self._connect()
+        return self._conn.transaction()
+
     @property
     def closed(self):
         return self._conn.closed

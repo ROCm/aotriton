@@ -8,7 +8,7 @@ All functions accept a psycopg connection object (caller manages lifecycle).
 Returns dicts ready for JSON serialization by the webui or export script.
 """
 
-from psycopg.rows import dict_row
+from psycopg.rows import dict_row, tuple_row
 
 from .vis_descriptors import DESCRIPTORS
 from ..tdesc import ImplSelector
@@ -238,7 +238,7 @@ def get_available_archs(conn, descriptor_id: str = 'flash') -> list[str]:
     and hide every op result from the UI and the static export.
     """
     desc = DESCRIPTORS[descriptor_id]
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute(f"SELECT DISTINCT arch FROM {desc['kernel_table']}")
         archs = [r[0] for r in cur.fetchall()]
     priority = {a: i for i, a in enumerate(_ARCH_ORDER)}
