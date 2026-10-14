@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-Flash-family LUT sancheck + missing-entry diagnostic, called by the ATI kdesc
+Flash-family LUT policy, sancheck + missing-entry diagnostic, called by the ATI kdesc
 (LutSancheck.method(self=kdesc, ...) via load_family_aot) -- see
 kdesc.py's sancheck_lut_tensor/_gen_missing_entries.
 
@@ -14,6 +14,7 @@ Torch-free: safe to import outside a GPU container.
 """
 
 from aotriton.gpu_targets import AOTRITON_ARCH_WARPSIZE
+from aotriton.autotune import ExactTuning
 from aotriton.utils import log
 
 from ._common import check_value, _empty_generator
@@ -29,11 +30,33 @@ LUT_FULL_SEQLEN_NAVI = [16, 32, 64, 128, 256, 512, 1024, 2048]
 
 
 class LutSancheck:
-    """Flash-family LUT sancheck + missing-entry diagnostic, called by the ATI
+    """Flash-family LUT policy, sancheck + missing-entry diagnostic, called by the ATI
     kdesc (LutSancheck.method(self=kdesc, ...) via family_aot). A plain holder — no
     description base; it relies only on the duck-typed kdesc surface (check_value,
     gen_autotune_configs presence)."""
     FAMILY = 'flash'
+
+    def exact_tuning(self, functional):
+        """MI100 inference measurements cover exact fixed-length shapes only.
+
+        Keep all other runtime shapes on the existing generic forward image.
+        The sequence-length keys are checked by exact binning in codegen.
+        """
+        if self.NAME != 'attn_fwd' or functional.arch != 'gfx908':
+            return None
+        c = functional.choices
+        if (c.T_io not in ('*fp16:16', '*bf16:16')
+                or c.BLOCK_DMODEL not in (64, 128)
+                or c.CAUSAL_TYPE not in (0, 3)
+                or c.ENABLE_DROPOUT or c.BIAS_TYPE != 0):
+            return None
+        hdim = ({64: 56, 128: 120}[c.BLOCK_DMODEL]
+                if c.PADDED_HEAD else c.BLOCK_DMODEL)
+        return ExactTuning(
+            'params.Batch == 1 && params.Num_head_q == 32 && '
+            '(params.Num_head_k == 32 || params.Num_head_k == 8) && '
+            f'params.Hdim_qk == {hdim} && params.Hdim_vo == {hdim} && '
+            'params.Varlen_bits == 0')
 
     def is_functional_disabled(self, functional):
         if not hasattr(self, 'gen_autotune_configs'):  # only check acutal FA kernels
@@ -66,6 +89,18 @@ class LutSancheck:
         log(lambda : f'{lut_tensor.shape=} ==? {LUT_TENSOR_SIZE=}')
         all_pos = (lut_tensor >= 0).all()
         shape = lut_tensor.shape[1:]
+        if self.exact_tuning(functional) is not None:
+            # Exact profiles intentionally need no interpolated 10x10 grid.
+            # Holes are explicitly filled with the default signature, and
+            # unknown representatives also fall back at runtime.
+            shape_match = (len(shape) == len(self.autotune_keys)
+                           and all(size > 0 for size in shape))
+            errors = []
+            if not all_pos:
+                errors.append('exact tuning LUT has an unfilled entry')
+            if not shape_match:
+                errors.append(f'Unexpected exact tuning LUT {shape=}')
+            return all_pos and shape_match, errors, _empty_generator()
         if MI:
             shape_match = shape == LUT_TENSOR_SIZE
         elif Navi:

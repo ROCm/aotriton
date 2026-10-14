@@ -52,6 +52,7 @@ enum AOTRITON_API GpuVendor : uint16_t {
 // More bits for potential non-PCI architectures
 enum AOTRITON_API Gpu : uint64_t {
   GPU_ARCH_UNKNOWN = 0,
+  GPU_AMD_ARCH_GFX908_MOD0  = TRICAT(GpuVendor::kAMD,  0x908, 0),
   GPU_AMD_ARCH_GFX90A_MOD0  = TRICAT(GpuVendor::kAMD,  0x90a, 0),
   GPU_AMD_ARCH_GFX942_MOD0  = TRICAT(GpuVendor::kAMD,  0x942, 0),
   GPU_AMD_ARCH_GFX942_MOD1  = TRICAT(GpuVendor::kAMD,  0x942, 1),

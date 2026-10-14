@@ -1,0 +1,5014 @@
+{
+  "status": "Passed automatic dispatch, output/LSE correctness, and split/fused regressions on MI100.",
+  "run_started_utc": "2026-10-11T20:10:50.824257Z",
+  "gpu": "AMD Instinct MI100",
+  "torch": "2.14.0+rocm10.1.0",
+  "build": {
+    "AOTRITON_GIT_SHA1": "1e5eab80fca22181b383a6fc2e149d7c04361ad9",
+    "AOTRITON_GIT_TREESHA1": "89e4c6b1f22486185b1d6aa66eb0f57d581cef57",
+    "DB_SHA256": {
+      "primary": {
+        "gfx908": {
+          "flash": {
+            "attn_fwd": "bd6406e88a9c065556a99f0faa7edcefd317dc2ed559adb2b6d6b38cfbfb807b"
+          }
+        }
+      },
+      "secondary": {
+        "flash.op": "706316e3e99136aa8718aff1986e0fba54aa5e1084c3bd8672353e4d973a714f"
+      }
+    },
+    "TRITON_VERSION": "3.8.0+gitaa3cf1a1",
+    "FLYC_VERSION": "0.3.1+git421935cc.llvm78302f03ff25"
+  },
+  "baseline_build": {
+    "AOTRITON_GIT_SHA1": "1e5eab80fca22181b383a6fc2e149d7c04361ad9",
+    "AOTRITON_GIT_TREESHA1": "89e4c6b1f22486185b1d6aa66eb0f57d581cef57",
+    "DB_SHA256": {
+      "primary": {
+        "gfx908": {
+          "flash": {}
+        }
+      },
+      "secondary": {
+        "flash.op": "706316e3e99136aa8718aff1986e0fba54aa5e1084c3bd8672353e4d973a714f"
+      }
+    },
+    "TRITON_VERSION": "3.8.0+gitaa3cf1a1",
+    "FLYC_VERSION": "0.3.1+git421935cc.llvm78302f03ff25"
+  },
+  "compiled_image_statuses": {
+    "Complete": 1783
+  },
+  "installed_archives": 6,
+  "dispatch": {
+    "checked": 66,
+    "measured": 48,
+    "fallback": 18,
+    "all_tiles_match": true,
+    "all_unmeasured_cases_use_default_index": true
+  },
+  "method": {
+    "selection": "Normal automatic dispatch, with no manual image or backend override.",
+    "timing": "Separate baseline/profiled processes; three rounds per case with 25 ms warmup, 100 ms repetition, and a 1 GiB cache flush between samples. Median of round medians; p50/p20/p80 values are milliseconds.",
+    "output_reference": "MATH SDPA, FP32 for FP16/BF16 inputs and FP64 for FP32 inputs. Max absolute error <= max(2 * low-precision MATH reference error, 1e-6).",
+    "lse_reference": "FP32 QK log-sum-exp; atol=2e-4, rtol=2e-4.",
+    "scope": "Fixed-length forward kernel timings. End-to-end LLM performance and PyTorch built-in SDPA integration are not measured."
+  },
+  "correctness": {
+    "baseline": {
+      "passed": 66,
+      "failed": 0,
+      "max_output_error_relative_to_math_reference_error": 1.717529296875,
+      "max_lse_abs_error": 1.9073486328125e-06,
+      "max_timing_round_max_min_ratio": 1.0157894711043696
+    },
+    "profiled": {
+      "passed": 66,
+      "failed": 0,
+      "max_output_error_relative_to_math_reference_error": 1.717529296875,
+      "max_lse_abs_error": 1.9073486328125e-06,
+      "max_timing_round_max_min_ratio": 1.0424756542229996
+    }
+  },
+  "regressions": {
+    "triton_split": {
+      "passed": 3907,
+      "failed": 0,
+      "seconds": 143.12
+    },
+    "triton_fuse": {
+      "passed": 3895,
+      "failed": 0,
+      "seconds": 145.26
+    }
+  },
+  "speedup_vs_baseline": {
+    "prefill": {
+      "cases": 16,
+      "min_speedup": 1.564424158061048,
+      "max_speedup": 4.403685336845138,
+      "geometric_mean_speedup": 2.5238960271630413
+    },
+    "decode": {
+      "cases": 16,
+      "min_speedup": 1.2093579253171933,
+      "max_speedup": 2.036786822428737,
+      "geometric_mean_speedup": 1.5518502617910246
+    },
+    "irregular": {
+      "cases": 16,
+      "min_speedup": 0.9747632741398642,
+      "max_speedup": 1.5473186061949404,
+      "geometric_mean_speedup": 1.133923003226854
+    },
+    "fallback": {
+      "cases": 18,
+      "min_speedup": 0.9963839598067894,
+      "max_speedup": 1.0032292531114093,
+      "geometric_mean_speedup": 0.9996639186071455
+    }
+  },
+  "source_sha256": {
+    "build-gfx908-logs/profile-validation-20261011-201050-824257/baseline-bench.jsonl": "1999835b91127dec28dfb47459e34ced19b6b3b1a07abb4980ebee9426bb05f5",
+    "build-gfx908-logs/profile-validation-20261011-201050-824257/profiled-bench.jsonl": "40bf2e5854b5f3d049905857710a3a3dce066f79a381f884c770884c68f44010",
+    "build-gfx908-logs/profile-validation-20261011-201050-824257/comparison.json": "49c04c8e02eac661f5a843316d0645fbc7226a32a9813e723cb697c03da794da",
+    "build-gfx908-logs/profile-validation-20261011-201050-824257/dispatch.json": "3db05b52efb5f8f9708c12c7c3bd7f0cb2aa93e40f387ae42d582492b96d0536",
+    "build-gfx908-logs/profile-validation-20261011-201050-824257/profiled-trace.stderr.log": "8f4794b5f6910b5472df4c357eef8cd5378f7d5e5781fbe7150f8cfdefb02907",
+    "build-gfx908-logs/validate-profiled.py": "4d6ed3b1227e786c88a032cfd7abd979e49fc32545de3ff36599e846ed82725b",
+    "build-gfx908-logs/profiled-regression-triton_split.log": "0dde3926d27cbca4cd4b5bf7db6cc08e31aef0c6f1de198cc7f6fd4dd4b00bc8",
+    "build-gfx908-logs/profiled-regression-triton_fuse.log": "9560bef09ca66f3e45faa89262f04e20076f14f79cea526057ff790d3d658d67"
+  },
+  "cases": [
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 64,
+      "sq": 512,
+      "sk": 512,
+      "causal": true,
+      "group": "prefill",
+      "expected_tile": [
+        64,
+        64,
+        0
+      ],
+      "case_id": 0,
+      "baseline_us": 159.5200002193451,
+      "profiled_us": 67.59999692440033,
+      "speedup": 2.3597634242164602,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00035965442657470703,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.00035965442657470703,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.1595200002193451,
+          0.1590082049369812,
+          0.16047999262809753
+        ],
+        [
+          0.1595200002193451,
+          0.158720001578331,
+          0.16016000509262085
+        ],
+        [
+          0.15984000265598297,
+          0.15904000401496887,
+          0.16047999262809753
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.06759999692440033,
+          0.0652799978852272,
+          0.07116799801588058
+        ],
+        [
+          0.06592000275850296,
+          0.06511999666690826,
+          0.07023999840021133
+        ],
+        [
+          0.06871999800205231,
+          0.06543999910354614,
+          0.07168000191450119
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 64,
+      "sq": 512,
+      "sk": 512,
+      "causal": true,
+      "group": "prefill",
+      "expected_tile": [
+        64,
+        64,
+        0
+      ],
+      "case_id": 1,
+      "baseline_us": 147.8399932384491,
+      "profiled_us": 69.11999732255936,
+      "speedup": 2.1388888739177823,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0003725290298461914,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.0003725290298461914,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.1478399932384491,
+          0.14655999839305878,
+          0.14927999675273895
+        ],
+        [
+          0.14815999567508698,
+          0.1467200070619583,
+          0.15039999783039093
+        ],
+        [
+          0.1478399932384491,
+          0.14655999839305878,
+          0.14959999918937683
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.0692799985408783,
+          0.06780800223350525,
+          0.07072000205516815
+        ],
+        [
+          0.06911999732255936,
+          0.06681600213050842,
+          0.07049600034952164
+        ],
+        [
+          0.06911999732255936,
+          0.06748799979686737,
+          0.07039999961853027
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 64,
+      "sq": 2048,
+      "sk": 2048,
+      "causal": true,
+      "group": "prefill",
+      "expected_tile": [
+        128,
+        64,
+        0
+      ],
+      "case_id": 2,
+      "baseline_us": 1530.7209491729736,
+      "profiled_us": 347.59998321533203,
+      "speedup": 4.403685336845138,
+      "kernel_index": 2,
+      "selected_tile": [
+        128,
+        64,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0003801584243774414,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.0003801584243774414,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          1.5312809944152832,
+          1.5272653102874756,
+          1.5355849266052246
+        ],
+        [
+          1.52960205078125,
+          1.5273616313934326,
+          1.5349136590957642
+        ],
+        [
+          1.5307209491729736,
+          1.5268490314483643,
+          1.5326730012893677
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.3494400084018707,
+          0.34064000844955444,
+          0.3577600121498108
+        ],
+        [
+          0.34759998321533203,
+          0.33830398321151733,
+          0.35705700516700745
+        ],
+        [
+          0.3457599878311157,
+          0.33587199449539185,
+          0.35654401779174805
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 64,
+      "sq": 2048,
+      "sk": 2048,
+      "causal": true,
+      "group": "prefill",
+      "expected_tile": [
+        128,
+        64,
+        0
+      ],
+      "case_id": 3,
+      "baseline_us": 1470.4010486602783,
+      "profiled_us": 344.7999954223633,
+      "speedup": 4.2645042580673715,
+      "kernel_index": 2,
+      "selected_tile": [
+        128,
+        64,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00034749507904052734,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.00034749507904052734,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          1.4718409776687622,
+          1.4669770002365112,
+          1.4784973859786987
+        ],
+        [
+          1.4691214561462402,
+          1.465696930885315,
+          1.4738249778747559
+        ],
+        [
+          1.4704010486602783,
+          1.4666577577590942,
+          1.472673773765564
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.34351998567581177,
+          0.3355199992656708,
+          0.3529599905014038
+        ],
+        [
+          0.34592002630233765,
+          0.33744001388549805,
+          0.3548479974269867
+        ],
+        [
+          0.3447999954223633,
+          0.3346239924430847,
+          0.35244837403297424
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 64,
+      "sq": 1,
+      "sk": 1024,
+      "causal": false,
+      "group": "decode",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 4,
+      "baseline_us": 122.08099663257599,
+      "profiled_us": 67.99999624490738,
+      "speedup": 1.7953088731489277,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00024878978729248047,
+          "reference_max_abs_error": 0.00024330615997314453,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0002487301826477051,
+          "reference_max_abs_error": 0.00024324655532836914,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.12303999811410904,
+          0.12223999947309494,
+          0.1236800029873848
+        ],
+        [
+          0.12192049622535706,
+          0.12144000083208084,
+          0.1228799968957901
+        ],
+        [
+          0.12208099663257599,
+          0.12144040316343307,
+          0.12288060039281845
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.06799999624490738,
+          0.0676800012588501,
+          0.06831999868154526
+        ],
+        [
+          0.06784100085496902,
+          0.0676800012588501,
+          0.06815999746322632
+        ],
+        [
+          0.06799999624490738,
+          0.0676800012588501,
+          0.06831999868154526
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 64,
+      "sq": 1,
+      "sk": 1024,
+      "causal": false,
+      "group": "decode",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 5,
+      "baseline_us": 120.64000219106674,
+      "profiled_us": 65.76000154018402,
+      "speedup": 1.834549868697116,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00024890899658203125,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.00024890899658203125,
+          "reference_max_abs_error": 0.0002440810203552246,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.12080000340938568,
+          0.1196800023317337,
+          0.12160000205039978
+        ],
+        [
+          0.11983999609947205,
+          0.11856000125408173,
+          0.12083200365304947
+        ],
+        [
+          0.12064000219106674,
+          0.11952000111341476,
+          0.122079998254776
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.06543999910354614,
+          0.06464000046253204,
+          0.06623999774456024
+        ],
+        [
+          0.06576000154018402,
+          0.0652799978852272,
+          0.06639999896287918
+        ],
+        [
+          0.06576000154018402,
+          0.06496000289916992,
+          0.066240593791008
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 64,
+      "sq": 1,
+      "sk": 8192,
+      "causal": false,
+      "group": "decode",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 6,
+      "baseline_us": 884.0010166168213,
+      "profiled_us": 435.2000057697296,
+      "speedup": 2.031252309046518,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00024688243865966797,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.00024688243865966797,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.8843209743499756,
+          0.8827210068702698,
+          0.8871999979019165
+        ],
+        [
+          0.8840010166168213,
+          0.8824009895324707,
+          0.8862400054931641
+        ],
+        [
+          0.8830410242080688,
+          0.8814730048179626,
+          0.8849608302116394
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.4352000057697296,
+          0.434112012386322,
+          0.43612799048423767
+        ],
+        [
+          0.4352000057697296,
+          0.4343999922275543,
+          0.4359999895095825
+        ],
+        [
+          0.4350399971008301,
+          0.4339199960231781,
+          0.4358403980731964
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 64,
+      "sq": 1,
+      "sk": 8192,
+      "causal": false,
+      "group": "decode",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 7,
+      "baseline_us": 868.1600093841553,
+      "profiled_us": 426.2399971485138,
+      "speedup": 2.036786822428737,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0002454519271850586,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.0002454519271850586,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.8694409728050232,
+          0.8655999898910522,
+          0.8772810101509094
+        ],
+        [
+          0.864799976348877,
+          0.8610250353813171,
+          0.868416965007782
+        ],
+        [
+          0.8681600093841553,
+          0.8658245801925659,
+          0.8705610036849976
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.4262399971485138,
+          0.4246399998664856,
+          0.4280007779598236
+        ],
+        [
+          0.42576098442077637,
+          0.4240959882736206,
+          0.42735999822616577
+        ],
+        [
+          0.4262399971485138,
+          0.42447999119758606,
+          0.42790400981903076
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 128,
+      "sq": 512,
+      "sk": 512,
+      "causal": true,
+      "group": "prefill",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 8,
+      "baseline_us": 199.52000677585602,
+      "profiled_us": 112.31999844312668,
+      "speedup": 1.7763533613017555,
+      "kernel_index": 2,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0003606081008911133,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.0003606081008911133,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.20000000298023224,
+          0.19935999810695648,
+          0.20112000405788422
+        ],
+        [
+          0.19952000677585602,
+          0.19840000569820404,
+          0.20047999918460846
+        ],
+        [
+          0.19936099648475647,
+          0.19872039556503296,
+          0.20032060146331787
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.11215999722480774,
+          0.11168000102043152,
+          0.1128000020980835
+        ],
+        [
+          0.11231999844312668,
+          0.11184000223875046,
+          0.11296040564775467
+        ],
+        [
+          0.11231999844312668,
+          0.11168000102043152,
+          0.11286400258541107
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 512,
+      "sk": 512,
+      "causal": true,
+      "group": "prefill",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 9,
+      "baseline_us": 187.44000792503357,
+      "profiled_us": 111.9999960064888,
+      "speedup": 1.67357155900411,
+      "kernel_index": 2,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.000362396240234375,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.000362396240234375,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.1881600022315979,
+          0.1852799952030182,
+          0.19040000438690186
+        ],
+        [
+          0.18744000792503357,
+          0.18528059124946594,
+          0.18928000330924988
+        ],
+        [
+          0.18696050345897675,
+          0.18489599227905273,
+          0.18950439989566803
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.11135999858379364,
+          0.11103999614715576,
+          0.1119999960064888
+        ],
+        [
+          0.1119999960064888,
+          0.11151999980211258,
+          0.11247999966144562
+        ],
+        [
+          0.1119999960064888,
+          0.11151999980211258,
+          0.11247999966144562
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 128,
+      "sq": 2048,
+      "sk": 2048,
+      "causal": true,
+      "group": "prefill",
+      "expected_tile": [
+        64,
+        64,
+        0
+      ],
+      "case_id": 10,
+      "baseline_us": 2029.3619632720947,
+      "profiled_us": 651.919960975647,
+      "speedup": 3.112900485874068,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00040286779403686523,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.00040286779403686523,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          2.0293619632720947,
+          2.0243213176727295,
+          2.0344340801239014
+        ],
+        [
+          2.0251219272613525,
+          2.0218260288238525,
+          2.0308496952056885
+        ],
+        [
+          2.030561923980713,
+          2.0232980251312256,
+          2.0401618480682373
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.6520000100135803,
+          0.6512010097503662,
+          0.6529600024223328
+        ],
+        [
+          0.6518399715423584,
+          0.650879979133606,
+          0.6532800197601318
+        ],
+        [
+          0.651919960975647,
+          0.6508479714393616,
+          0.653439998626709
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 2048,
+      "sk": 2048,
+      "causal": true,
+      "group": "prefill",
+      "expected_tile": [
+        64,
+        64,
+        0
+      ],
+      "case_id": 11,
+      "baseline_us": 2013.761043548584,
+      "profiled_us": 647.8404998779297,
+      "speedup": 3.1084210448837792,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00037223100662231445,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.00037223100662231445,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          2.0119214057922363,
+          2.0046732425689697,
+          2.021250009536743
+        ],
+        [
+          2.013761043548584,
+          2.0073299407958984,
+          2.020545482635498
+        ],
+        [
+          2.014241933822632,
+          2.0071375370025635,
+          2.022305488586426
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.6475210189819336,
+          0.6453759670257568,
+          0.64998459815979
+        ],
+        [
+          0.6478404998779297,
+          0.6458879709243774,
+          0.6499519944190979
+        ],
+        [
+          0.6481599807739258,
+          0.645760178565979,
+          0.6496328115463257
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 1024,
+      "causal": false,
+      "group": "decode",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 12,
+      "baseline_us": 140.47999680042267,
+      "profiled_us": 97.59999811649323,
+      "speedup": 1.439344257289317,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00025260448455810547,
+          "reference_max_abs_error": 0.00024396181106567383,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.00025260448455810547,
+          "reference_max_abs_error": 0.00024390220642089844,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.14159999787807465,
+          0.1409599930047989,
+          0.1422400027513504
+        ],
+        [
+          0.14047999680042267,
+          0.14000000059604645,
+          0.1409599930047989
+        ],
+        [
+          0.14047999680042267,
+          0.13967999815940857,
+          0.1409599930047989
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.09728000313043594,
+          0.09696000069379807,
+          0.09775999933481216
+        ],
+        [
+          0.09759999811649323,
+          0.097120001912117,
+          0.09808000177145004
+        ],
+        [
+          0.09759999811649323,
+          0.097120001912117,
+          0.09779279679059982
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 1024,
+      "causal": false,
+      "group": "decode",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 13,
+      "baseline_us": 137.11999356746674,
+      "profiled_us": 95.20000219345093,
+      "speedup": 1.440336033699163,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0002487301826477051,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0002512335777282715,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.13711999356746674,
+          0.13551999628543854,
+          0.13814400136470795
+        ],
+        [
+          0.13791999220848083,
+          0.13683199882507324,
+          0.13887999951839447
+        ],
+        [
+          0.1369599997997284,
+          0.13603200018405914,
+          0.13791999220848083
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.09520000219345093,
+          0.09455999732017517,
+          0.09567999839782715
+        ],
+        [
+          0.09528049826622009,
+          0.09487999975681305,
+          0.09567999839782715
+        ],
+        [
+          0.09520000219345093,
+          0.09471999853849411,
+          0.09583999961614609
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 8192,
+      "causal": false,
+      "group": "decode",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 14,
+      "baseline_us": 1008.1604719161987,
+      "profiled_us": 652.4804830551147,
+      "speedup": 1.545119736295683,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.000246584415435791,
+          "reference_max_abs_error": 0.00024384260177612305,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.000246584415435791,
+          "reference_max_abs_error": 0.00024384260177612305,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          1.0081604719161987,
+          1.0048329830169678,
+          1.011201024055481
+        ],
+        [
+          1.0083210468292236,
+          1.004768967628479,
+          1.0106884241104126
+        ],
+        [
+          1.0070409774780273,
+          1.0047049522399902,
+          1.0102410316467285
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.6526399850845337,
+          0.6514880061149597,
+          0.6549760103225708
+        ],
+        [
+          0.6524804830551147,
+          0.6513282060623169,
+          0.6534730195999146
+        ],
+        [
+          0.652240514755249,
+          0.6516799926757812,
+          0.6537920236587524
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 8192,
+      "causal": false,
+      "group": "decode",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 15,
+      "baseline_us": 990.4009699821472,
+      "profiled_us": 645.4409956932068,
+      "speedup": 1.5344562502083583,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0002461075782775879,
+          "reference_max_abs_error": 0.0002440810203552246,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.00024634599685668945,
+          "reference_max_abs_error": 0.0002440810203552246,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.9891210198402405,
+          0.985664963722229,
+          0.9965450167655945
+        ],
+        [
+          0.994720995426178,
+          0.9888321757316589,
+          0.9973762035369873
+        ],
+        [
+          0.9904009699821472,
+          0.9862082004547119,
+          0.9962249994277954
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.6451209783554077,
+          0.6440005898475647,
+          0.6470400094985962
+        ],
+        [
+          0.6455205082893372,
+          0.6442880034446716,
+          0.6475520133972168
+        ],
+        [
+          0.6454409956932068,
+          0.6438400149345398,
+          0.6468799710273743
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 64,
+      "sq": 512,
+      "sk": 512,
+      "causal": true,
+      "group": "prefill",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 16,
+      "baseline_us": 183.9205026626587,
+      "profiled_us": 83.03999900817871,
+      "speedup": 2.2148423032199718,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0030359625816345215,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.0030359625816345215,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.18464000523090363,
+          0.18367999792099,
+          0.18560099601745605
+        ],
+        [
+          0.18384000658988953,
+          0.1833599954843521,
+          0.18464000523090363
+        ],
+        [
+          0.1839205026626587,
+          0.1833599954843521,
+          0.1849599927663803
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.08303999900817871,
+          0.08278460055589676,
+          0.08345640450716019
+        ],
+        [
+          0.08303999900817871,
+          0.08287999778985977,
+          0.08336000144481659
+        ],
+        [
+          0.08303999900817871,
+          0.08275199681520462,
+          0.08336000144481659
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 64,
+      "sq": 512,
+      "sk": 512,
+      "causal": true,
+      "group": "prefill",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 17,
+      "baseline_us": 173.12049865722656,
+      "profiled_us": 81.7599967122078,
+      "speedup": 2.1174230139294696,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0029916763305664062,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.0029916763305664062,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.17256049811840057,
+          0.17136000096797943,
+          0.17548799514770508
+        ],
+        [
+          0.17312049865722656,
+          0.17139199376106262,
+          0.1753285974264145
+        ],
+        [
+          0.17375999689102173,
+          0.17151999473571777,
+          0.1761920005083084
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.0817599967122078,
+          0.08160000294446945,
+          0.08198459446430206
+        ],
+        [
+          0.0817599967122078,
+          0.08160000294446945,
+          0.08207999914884567
+        ],
+        [
+          0.0817599967122078,
+          0.08160000294446945,
+          0.08207999914884567
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 64,
+      "sq": 2048,
+      "sk": 2048,
+      "causal": true,
+      "group": "prefill",
+      "expected_tile": [
+        128,
+        64,
+        1
+      ],
+      "case_id": 18,
+      "baseline_us": 1836.3219499588013,
+      "profiled_us": 515.5199766159058,
+      "speedup": 3.562077190515887,
+      "kernel_index": 2,
+      "selected_tile": [
+        128,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.002994239330291748,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.002994239330291748,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          1.8395220041275024,
+          1.83200204372406,
+          1.8442894220352173
+        ],
+        [
+          1.8360010385513306,
+          1.8307219743728638,
+          1.8406418561935425
+        ],
+        [
+          1.8363219499588013,
+          1.8284498453140259,
+          1.8409940004348755
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.5189604759216309,
+          0.5040319561958313,
+          0.5332159996032715
+        ],
+        [
+          0.5155199766159058,
+          0.5019519925117493,
+          0.530784010887146
+        ],
+        [
+          0.5144010186195374,
+          0.5002567768096924,
+          0.5299528241157532
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 64,
+      "sq": 2048,
+      "sk": 2048,
+      "causal": true,
+      "group": "prefill",
+      "expected_tile": [
+        128,
+        64,
+        1
+      ],
+      "case_id": 19,
+      "baseline_us": 1817.602038383484,
+      "profiled_us": 514.959990978241,
+      "speedup": 3.5295985517839665,
+      "kernel_index": 2,
+      "selected_tile": [
+        128,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.003058016300201416,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.003058016300201416,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          1.8211219310760498,
+          1.8157140016555786,
+          1.827297568321228
+        ],
+        [
+          1.8176020383834839,
+          1.8132820129394531,
+          1.8223060369491577
+        ],
+        [
+          1.817121982574463,
+          1.8111698627471924,
+          1.8227540254592896
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.514959990978241,
+          0.5003200173377991,
+          0.5280320048332214
+        ],
+        [
+          0.5112800002098083,
+          0.49695998430252075,
+          0.527679979801178
+        ],
+        [
+          0.5158405303955078,
+          0.4964810013771057,
+          0.5292810201644897
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 64,
+      "sq": 1,
+      "sk": 1024,
+      "causal": false,
+      "group": "decode",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 20,
+      "baseline_us": 129.60000336170197,
+      "profiled_us": 83.03999900817871,
+      "speedup": 1.5606937007421868,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0019965767860412598,
+          "reference_max_abs_error": 0.001946866512298584,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.0019729137420654297,
+          "reference_max_abs_error": 0.001946866512298584,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.13072000443935394,
+          0.13023999333381653,
+          0.1313599944114685
+        ],
+        [
+          0.1295199990272522,
+          0.12880000472068787,
+          0.1303360015153885
+        ],
+        [
+          0.12960000336170197,
+          0.1289599984884262,
+          0.13023999333381653
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.08303999900817871,
+          0.08271999657154083,
+          0.08352000266313553
+        ],
+        [
+          0.08303999900817871,
+          0.08271999657154083,
+          0.08352000266313553
+        ],
+        [
+          0.08320000022649765,
+          0.08287999778985977,
+          0.08352000266313553
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 64,
+      "sq": 1,
+      "sk": 1024,
+      "causal": false,
+      "group": "decode",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 21,
+      "baseline_us": 129.11999225616455,
+      "profiled_us": 80.9599980711937,
+      "speedup": 1.5948616024251936,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0019829273223876953,
+          "reference_max_abs_error": 0.0019519329071044922,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0019936561584472656,
+          "reference_max_abs_error": 0.0019519925117492676,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.1292800009250641,
+          0.12863999605178833,
+          0.1305599957704544
+        ],
+        [
+          0.12848000228405,
+          0.1275203973054886,
+          0.1292800009250641
+        ],
+        [
+          0.12911999225616455,
+          0.12831999361515045,
+          0.12992000579833984
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.08048000186681747,
+          0.07968000322580338,
+          0.08134400099515915
+        ],
+        [
+          0.08111999928951263,
+          0.08048000186681747,
+          0.08160000294446945
+        ],
+        [
+          0.0809599980711937,
+          0.08048000186681747,
+          0.08144000172615051
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 64,
+      "sq": 1,
+      "sk": 8192,
+      "causal": false,
+      "group": "decode",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 22,
+      "baseline_us": 941.120982170105,
+      "profiled_us": 553.4409880638123,
+      "speedup": 1.7004902102798227,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.001966714859008789,
+          "reference_max_abs_error": 0.0019518136978149414,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.001966714859008789,
+          "reference_max_abs_error": 0.0019518136978149414,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.9413604736328125,
+          0.9387208223342896,
+          0.943681001663208
+        ],
+        [
+          0.9409610033035278,
+          0.939041018486023,
+          0.9432010054588318
+        ],
+        [
+          0.941120982170105,
+          0.939041018486023,
+          0.9432010054588318
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.5536010265350342,
+          0.5529599785804749,
+          0.5547199845314026
+        ],
+        [
+          0.5534409880638123,
+          0.5528959631919861,
+          0.5542404055595398
+        ],
+        [
+          0.5534409880638123,
+          0.5528959631919861,
+          0.554144024848938
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 64,
+      "sq": 1,
+      "sk": 8192,
+      "causal": false,
+      "group": "decode",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 23,
+      "baseline_us": 927.8410077095032,
+      "profiled_us": 549.4409799575806,
+      "speedup": 1.688700045237137,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0019445419311523438,
+          "reference_max_abs_error": 0.0019445419311523438,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.0019445419311523438,
+          "reference_max_abs_error": 0.0019445419311523438,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.9278410077095032,
+          0.9249289631843567,
+          0.9344649910926819
+        ],
+        [
+          0.9236810207366943,
+          0.920960009098053,
+          0.9265609979629517
+        ],
+        [
+          0.9283210039138794,
+          0.9254410266876221,
+          0.9315209984779358
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.5484799742698669,
+          0.5451210141181946,
+          0.5507199764251709
+        ],
+        [
+          0.5500804781913757,
+          0.5489609837532043,
+          0.5518410205841064
+        ],
+        [
+          0.5494409799575806,
+          0.5479366183280945,
+          0.5519043803215027
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 128,
+      "sq": 512,
+      "sk": 512,
+      "causal": true,
+      "group": "prefill",
+      "expected_tile": [
+        64,
+        32,
+        1
+      ],
+      "case_id": 24,
+      "baseline_us": 226.23999416828156,
+      "profiled_us": 143.51999759674072,
+      "speedup": 1.5763656490851234,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        32,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0029757022857666016,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.0029757022857666016,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.2268799990415573,
+          0.225600004196167,
+          0.2280000001192093
+        ],
+        [
+          0.22592100501060486,
+          0.22543999552726746,
+          0.22720099985599518
+        ],
+        [
+          0.22623999416828156,
+          0.22543999552726746,
+          0.2276799976825714
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.14336000382900238,
+          0.14281639456748962,
+          0.1442245990037918
+        ],
+        [
+          0.14368000626564026,
+          0.14259199798107147,
+          0.14431999623775482
+        ],
+        [
+          0.14351999759674072,
+          0.14256000518798828,
+          0.14428800344467163
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 512,
+      "sk": 512,
+      "causal": true,
+      "group": "prefill",
+      "expected_tile": [
+        64,
+        32,
+        1
+      ],
+      "case_id": 25,
+      "baseline_us": 219.52000260353088,
+      "profiled_us": 140.32000303268433,
+      "speedup": 1.564424158061048,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        32,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.002913832664489746,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.002913832664489746,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.21952000260353088,
+          0.21625639498233795,
+          0.22332799434661865
+        ],
+        [
+          0.21952000260353088,
+          0.2168010026216507,
+          0.22400100529193878
+        ],
+        [
+          0.22016100585460663,
+          0.2171200066804886,
+          0.22224000096321106
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.1398400068283081,
+          0.13904060423374176,
+          0.14079999923706055
+        ],
+        [
+          0.14047999680042267,
+          0.13952000439167023,
+          0.14112000167369843
+        ],
+        [
+          0.14032000303268433,
+          0.13952000439167023,
+          0.1409599930047989
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 128,
+      "sq": 2048,
+      "sk": 2048,
+      "causal": true,
+      "group": "prefill",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 26,
+      "baseline_us": 2482.8028678894043,
+      "profiled_us": 950.0805139541626,
+      "speedup": 2.613255225661,
+      "kernel_index": 2,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00292050838470459,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.00292050838470459,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          2.486482620239258,
+          2.47776198387146,
+          2.494210958480835
+        ],
+        [
+          2.4828028678894043,
+          2.4748823642730713,
+          2.4947540760040283
+        ],
+        [
+          2.4804024696350098,
+          2.4691860675811768,
+          2.4909141063690186
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.9500805139541626,
+          0.9482882022857666,
+          0.9513601660728455
+        ],
+        [
+          0.950240969657898,
+          0.9481610059738159,
+          0.9523199796676636
+        ],
+        [
+          0.9494400024414062,
+          0.9481610059738159,
+          0.9524809718132019
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 2048,
+      "sk": 2048,
+      "causal": true,
+      "group": "prefill",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 27,
+      "baseline_us": 2477.682590484619,
+      "profiled_us": 946.8799829483032,
+      "speedup": 2.6166807146665527,
+      "kernel_index": 2,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.003067195415496826,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.003067195415496826,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          2.475922107696533,
+          2.461793899536133,
+          2.489570379257202
+        ],
+        [
+          2.479682445526123,
+          2.470370054244995,
+          2.4909465312957764
+        ],
+        [
+          2.477682590484619,
+          2.465090036392212,
+          2.48323392868042
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.9465609788894653,
+          0.944159984588623,
+          0.9488322138786316
+        ],
+        [
+          0.9472000002861023,
+          0.9454410076141357,
+          0.9496009945869446
+        ],
+        [
+          0.9468799829483032,
+          0.9457600116729736,
+          0.9488000273704529
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 1024,
+      "causal": false,
+      "group": "decode",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 28,
+      "baseline_us": 151.99999511241913,
+      "profiled_us": 124.79999661445618,
+      "speedup": 1.217948711825624,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.001982569694519043,
+          "reference_max_abs_error": 0.0019522905349731445,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.002021193504333496,
+          "reference_max_abs_error": 0.0019522905349731445,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.15344099700450897,
+          0.15279999375343323,
+          0.1540805995464325
+        ],
+        [
+          0.1518400013446808,
+          0.15136000514030457,
+          0.15248000621795654
+        ],
+        [
+          0.15199999511241913,
+          0.15136100351810455,
+          0.15263999998569489
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.12432000041007996,
+          0.12415999919176102,
+          0.1246728003025055
+        ],
+        [
+          0.12479999661445618,
+          0.1244800016283989,
+          0.12521639466285706
+        ],
+        [
+          0.12479999661445618,
+          0.1244800016283989,
+          0.12511999905109406
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 1024,
+      "causal": false,
+      "group": "decode",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 29,
+      "baseline_us": 148.80000054836273,
+      "profiled_us": 123.04049730300903,
+      "speedup": 1.2093579253171933,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.001995861530303955,
+          "reference_max_abs_error": 0.0019519329071044922,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.0019884705543518066,
+          "reference_max_abs_error": 0.0019519329071044922,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.14880000054836273,
+          0.14815999567508698,
+          0.1500163972377777
+        ],
+        [
+          0.1486400067806244,
+          0.1475200057029724,
+          0.14982399344444275
+        ],
+        [
+          0.14895999431610107,
+          0.14784100651741028,
+          0.1499200016260147
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.1228799968957901,
+          0.12172800302505493,
+          0.12399999797344208
+        ],
+        [
+          0.12319999933242798,
+          0.12230399996042252,
+          0.12383999675512314
+        ],
+        [
+          0.12304049730300903,
+          0.12256000190973282,
+          0.12399999797344208
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 8192,
+      "causal": false,
+      "group": "decode",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 30,
+      "baseline_us": 1105.2809953689575,
+      "profiled_us": 869.6005344390869,
+      "speedup": 1.2710215226372763,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.001953125,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.001955091953277588,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          1.1052809953689575,
+          1.1020809412002563,
+          1.108320951461792
+        ],
+        [
+          1.1056009531021118,
+          1.101153016090393,
+          1.108320951461792
+        ],
+        [
+          1.1028809547424316,
+          1.1004810333251953,
+          1.1045769453048706
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.8696005344390869,
+          0.8686410188674927,
+          0.8706569671630859
+        ],
+        [
+          0.8695999979972839,
+          0.8683840036392212,
+          0.8704010248184204
+        ],
+        [
+          0.8696010112762451,
+          0.8683210015296936,
+          0.8705610036849976
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 8192,
+      "causal": false,
+      "group": "decode",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 31,
+      "baseline_us": 1090.2409553527832,
+      "profiled_us": 863.6800050735474,
+      "speedup": 1.2623204762740141,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0019756555557250977,
+          "reference_max_abs_error": 0.0019441843032836914,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0019620656967163086,
+          "reference_max_abs_error": 0.0019441843032836914,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          1.0907210111618042,
+          1.0875200033187866,
+          1.0940810441970825
+        ],
+        [
+          1.0876810550689697,
+          1.082176923751831,
+          1.0925129652023315
+        ],
+        [
+          1.0902409553527832,
+          1.084225058555603,
+          1.0952650308609009
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.8623999953269958,
+          0.8603528141975403,
+          0.8678408265113831
+        ],
+        [
+          0.8636800050735474,
+          0.8595845699310303,
+          0.8694084286689758
+        ],
+        [
+          0.8641600012779236,
+          0.8608645796775818,
+          0.8709766268730164
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 56,
+      "sq": 33,
+      "sk": 33,
+      "causal": true,
+      "group": "irregular",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 32,
+      "baseline_us": 26.079999282956123,
+      "profiled_us": 25.919999927282333,
+      "speedup": 1.0061728146652262,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0003688931465148926,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0003688931465148926,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.025919999927282333,
+          0.025760000571608543,
+          0.026399999856948853
+        ],
+        [
+          0.026079999282956123,
+          0.025919999927282333,
+          0.026240000501275063
+        ],
+        [
+          0.026079999282956123,
+          0.025919999927282333,
+          0.026399999856948853
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.026079999282956123,
+          0.025760000571608543,
+          0.026399999856948853
+        ],
+        [
+          0.025919999927282333,
+          0.025760000571608543,
+          0.026240000501275063
+        ],
+        [
+          0.025919999927282333,
+          0.025760000571608543,
+          0.026240000501275063
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 56,
+      "sq": 33,
+      "sk": 33,
+      "causal": true,
+      "group": "irregular",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 33,
+      "baseline_us": 25.439999997615814,
+      "profiled_us": 25.280000641942024,
+      "speedup": 1.006329088275747,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0003814697265625,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0003814697265625,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.025439999997615814,
+          0.025119999423623085,
+          0.025599999353289604
+        ],
+        [
+          0.025439999997615814,
+          0.025119999423623085,
+          0.025599999353289604
+        ],
+        [
+          0.025439999997615814,
+          0.025119999423623085,
+          0.025599999353289604
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.025439999997615814,
+          0.025119999423623085,
+          0.02582400105893612
+        ],
+        [
+          0.025280000641942024,
+          0.024960000067949295,
+          0.025599999353289604
+        ],
+        [
+          0.025280000641942024,
+          0.025119999423623085,
+          0.025599999353289604
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 56,
+      "sq": 1,
+      "sk": 1009,
+      "causal": false,
+      "group": "irregular",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 34,
+      "baseline_us": 156.95999562740326,
+      "profiled_us": 101.43999755382538,
+      "speedup": 1.5473186061949404,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00024759769439697266,
+          "reference_max_abs_error": 0.0002440810203552246,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0002485513687133789,
+          "reference_max_abs_error": 0.0002440810203552246,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.15695999562740326,
+          0.15663999319076538,
+          0.15737640857696533
+        ],
+        [
+          0.15695999562740326,
+          0.15647999942302704,
+          0.15744000673294067
+        ],
+        [
+          0.15663999319076538,
+          0.1563200056552887,
+          0.15727999806404114
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.10143999755382538,
+          0.10080000013113022,
+          0.10175999999046326
+        ],
+        [
+          0.10143999755382538,
+          0.10127999633550644,
+          0.10159999877214432
+        ],
+        [
+          0.10159999877214432,
+          0.10127999633550644,
+          0.1019200012087822
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 56,
+      "sq": 1,
+      "sk": 1009,
+      "causal": false,
+      "group": "irregular",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 35,
+      "baseline_us": 156.63999319076538,
+      "profiled_us": 101.75999999046326,
+      "speedup": 1.5393081093302414,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00024634599685668945,
+          "reference_max_abs_error": 0.0002434253692626953,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0002459883689880371,
+          "reference_max_abs_error": 0.00024336576461791992,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.1563200056552887,
+          0.15535999834537506,
+          0.15695999562740326
+        ],
+        [
+          0.15663999319076538,
+          0.1562879979610443,
+          0.15760000050067902
+        ],
+        [
+          0.15663999319076538,
+          0.15596820414066315,
+          0.15727999806404114
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.10175999999046326,
+          0.10063999891281128,
+          0.10208000242710114
+        ],
+        [
+          0.10175999999046326,
+          0.10143999755382538,
+          0.10208000242710114
+        ],
+        [
+          0.1019200012087822,
+          0.10159999877214432,
+          0.10223999619483948
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 120,
+      "sq": 33,
+      "sk": 33,
+      "causal": true,
+      "group": "irregular",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 36,
+      "baseline_us": 30.880499631166458,
+      "profiled_us": 31.679999083280563,
+      "speedup": 0.9747632741398642,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00038993358612060547,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.1920928955078125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.00038993358612060547,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.1920928955078125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.030880000442266464,
+          0.030559999868273735,
+          0.031039999797940254
+        ],
+        [
+          0.030880499631166458,
+          0.030719999223947525,
+          0.031199999153614044
+        ],
+        [
+          0.031039999797940254,
+          0.030880000442266464,
+          0.031199999153614044
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.03167999908328056,
+          0.03152000159025192,
+          0.03200000151991844
+        ],
+        [
+          0.03167999908328056,
+          0.03152000159025192,
+          0.0318400003015995
+        ],
+        [
+          0.03167999908328056,
+          0.03152000159025192,
+          0.0318400003015995
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 120,
+      "sq": 33,
+      "sk": 33,
+      "causal": true,
+      "group": "irregular",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 37,
+      "baseline_us": 30.400000512599945,
+      "profiled_us": 30.719999223947525,
+      "speedup": 0.9895833750185082,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0003979802131652832,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0003979802131652832,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.030400000512599945,
+          0.030144600197672844,
+          0.030880000442266464
+        ],
+        [
+          0.030400000512599945,
+          0.030239999294281006,
+          0.030719999223947525
+        ],
+        [
+          0.030880000442266464,
+          0.030559999868273735,
+          0.031199999153614044
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.030719999223947525,
+          0.030400000512599945,
+          0.030880000442266464
+        ],
+        [
+          0.030719999223947525,
+          0.030559999868273735,
+          0.031039999797940254
+        ],
+        [
+          0.03072049841284752,
+          0.030559999868273735,
+          0.031039999797940254
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 120,
+      "sq": 1,
+      "sk": 1009,
+      "causal": false,
+      "group": "irregular",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 38,
+      "baseline_us": 292.481005191803,
+      "profiled_us": 248.31999838352203,
+      "speedup": 1.1778391071832874,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00025391578674316406,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.00024944543838500977,
+          "reference_max_abs_error": 0.0002440810203552246,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.292481005191803,
+          0.2921279966831207,
+          0.29311999678611755
+        ],
+        [
+          0.29264000058174133,
+          0.29203280806541443,
+          0.29311999678611755
+        ],
+        [
+          0.292481005191803,
+          0.2920002043247223,
+          0.29311999678611755
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.24831999838352203,
+          0.24767999351024628,
+          0.24848079681396484
+        ],
+        [
+          0.24831999838352203,
+          0.24799999594688416,
+          0.24851280450820923
+        ],
+        [
+          0.24831999838352203,
+          0.24799999594688416,
+          0.24847999215126038
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 120,
+      "sq": 1,
+      "sk": 1009,
+      "causal": false,
+      "group": "irregular",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 39,
+      "baseline_us": 292.32001304626465,
+      "profiled_us": 247.51999974250793,
+      "speedup": 1.1809955290496188,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0002490878105163574,
+          "reference_max_abs_error": 0.00024390220642089844,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0002537965774536133,
+          "reference_max_abs_error": 0.00024390220642089844,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.29232001304626465,
+          0.2911680042743683,
+          0.292959988117218
+        ],
+        [
+          0.2924799919128418,
+          0.2916800081729889,
+          0.2932800054550171
+        ],
+        [
+          0.29232001304626465,
+          0.29151999950408936,
+          0.29299280047416687
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.2473600059747696,
+          0.24704019725322723,
+          0.24780820310115814
+        ],
+        [
+          0.24751999974250793,
+          0.24719999730587006,
+          0.2478400021791458
+        ],
+        [
+          0.24751999974250793,
+          0.24719999730587006,
+          0.2478400021791458
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 56,
+      "sq": 33,
+      "sk": 33,
+      "causal": true,
+      "group": "irregular",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 40,
+      "baseline_us": 26.079999282956123,
+      "profiled_us": 26.399999856948853,
+      "speedup": 0.9878787660709589,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00296175479888916,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 4.76837158203125e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.00296175479888916,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 4.76837158203125e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.026079999282956123,
+          0.025760000571608543,
+          0.026559999212622643
+        ],
+        [
+          0.026079999282956123,
+          0.025919999927282333,
+          0.026399999856948853
+        ],
+        [
+          0.026240000501275063,
+          0.026079999282956123,
+          0.026559999212622643
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.026399999856948853,
+          0.026079999282956123,
+          0.02672000043094158
+        ],
+        [
+          0.026240000501275063,
+          0.026079999282956123,
+          0.026559999212622643
+        ],
+        [
+          0.026399999856948853,
+          0.026240000501275063,
+          0.026559999212622643
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 56,
+      "sq": 33,
+      "sk": 33,
+      "causal": true,
+      "group": "irregular",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 41,
+      "baseline_us": 25.280000641942024,
+      "profiled_us": 25.760000571608543,
+      "speedup": 0.9813664627711401,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0029500722885131836,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0029500722885131836,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.025439999997615814,
+          0.025119999423623085,
+          0.025599999353289604
+        ],
+        [
+          0.025280000641942024,
+          0.025119999423623085,
+          0.025599999353289604
+        ],
+        [
+          0.025280000641942024,
+          0.025119999423623085,
+          0.025760000571608543
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.025760000571608543,
+          0.025599999353289604,
+          0.026079999282956123
+        ],
+        [
+          0.025599999353289604,
+          0.025439999997615814,
+          0.025919999927282333
+        ],
+        [
+          0.025760000571608543,
+          0.025472000241279602,
+          0.026079999282956123
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 56,
+      "sq": 1,
+      "sk": 1009,
+      "causal": false,
+      "group": "irregular",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 42,
+      "baseline_us": 163.2000058889389,
+      "profiled_us": 117.11999773979187,
+      "speedup": 1.3934427001230312,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.001995980739593506,
+          "reference_max_abs_error": 0.0019524097442626953,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0019960403442382812,
+          "reference_max_abs_error": 0.0019524097442626953,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.1632000058889389,
+          0.1627199947834015,
+          0.16364820301532745
+        ],
+        [
+          0.1632000058889389,
+          0.1627199947834015,
+          0.16368000209331512
+        ],
+        [
+          0.16335999965667725,
+          0.1627199947834015,
+          0.16368019580841064
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.11711999773979187,
+          0.11648000031709671,
+          0.11727999895811081
+        ],
+        [
+          0.11711999773979187,
+          0.11695999652147293,
+          0.11744000017642975
+        ],
+        [
+          0.11711999773979187,
+          0.11695999652147293,
+          0.11744000017642975
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 56,
+      "sq": 1,
+      "sk": 1009,
+      "causal": false,
+      "group": "irregular",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 43,
+      "baseline_us": 163.03999722003937,
+      "profiled_us": 116.80000275373459,
+      "speedup": 1.3958903542476697,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0019705891609191895,
+          "reference_max_abs_error": 0.0019530057907104492,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0019705891609191895,
+          "reference_max_abs_error": 0.0019530057907104492,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.16303999722003937,
+          0.16223999857902527,
+          0.16368000209331512
+        ],
+        [
+          0.1627199947834015,
+          0.16208000481128693,
+          0.16335999965667725
+        ],
+        [
+          0.1632000058889389,
+          0.1627199947834015,
+          0.16371279954910278
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.11680000275373459,
+          0.11599999666213989,
+          0.11727999895811081
+        ],
+        [
+          0.11680000275373459,
+          0.11648000031709671,
+          0.11711999773979187
+        ],
+        [
+          0.11695999652147293,
+          0.11664000153541565,
+          0.11727999895811081
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 120,
+      "sq": 33,
+      "sk": 33,
+      "causal": true,
+      "group": "irregular",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 44,
+      "baseline_us": 32.48000144958496,
+      "profiled_us": 32.6399989426136,
+      "speedup": 0.9950981158636083,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0029247403144836426,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0029247403144836426,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.03248000144958496,
+          0.03215999901294708,
+          0.03280000016093254
+        ],
+        [
+          0.03248000144958496,
+          0.03215999901294708,
+          0.0326399989426136
+        ],
+        [
+          0.03248000144958496,
+          0.03215999901294708,
+          0.0326399989426136
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.0326399989426136,
+          0.03248000144958496,
+          0.03296000137925148
+        ],
+        [
+          0.0326399989426136,
+          0.03232000023126602,
+          0.03296000137925148
+        ],
+        [
+          0.0326399989426136,
+          0.03232000023126602,
+          0.03280000016093254
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 120,
+      "sq": 33,
+      "sk": 33,
+      "causal": true,
+      "group": "irregular",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 45,
+      "baseline_us": 31.840000301599503,
+      "profiled_us": 32.32000023126602,
+      "speedup": 0.9851485171339147,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.002840280532836914,
+          "reference_max_abs_error": 0.0019530653953552246,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.002840280532836914,
+          "reference_max_abs_error": 0.0019530653953552246,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.0318400003015995,
+          0.03167999908328056,
+          0.032255999743938446
+        ],
+        [
+          0.0318400003015995,
+          0.03152000159025192,
+          0.03215999901294708
+        ],
+        [
+          0.03192000091075897,
+          0.03167999908328056,
+          0.03215999901294708
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.03216100111603737,
+          0.03200000151991844,
+          0.03248000144958496
+        ],
+        [
+          0.03232000023126602,
+          0.03200099989771843,
+          0.0326399989426136
+        ],
+        [
+          0.03232000023126602,
+          0.03200099989771843,
+          0.0326399989426136
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 120,
+      "sq": 1,
+      "sk": 1009,
+      "causal": false,
+      "group": "irregular",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 46,
+      "baseline_us": 306.87999725341797,
+      "profiled_us": 274.87999200820923,
+      "speedup": 1.1164144578564055,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.001978278160095215,
+          "reference_max_abs_error": 0.0019478201866149902,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.001978278160095215,
+          "reference_max_abs_error": 0.0019478201866149902,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.3073599934577942,
+          0.3068163990974426,
+          0.30784040689468384
+        ],
+        [
+          0.30687999725341797,
+          0.3065600097179413,
+          0.30768001079559326
+        ],
+        [
+          0.30687999725341797,
+          0.30640000104904175,
+          0.30736100673675537
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.2747209966182709,
+          0.27423998713493347,
+          0.2752000093460083
+        ],
+        [
+          0.27487999200820923,
+          0.274399995803833,
+          0.2752000093460083
+        ],
+        [
+          0.27487999200820923,
+          0.27446460723876953,
+          0.2752000093460083
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 120,
+      "sq": 1,
+      "sk": 1009,
+      "causal": false,
+      "group": "irregular",
+      "expected_tile": [
+        64,
+        64,
+        1
+      ],
+      "case_id": 47,
+      "baseline_us": 306.40000104904175,
+      "profiled_us": 273.9199995994568,
+      "speedup": 1.118574771820529,
+      "kernel_index": 1,
+      "selected_tile": [
+        64,
+        64,
+        1
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.002027153968811035,
+          "reference_max_abs_error": 0.0019499659538269043,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.002027153968811035,
+          "reference_max_abs_error": 0.0019500255584716797,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.3062399923801422,
+          0.3049609959125519,
+          0.30719998478889465
+        ],
+        [
+          0.30663999915122986,
+          0.30608001351356506,
+          0.30768001079559326
+        ],
+        [
+          0.30640000104904175,
+          0.30559998750686646,
+          0.3073599934577942
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.2739199995994568,
+          0.2736000120639801,
+          0.27423998713493347
+        ],
+        [
+          0.27375999093055725,
+          0.27344000339508057,
+          0.2740806043148041
+        ],
+        [
+          0.2739199995994568,
+          0.2736000120639801,
+          0.27423998713493347
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 1023,
+      "causal": false,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 48,
+      "baseline_us": 137.91999220848083,
+      "profiled_us": 138.2399946451187,
+      "speedup": 0.9976851674693755,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0002505779266357422,
+          "reference_max_abs_error": 0.00024384260177612305,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0002505183219909668,
+          "reference_max_abs_error": 0.00024384260177612305,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.13791999220848083,
+          0.1361600011587143,
+          0.1390399932861328
+        ],
+        [
+          0.13791999220848083,
+          0.13712020218372345,
+          0.1390399932861328
+        ],
+        [
+          0.13840000331401825,
+          0.13743999600410461,
+          0.13900800049304962
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.13808000087738037,
+          0.13657599687576294,
+          0.1391039937734604
+        ],
+        [
+          0.1382399946451187,
+          0.13743999600410461,
+          0.13916799426078796
+        ],
+        [
+          0.13840000331401825,
+          0.13728000223636627,
+          0.1390399932861328
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 8193,
+      "causal": false,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 49,
+      "baseline_us": 1003.3600330352783,
+      "profiled_us": 1006.7199468612671,
+      "speedup": 0.9966625139032317,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0002454519271850586,
+          "reference_max_abs_error": 0.00024402141571044922,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0002454519271850586,
+          "reference_max_abs_error": 0.00024402141571044922,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          1.0043209791183472,
+          0.9992969632148743,
+          1.009312629699707
+        ],
+        [
+          1.000161051750183,
+          0.995648980140686,
+          1.0072009563446045
+        ],
+        [
+          1.0033600330352783,
+          0.999521017074585,
+          1.0114250183105469
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          1.006719946861267,
+          1.0012165307998657,
+          1.0096324682235718
+        ],
+        [
+          1.0027199983596802,
+          0.9977285861968994,
+          1.0073280334472656
+        ],
+        [
+          1.006721019744873,
+          1.0024644136428833,
+          1.0143686532974243
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 511,
+      "sk": 512,
+      "causal": true,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 50,
+      "baseline_us": 185.7600063085556,
+      "profiled_us": 185.7600063085556,
+      "speedup": 1.0,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00041931867599487305,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.00041931867599487305,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.18559999763965607,
+          0.1841609925031662,
+          0.18832099437713623
+        ],
+        [
+          0.1857600063085556,
+          0.18367999792099,
+          0.18822459876537323
+        ],
+        [
+          0.18592000007629395,
+          0.1842564046382904,
+          0.18816040456295013
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.1857600063085556,
+          0.18448099493980408,
+          0.1881600022315979
+        ],
+        [
+          0.18624000251293182,
+          0.1844799965620041,
+          0.18848000466823578
+        ],
+        [
+          0.18559999763965607,
+          0.18409599363803864,
+          0.1881600022315979
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 512,
+      "sk": 2048,
+      "causal": true,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 51,
+      "baseline_us": 188.56050074100494,
+      "profiled_us": 188.6405050754547,
+      "speedup": 0.9995758899478255,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0003539919853210449,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.0003539919853210449,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.18879999220371246,
+          0.18608099222183228,
+          0.19232000410556793
+        ],
+        [
+          0.18856050074100494,
+          0.1863359957933426,
+          0.191103994846344
+        ],
+        [
+          0.18719999492168427,
+          0.1856645941734314,
+          0.1903683990240097
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.1886409968137741,
+          0.1868799924850464,
+          0.19167999923229218
+        ],
+        [
+          0.18807999789714813,
+          0.1857600063085556,
+          0.19030459225177765
+        ],
+        [
+          0.1886405050754547,
+          0.18624059855937958,
+          0.19088000059127808
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 2,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 1024,
+      "causal": false,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 52,
+      "baseline_us": 136.48000359535217,
+      "profiled_us": 136.80000603199005,
+      "speedup": 0.9976608010049134,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00025075674057006836,
+          "reference_max_abs_error": 0.00024402141571044922,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.00025075674057006836,
+          "reference_max_abs_error": 0.00024402141571044922,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.13663999736309052,
+          0.13558459281921387,
+          0.13728000223636627
+        ],
+        [
+          0.13631999492645264,
+          0.13536019623279572,
+          0.13776080310344696
+        ],
+        [
+          0.13648000359535217,
+          0.1353600025177002,
+          0.1379207968711853
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.13680100440979004,
+          0.13583999872207642,
+          0.1382399946451187
+        ],
+        [
+          0.13648000359535217,
+          0.13523200154304504,
+          0.13840000331401825
+        ],
+        [
+          0.13680000603199005,
+          0.1353919953107834,
+          0.1382399946451187
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        16,
+        8
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 1024,
+      "causal": false,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 53,
+      "baseline_us": 137.91999220848083,
+      "profiled_us": 137.91999220848083,
+      "speedup": 1.0,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00024813413619995117,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.00024813413619995117,
+          "reference_max_abs_error": 0.000244140625,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.13791999220848083,
+          0.13648000359535217,
+          0.13887999951839447
+        ],
+        [
+          0.13808099925518036,
+          0.13731199502944946,
+          0.13916799426078796
+        ],
+        [
+          0.13791999220848083,
+          0.13680000603199005,
+          0.13887999951839447
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.13768050074577332,
+          0.1364160031080246,
+          0.13887999951839447
+        ],
+        [
+          0.13808000087738037,
+          0.13680000603199005,
+          0.13916799426078796
+        ],
+        [
+          0.13791999220848083,
+          0.13711999356746674,
+          0.1390399932861328
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 112,
+      "sq": 1,
+      "sk": 1009,
+      "causal": false,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 54,
+      "baseline_us": 281.76000714302063,
+      "profiled_us": 281.76000714302063,
+      "speedup": 1.0,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0002498626708984375,
+          "reference_max_abs_error": 0.00024402141571044922,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0002498626708984375,
+          "reference_max_abs_error": 0.00024402141571044922,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.2812800109386444,
+          0.2802879810333252,
+          0.28224000334739685
+        ],
+        [
+          0.2819199860095978,
+          0.28083279728889465,
+          0.28284820914268494
+        ],
+        [
+          0.28176000714302063,
+          0.28083279728889465,
+          0.2823682129383087
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.28176000714302063,
+          0.280000776052475,
+          0.28271999955177307
+        ],
+        [
+          0.28176000714302063,
+          0.2812800109386444,
+          0.28255999088287354
+        ],
+        [
+          0.28176000714302063,
+          0.2809928059577942,
+          0.28271999955177307
+        ]
+      ]
+    },
+    {
+      "dtype": "float16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": [
+        128,
+        64
+      ],
+      "sq": 1,
+      "sk": 1024,
+      "causal": false,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 55,
+      "baseline_us": 259.68000292778015,
+      "profiled_us": 258.87998938560486,
+      "speedup": 1.0030902872951823,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00025027990341186523,
+          "reference_max_abs_error": 0.0002442002296447754,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.00025027990341186523,
+          "reference_max_abs_error": 0.0002440810203552246,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.25968000292778015,
+          0.2587200105190277,
+          0.2603200078010559
+        ],
+        [
+          0.2598400115966797,
+          0.2587200105190277,
+          0.2608009874820709
+        ],
+        [
+          0.25968000292778015,
+          0.25887998938560486,
+          0.2607046067714691
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.25936049222946167,
+          0.2587200105190277,
+          0.26015999913215637
+        ],
+        [
+          0.2585600018501282,
+          0.2579840123653412,
+          0.260001003742218
+        ],
+        [
+          0.25887998938560486,
+          0.2580806016921997,
+          0.26015999913215637
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 1023,
+      "causal": false,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 56,
+      "baseline_us": 150.2400040626526,
+      "profiled_us": 150.07999539375305,
+      "speedup": 1.001066155875603,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.001999974250793457,
+          "reference_max_abs_error": 0.0019505620002746582,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.0020000338554382324,
+          "reference_max_abs_error": 0.0019505023956298828,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.14975999295711517,
+          0.1486400067806244,
+          0.151296004652977
+        ],
+        [
+          0.1502400040626526,
+          0.14880000054836273,
+          0.15136000514030457
+        ],
+        [
+          0.15056100487709045,
+          0.14959999918937683,
+          0.15167999267578125
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.14959999918937683,
+          0.14822399616241455,
+          0.1510400027036667
+        ],
+        [
+          0.15087999403476715,
+          0.14959999918937683,
+          0.15216000378131866
+        ],
+        [
+          0.15007999539375305,
+          0.14927999675273895,
+          0.1515199989080429
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 8193,
+      "causal": false,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 57,
+      "baseline_us": 1104.9610376358032,
+      "profiled_us": 1106.0805320739746,
+      "speedup": 0.99898787257735,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0019608139991760254,
+          "reference_max_abs_error": 0.0019519925117492676,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.0019608139991760254,
+          "reference_max_abs_error": 0.0019519925117492676,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          1.1049609184265137,
+          1.0990409851074219,
+          1.1104010343551636
+        ],
+        [
+          1.1049610376358032,
+          1.100672960281372,
+          1.1089609861373901
+        ],
+        [
+          1.1060810089111328,
+          1.1018887758255005,
+          1.109152913093567
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          1.1060805320739746,
+          1.0984009504318237,
+          1.1115210056304932
+        ],
+        [
+          1.106881022453308,
+          1.1009602546691895,
+          1.1103678941726685
+        ],
+        [
+          1.1049610376358032,
+          1.0993287563323975,
+          1.1116162538528442
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 511,
+      "sk": 512,
+      "causal": true,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 58,
+      "baseline_us": 219.04000639915466,
+      "profiled_us": 218.72000396251678,
+      "speedup": 1.0014630689047204,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0029163360595703125,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.0029163360595703125,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.21855999529361725,
+          0.21584059298038483,
+          0.22262440621852875
+        ],
+        [
+          0.21904000639915466,
+          0.21583999693393707,
+          0.22176000475883484
+        ],
+        [
+          0.21952000260353088,
+          0.21568000316619873,
+          0.22256000339984894
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.21872000396251678,
+          0.2160000056028366,
+          0.22176000475883484
+        ],
+        [
+          0.21967999637126923,
+          0.21663999557495117,
+          0.22288000583648682
+        ],
+        [
+          0.21855999529361725,
+          0.21615999937057495,
+          0.22271999716758728
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 512,
+      "sk": 2048,
+      "causal": true,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 59,
+      "baseline_us": 220.16100585460663,
+      "profiled_us": 220.96000611782074,
+      "speedup": 0.9963839598067894,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0029757022857666016,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.0029757022857666016,
+          "reference_max_abs_error": 0.001953125,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.21952000260353088,
+          0.2160000056028366,
+          0.22230400145053864
+        ],
+        [
+          0.22016100585460663,
+          0.21728099882602692,
+          0.2236810028553009
+        ],
+        [
+          0.22096000611782074,
+          0.21792000532150269,
+          0.22431999444961548
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.22032000124454498,
+          0.21792000532150269,
+          0.2247679978609085
+        ],
+        [
+          0.22096000611782074,
+          0.2176000028848648,
+          0.22303999960422516
+        ],
+        [
+          0.22127999365329742,
+          0.21807999908924103,
+          0.2252800017595291
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 2,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 1024,
+      "causal": false,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 60,
+      "baseline_us": 149.1200029850006,
+      "profiled_us": 148.6400067806244,
+      "speedup": 1.0032292531114093,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.0020148754119873047,
+          "reference_max_abs_error": 0.001952528953552246,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.00201493501663208,
+          "reference_max_abs_error": 0.0019525885581970215,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.1491200029850006,
+          0.14815999567508698,
+          0.15014459192752838
+        ],
+        [
+          0.14864100515842438,
+          0.1473281979560852,
+          0.15007999539375305
+        ],
+        [
+          0.1491200029850006,
+          0.14800000190734863,
+          0.15039999783039093
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.14847999811172485,
+          0.14745600521564484,
+          0.14975999295711517
+        ],
+        [
+          0.14952000975608826,
+          0.14800000190734863,
+          0.1507200002670288
+        ],
+        [
+          0.1486400067806244,
+          0.14720000326633453,
+          0.1502400040626526
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        16,
+        8
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 1024,
+      "causal": false,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 61,
+      "baseline_us": 149.4400054216385,
+      "profiled_us": 149.4400054216385,
+      "speedup": 1.0,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.001982390880584717,
+          "reference_max_abs_error": 0.0019521117210388184,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 0.001982390880584717,
+          "reference_max_abs_error": 0.0019521117210388184,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.1491200029850006,
+          0.14800040423870087,
+          0.1500805914402008
+        ],
+        [
+          0.1494400054216385,
+          0.1483200043439865,
+          0.15087999403476715
+        ],
+        [
+          0.14959999918937683,
+          0.14815999567508698,
+          0.1510400027036667
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.14895999431610107,
+          0.14800000190734863,
+          0.15039999783039093
+        ],
+        [
+          0.1494400054216385,
+          0.14815999567508698,
+          0.15087999403476715
+        ],
+        [
+          0.14959999918937683,
+          0.1478399932384491,
+          0.1510400027036667
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 112,
+      "sq": 1,
+      "sk": 1009,
+      "causal": false,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 62,
+      "baseline_us": 295.6004738807678,
+      "profiled_us": 296.00000381469727,
+      "speedup": 0.9986502367270929,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.002004683017730713,
+          "reference_max_abs_error": 0.001952826976776123,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.002004683017730713,
+          "reference_max_abs_error": 0.001952826976776123,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.2956004738807678,
+          0.2948800027370453,
+          0.29654401540756226
+        ],
+        [
+          0.2953599989414215,
+          0.29472100734710693,
+          0.29600000381469727
+        ],
+        [
+          0.29600000381469727,
+          0.2953599989414215,
+          0.29679998755455017
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.2954404950141907,
+          0.29440000653266907,
+          0.29584041237831116
+        ],
+        [
+          0.29600000381469727,
+          0.2953599989414215,
+          0.29679998755455017
+        ],
+        [
+          0.29600000381469727,
+          0.295199990272522,
+          0.2964800000190735
+        ]
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": [
+        128,
+        64
+      ],
+      "sq": 1,
+      "sk": 1024,
+      "causal": false,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 63,
+      "baseline_us": 273.27999472618103,
+      "profiled_us": 273.19997549057007,
+      "speedup": 1.000292896203476,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 0.00199282169342041,
+          "reference_max_abs_error": 0.0019526481628417969,
+          "lse_max_abs_error": 1.9073486328125e-06
+        },
+        "profiled": {
+          "max_abs_error": 0.00199282169342041,
+          "reference_max_abs_error": 0.0019526481628417969,
+          "lse_max_abs_error": 1.9073486328125e-06
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.27375999093055725,
+          0.2726079821586609,
+          0.274399995803833
+        ],
+        [
+          0.2726399898529053,
+          0.27184000611305237,
+          0.273855984210968
+        ],
+        [
+          0.27327999472618103,
+          0.27215999364852905,
+          0.27423998713493347
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.2731199860572815,
+          0.27216100692749023,
+          0.27423998713493347
+        ],
+        [
+          0.2736009955406189,
+          0.2726399898529053,
+          0.2744008004665375
+        ],
+        [
+          0.27319997549057007,
+          0.2719045877456665,
+          0.2740800082683563
+        ]
+      ]
+    },
+    {
+      "dtype": "float32",
+      "batch": 1,
+      "heads": [
+        32,
+        8
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 1024,
+      "causal": false,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 64,
+      "baseline_us": 203.36000621318817,
+      "profiled_us": 203.36049795150757,
+      "speedup": 0.9999975819378673,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 9.667076671937558e-07,
+          "reference_max_abs_error": 2.0395282596119557e-07,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 9.667076671382446e-07,
+          "reference_max_abs_error": 1.9332245482228672e-07,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.20320048928260803,
+          0.20192000269889832,
+          0.2043199986219406
+        ],
+        [
+          0.20367999374866486,
+          0.2019519954919815,
+          0.2046400010585785
+        ],
+        [
+          0.20336000621318817,
+          0.20175999402999878,
+          0.2046400010585785
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.2038400024175644,
+          0.2019519954919815,
+          0.20512080192565918
+        ],
+        [
+          0.20336049795150757,
+          0.2019519954919815,
+          0.20508800446987152
+        ],
+        [
+          0.20336000621318817,
+          0.20214399695396423,
+          0.2046400010585785
+        ]
+      ]
+    },
+    {
+      "dtype": "float32",
+      "batch": 1,
+      "heads": [
+        32,
+        32
+      ],
+      "hdim": 128,
+      "sq": 1,
+      "sk": 1024,
+      "causal": false,
+      "group": "fallback",
+      "expected_tile": [
+        16,
+        16,
+        0
+      ],
+      "case_id": 65,
+      "baseline_us": 208.95999670028687,
+      "profiled_us": 209.1200053691864,
+      "speedup": 0.9992348476243722,
+      "kernel_index": 0,
+      "selected_tile": [
+        16,
+        16,
+        0
+      ],
+      "correctness": {
+        "baseline": {
+          "max_abs_error": 8.612165277588346e-07,
+          "reference_max_abs_error": 2.1738253419556486e-07,
+          "lse_max_abs_error": 9.5367431640625e-07
+        },
+        "profiled": {
+          "max_abs_error": 8.612165278698569e-07,
+          "reference_max_abs_error": 2.173825341400537e-07,
+          "lse_max_abs_error": 9.5367431640625e-07
+        }
+      },
+      "baseline_timings_ms_p50_p20_p80": [
+        [
+          0.20927999913692474,
+          0.2084808051586151,
+          0.2099200040102005
+        ],
+        [
+          0.20895999670028687,
+          0.2083519995212555,
+          0.20960000157356262
+        ],
+        [
+          0.20895999670028687,
+          0.2083210051059723,
+          0.20944100618362427
+        ]
+      ],
+      "profiled_timings_ms_p50_p20_p80": [
+        [
+          0.2091200053691864,
+          0.2083200067281723,
+          0.20995280146598816
+        ],
+        [
+          0.2091200053691864,
+          0.20848000049591064,
+          0.20975999534130096
+        ],
+        [
+          0.20895999670028687,
+          0.20848000049591064,
+          0.20960000157356262
+        ]
+      ]
+    }
+  ]
+}

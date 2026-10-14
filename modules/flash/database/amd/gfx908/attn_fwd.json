@@ -1,0 +1,1398 @@
+{
+  "status": "Validated normal automatic dispatch and correctness on MI100 with PyTorch 2.14.0+rocm10.1.0; see validation.json.",
+  "kernel": "flash/triton/attn_fwd",
+  "arch": "gfx908",
+  "source_log": "build-gfx908-logs/inference-tuning-candidates.jsonl",
+  "source_sha256": "fe7ea5918b6645b171a2b9433d28296a0ea3fce58b8880daadfb41728ef98d80",
+  "build": {
+    "AOTRITON_GIT_SHA1": "1e5eab80fca22181b383a6fc2e149d7c04361ad9",
+    "AOTRITON_GIT_TREESHA1": "89e4c6b1f22486185b1d6aa66eb0f57d581cef57",
+    "DB_SHA256": {
+      "primary": {
+        "gfx908": {
+          "flash": {}
+        }
+      },
+      "secondary": {
+        "flash.op": "706316e3e99136aa8718aff1986e0fba54aa5e1084c3bd8672353e4d973a714f"
+      }
+    },
+    "TRITON_VERSION": "3.8.0+gitaa3cf1a1",
+    "FLYC_VERSION": "0.3.1+git421935cc.llvm78302f03ff25"
+  },
+  "selection": "Lowest geometric mean relative latency across both MHA and GQA, using only candidates remeasured for both.",
+  "coverage": "Batch 1; measured FP16/BF16 fixed-length shapes only. Preserve generic choices for uncovered shapes.",
+  "candidate_checks": 3888,
+  "failed_checks": 0,
+  "entries": [
+    {
+      "dtype": "float16",
+      "hdim": 64,
+      "block_dmodel": 64,
+      "padded_head": false,
+      "seqlen_q": 512,
+      "seqlen_k": 512,
+      "causal": true,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 39,
+      "psels": {
+        "PERSISTENT_TYPE": 2,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": false,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 2,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 67.52000004053116,
+          "rounds_us": [
+            66.72000139951706,
+            67.52000004053116,
+            68.15899908542633
+          ],
+          "default_us": 159.35899317264557,
+          "speedup_vs_default": 2.3601746605003697
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 66.71900302171707,
+          "rounds_us": [
+            66.71900302171707,
+            66.55900180339813,
+            66.95950031280518
+          ],
+          "default_us": 148.31900596618652,
+          "speedup_vs_default": 2.223039902408443
+        }
+      ]
+    },
+    {
+      "dtype": "float16",
+      "hdim": 64,
+      "block_dmodel": 64,
+      "padded_head": false,
+      "seqlen_q": 2048,
+      "seqlen_k": 2048,
+      "causal": true,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 23,
+      "psels": {
+        "PERSISTENT_TYPE": 2,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 128,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": false,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 2,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 344.4780111312866,
+          "rounds_us": [
+            344.15701031684875,
+            346.1579978466034,
+            344.4780111312866
+          ],
+          "default_us": 1531.6699743270874,
+          "speedup_vs_default": 4.446350492146046
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 344.4780111312866,
+          "rounds_us": [
+            344.4780111312866,
+            344.63798999786377,
+            343.35801005363464
+          ],
+          "default_us": 1473.5900163650513,
+          "speedup_vs_default": 4.277747689977925
+        }
+      ]
+    },
+    {
+      "dtype": "float16",
+      "hdim": 64,
+      "block_dmodel": 64,
+      "padded_head": false,
+      "seqlen_q": 1,
+      "seqlen_k": 1024,
+      "causal": false,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 40,
+      "psels": {
+        "PERSISTENT_TYPE": 0,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": true,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 2,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 67.6800012588501,
+          "rounds_us": [
+            67.6800012588501,
+            67.6800012588501,
+            67.99899786710739
+          ],
+          "default_us": 121.75899744033813,
+          "speedup_vs_default": 1.7990395268264932
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 65.60000032186508,
+          "rounds_us": [
+            65.60000032186508,
+            65.43999910354614,
+            65.76000154018402
+          ],
+          "default_us": 120.4800009727478,
+          "speedup_vs_default": 1.836585371670962
+        }
+      ]
+    },
+    {
+      "dtype": "float16",
+      "hdim": 64,
+      "block_dmodel": 64,
+      "padded_head": false,
+      "seqlen_q": 1,
+      "seqlen_k": 8192,
+      "causal": false,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 40,
+      "psels": {
+        "PERSISTENT_TYPE": 0,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": true,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 2,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 435.0374937057495,
+          "rounds_us": [
+            434.8770081996918,
+            435.1174980401993,
+            435.0374937057495
+          ],
+          "default_us": 879.9144923686981,
+          "speedup_vs_default": 2.0226176021597215
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 426.15748941898346,
+          "rounds_us": [
+            425.67749321460724,
+            426.15748941898346,
+            426.2374937534332
+          ],
+          "default_us": 865.1944994926453,
+          "speedup_vs_default": 2.030222443520207
+        }
+      ]
+    },
+    {
+      "dtype": "float16",
+      "hdim": 128,
+      "block_dmodel": 128,
+      "padded_head": false,
+      "seqlen_q": 512,
+      "seqlen_k": 512,
+      "causal": true,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 34,
+      "psels": {
+        "PERSISTENT_TYPE": 2,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": true,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 1,
+        "num_warps": 2,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 110.07899791002274,
+          "rounds_us": [
+            109.91949960589409,
+            110.07899791002274,
+            110.55900156497955
+          ],
+          "default_us": 199.3589997291565,
+          "speedup_vs_default": 1.8110539114110593
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 109.43900048732758,
+          "rounds_us": [
+            109.43900048732758,
+            109.43900048732758,
+            109.75900292396545
+          ],
+          "default_us": 187.51899898052216,
+          "speedup_vs_default": 1.7134567946116779
+        }
+      ]
+    },
+    {
+      "dtype": "float16",
+      "hdim": 128,
+      "block_dmodel": 128,
+      "padded_head": false,
+      "seqlen_q": 2048,
+      "seqlen_k": 2048,
+      "causal": true,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 33,
+      "psels": {
+        "PERSISTENT_TYPE": 2,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": false,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 1,
+        "num_warps": 2,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 653.436005115509,
+          "rounds_us": [
+            653.2750129699707,
+            653.436005115509,
+            653.9160013198853
+          ],
+          "default_us": 2049.427032470703,
+          "speedup_vs_default": 3.136385225831598
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 649.5959758758545,
+          "rounds_us": [
+            649.4359970092773,
+            649.5959758758545,
+            649.7560143470764
+          ],
+          "default_us": 2035.9880924224854,
+          "speedup_vs_default": 3.1342375384597316
+        }
+      ]
+    },
+    {
+      "dtype": "float16",
+      "hdim": 128,
+      "block_dmodel": 128,
+      "padded_head": false,
+      "seqlen_q": 1,
+      "seqlen_k": 1024,
+      "causal": false,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 36,
+      "psels": {
+        "PERSISTENT_TYPE": 0,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": true,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 1,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 97.120001912117,
+          "rounds_us": [
+            97.120001912117,
+            97.11899608373642,
+            97.4389985203743
+          ],
+          "default_us": 140.31900465488434,
+          "speedup_vs_default": 1.4448002666006712
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 94.87900137901306,
+          "rounds_us": [
+            94.87900137901306,
+            94.87900137901306,
+            94.87999975681305
+          ],
+          "default_us": 136.9595006108284,
+          "speedup_vs_default": 1.4435175183148947
+        }
+      ]
+    },
+    {
+      "dtype": "float16",
+      "hdim": 128,
+      "block_dmodel": 128,
+      "padded_head": false,
+      "seqlen_q": 1,
+      "seqlen_k": 8192,
+      "causal": false,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 36,
+      "psels": {
+        "PERSISTENT_TYPE": 0,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": true,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 1,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 652.9560089111328,
+          "rounds_us": [
+            652.7959704399109,
+            653.0354917049408,
+            652.9560089111328
+          ],
+          "default_us": 1007.673978805542,
+          "speedup_vs_default": 1.5432494150500822
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 647.1959948539734,
+          "rounds_us": [
+            647.3559737205505,
+            647.0360159873962,
+            647.1959948539734
+          ],
+          "default_us": 996.7929720878601,
+          "speedup_vs_default": 1.5401717254334464
+        }
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "hdim": 64,
+      "block_dmodel": 64,
+      "padded_head": false,
+      "seqlen_q": 512,
+      "seqlen_k": 512,
+      "causal": true,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 34,
+      "psels": {
+        "PERSISTENT_TYPE": 2,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": true,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 1,
+        "num_warps": 2,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 82.07900077104568,
+          "rounds_us": [
+            81.91999793052673,
+            82.07900077104568,
+            82.40000158548355
+          ],
+          "default_us": 184.15899574756622,
+          "speedup_vs_default": 2.243679796508079
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 80.9599980711937,
+          "rounds_us": [
+            80.9599980711937,
+            80.95899969339371,
+            81.28000050783157
+          ],
+          "default_us": 173.27900230884552,
+          "speedup_vs_default": 2.140303933264294
+        }
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "hdim": 64,
+      "block_dmodel": 64,
+      "padded_head": false,
+      "seqlen_q": 2048,
+      "seqlen_k": 2048,
+      "causal": true,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 24,
+      "psels": {
+        "PERSISTENT_TYPE": 2,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 128,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": true,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 2,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 514.4765079021454,
+          "rounds_us": [
+            514.4765079021454,
+            515.9969925880432,
+            513.5970115661621
+          ],
+          "default_us": 1845.5890417099,
+          "speedup_vs_default": 3.5873145097247767
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 516.6370272636414,
+          "rounds_us": [
+            509.9170207977295,
+            517.67697930336,
+            516.6370272636414
+          ],
+          "default_us": 1827.6690244674683,
+          "speedup_vs_default": 3.5376268599013976
+        }
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "hdim": 64,
+      "block_dmodel": 64,
+      "padded_head": false,
+      "seqlen_q": 1,
+      "seqlen_k": 1024,
+      "causal": false,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 40,
+      "psels": {
+        "PERSISTENT_TYPE": 0,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": true,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 2,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 82.87899941205978,
+          "rounds_us": [
+            82.87899941205978,
+            82.87899941205978,
+            83.03999900817871
+          ],
+          "default_us": 129.2790025472641,
+          "speedup_vs_default": 1.5598523566206641
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 80.48000186681747,
+          "rounds_us": [
+            80.48000186681747,
+            80.48000186681747,
+            80.64000308513641
+          ],
+          "default_us": 126.71899795532227,
+          "speedup_vs_default": 1.574540196520168
+        }
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "hdim": 64,
+      "block_dmodel": 64,
+      "padded_head": false,
+      "seqlen_q": 1,
+      "seqlen_k": 8192,
+      "causal": false,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 40,
+      "psels": {
+        "PERSISTENT_TYPE": 0,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": true,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 2,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 553.7559986114502,
+          "rounds_us": [
+            553.4369945526123,
+            553.7565052509308,
+            553.7559986114502
+          ],
+          "default_us": 940.7939910888672,
+          "speedup_vs_default": 1.6989323699389611
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 549.9964952468872,
+          "rounds_us": [
+            549.3564903736115,
+            550.2359867095947,
+            549.9964952468872
+          ],
+          "default_us": 924.9550104141235,
+          "speedup_vs_default": 1.6817470991318257
+        }
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "hdim": 128,
+      "block_dmodel": 128,
+      "padded_head": false,
+      "seqlen_q": 512,
+      "seqlen_k": 512,
+      "causal": true,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 50,
+      "psels": {
+        "PERSISTENT_TYPE": 2,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 32,
+        "PRE_LOAD_V": true,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 1,
+        "num_warps": 2,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 142.39899814128876,
+          "rounds_us": [
+            142.39899814128876,
+            142.39899814128876,
+            142.63950288295746
+          ],
+          "default_us": 226.07900202274323,
+          "speedup_vs_default": 1.5876446110837583
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 139.51900601387024,
+          "rounds_us": [
+            139.51900601387024,
+            139.3589973449707,
+            139.83899354934692
+          ],
+          "default_us": 220.319002866745,
+          "speedup_vs_default": 1.5791325437398978
+        }
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "hdim": 128,
+      "block_dmodel": 128,
+      "padded_head": false,
+      "seqlen_q": 2048,
+      "seqlen_k": 2048,
+      "causal": true,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 34,
+      "psels": {
+        "PERSISTENT_TYPE": 2,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": true,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 1,
+        "num_warps": 2,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 948.1539726257324,
+          "rounds_us": [
+            947.6739764213562,
+            948.1539726257324,
+            948.1539726257324
+          ],
+          "default_us": 2508.384943008423,
+          "speedup_vs_default": 2.6455459929803666
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 945.6745088100433,
+          "rounds_us": [
+            944.6349740028381,
+            945.6745088100433,
+            946.0750222206116
+          ],
+          "default_us": 2498.3054399490356,
+          "speedup_vs_default": 2.6418238164129977
+        }
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "hdim": 128,
+      "block_dmodel": 128,
+      "padded_head": false,
+      "seqlen_q": 1,
+      "seqlen_k": 1024,
+      "causal": false,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 36,
+      "psels": {
+        "PERSISTENT_TYPE": 0,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": true,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 1,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 124.47900325059891,
+          "rounds_us": [
+            124.47900325059891,
+            124.47900325059891,
+            124.64000284671783
+          ],
+          "default_us": 151.67999267578125,
+          "speedup_vs_default": 1.218518695642363
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 122.71899729967117,
+          "rounds_us": [
+            122.71899729967117,
+            122.87899851799011,
+            122.71899729967117
+          ],
+          "default_us": 148.158997297287,
+          "speedup_vs_default": 1.2073028671795054
+        }
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "hdim": 128,
+      "block_dmodel": 128,
+      "padded_head": false,
+      "seqlen_q": 1,
+      "seqlen_k": 8192,
+      "causal": false,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 36,
+      "psels": {
+        "PERSISTENT_TYPE": 0,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": true,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 1,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 869.5949912071228,
+          "rounds_us": [
+            869.4350123405457,
+            869.5949912071228,
+            869.9150085449219
+          ],
+          "default_us": 1104.3130159378052,
+          "speedup_vs_default": 1.269916486529965
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 870.5549836158752,
+          "rounds_us": [
+            871.9949722290039,
+            870.235025882721,
+            870.5549836158752
+          ],
+          "default_us": 1088.6340141296387,
+          "speedup_vs_default": 1.25050575163899
+        }
+      ]
+    },
+    {
+      "dtype": "float16",
+      "hdim": 56,
+      "block_dmodel": 64,
+      "padded_head": true,
+      "seqlen_q": 33,
+      "seqlen_k": 33,
+      "causal": true,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 0,
+      "psels": {
+        "PERSISTENT_TYPE": 2,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 16,
+        "BLOCK_N": 16,
+        "PRE_LOAD_V": false,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 2,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 25.280000641942024,
+          "rounds_us": [
+            25.280000641942024,
+            25.280000641942024,
+            25.280000641942024
+          ],
+          "default_us": 25.280000641942024,
+          "speedup_vs_default": 1.0
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 24.639999493956566,
+          "rounds_us": [
+            24.639999493956566,
+            24.639999493956566,
+            24.639999493956566
+          ],
+          "default_us": 24.639999493956566,
+          "speedup_vs_default": 1.0
+        }
+      ]
+    },
+    {
+      "dtype": "float16",
+      "hdim": 56,
+      "block_dmodel": 64,
+      "padded_head": true,
+      "seqlen_q": 1,
+      "seqlen_k": 1009,
+      "causal": false,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 40,
+      "psels": {
+        "PERSISTENT_TYPE": 0,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": true,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 2,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 101.11899673938751,
+          "rounds_us": [
+            101.11899673938751,
+            101.11899673938751,
+            101.43899917602539
+          ],
+          "default_us": 156.79900348186493,
+          "speedup_vs_default": 1.5506384412216891
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 101.43899917602539,
+          "rounds_us": [
+            101.27999633550644,
+            101.43899917602539,
+            101.59999877214432
+          ],
+          "default_us": 156.6389948129654,
+          "speedup_vs_default": 1.5441693637094387
+        }
+      ]
+    },
+    {
+      "dtype": "float16",
+      "hdim": 120,
+      "block_dmodel": 128,
+      "padded_head": true,
+      "seqlen_q": 33,
+      "seqlen_k": 33,
+      "causal": true,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 0,
+      "psels": {
+        "PERSISTENT_TYPE": 2,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 16,
+        "BLOCK_N": 16,
+        "PRE_LOAD_V": false,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 2,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 30.880000442266464,
+          "rounds_us": [
+            30.880000442266464,
+            30.880000442266464,
+            30.719999223947525
+          ],
+          "default_us": 30.880000442266464,
+          "speedup_vs_default": 1.0
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 30.399000272154808,
+          "rounds_us": [
+            30.399000272154808,
+            30.399000272154808,
+            30.239999294281006
+          ],
+          "default_us": 30.399000272154808,
+          "speedup_vs_default": 1.0
+        }
+      ]
+    },
+    {
+      "dtype": "float16",
+      "hdim": 120,
+      "block_dmodel": 128,
+      "padded_head": true,
+      "seqlen_q": 1,
+      "seqlen_k": 1009,
+      "causal": false,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 36,
+      "psels": {
+        "PERSISTENT_TYPE": 0,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": true,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 1,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 249.11800026893616,
+          "rounds_us": [
+            249.11800026893616,
+            248.9590048789978,
+            249.2789924144745
+          ],
+          "default_us": 292.4779951572418,
+          "speedup_vs_default": 1.1740540420262535
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 248.31900000572205,
+          "rounds_us": [
+            248.31900000572205,
+            248.31900000572205,
+            248.63900244235992
+          ],
+          "default_us": 292.15800762176514,
+          "speedup_vs_default": 1.1765431063069394
+        }
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "hdim": 56,
+      "block_dmodel": 64,
+      "padded_head": true,
+      "seqlen_q": 33,
+      "seqlen_k": 33,
+      "causal": true,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 0,
+      "psels": {
+        "PERSISTENT_TYPE": 2,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 16,
+        "BLOCK_N": 16,
+        "PRE_LOAD_V": false,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 2,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 25.599999353289604,
+          "rounds_us": [
+            25.599999353289604,
+            25.599999353289604,
+            25.598999112844467
+          ],
+          "default_us": 25.599999353289604,
+          "speedup_vs_default": 1.0
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 24.960000067949295,
+          "rounds_us": [
+            24.960000067949295,
+            24.960000067949295,
+            24.958999827504158
+          ],
+          "default_us": 24.960000067949295,
+          "speedup_vs_default": 1.0
+        }
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "hdim": 56,
+      "block_dmodel": 64,
+      "padded_head": true,
+      "seqlen_q": 1,
+      "seqlen_k": 1009,
+      "causal": false,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 40,
+      "psels": {
+        "PERSISTENT_TYPE": 0,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": true,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 2,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 115.68000167608261,
+          "rounds_us": [
+            115.68000167608261,
+            115.68000167608261,
+            115.9994974732399
+          ],
+          "default_us": 163.03899884223938,
+          "speedup_vs_default": 1.4093965809126408
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 115.67900329828262,
+          "rounds_us": [
+            115.67900329828262,
+            115.67900329828262,
+            115.9989982843399
+          ],
+          "default_us": 162.87900507450104,
+          "speedup_vs_default": 1.408025660927519
+        }
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "hdim": 120,
+      "block_dmodel": 128,
+      "padded_head": true,
+      "seqlen_q": 33,
+      "seqlen_k": 33,
+      "causal": true,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 0,
+      "psels": {
+        "PERSISTENT_TYPE": 2,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 16,
+        "BLOCK_N": 16,
+        "PRE_LOAD_V": false,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 2,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 32.00000151991844,
+          "rounds_us": [
+            31.840000301599503,
+            32.00000151991844,
+            32.00000151991844
+          ],
+          "default_us": 32.00000151991844,
+          "speedup_vs_default": 1.0
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 31.199999153614044,
+          "rounds_us": [
+            31.199999153614044,
+            31.199999153614044,
+            31.199999153614044
+          ],
+          "default_us": 31.199999153614044,
+          "speedup_vs_default": 1.0
+        }
+      ]
+    },
+    {
+      "dtype": "bfloat16",
+      "hdim": 120,
+      "block_dmodel": 128,
+      "padded_head": true,
+      "seqlen_q": 1,
+      "seqlen_k": 1009,
+      "causal": false,
+      "dropout_p": 0.0,
+      "bias_type": 0,
+      "tuning_build_index": 36,
+      "psels": {
+        "PERSISTENT_TYPE": 0,
+        "GRID_CU_MULTIP": 2,
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "PRE_LOAD_V": true,
+        "NUM_XCDS": 1
+      },
+      "copts": {
+        "waves_per_eu": 1,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "measurements": [
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            32
+          ],
+          "median_us": 274.87900853157043,
+          "rounds_us": [
+            274.87799525260925,
+            274.87900853157043,
+            275.1980125904083
+          ],
+          "default_us": 306.878000497818,
+          "speedup_vs_default": 1.1164111880975895
+        },
+        {
+          "batch": 1,
+          "heads": [
+            32,
+            8
+          ],
+          "median_us": 274.87900853157043,
+          "rounds_us": [
+            274.87900853157043,
+            274.87900853157043,
+            275.1980125904083
+          ],
+          "default_us": 306.3980042934418,
+          "speedup_vs_default": 1.1146649790766083
+        }
+      ]
+    }
+  ],
+  "automatic_dispatch_validation": "validation.json"
+}

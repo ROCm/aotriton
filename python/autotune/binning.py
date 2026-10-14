@@ -28,5 +28,14 @@ class BinningLessOrEqual(Binning):
         stmt.append(f'}}(params.{key});')
         return stmt
 
-class BinningExact(Binning):
-    pass
+class BinningExact(BinningLessOrEqual):
+    """Return -1 for values outside the measured representatives."""
+
+    def codegen_binning_lambda(self, key, out_suffix):
+        out = f'{key}{out_suffix}'
+        stmt = [f'auto {out} = [] (int x) {{']
+        for index, rep in enumerate(self._bin_representatives):
+            stmt.append(f'    if (x == {rep}) return {index};')
+        stmt.append('    return -1;')
+        stmt.append(f'}}(params.{key});')
+        return stmt

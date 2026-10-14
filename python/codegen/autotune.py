@@ -39,11 +39,13 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
         self._sql = sql
         # TODO: support other binning algorithm
         kdesc = self._f.meta_object
-        if args.build_for_tuning or self._df is None or self._df.empty:
+        tuning_filter = getattr(args, 'tuning_filter', None)
+        full_tuning = args.build_for_tuning and tuning_filter is None
+        if full_tuning or self._df is None or self._df.empty:
             log(lambda : f'translate_empty_dataframe for kernel {kdesc.NAME}')
             self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_empty_dataframe(f)
             # Replace sigs with configs from KernelDescription.gen_autotune_configs
-            if args.build_for_tuning and kdesc.is_tunable:
+            if full_tuning and kdesc.is_tunable:
                 self._sigs = list(kdesc.gen_signatures_for_tuning(f))
                 # Signatures whose HSACO failed to compile are deliberately KEPT.
                 #
@@ -89,6 +91,15 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
                         print("  SQL:", self._sql)
                         for err in errors:
                             print("    ERROR:", err)
+        if (args.build_for_tuning and tuning_filter is not None
+                and kdesc.is_tunable and tuning_filter.matches(f)):
+            # Append so the existing LUT and every baseline image index stay valid.
+            seen = {sig.hsaco_entry_name for sig in self._sigs}
+            for sig in kdesc.gen_signatures_for_tuning(f):
+                key = sig.hsaco_entry_name
+                if key not in seen:
+                    self._sigs.append(sig)
+                    seen.add(key)
         assert all(isinstance(k, KernelSignature) for k in self._sigs)
 
     def generate(self):

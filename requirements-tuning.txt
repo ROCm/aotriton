@@ -4,3 +4,4 @@ msgpack
 filelock
 psycopg[binary,pool]  # PostgreSQL adapter for task queue
 dacite
+textual

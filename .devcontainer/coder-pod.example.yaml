@@ -1,0 +1,42 @@
+# Integration fragment, NOT a standalone Pod and not a kubectl apply manifest.
+# Merge into the existing Coder template's Envbuilder container and Pod spec.
+# Keep its image, Coder agent token, ENVBUILDER_GIT_URL, init script and cache.
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: REPLACE_WITH_MI100_NODE
+  containers:
+    - name: REPLACE_WITH_EXISTING_ENVBUILDER_CONTAINER_NAME
+      # Envbuilder and development sessions run as root.
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        runAsNonRoot: false
+      env:
+        - name: ENVBUILDER_WORKSPACE_FOLDER
+          value: /workspaces/aotriton
+        - name: CODEX_HOME
+          value: /workspaces/.codex
+      resources:
+        requests:
+          cpu: "4"
+          memory: 16Gi
+          ephemeral-storage: 60Gi
+          amd.com/gpu: "1"
+        limits:
+          cpu: "8"
+          memory: 32Gi
+          ephemeral-storage: 120Gi
+          amd.com/gpu: "1"
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspaces
+        - name: shm
+          mountPath: /dev/shm
+  volumes:
+    - name: workspace
+      persistentVolumeClaim:
+        claimName: REPLACE_WITH_PER_WORKSPACE_PVC
+    - name: shm
+      emptyDir:
+        medium: Memory
+        sizeLimit: 8Gi

@@ -8,6 +8,7 @@ from ..template_instantiation.ir import (
     Interface,
 )
 from .common import tunecc_ondisk_name
+from ..autotune import BinningExact
 import numpy as np
 
 class BaseTuneCodeGenerator(ABC):
@@ -69,8 +70,15 @@ class BaseTuneCodeGenerator(ABC):
             return ''
         ALIGN = '\n' + 4 * ' '  # Note codegen_binning_lambda already contains ';'
         stmt = []
+        iface = self._f.meta_object
+        exact_tuning = getattr(iface, 'exact_tuning', lambda _: None)(self._f)
+        fallback_index = 0 if exact_tuning is not None else -1
+        if exact_tuning is not None:
+            stmt.append(f'if (!({exact_tuning.runtime_condition})) return 0;')
         for key, algo in self._binning_dict.items():
             stmt += algo.codegen_binning_lambda(key, out_suffix=self.BIN_INDEX_SUFFIX)
+            if isinstance(algo, BinningExact):
+                stmt.append(f'if ({key}{self.BIN_INDEX_SUFFIX} < 0) return {fallback_index};')
         return ALIGN.join(stmt)
 
     def codegen_binned_indices(self):
