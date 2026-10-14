@@ -19,7 +19,6 @@ AOTRITON_SUPPORTED_GPUS = (
     'gfx1153_mod0',
     'gfx1170_mod0',
     'gfx1171_mod0',
-    'gfx1172_mod0',
     'gfx1201_mod0',
     'gfx1200_mod0',
     'gfx1250_mod0',
@@ -38,7 +37,6 @@ AOTRITON_TUNING_DATABASE_REUSE = {
     'gfx1153_mod0' : 'gfx1100_mod0',
     'gfx1170_mod0' : 'gfx1100_mod0',
     'gfx1171_mod0' : 'gfx1100_mod0',
-    'gfx1172_mod0' : 'gfx1100_mod0',
     'gfx1250_mod0' : 'gfx942_mod0',
 }
 
@@ -56,7 +54,6 @@ AOTRITON_ARCH_TO_PACK = {
     'gfx1153'   : 'gfx115x',
     'gfx1170'   : 'gfx117x',
     'gfx1171'   : 'gfx117x',
-    'gfx1172'   : 'gfx117x',
     'gfx1201'   : 'gfx120x',
     'gfx1200'   : 'gfx120x',
     'gfx1250'   : 'gfx1250',
@@ -80,7 +77,6 @@ AOTRITON_ARCH_WARPSIZE = {
     'gfx1153'    : 32,
     'gfx1170'    : 32,
     'gfx1171'    : 32,
-    'gfx1172'    : 32,
     'gfx1201'    : 32,
     'gfx1200'    : 32,
     'gfx1250'    : 32,
