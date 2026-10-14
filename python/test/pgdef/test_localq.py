@@ -37,7 +37,7 @@ class ToyStart(StartHandler):
             raise RuntimeError('transient start failure')
         n = msg['payload'].get('n', 3)
         keys = [i for i in range(n)]
-        join = semaphore.wait(child(msg, 'toy/join'), keys, depends='toy/result')
+        join = semaphore.wait('toy/result', keys, child(msg, 'toy/join'))
         return [join] + [child(msg, 'toy/work', index=i) for i in keys]
 
     @classmethod
@@ -100,7 +100,7 @@ def _reset_behaviour():
 
 def _join(keys):
     base = {'class': 'x/start', 'task_id': 7, 'pool': 'p', 'payload': {}}
-    return semaphore.wait(child(base, 'x/join'), keys, depends='x/result')
+    return semaphore.wait('x/result', keys, child(base, 'x/join'))
 
 
 def _result(key, value=None, task_id=7):

@@ -198,7 +198,7 @@ class ProbeHandler(MessageHandler):
                 impl_msgs.append(child(msg, IMPL, tmpdir=msg['tmpdir'],
                                        iface_name=iface_name, impl_index=impl_index))
 
-        join = semaphore.wait(child(msg, POSTPROCESS, tmpdir=msg['tmpdir']), keys, depends=IMPL_RESULT)
+        join = semaphore.wait(IMPL_RESULT, keys, child(msg, POSTPROCESS, tmpdir=msg['tmpdir']))
         logger.info(f"Probed {len(keys)} impl variant(s) for task_id={msg['task_id']} (tuning_level={level})")
         # The join goes FIRST: it is blocked in the broker before any impl can
         # possibly have reported, so no impl_result can arrive ahead of it.

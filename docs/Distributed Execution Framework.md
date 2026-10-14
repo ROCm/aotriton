@@ -140,9 +140,9 @@ release on any condition. The default is the shared helper
 signal has arrived for every key":
 
 ```python
-join = semaphore.wait(postprocess_msg, keys=[('attn_fwd', 0), ('attn_fwd', 1)],
-                      depends='tune/impl_result')    # in the fanning-out handler
-semaphore.signal(result_msg, key=('attn_fwd', 0), value=report)   # in each result
+# in the fanning-out handler: wait(depends, keys, result_msg)
+join = semaphore.wait('tune/impl_result', [('attn_fwd', 0), ('attn_fwd', 1)], postprocess_msg)
+semaphore.signal(signal_msg, key=('attn_fwd', 0), value=report)   # in each result
 reports = semaphore.signals(msg)                     # in the semaphore message's handler
 ```
 

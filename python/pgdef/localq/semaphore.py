@@ -31,12 +31,12 @@ Usage. A producer emits the semaphore message and N parallel messages; each
 parallel step's result signals one key, and the semaphore message is
 released once every key has been signalled.
 
-    # the step that fans out: the semaphore message waits for one signal per key
-    join = child(msg, 'tune/postprocess', target...)          # no target_queue: filled in later
-    semaphore.wait(join, keys=[('attn_fwd', 0), ('attn_fwd', 1)], depends='tune/impl_result')
+    # the step that fans out: wait(depends, keys, result_msg)
+    join = semaphore.wait('tune/impl_result', [('attn_fwd', 0), ('attn_fwd', 1)],
+                          child(msg, 'tune/postprocess'))   # no target_queue: filled in later
 
     # each parallel step's result message signals its key
-    semaphore.signal(result_msg, key=('attn_fwd', 0), value=report)
+    semaphore.signal(signal_msg, key=('attn_fwd', 0), value=report)
 
     # the semaphore message's handler, once released
     reports = semaphore.signals(msg)       # {('attn_fwd', 0): report, ...}
@@ -62,14 +62,17 @@ def _decode(text: str):
     return tuplify(json.loads(text))
 
 
-def wait(msg: dict, keys: Iterable, *, depends: str) -> dict:
-    """Turn `msg` into a semaphore message that waits for one signal per key
-    in `keys`, from messages of class `depends`. Returns `msg`."""
+def wait(depends: str | Iterable[str], keys: Iterable, result_msg: dict) -> dict:
+    """Make `result_msg` a semaphore message: the broker holds it until a
+    signal has arrived for every key in `keys`, from messages of class
+    `depends` (one class name, or several), then releases it.
+
+    Returns `result_msg`, so a handler can emit it directly."""
     encoded = [_encode(k) for k in keys]
     if encoded:
-        msg['depends'] = [depends]
-        msg[SEMAPHORE] = {'expected': encoded, 'received': {}}
-    return msg
+        result_msg['depends'] = [depends] if isinstance(depends, str) else list(depends)
+        result_msg[SEMAPHORE] = {'expected': encoded, 'received': {}}
+    return result_msg
 
 
 def signal(msg: dict, key, value: Any = None) -> dict:

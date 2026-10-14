@@ -70,7 +70,8 @@ Engine classes (`pgdef/`): `task_failed`, `graceful_cancel` (handlers) and
 ## Joins: fan-in
 
 `pgdef.localq.semaphore`: the producer builds the join with
-`semaphore.wait(join_msg, keys, depends='app/result')` (no keys: not blocked);
+`semaphore.wait('app/result', keys, join_msg)`, i.e. wait(depends, keys,
+result_msg) (no keys: not blocked);
 each parallel result calls `semaphore.signal(msg, key, value)`; the broker
 resolves with `MessageHandler.resolve_dependency` (default `semaphore.resolve`,
 runs on the CLASS in the broker: no database, no runner); the released handler
