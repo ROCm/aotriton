@@ -364,9 +364,17 @@ class LocalBroker:
                 logger.debug(f"Unblocked {blocked_msg['class']} "
                            f"(task_id={blocked_msg.get('task_id')})")
 
-        # Remove unblocked messages and forward them
+        # Remove unblocked messages and forward them. A message that depends on
+        # several classes is parked under each of them: drop every copy, or the
+        # stale ones would linger and be torn down again at shutdown.
         for msg in unblocked:
-            blocked_list.remove(msg)
+            for dep_class in msg.get('depends') or (msg_class,):
+                parked = self.blocked_messages.get(dep_class)
+                if parked is None:
+                    continue
+                parked[:] = [m for m in parked if m is not msg]
+                if not parked:
+                    del self.blocked_messages[dep_class]
 
             # Remove 'depends' field since it's now resolved
             msg.pop('depends', None)
@@ -517,21 +525,25 @@ class LocalBroker:
 
     def _teardown_blocked_messages(self):
         """Teardown all blocked messages (tasks with unmet dependencies)"""
-        total = sum(len(msgs) for msgs in self.blocked_messages.values())
-        logger.info(f"Tearing down {total} blocked messages")
-
-        for dep_class, messages in self.blocked_messages.items():
+        # A message that depends on several classes is parked under each: tear
+        # it down once.
+        unique: dict[int, dict] = {}
+        for messages in self.blocked_messages.values():
             for msg in messages:
-                msg_class = msg.get('class')
-                if not msg_class:
-                    continue
+                unique.setdefault(id(msg), msg)
+        logger.info(f"Tearing down {len(unique)} blocked messages")
 
-                handler = self.handlers.get(msg_class, MessageHandler)
-                logger.info(f"Calling teardown for {msg_class}: task_id={msg.get('task_id')}")
-                result_msg = handler.teardown_with_unmet_dependency(msg)
+        for msg in unique.values():
+            msg_class = msg.get('class')
+            if not msg_class:
+                continue
 
-                if result_msg:
-                    self._enqueue_with_priority(result_msg['target_queue'], result_msg)
+            handler = self.handlers.get(msg_class, MessageHandler)
+            logger.info(f"Calling teardown for {msg_class}: task_id={msg.get('task_id')}")
+            result_msg = handler.teardown_with_unmet_dependency(msg)
+
+            if result_msg:
+                self._enqueue_with_priority(result_msg['target_queue'], result_msg)
 
         self.blocked_messages.clear()
         logger.info("Blocked messages teardown complete")
