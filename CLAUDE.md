@@ -6,6 +6,18 @@ Name products by their architecture identifier only (e.g. gfx1250, gfx942).
 Do not add commercial names, code names, or any other aliases. Only manual
 editing by the user may introduce alternative names.
 
+## Do Not Name Things "kind"
+
+Do not use `kind` in any identifier or term: variables, fields, columns,
+arguments, CLI flags, classes, or concepts in design documents. That includes
+compounds such as `subkind`, `runner_kind` and `task_kind`.
+
+The one exception is code that is closely tied to a compiler concept, or that is
+itself a component of a compiler. There, `kind` is established vocabulary (AST
+node kinds, token kinds). Outside compilers the word is rare and says nothing
+about what it names. Pick a word that describes the actual distinction, such
+as `type`, `role`, `level` or `mode`, or a domain-specific term.
+
 ## Python Version
 
 This project targets **Python 3.10 or newer** (dev environment is Python 3.12). Do not use syntax or features deprecated as of Python 3.10:
@@ -43,79 +55,68 @@ When creating or modifying PostgreSQL connection parameters:
 - Let psycopg use the default database (same as username)
 - Connection params should only contain: `host`, `port`, `user`, `password`
 
-## Database Access Pattern (pq Package)
+## Database Access Pattern (pq Packages)
 
-The `v3python/tune/pq/` package is the **centralized database access library** for all database operations. This ensures CRUD operations are consistent with the schema.
+**The main goal: raw PostgreSQL statements must not exist outside a `pq`
+package.** Everything below serves that goal.
+
+Each application or library has exactly one (sub-)package named `pq` that
+handles all of its PostgreSQL access. It holds that layer's schema and every
+query.
+
+For example, the distributed execution engine has `pgdef/pq` for its own tables,
+and each application (tune, and later perfmon) has its own `pq` for theirs. A
+layer's `pq` may *read* another layer's tables directly (for example, to join
+against them), but it *writes* them only by calling that layer's `pq`
+functions. Locations change over the project's history (for example
+`v3python/tune/pq/`, later `python/tune/pq/`), so locate the current `pq`
+packages instead of assuming paths. The rule does not change.
 
 ### Key Principles:
 
-1. **pq handles database reads/writes, NOT connections**
-   - All functions in `pq/` accept a database connection object (`conn`), not connection parameters
-   - Connection management is the caller's responsibility
-   - Connections are created once per worker/process and reused
+1. **No SQL outside pq.** Application code, workers, scripts and tools call pq
+   functions. If the operation you need does not exist, add a function to the
+   `pq` of the layer that owns the table. Do not write SQL at the call site.
 
-2. **Use pq functions for all database operations**
-   - `pq/queue.py` - TaskQueue class for task_queue table operations (fetch, mark_completed, mark_failed, etc.)
-   - `pq/results.py` - Functions for tuning_results table (save_tuning_result, get_task_results)
-   - DO NOT write raw SQL in other packages (e.g., localq) - use pq functions instead
+2. **pq handles reads and writes, NOT connections.**
+   - pq functions take a connection object (`conn`), never connection
+     parameters.
+   - The caller creates one connection per worker or process, and reuses it.
+   - Connection parameters follow the PostgreSQL section above (no `dbname`).
 
-3. **Pattern Example:**
+3. **Pattern Example** (function names are illustrative):
 
 ```python
-# GOOD - Persistent connection per worker, use pq functions
+# GOOD - one connection per process, all SQL behind pq functions
 import psycopg
-from v3python.tune.pq.queue import TaskQueue
-from v3python.tune.pq.results import save_tuning_result
+from <pq package> import tasks
 
 class MyWorker:
     def __init__(self, conn_params):
-        # Create connection once per worker process
         self.db_conn = psycopg.connect(**conn_params, autocommit=True)
-    
+
     def run(self):
-        # Reuse connection for all operations
-        task_queue = TaskQueue(self.db_conn)
-        
         while self.running:
-            tasks = task_queue.fetch_tasks('gfx942', batch_size=10)
-            for task in tasks:
+            for task in tasks.claim(self.db_conn, ...):
                 # ... process task ...
-                save_tuning_result(task.id, report, self.db_conn)
-                task_queue.mark_completed(task.id, arch='gfx942')
-    
+                tasks.complete(self.db_conn, task.id, ...)
+
     def shutdown(self):
-        # Close connection on worker shutdown
         if self.db_conn:
             self.db_conn.close()
 ```
 
 ```python
-# BAD - Creates new connection per operation
-from v3python.tune.pq.queue import TaskQueue
+# BAD - pq object that opens its own connection
+queue = TaskQueue(conn_params)  # WRONG: pass a conn
 
-# Don't do this - creates connection internally
-task_queue = TaskQueue(conn_params)  # WRONG
-```
-
-```python
-# BAD - Raw SQL in application code
+# BAD - raw SQL outside pq
 with db_conn.cursor() as cur:
-    cur.execute("""
-        UPDATE task_queue
-        SET status = 'completed'
-        WHERE id = %s
-    """, (task_id,))
-# Should use: task_queue.mark_completed(task_id, arch)
+    cur.execute("UPDATE ... SET status = 'completed' WHERE id = %s", (task_id,))
 ```
 
-### When to Add Functions to pq:
-
-If you need to perform a database operation:
-1. Check if a function exists in `pq/queue.py` or `pq/results.py`
-2. If not, add a new function to the appropriate pq module
-3. DO NOT write raw SQL in other packages
-
-This keeps all database operations centralized and schema-consistent.
+This keeps each layer's database operations in one place, consistent with its
+schema, and relocatable as a unit.
 
 ## v3python Package Architecture
 
