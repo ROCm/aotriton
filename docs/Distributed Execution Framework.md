@@ -1,10 +1,5 @@
 # Distributed Execution Framework (pgdef)
 
-> Status: implemented (phases P0-P5 of the plan) but not yet exercised against a live
-> PostgreSQL server or a GPU. The CPU-only tests pass; run the `pg`-marked tests
-> against a disposable server (`aotriton.pgdef.pq.testing`) before trusting the SQL,
-> and canary one arch against the previous tuning results before a campaign.
-
 pgdef runs many independent GPU tasks across a fleet of machines. It uses
 PostgreSQL as the task queue and a small per-node runtime to execute each task.
 It knows nothing about tuning or performance measurement; those are
@@ -14,9 +9,6 @@ and it never loads them.
 | Application | Package | What one task does |
 |---|---|---|
 | tune | `python/tune` | Benchmark every kernel/op implementation for one entry, and record the timings |
-
-Perfmon (measuring one entry on a released AOTriton build) is the planned second
-application. It lands in a later PR; nothing of it is in this tree.
 
 ## Design principles
 
@@ -84,11 +76,10 @@ pending ──claim──> running ──> done
 * **Lease.** The claiming worker renews a lease while it runs the task. If the
   worker or its node dies, the lease expires and other workers mark the task
   `failed`. There is no manual cleanup of stuck rows.
-* **Retry: supported, but unused.** By default a task gets one attempt
-  (`max_attempts` = 1), so any failure or expired lease ends in `failed`, and
-  redoing it is an operator reset. pgdef can retry automatically if a task is
-  dispatched with a larger budget (`--max_attempts N`, or the application's
-  default), but tune does not do this today.
+* **Retry is opt-in.** By default a task gets one attempt (`max_attempts` = 1),
+  so any failure or expired lease ends in `failed`, and redoing it is an
+  operator reset. pgdef retries automatically only if a task is dispatched with
+  a larger budget (`--max_attempts N`, or the application's default).
 * **Reset.** An operator reset clears `appcookie` by default, so the task is
   redone from scratch. Reset with `keep_appcookie` lets the application skip
   work it already finished.
@@ -190,7 +181,7 @@ every schema for every application. Each `pq` ships an idempotent
 ## Common operations
 
 ```bash
-# Dispatch: each application has its own dispatch command (tune today)
+# Dispatch: each application has its own dispatch command
 python -m aotriton.tune.dispatch --category tune,kernel --pool gfx950 --workdir <workdir> --module flash <tune options>
 
 # Start a node's processes (normally done by .tune/remote/worker_service.sh --category tune,kernel)
