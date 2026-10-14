@@ -210,49 +210,66 @@ def test_flash_tune_get_impl_unknown_name_raises_clearly():
         tune.get_impl('not_a_real_iface')
 
 
-def test_schema_sql_ddl_parses_and_iface_name_columns_carry_tuning_level():
+def test_schema_sql_ddl_parses_and_iface_name_columns_carry_cat_level1():
     # No live PG in this environment/CI job -- fall back to a structural check
     # of the checked-in DDL: (1) balanced parens/quotes so it is at least
     # lexically well-formed, and (2) every table/index that has an
-    # `iface_name` column also carries `tuning_level`, since `iface_name`
-    # collides across tuning levels (highest-risk area #2) and any table or
+    # `iface_name` column also carries `cat_level1`, since `iface_name`
+    # collides across the two levels (highest-risk area #2) and any table or
     # lookup index keyed on it alone would silently mix kernel-level and
     # op-level rows.
-    schema_sql = (_REPO_ROOT / 'python' / 'tune' / 'pq' / 'schema.sql').read_text()
-    mat_views_sql = (_REPO_ROOT / 'python' / 'tune' / 'pq' / 'materialized_views.sql').read_text()
-
-    for name, sql in (('schema.sql', schema_sql), ('materialized_views.sql', mat_views_sql)):
-        # Lexical sanity: parens balance (ignoring $$ plpgsql bodies' own
-        # dollar-quoting is not needed here -- schema.sql's only $$ body,
-        # create_arch_partition, is itself paren-balanced).
-        assert sql.count('(') == sql.count(')'), f'{name}: unbalanced parentheses'
-
-    # CREATE TABLE blocks: split on 'CREATE TABLE' and check each block up to
-    # its closing ');' for the iface_name/tuning_level pairing.
     import re
-    for name, sql in (('schema.sql', schema_sql), ('materialized_views.sql', mat_views_sql)):
-        for m in re.finditer(r'CREATE TABLE.*?\);', sql, re.DOTALL):
-            block = m.group(0)
-            if 'iface_name' in block:
-                assert 'tuning_level' in block, (
-                    f'{name}: a CREATE TABLE block has iface_name but no '
-                    f'tuning_level column:\n{block}')
+    schema_sql = (_REPO_ROOT / 'python' / 'tune' / 'pq' / 'schema.sql').read_text()
+    code = re.sub(r'--[^\n]*', '', schema_sql)
+
+    assert code.count('(') == code.count(')'), 'schema.sql: unbalanced parentheses'
+    assert code.count("'") % 2 == 0, 'schema.sql: unbalanced quotes'
+    # Everything is schema-qualified: nothing may land in `public`.
+    for m in re.finditer(r'CREATE (?:OR REPLACE )?(?:TABLE|VIEW)(?: IF NOT EXISTS)?\s+(\S+)', code):
+        assert m.group(1).startswith(('tune.', 'pgdef.')), f'unqualified object {m.group(1)}'
+    # Every statement is idempotent.
+    for m in re.finditer(r'CREATE (?:UNIQUE )?(?:TABLE|INDEX|SCHEMA)[^;]*;', code):
+        assert 'IF NOT EXISTS' in m.group(0), m.group(0)
+
+    for m in re.finditer(r'CREATE TABLE.*?\n\);', code, re.DOTALL):
+        block = m.group(0)
+        if 'iface_name' in block:
+            assert 'cat_level1' in block, (
+                f'a CREATE TABLE block has iface_name but no '
+                f'cat_level1 column:\n{block}')
 
     # CREATE INDEX statements: any index over iface_name that is NOT already
-    # anchored on task_id must also cover tuning_level. A task_id already
-    # implies exactly one tuning_level via its task_queue row (see
-    # pq/results.py's get_task_results docstring), so an (task_id,
-    # iface_name, ...) index is unambiguous without tuning_level; but an
-    # index meant to be queried by iface_name alone (no task_id/task_queue
-    # join) must carry tuning_level or it would silently mix kernel-level and
-    # op-level rows (highest-risk area #2).
-    for name, sql in (('schema.sql', schema_sql), ('materialized_views.sql', mat_views_sql)):
-        for m in re.finditer(r'CREATE (?:UNIQUE )?INDEX.*?;', sql, re.DOTALL):
-            stmt = m.group(0)
-            if 'iface_name' in stmt and 'task_id' not in stmt:
-                assert 'tuning_level' in stmt, (
-                    f'{name}: an index covers iface_name (without task_id) but not '
-                    f'tuning_level:\n{stmt}')
+    # anchored on task_id must also cover cat_level1. A task_id already
+    # implies exactly one level via its task row (see pq/results.py's
+    # get_task_results docstring), so a (task_id, iface_name, ...) index is
+    # unambiguous without cat_level1; but an index meant to be queried by
+    # iface_name alone must carry cat_level1 or it would silently mix
+    # kernel-level and op-level rows.
+    for m in re.finditer(r'CREATE (?:UNIQUE )?INDEX.*?;', code, re.DOTALL):
+        stmt = m.group(0)
+        if ('iface_name' in stmt or "'iface'" in stmt) and 'task_id' not in stmt:
+            assert 'cat_level1' in stmt, (
+                f'an index covers iface_name (without task_id) but not '
+                f'cat_level1:\n{stmt}')
+
+    # Derived tables must cascade from the engine's reports, so that a generic
+    # reset needs no tune code (gDEF-ver0.md 4.2).
+    assert re.search(r'most_accurate_tuning_results.*?REFERENCES pgdef\.report \(id, pool\) ON DELETE CASCADE',
+                     code, re.DOTALL)
+    assert re.search(r'extra_uts.*?REFERENCES pgdef\.task \(id, pool\) ON DELETE CASCADE', code, re.DOTALL)
+
+
+def test_tune_category_vocabulary():
+    pytest.importorskip('psycopg')
+    from aotriton.tune.pq import tasks
+    assert tasks.category('kernel') == ('tune', 'kernel')
+    assert tasks.level_of('tune,op') == 'op'
+    assert tasks.level_of(('tune', 'kernel')) == 'kernel'
+    for bad in ('other', 'tune', 'tune,nope', 'other,kernel'):
+        with pytest.raises(ValueError):
+            tasks.level_of(bad)
+    with pytest.raises(ValueError):
+        tasks.category('nope')
 
 
 def test_fetch_tasks_requires_tuning_mode_keyword():
@@ -601,32 +618,36 @@ def test_flash_entry_from_pytest_node():
             '[BiasOn-False-l1-dtype2-0.5-CausalOff-300-900-hdim100-4-2]'))
 
 
-def test_entry_filter_is_the_only_clause_builder():
+def test_entry_selector_is_the_only_clause_builder():
     # CLAUDE.md: pq owns database access. Four copies of this clause builder
-    # had drifted across .tune/; three of them mishandled a tuple value.
-    from aotriton.tune.pq.queue import entry_filter
+    # had drifted across .tune/; three of them mishandled a tuple value. The
+    # selector now speaks jsonb containment (types come from the JSON values,
+    # so there are no text casts to get wrong) and compares tuples as the
+    # ORDERED arrays they are.
+    pytest.importorskip('psycopg')
+    from aotriton.tune.pq.tasks import entry_selector
     entry = {'dtype': 'float16', 'hdim': 64, 'causal': True, 'dropout_p': 0.0}
 
-    sql, params = entry_filter(entry)
-    # bool must be tested before int -- bool is a subclass of int in Python,
-    # so a reordering silently casts causal to ::integer.
-    assert "(task_config->'entry'->>'causal')::boolean = %s" in sql
-    assert "(task_config->'entry'->>'hdim')::integer = %s" in sql
-    assert "(task_config->'entry'->>'dropout_p')::float = %s" in sql
-    assert "task_config->'entry'->>'dtype' = %s" in sql
-    assert params == ['float16', 64, True, 0.0]
+    sel = entry_selector(entry)
+    assert sel.payload_contains == {'entry': entry}
+    assert sel.payload_exact is None
+    # bool/int stay distinct JSON values: `True` is not `1`.
+    where, params = sel.where('t')
+    assert where == 't.cat_level0 = %s AND t.payload @> %s'
+    assert params[0] == 'tune' and params[1].obj == {'entry': entry}
 
-    # A composite value is compared as a JSON array via -> , not ->>.
-    sql, params = entry_filter({'hdim': (64, 128)})
-    assert sql == "task_config->'entry'->'hdim' = %s::jsonb"
-    assert params == ['[64, 128]']
+    # A composite value is compared exactly, as an ordered JSON array:
+    # containment would treat [64, 128] and [128, 64] alike.
+    sel = entry_selector({'hdim': (64, 128), 'dtype': 'float16'})
+    assert sel.payload_exact == {('entry', 'hdim'): [64, 128]}
+    assert sel.payload_contains == {'entry': {'dtype': 'float16'}}
 
-    # Optional row filters lead, in a fixed order.
-    sql, params = entry_filter({'hdim': 64}, arch='gfx942',
-                               tuning_level='op', module='flash')
-    assert sql.startswith("task_config->>'arch' = %s AND tuning_level = %s "
-                          "AND module = %s AND ")
-    assert params[:3] == ['gfx942', 'op', 'flash']
+    # Optional row filters: arch is the pool, the level is tuning_level.
+    sel = entry_selector({'hdim': 64}, arch='gfx942', tuning_level='op', module='flash')
+    assert sel.pool == 'gfx942' and sel.category == ('tune', 'op')
+    assert sel.payload_contains == {'module': 'flash', 'entry': {'hdim': 64}}
+    with pytest.raises(ValueError):
+        entry_selector({'hdim': 64}, tuning_level='nope')
 
 
 def test_no_raw_tuning_db_sql_outside_pq():
@@ -637,8 +658,8 @@ def test_no_raw_tuning_db_sql_outside_pq():
     # the point of the tool, not a bypass of the pq layer.
     EXEMPT = {'.tune/bin/psql'}
     offenders = []
-    pat = re.compile(r"FROM (task_queue|tuning_results|best_tuning_results"
-                     r"|most_accurate_tuning_results)\b|task_config->'entry'")
+    pat = re.compile(r"\b(FROM|JOIN|UPDATE|INSERT INTO|DELETE FROM)\s+(pgdef|tune)\.\w+"
+                     r"|payload->'entry'")
     for sub in ('webui', 'libexec', 'bin', 'remote'):
         d = _REPO_ROOT / '.tune' / sub
         if not d.is_dir():

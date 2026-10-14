@@ -2,26 +2,14 @@
 # SPDX-License-Identifier: MIT
 
 """
-Tuner v3.5 PostgreSQL Queue
+tune's PostgreSQL layer: schema `tune` and the queries over it.
 
-PostgreSQL-based distributed task queue replacing Celery + RabbitMQ.
-Provides lower network overhead, simpler infrastructure, and better visibility.
+SQL for tune's tables lives here, and nowhere else. The engine's tables
+(pgdef.task, pgdef.report, ...) are written only through aotriton.pgdef.pq;
+this package may read them directly.
+
+Storage mapping: tune stores its application name as `cat_level0 = 'tune'` and
+its tuning level ('kernel'|'op') as `cat_level1` in pgdef (pgdef.task,
+pgdef.report.rkey) and in tune's own tables. Outside this package tune code
+says `tuning_level`.
 """
-
-from .queue import TaskQueue
-from .dispatcher import TaskDispatcher
-from .heartbeat import HeartbeatManager
-from .results import save_tuning_result, get_task_results
-
-# NOTE: `Worker` (a PostgreSQL-polling worker loop) used to be exported here
-# from `.worker`, but it was dead code: `Worker.start()`/`run_once()` called
-# `fetch_tasks(self.arch, self.batch_size)` with no `tuning_mode` (which
-# `fetch_tasks` now requires, keyword-only, per modular-tune.md F16) and
-# `mark_failed(task.id, task.arch, error_msg)` positionally against a
-# keyword-only signature -- both would already raise `TypeError` if ever
-# executed, and nothing in this repo constructs `Worker` (see
-# `python/tune/localq/` for the actual worker implementation, built on
-# `TaskQueue` directly). Deleted rather than fixed since it has no callers.
-__all__ = ['TaskQueue', 'TaskDispatcher', 'HeartbeatManager', 'save_tuning_result', 'get_task_results']
-
-__version__ = '3.5.0'

@@ -1,264 +1,109 @@
-# pq -- PostgreSQL Task Queue
+# aotriton.tune.pq -- tune's PostgreSQL layer
 
-PostgreSQL-based distributed task queue for AOTriton tuning, replacing
-Celery + RabbitMQ.  All modules accept a psycopg connection object; the
-caller owns the connection lifetime.
+The engine (`aotriton.pgdef.pq`, schema `pgdef`) owns the task queue, the raw
+results and the workers: see `python/pgdef/pq` and
+`docs/Distributed Execution Framework.md`. This package is the tune
+application's own layer, in PostgreSQL schema `tune`. All SQL for tune's tables
+lives here. Engine tables are written only through `aotriton.pgdef.pq`; this
+package may read them directly.
+
+Every function takes a psycopg connection (`conn`); the caller owns it. Never
+put a database name in the connection parameters: the server default is used.
+Tools that are handed `--workdir` get parameters from
+`aotriton.pgdef.workdir.get_db_connection_params`, which sources config.rc.
+
+
+## Vocabulary
+
+  arch        The GPU architecture. It is the task's `pool` in `pgdef.task`.
+  tuning_level
+              `kernel` or `op`. tune stores it as the `cat_level1` column of
+              `pgdef.task` and of tune's own tables (and as `cat_level1` in
+              the report's rkey); `--category tune,kernel` on the CLI.
+              `iface_name` collides across the two levels, so every query over
+              tune's tables filters on the column.
+  payload     A tune task's input, `{"module": "flash", "entry": {...},
+              "max_hsaco": {...}?}`. The arch and the level are columns, not
+              payload fields.
+
+
+## Schema (schema.sql, applied by `.tune/bin/initdb` after pgdef's)
+
+```
+  tune.tuning_results                view over pgdef.report WHERE cat_level0='tune':
+                                     id, task_id, arch, cat_level1, iface_name,
+                                     impl_index, result (OK/NotOK/crash/ERROR),
+                                     result_data, error, worker ('gpu-<n>'), attempt
+  tune.best_tuning_results           fastest accurate impl per (task_id, iface_name);
+                                     rebuilt wholesale by compute_best_results
+  tune.most_accurate_tuning_results  per (task, iface, test case, tensor) accuracy
+                                     targets; report_id anchors each row to one of the
+                                     task's reports (ON DELETE CASCADE), so a generic
+                                     reset clears it with no tune code
+  tune.extra_uts                     extra unit tests per task, from re-queued broken
+                                     entries; (task_id, pool) -> pgdef.task, cascade
+```
+
+The raw per-impl results are rows of `pgdef.report` with
+`rkey = {"cat_level1", "iface", "impl"}`. The schema adds partial expression
+indexes on them for tune's rows.
 
 
 ## Modules
 
-### queue.py -- TaskQueue
+### tasks.py -- finding, resetting and counting tune tasks
 
-Core queue operations.  Accepts a psycopg connection on construction and
-reuses it for all operations.
+  `category(level)`, `level_of(text_or_category)`, `check_level(level)`
+    `('tune', 'kernel')`; and the inverse for a `--category` value.
 
-    import psycopg
-    from aotriton.tune.pq.queue import TaskQueue
+  `entry_selector(entry, *, arch=None, tuning_level=None, module=None, **kw)`
+    A `pgdef.pq.tasks.TaskSelector` for one tuning entry. Scalar fields match
+    by jsonb containment; tuple/list fields by exact ordered path equality.
 
-    conn = psycopg.connect(host=..., port=..., user=..., password=...,
-                           autocommit=True)
-    q = TaskQueue(conn)
+  `find_by_entry(conn, entry, *, arch, tuning_level, module, limit)`,
+  `find_by_ids(conn, ids)`
+    Rows `{id, arch, module, tuning_level, status}`.
 
-Methods:
+  `find_resettable(conn, 'stale'|'failed', timeout_seconds=None)`,
+  `find_resettable_by_ids(conn, ids)`
+    Rows with `id, arch, tuning_level, status, lease_owner, age_s`.
+    Readers reap expired leases themselves; 'stale' finds claims that are
+    still leased but older than the timeout (a wedged reader).
 
-  `fetch_tasks(arch, batch_size=10, tuning_mode='kernel')`
-    Atomically claim batch_size pending tasks for arch using SELECT FOR
-    UPDATE SKIP LOCKED.  tuning_mode='op' fetches operator tasks (module
-    LIKE '%_op'); default fetches kernel tasks.  Returns list[Task].
+  `reset(conn, ids, tuning_level, *, delete_results)`
+    Reset to pending. `delete_results` is required: with it the tasks' reports
+    are purged and `most_accurate_tuning_results` cascades.
 
-  `mark_completed(task_id, arch)`
-    Transition task to 'completed'.
+  `get_progress(conn, tuning_level)`, `completed_payloads(conn, module, tuning_level)`
+    Per-arch progress from the engine views; done payloads for `--skip_completed`.
 
-  `mark_failed(task_id, *, arch=None, error_message)`
-    Transition task to 'failed' with error text.  arch is keyword-only
-    and optional; omit when arch is unknown (updates parent table).
+### results.py
 
-  `mark_pending(task_id, arch)`
-    Reset a running task to 'pending' (used during graceful shutdown).
+  `save_tuning_result(conn, (task_id, arch), report, *, attempt)`
+    Insert one `pgdef.report` row for a tuned impl.
+  `get_task_results(conn, task_id, tuning_level=None)`,
+  `get_task_debug_snapshot(conn, task_id)`
+    Reads, through `tune.tuning_results` and the derived tables.
 
-  `retry_task(task_id, arch, max_retries=3)`
-    Reset to 'pending' and increment retry_count.  Returns False if
-    max_retries is exceeded.
+### extra_uts.py
 
-  `get_queue_stats(arch=None)`
-    Returns dict with pending/running/completed/failed counts.
-    arch=None queries the parent table across all partitions.
+  `insert_extra_uts(conn, (task_id, arch), im_texts)`, `get_extra_uts`,
+  `delete_extra_uts`. Rows accumulate across passes; a reset never deletes them.
 
-  `detect_stale_tasks(timeout_seconds=7200)`
-    Return tasks in 'running' state longer than timeout_seconds.
+### Tools (run as `python -m aotriton.tune.pq.<tool>`, wrapped by `.tune/bin`)
 
-  `reset_stale_tasks(timeout_seconds=7200)`
-    Reset stale running tasks to 'pending'; returns count reset.
+  compute_best_results       reports -> tune.best_tuning_results
+  populate_most_accurate     reports -> tune.most_accurate_tuning_results
+  export_best_results        best results -> SQLite LUTs
+  manual_pick_missing_entry  hand-pick an impl for an entry
+  visperf, export_visperf    data and standalone export for the webui perf page
 
-Task dataclass:
+All take `--category tune,kernel|tune,op` (default `tune,kernel`).
 
-    @dataclass
-    class Task:
-        id:             int
-        arch:           str
-        module:         str
-        task_config:    dict
-        status:         str
-        priority:       int            = 5
-        worker_id:      str | None     = None
-        node_hostname:  str | None     = None
-        created_at:     datetime | None = None
-        started_at:     datetime | None = None
-        completed_at:   datetime | None = None
-        error:          str | None     = None
-        retry_count:    int            = 0
 
+## Dispatching
 
-### dispatcher.py -- TaskDispatcher
-
-Bulk task insertion.  Creates its own short-lived connections.
-
-    from aotriton.tune.pq.dispatcher import TaskDispatcher
-
-    dispatcher = TaskDispatcher({'host': ..., 'port': ...,
-                                 'user': ..., 'password': ...})
-    tasks = [
-        {'arch': 'gfx942', 'module': 'attn_fwd',
-         'task_config': {'BATCH': 4, 'H': 32, 'N_CTX': 1024,
-                         'D_HEAD': 64},
-         'priority': 5},
-    ]
-    count = dispatcher.dispatch_bulk(tasks)
-
-Methods:
-
-  `dispatch_bulk(tasks, batch_size=1000)`
-    Batch INSERT an iterable of task dicts.  Returns total count.
-
-  `dispatch_single(arch, module, task_config, priority=5)`
-    Insert one task.
-
-  `ensure_partition(arch)`
-    Create the task_queue_<arch> partition if it does not exist.
-
-
-### results.py -- result storage functions
-
-Free functions; each accepts a psycopg connection as last argument.
-
-```python
-    from aotriton.tune.pq.results import (
-        save_tuning_result, get_task_results)
-```
-
-  `save_tuning_result(task_id, report, conn)`
-    Insert one benchmark result into tuning_results. Serves both tuning
-    levels (kernel and op) -- there is no more separate optune_results table
-    or save_optune_result function.
-    report keys: tuning_level ('kernel' | 'op'), iface_name, impl_index,
-                 result, result_data (JSONB, optional), error (JSONB, optional),
-                 complete_on_gpu.
-
-  `get_task_results(task_id, conn, tuning_level=None)`
-    Return all tuning_results rows for a task as a list of dicts. tuning_level
-    filters to one level; iface_name collides across levels (e.g. bare
-    'attn_fwd' is valid at both), so pass it whenever the task's level is
-    unambiguous from context.
-
-
-### heartbeat.py -- HeartbeatManager
-
-Worker liveness tracking.  Creates its own short-lived connections.
-
-```python
-    from aotriton.tune.pq.heartbeat import HeartbeatManager
-
-    hb = HeartbeatManager({'host': ..., ...}, arch='gfx942')
-    hb.update('active')       # call periodically from worker loop
-    hb.increment_completed()
-    hb.mark_dead()            # call on graceful shutdown
-```
-
-Methods:
-
-  `update(status)`
-    Upsert heartbeat row; status is 'active' or 'idle'.
-
-  `increment_completed()`
-    Increment tasks_completed counter.
-
-  `increment_failed()`
-    Increment tasks_failed counter.
-
-  `mark_dead()`
-    Set worker status to 'dead'.
-
-  `cleanup_dead_workers(threshold_seconds=300)`
-    Mark workers with stale heartbeats as 'dead'.
-
-
-### admin.py -- QueueAdmin
-
-Schema initialization and maintenance.  Creates its own connections.
-
-  `init_schema()`
-    Create all tables, indexes, and views from schema.sql.
-
-  `create_partition(arch)`
-    Create `task_queue_<arch>` partition.
-
-  `create_partitions(arch_list)`
-    Create multiple partitions at once.
-
-  `reset_stale_tasks(timeout_seconds=7200)`
-    Reset long-running tasks to 'pending'.
-
-  `cleanup_dead_workers(threshold_seconds=300)`
-    Mark stale workers as 'dead'.
-
-  `purge_completed(older_than_hours=24)`
-    Delete old 'completed' rows.
-
-  `get_statistics()`
-    Return overall queue and worker statistics dict.
-
-
-## Database Schema
-
-### task_queue (partitioned by arch)
-
-```
-  id              BIGSERIAL    Task ID
-  arch            TEXT         GPU architecture (partition key)
-  module          TEXT         Tuning module name
-  task_config     JSONB        Task configuration
-  status          TEXT         pending/running/completed/failed/cancelled
-  priority        INT          Higher value = higher priority
-  worker_id       TEXT         Worker that claimed this task
-  node_hostname   TEXT         Node hostname
-  created_at      TIMESTAMP    Task creation time
-  started_at      TIMESTAMP    Task start time
-  completed_at    TIMESTAMP    Task completion/failure time
-  error           TEXT         Error message (failed) or cancellation
-                               reason (cancelled)
-  retry_count     INT          Number of retries
-```
-
-Status values:
-
-  pending    Waiting to be claimed.
-  running    Being processed by a worker.
-  completed  Finished successfully.
-  failed     Terminated with error; eligible for retry.
-  cancelled  Deliberately skipped; never retried or reset by scripts.
-
-### worker_heartbeat
-
-```
-  worker_id        TEXT         Unique worker ID (hostname-pid)
-  node_hostname    TEXT         Node hostname
-  arch             TEXT         GPU architecture
-  last_heartbeat   TIMESTAMP    Last heartbeat time
-  status           TEXT         active/idle/dead
-  tasks_completed  INT          Total completed tasks
-  tasks_failed     INT          Total failed tasks
-```
-
-### SQL Views (schema.sql)
-
-```
-  queue_progress    Task counts by architecture
-  worker_health     Worker status and activity
-  task_timing_stats Duration statistics
-  stale_tasks       Tasks running longer than threshold
-  completion_eta    Estimated completion time
-```
-
-
-## Connection Pattern
-
-TaskQueue and result functions take a persistent connection; create one
-per worker process and reuse it:
-
-```python
-    import psycopg
-    from aotriton.tune.pq.queue import TaskQueue
-    from aotriton.tune.pq.results import save_tuning_result
-
-    conn_params = {'host': ..., 'port': ..., 'user': ..., 'password': ...}
-    conn = psycopg.connect(**conn_params, autocommit=True)
-
-    q = TaskQueue(conn)
-    while running:
-        tasks = q.fetch_tasks('gfx942', batch_size=10)
-        for task in tasks:
-            report = execute(task)
-            save_tuning_result(task.id, report, conn)
-            q.mark_completed(task.id, arch='gfx942')
-
-    conn.close()
-```
-
-TaskDispatcher, HeartbeatManager, and QueueAdmin manage their own
-short-lived connections and accept conn_params dicts instead.
-
-Note: never include 'dbname' in connection parameters. Let psycopg use
-the default database (same as the username).  Workdir isolation is
-achieved at the container level -- each workdir runs its own PostgreSQL
-container backed by its own Docker volume, so different workdirs never
-share a server instance and database-name separation is unnecessary.
+`python/tune/dispatch_tasks.py` builds `TaskSpec(payload, category=('tune', level))`
+for each entry and arch and inserts them with `pgdef.pq.tasks.insert`, after
+`ensure_partition(conn, arch)` creates the pool's partitions on demand.
+`--skip_completed` matches done payloads from `completed_payloads`.
