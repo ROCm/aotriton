@@ -108,6 +108,13 @@ class ProbeHandler(MessageHandler):
 `python -m aotriton.pgdef.localq.graph tune` prints the whole graph. If any
 handler raises, the task fails through one common path.
 
+GPU work runs in a supervised child process (**exaid**) that speaks a line
+protocol: send a command, read back `OK <json>` or an error. A crash or a
+timeout restarts the child without killing the worker.
+
+A node may run zero GPU workers or zero CPU workers, for an application that
+needs only one type.
+
 ### Fan-in: semaphore messages
 
 A step that waits for several others (a join) is not a waiting handler. It
@@ -142,13 +149,6 @@ reports = semaphore.signals(msg)                     # in the semaphore message'
 If the broker shuts down while a semaphore message is still parked, it calls
 the handler's `teardown_with_unmet_dependency()`. By default that gives the task
 back to the queue.
-
-GPU work runs in a supervised child process (**exaid**) that speaks a line
-protocol: send a command, read back `OK <json>` or an error. A crash or a
-timeout restarts the child without killing the worker.
-
-A node may run zero GPU workers or zero CPU workers, for an application that
-needs only one type.
 
 ## Writing an application
 
@@ -230,7 +230,7 @@ views, which the webui shows.
 
 ```
 python/pgdef/pq/       engine schema and SQL (tasks, logistics, reports, workers, dispatch driver)
-python/pgdef/localq/   broker, workers, handler base classes, fan-in helper, run_node_role
+python/pgdef/localq/   broker, workers, handler base classes, semaphore messages, run_node_role
 python/pgdef/exaid.py  supervised subprocess runner
 python/tune/           tuning application (its own pq/, node, dispatch, manifest, handlers)
 ```
