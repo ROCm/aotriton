@@ -223,11 +223,17 @@ class HandlerSet:
 class TaskFailedHandler(MessageHandler):
     """The one failure path.
 
-    Any exception raised by any handler (and any message the broker cannot
-    deliver) becomes a `task_failed` message. This handler records the failure
-    in the database (`pq.tasks.fail`: the task goes back to pending while
-    attempts remain, to failed otherwise), lets the application clean up, and
-    releases the PG reader with a negative ack, so a reader slot is never lost.
+    Any exception raised by any handler becomes a `task_failed` message. This
+    handler records the failure (`pq.tasks.fail`: the task goes back to
+    pending while attempts remain, to failed otherwise), lets the application
+    clean up, and releases the PG reader with a negative ack, so a reader slot
+    is never lost. (A message the broker cannot deliver does not come here: the
+    broker sends the reader a negative ack with the reason itself, and the
+    reader records the failure.)
+
+    Input: task_failed message (the error, whether it is permanent, and the
+    failing message as `origin`).
+    Output: a negative dag_ack, which releases the PG reader.
     """
     CLASS = TASK_FAILED
     QUEUE = 'cpu'
@@ -251,7 +257,12 @@ class TaskFailedHandler(MessageHandler):
 
 
 class GracefulCancelHandler(MessageHandler):
-    """Give a task back during graceful shutdown (its attempt is not consumed)."""
+    """Give a task back during graceful shutdown (its attempt is not consumed),
+    and let the application clean up.
+
+    Input: graceful_cancel message.
+    Output: none.
+    """
     CLASS = GRACEFUL_CANCEL
     QUEUE = 'cpu'
     EMITS = ()
@@ -277,6 +288,9 @@ class StartHandler(MessageHandler):
     whatever the application's `enrich()` returned (under `enrich`). Override
     `cleanup()` to remove per-task scratch state when the task fails or is
     given back.
+
+    Input: the PG reader's start message.
+    Output: the application's first step (declared in the subclass's EMITS).
     """
 
     @classmethod
