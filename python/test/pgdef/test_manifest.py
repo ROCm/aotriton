@@ -6,6 +6,7 @@
 
 import pathlib
 import re
+import shlex
 import shutil
 import subprocess
 
@@ -127,3 +128,15 @@ def test_the_shell_helper_works_from_a_bare_checkout():
     bad = subprocess.run(['bash', '-c', f'cd {_REPO} && . .tune/lib/manifest.sh && require_app nope'],
                          capture_output=True, text=True)
     assert bad.returncode == 1 and 'not registered' in bad.stderr
+
+
+def test_validate_category_matches_levels_literally():
+    # The level is compared as a fixed string: `tune,k.*` must not pass as a
+    # regular expression matching `kernel`.
+    def validate(category):
+        script = (f'cd {_REPO} && . .tune/lib/manifest.sh && . .tune/lib/category.sh && '
+                  f'validate_category {shlex.quote(category)}')
+        return subprocess.run(['bash', '-c', script], capture_output=True, text=True).returncode
+    assert validate('tune,kernel') == 0
+    assert validate('tune,k.*') != 0
+    assert validate('tune,.*') != 0

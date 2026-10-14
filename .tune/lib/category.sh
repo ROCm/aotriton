@@ -62,7 +62,7 @@ validate_category() {
     # (captured first: `grep -q` in a pipeline would SIGPIPE its producer under pipefail)
     values="$(app_manifest "$CAT_LEVEL0" category.level1_values 2>/dev/null || true)"
     if [ -n "$values" ]; then
-        if [ -z "$CAT_LEVEL1" ] || ! grep -qx -- "$CAT_LEVEL1" <<<"$values"; then
+        if [ -z "$CAT_LEVEL1" ] || ! grep -qxF -- "$CAT_LEVEL1" <<<"$values"; then
             echo "Error: invalid --category '$category': application '$CAT_LEVEL0' needs one of:" \
                  $(sed "s/^/$CAT_LEVEL0,/" <<<"$values") >&2
             return 1

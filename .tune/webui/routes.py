@@ -554,11 +554,14 @@ def api_deploy_workdir():
 
 @bp.route('/api/deploy/<hostname>', methods=['POST'])
 def api_deploy_single(hostname):
-    """Deploy workdir to a single worker; pass testnode=1 to add --testnode flag"""
+    """Deploy workdir to a single worker; testnode=1 (the Testing tab) deploys
+    the testing build, i.e. category tune,op."""
     workdir = current_app.config['WORKDIR']
-    extra_args = ['--testnode'] if request.form.get('testnode') == '1' else None
-    category = request.form.get('category') or tasks.get_category(workdir)
-    result = tasks.deploy_workdir_single(workdir, hostname, extra_args=extra_args,
+    if request.form.get('testnode') == '1':
+        category = 'tune,op'
+    else:
+        category = request.form.get('category') or tasks.get_category(workdir)
+    result = tasks.deploy_workdir_single(workdir, hostname, extra_args=None,
                                          category=category,
                                          dry_run=should_dryrun())
     return jsonify(result)
