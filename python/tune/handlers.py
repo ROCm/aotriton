@@ -29,7 +29,7 @@ from pathlib import Path
 
 from aotriton.pgdef.localq import semaphore
 from aotriton.pgdef.localq.handlers import (DAG_ACK, MessageHandler, Permanent, StartHandler, ack,
-                                            child, task_ref)
+                                            child, owner_of, task_ref)
 from aotriton.pgdef.exaid import ExaidSubprocessNotOK
 from aotriton.pgdef.pq import tasks as pgtasks
 
@@ -284,7 +284,9 @@ class PostprocessHandler(MessageHandler):
 
     def handle(self, msg, ctx):
         task_id = msg['task_id']
-        pgtasks.complete(ctx.db_conn, task_ref(msg))
+        if not pgtasks.complete(ctx.db_conn, task_ref(msg), owner=owner_of(msg)):
+            logger.warning(f"task_id={task_id} was not completed: it is no longer running "
+                           f"under this claim (reaped, reset or cancelled)")
         logger.info(f"Postprocess completed for task_id={task_id}")
         _rmtree(msg.get('tmpdir'))
         return ack(msg)

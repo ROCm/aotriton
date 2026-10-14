@@ -49,9 +49,10 @@ GRACEFUL_CANCEL = 'pgdef/graceful_cancel'
 BROKER_CLASSES = (DAG_ACK,)
 
 # Fields every message of one task carries (the task's columns, the immutable
-# payload, and the attempt number), so a handler never needs a database read to
-# know what it is working on.
-HEADER_KEYS = ('task_id', 'pool', 'subpool', 'category', 'attempt', 'payload')
+# payload, the attempt number and the reader holding the claim), so a handler
+# never needs a database read to know what it is working on. `lease_owner` is
+# what complete/fail/release are guarded with (see `owner_of`).
+HEADER_KEYS = ('task_id', 'pool', 'subpool', 'category', 'attempt', 'lease_owner', 'payload')
 
 
 class Permanent(Exception):
@@ -78,6 +79,13 @@ def child(msg: dict, cls: str, **fields) -> dict:
 
 def task_ref(msg: dict) -> pgtasks.TaskRef:
     return (msg['task_id'], msg['pool'])
+
+
+def owner_of(msg: dict) -> str | None:
+    """The reader whose claim `msg` belongs to; pass it as `owner=` to
+    pq.tasks.complete/fail/release so a graph that outlived its claim (lease
+    lapsed and the task was claimed again, or reset) cannot settle the new one."""
+    return msg.get('lease_owner')
 
 
 def ack(msg: dict, *, negative: bool = False, error: str | None = None) -> dict:
@@ -243,7 +251,8 @@ class TaskFailedHandler(MessageHandler):
     def handle(self, msg, ctx):
         error = msg.get('error', 'unknown error')
         permanent = bool(msg.get('permanent', False))
-        status = pgtasks.fail(ctx.db_conn, task_ref(msg), error, permanent=permanent)
+        status = pgtasks.fail(ctx.db_conn, task_ref(msg), error, permanent=permanent,
+                              owner=owner_of(msg))
         logger.error(f"task_id={msg['task_id']} failed ({'permanent' if permanent else 'attempt'}): "
                      f"{error} -> {status}")
         origin = msg.get('origin') or {}
@@ -269,7 +278,7 @@ class GracefulCancelHandler(MessageHandler):
     PRIORITY = 100
 
     def handle(self, msg, ctx):
-        pgtasks.release(ctx.db_conn, task_ref(msg))
+        pgtasks.release(ctx.db_conn, task_ref(msg), owner=owner_of(msg))
         logger.info(f"task_id={msg['task_id']} released back to pending")
         cleanup = getattr(ctx.start, 'cleanup', None)
         if cleanup is not None:

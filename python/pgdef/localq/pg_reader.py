@@ -171,6 +171,7 @@ class PGReader:
             'subpool': task.subpool,
             'category': list(task.category),
             'attempt': task.logistics.attempt,
+            'lease_owner': self.worker_id,
             'payload': task.payload,
             'appcookie': task.appcookie,
             'enrich': extra or {},
@@ -183,7 +184,8 @@ class PGReader:
         except Exception as e:
             # enrich() failed: nothing was sent, so there is no ack to wait for.
             logger.error(f"start message for task_id={task.id} failed: {e}", exc_info=True)
-            pgtasks.fail(self.db_conn, task.ref, f"enrich failed: {type(e).__name__}: {e}")
+            pgtasks.fail(self.db_conn, task.ref, f"enrich failed: {type(e).__name__}: {e}",
+                         owner=self.worker_id)
             return True
 
         send_message(self.sock, {'type': 'register_ack', 'task_id': task.id, 'worker_id': self.worker_id})
@@ -223,7 +225,8 @@ class PGReader:
                 # The broker could not deliver a message of this task (a queue
                 # without workers). It has no database; record the failure here.
                 # Permanent: no retry will make the node's configuration right.
-                pgtasks.fail(self.db_conn, task.ref, str(response['error']), permanent=True)
+                pgtasks.fail(self.db_conn, task.ref, str(response['error']), permanent=True,
+                             owner=self.worker_id)
         else:
             logger.info(f"Received ACK for task_id={task.id} (task completed), continuing")
 

@@ -82,7 +82,7 @@ class FakeDB:
             row.renewals += 1
             return not row.lease_lost
 
-    def complete(self, conn, ref):
+    def complete(self, conn, ref, *, owner=None):
         with self.lock:
             row = self.rows[ref[0]]
             if row.status != 'running':
@@ -90,7 +90,7 @@ class FakeDB:
             row.status, row.completed = 'done', True
             return True
 
-    def fail(self, conn, ref, error, *, permanent=False):
+    def fail(self, conn, ref, error, *, permanent=False, owner=None):
         with self.lock:
             row = self.rows[ref[0]]
             if row.status != 'running':
@@ -99,7 +99,7 @@ class FakeDB:
             row.status = 'failed' if permanent or row.attempt >= row.max_attempts else 'pending'
             return row.status
 
-    def release(self, conn, ref):
+    def release(self, conn, ref, *, owner=None):
         with self.lock:
             row = self.rows[ref[0]]
             row.status, row.released = 'pending', True
