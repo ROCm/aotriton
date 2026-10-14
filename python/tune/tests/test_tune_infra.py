@@ -9,7 +9,7 @@ None of this needs a GPU or a database connection. `entry.py`/`desc.py`/
 `tdesc.py`/`utils.py` import `dacite` lazily (only inside the methods that
 actually call `from_dict()`, e.g. `ENTRY_CLASS.from_dict()`, `run_single_test`)
 so merely loading the flash family / constructing a `TuneDesc` never requires
-`dacite` to be installed; `aotriton.tune.pq`/`aotriton.tune.localq` still need
+`dacite` to be installed; `aotriton.tune.pq`/`aotriton.pgdef` still need
 `psycopg` for real DB access. Neither is in the base `requirements.txt` (only
 `requirements-tuning.txt` pulls them in, and no `.ci/*.sh` installs it before
 running this suite), so every check here that needs one of those two packages
@@ -73,9 +73,9 @@ def test_load_tune_module_flash_op_no_longer_exists():
         load_tune_module('flash_op', modules_dir=_MODULES_DIR)
 
 
-# --- Phase 2 step 14 (modular-tune.md): ImplSelector DSL + fetch_tasks -------
+# --- Phase 2 step 14 (modular-tune.md): ImplSelector DSL ------------------------
 #     highest-risk-area coverage (op.attn_fwd=1 is surface syntax only,
-#     iface_name collisions across levels, fetch_tasks tuning_mode required).
+#     iface_name collisions across levels).
 
 def test_implselector_parse_text_roundtrip_prefixed():
     from aotriton.tune.tdesc import ImplSelector
@@ -272,40 +272,6 @@ def test_tune_category_vocabulary():
         tasks.category('nope')
 
 
-def test_fetch_tasks_requires_tuning_mode_keyword():
-    # F16 (modular-tune.md): a kernel worker must never claim an op task and
-    # vice versa. fetch_tasks() must have NO default for tuning_mode so a
-    # caller that forgets to pass it fails fast at the call site instead of
-    # silently defaulting to 'kernel'.
-    pytest.importorskip('psycopg')
-    import inspect
-    from aotriton.tune.pq.queue import TaskQueue
-
-    sig = inspect.signature(TaskQueue.fetch_tasks)
-    tuning_mode_param = sig.parameters['tuning_mode']
-    assert tuning_mode_param.kind == inspect.Parameter.KEYWORD_ONLY
-    assert tuning_mode_param.default is inspect.Parameter.empty
-
-    # A conn is never touched before the missing-keyword TypeError fires.
-    task_queue = TaskQueue(conn=None)
-    with pytest.raises(TypeError):
-        task_queue.fetch_tasks('gfx942', batch_size=1)
-
-
-def test_fetch_tasks_sql_filters_on_tuning_level():
-    # The SQL itself must filter on the denormalized tuning_level column
-    # (not a `module LIKE '%_op'` string-suffix pattern -- the pre-Phase-2
-    # anti-pattern this replaces).
-    pytest.importorskip('psycopg')
-    import inspect
-    from aotriton.tune.pq.queue import TaskQueue
-
-    source = inspect.getsource(TaskQueue.fetch_tasks)
-    assert 'tuning_level = %s' in source
-    assert "LIKE '%_op'" not in source
-    assert "NOT LIKE '%_op'" not in source
-
-
 # --- (b) F5: the codegen-side FlashEntry copy (modules/flash/aot/flash_entry.py) ---
 #     must stay byte-identical, in `as_text()` output, to the tuning-side
 #     FlashEntry (modules/flash/tune/flash/module.py) it was split off from.
@@ -355,14 +321,19 @@ def test_flash_entry_round_trips_through_pon():
 # --- (c) pq/localq stay torch-free at import time -----------------------------
 
 def _iter_pq_localq_module_names():
-    for pkg in ('pq', 'localq'):
-        root = _REPO_ROOT / 'python' / 'tune' / pkg
-        for path in sorted(root.rglob('*.py')):
-            if path.name == '__init__.py':
-                dotted = path.parent.relative_to(_REPO_ROOT / 'python').as_posix().replace('/', '.')
-            else:
-                dotted = path.relative_to(_REPO_ROOT / 'python').with_suffix('').as_posix().replace('/', '.')
-            yield f'aotriton.{dotted}'
+    """Every module of the engine's pq/localq, tune's pq, and tune's entry
+    points: all of them must import without torch (GPU-container-only)."""
+    py = _REPO_ROOT / 'python'
+    paths = []
+    for pkg in ('pgdef/pq', 'pgdef/localq', 'tune/pq'):
+        paths.extend(sorted((py / pkg).rglob('*.py')))
+    paths.extend(py / 'tune' / f'{name}.py' for name in ('handlers', 'node', 'dispatch', 'exaid_tuner'))
+    for path in paths:
+        if path.name == '__init__.py':
+            dotted = path.parent.relative_to(py).as_posix().replace('/', '.')
+        else:
+            dotted = path.relative_to(py).with_suffix('').as_posix().replace('/', '.')
+        yield f'aotriton.{dotted}'
 
 
 _PQ_LOCALQ_MODULES = sorted(set(_iter_pq_localq_module_names()))
@@ -388,10 +359,11 @@ def test_pq_localq_module_imports_without_torch(module_name):
 
 def test_pq_localq_module_list_is_not_empty():
     # Guards against the discovery glob above silently matching nothing (e.g.
-    # if python/tune/pq or python/tune/localq were ever renamed/moved again).
-    assert len(_PQ_LOCALQ_MODULES) >= 20
-    assert 'aotriton.tune.pq.queue' in _PQ_LOCALQ_MODULES
-    assert 'aotriton.tune.localq.broker' in _PQ_LOCALQ_MODULES
+    # if these packages were ever renamed/moved again).
+    assert len(_PQ_LOCALQ_MODULES) >= 30
+    assert 'aotriton.tune.pq.tasks' in _PQ_LOCALQ_MODULES
+    assert 'aotriton.pgdef.localq.broker' in _PQ_LOCALQ_MODULES
+    assert 'aotriton.tune.handlers' in _PQ_LOCALQ_MODULES
     assert 'aotriton.tune.pq.vis_descriptors' in _PQ_LOCALQ_MODULES
     # Per-family descriptors used to live here as
     # aotriton.tune.pq.vis_descriptors.<family> (e.g. `...flash`); they now

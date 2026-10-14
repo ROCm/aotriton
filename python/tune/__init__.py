@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: MIT
 
 """
-Tuner v3.5 tuning orchestration
+Tuner v3.5: the "tune" application on pgdef (aotriton.pgdef).
 
-Integrates PostgreSQL queue with Ray-based task execution.
+Entry points: python -m aotriton.tune.{node,dispatch,manifest}. The handler graph is
+handlers.py; the PostgreSQL layer is pq/ (schema `tune`).
 """
 
 __version__ = '3.5.0'

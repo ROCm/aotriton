@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 import pytest
-from aotriton.tune.exaid import exaid_create, ExaidSubprocessNotOK
+from aotriton.tune.exaid_tuner import ExaidTunerWorker
 from aotriton.tune.tdesc import ImplSelector
 import shutil
 import json
@@ -13,7 +13,7 @@ import torch
 @pytest.mark.parametrize('module', ['flash'])
 def test_exaid(module, gpu_id):
     level = 'kernel'
-    exaid = exaid_create(module, gpu_id)
+    exaid = ExaidTunerWorker(module, gpu_id)
     entry = {"dtype": "float16", "hdim": 32, "seqlen_q": 256, "seqlen_k": 128, "causal": False, "dropout_p": 0.5, "bias_type": 0}
     tmpdir = exaid.get_tmpfs_for(entry)
     exaid.prepare_data(entry, tmpdir)
@@ -40,6 +40,7 @@ def test_exaid(module, gpu_id):
         assert result_data['impl_selection']['impl_index'] == impl_index
         assert "adiffs" in result_data
     shutil.rmtree(tmpdir)
+    exaid.exit()
 
 if __name__ == '__main__':
     raise SystemExit("Run this file with pytest, not directly:\n  pytest python/tune/tests/test_exaid.py")
