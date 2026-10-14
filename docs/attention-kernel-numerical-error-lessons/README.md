@@ -446,13 +446,16 @@ fp16, and f9bb46f2 stored dV in dK's dtype.
   that splits a non-power-of-two head dimension into power-of-two pieces cannot
   assume only the trailing piece is ragged once `hdim_qk != hdim_vo`. Fixed in
   0373139c (#135).
-- **The input contract: a contiguous last dimension, aligned to 16 bytes.**
-  The kernels move each row with 128-bit vector loads and stores, so the head
-  dimension must be contiguous and aligned to 16 bytes. The Triton kernels state
-  the first half as `tl.assume(stride_qk == 1)` and its siblings (1884d3d0).
-  - A kernel therefore touches every row up to the next 16-byte boundary:
-    `ceil8(hdim)` columns for fp16/bf16, which the test comments call the "8xD
-    contract", and `ceil4(hdim)` for fp32. The caller must own those columns.
+- **The 8xD input contract.** Precisely, the last dimension must be contiguous
+  and aligned to 16 bytes, because the kernels move each row with 128-bit vector
+  loads and stores. The Triton kernels state the contiguity half as
+  `tl.assume(stride_qk == 1)` and its siblings (1884d3d0).
+  - It is called 8xD, as in the flyc kernels, because 8 is the number PyTorch
+    enforces: its callers of the flash and memory-efficient attention backends
+    pad the head dimension to a multiple of 8. For fp16/bf16 that is exactly 16
+    bytes.
+  - A kernel therefore touches `ceil8(hdim)` columns of every row, and the
+    caller must own them.
   - A buffer descriptor whose range ends at `hdim` makes the hardware drop the
     dword holding the last real column and the first pad column. The last
     element of every slab is then never written or read. Fixed for the gfx950
