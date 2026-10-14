@@ -140,5 +140,6 @@ done
 
 echo "Database schema initialized successfully"
 
-# Pool partitions (pgdef.task_<pool>) are NOT created here: dispatch creates
-# them on demand with pgdef.pq.tasks.ensure_partition.
+# Pool partitions (pgdef.task_<pool>, pgdef.report_<pool>) come from the
+# schemas applied above: each application's schema.sql calls
+# pgdef.ensure_pool() for the pools it anticipates.

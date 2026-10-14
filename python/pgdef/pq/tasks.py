@@ -10,9 +10,8 @@ explicitly, so they work on a connection with any default row factory (and on
 `ReconnectableConn`, which only offers `cursor()`).
 
 All statements target the PARENT table with `pool = %s`, relying on partition
-pruning; no code here builds a leaf table name. The one exception is
-ensure_partition(), which creates leaves and so must name them, with a
-validated identifier quoted by psycopg.sql.
+pruning; no code here builds a leaf table name. Partitions are created by the
+SQL function pgdef.ensure_pool(), which applications call from their schema.sql.
 """
 
 import re
@@ -20,7 +19,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterable, Sequence
 
-from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
@@ -37,7 +35,6 @@ TaskRef = tuple[int, str]
 POOL_RE = re.compile(r'^[a-z0-9_]+$')
 
 #: Partitioned tables that get one leaf per pool.
-PARTITIONED = ('task', 'report')
 
 
 # ---------------------------------------------------------------------------
@@ -95,25 +92,6 @@ def validate_pool(pool: str) -> str:
     if not isinstance(pool, str) or not POOL_RE.match(pool):
         raise ValueError(f"invalid pool {pool!r}: expected {POOL_RE.pattern}")
     return pool
-
-
-def partition_statements(pool: str) -> list[sql.Composed]:
-    """CREATE TABLE statements for the leaves of `pool` (a unit-testable seam)."""
-    validate_pool(pool)
-    return [
-        sql.SQL('CREATE TABLE IF NOT EXISTS {leaf} PARTITION OF {parent} FOR VALUES IN ({pool})').format(
-            leaf=sql.Identifier('pgdef', f'{parent}_{pool}'),
-            parent=sql.Identifier('pgdef', parent),
-            pool=sql.Literal(pool))
-        for parent in PARTITIONED
-    ]
-
-
-def ensure_partition(conn, pool: str) -> None:
-    """Create the task and report leaves for `pool`, if absent."""
-    with conn.cursor() as cur:
-        for stmt in partition_statements(pool):
-            cur.execute(stmt)
 
 
 def list_pools(conn) -> list[str]:

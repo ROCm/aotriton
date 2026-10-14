@@ -19,8 +19,8 @@ this module is the tune TaskSource:
    accepts. The payload is {module, entry, max_hsaco?}; the arch is the task's
    pool and the level its category, not payload fields.
 
-`--arch` is accepted as a synonym of `--pool` (tune's word for it). When no
-pool is given, every arch registered in <workdir>/workers.db is used.
+`--arch` is accepted as a synonym of `--pool` (tune's word for it). A pool is
+required: each must be one tune's pq/schema.sql creates partitions for.
 """
 
 import argparse
@@ -30,7 +30,7 @@ from pathlib import Path
 
 from aotriton.pgdef.pq import dispatch as pgdispatch
 from aotriton.pgdef.pq.tasks import TaskSpec
-from aotriton.pgdef.workdir import get_registered_archs, load_config
+from aotriton.pgdef.workdir import load_config
 
 from .pq.tasks import level_of
 
@@ -192,13 +192,6 @@ class TuneTaskSource:
         self.module_name = args.module
         self.module = self._available()[args.module]
         self._entry_fields = tuple(f.name for f in fields(self.module.ENTRY_CLASS))
-
-    def default_pools(self, args):
-        pools = get_registered_archs(args.workdir)
-        if not pools:
-            sys.exit(f"No workers registered in {args.workdir}/workers.db")
-        print(f"No --pool/--arch specified, using all registered: {', '.join(pools)}")
-        return pools
 
     def skip_key(self, payload):
         """--skip_completed compares (module, entry fields); max_hsaco does not

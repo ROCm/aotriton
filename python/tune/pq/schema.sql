@@ -115,3 +115,14 @@ CREATE TABLE IF NOT EXISTS tune.extra_uts (
 
 CREATE INDEX IF NOT EXISTS idx_extra_uts_task_id
     ON tune.extra_uts (task_id);
+
+-- The pools (archs) tune anticipates. Creating a pool's partitions when it is
+-- not in the fleet does no harm; dispatching to a pool not listed here fails
+-- at insert. Add an arch here, then rerun initdb.
+SELECT pgdef.ensure_pool('gfx90a');
+SELECT pgdef.ensure_pool('gfx942');
+SELECT pgdef.ensure_pool('gfx950');
+SELECT pgdef.ensure_pool('gfx1100');
+SELECT pgdef.ensure_pool('gfx1151');
+SELECT pgdef.ensure_pool('gfx1201');
+SELECT pgdef.ensure_pool('gfx1250');

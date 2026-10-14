@@ -103,7 +103,11 @@ All take `--category tune,kernel|tune,op` (default `tune,kernel`).
 
 ## Dispatching
 
-`python/tune/dispatch_tasks.py` builds `TaskSpec(payload, category=('tune', level))`
-for each entry and arch and inserts them with `pgdef.pq.tasks.insert`, after
-`ensure_partition(conn, arch)` creates the pool's partitions on demand.
+`python/tune/dispatch.py` builds `TaskSpec(payload, category=('tune', level))`
+for each entry and arch, and `pgdef.pq.dispatch.drive` inserts them with
+`pgdef.pq.tasks.insert`. The pools' partitions already exist: tune's
+`schema.sql` creates them for every arch tune anticipates
+(`SELECT pgdef.ensure_pool('gfx950');` ...). To tune a new arch, add it there
+and rerun initdb. `--pool`/`--arch` is required; nothing is read from
+workers.db.
 `--skip_completed` matches done payloads from `completed_payloads`.

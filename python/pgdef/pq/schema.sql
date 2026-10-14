@@ -17,10 +17,11 @@
 --              writes it. Times inside are epoch seconds (float8), because
 --              text::timestamptz is not IMMUTABLE and could not be indexed.
 --
--- Partitions (pgdef.task_<pool>, pgdef.report_<pool>) are NOT created here:
--- pgdef.pq.tasks.ensure_partition() creates them on demand at dispatch, with a
--- validated, quoted identifier. There is no DEFAULT partition, so a row for an
--- unknown pool fails loudly at insert.
+-- Partitions (pgdef.task_<pool>, pgdef.report_<pool>) are created explicitly:
+-- each application's own schema.sql calls pgdef.ensure_pool('<pool>') (defined
+-- at the end of this file) for every pool it anticipates. An unused partition
+-- costs nothing. There is no DEFAULT partition, so a row for a pool without one
+-- fails loudly at insert.
 
 CREATE SCHEMA IF NOT EXISTS pgdef;
 
@@ -182,3 +183,20 @@ SELECT
     END AS eta_hours
 FROM stats
 WHERE remaining > 0;
+
+-- pgdef.ensure_pool(pool): create the pool's leaves of pgdef.task and
+-- pgdef.report, if absent. Applications call it from their own schema.sql for
+-- the pools they anticipate; it is the engine's API for its own partitions.
+-- The pool name is validated, and the leaf name is quoted with %I.
+CREATE OR REPLACE FUNCTION pgdef.ensure_pool(pool text) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF pool IS NULL OR pool !~ '^[a-z0-9_]+$' THEN
+        RAISE EXCEPTION 'invalid pool %: expected ^[a-z0-9_]+$', quote_literal(pool);
+    END IF;
+    EXECUTE format('CREATE TABLE IF NOT EXISTS pgdef.%I PARTITION OF pgdef.task FOR VALUES IN (%L)',
+                   'task_' || pool, pool);
+    EXECUTE format('CREATE TABLE IF NOT EXISTS pgdef.%I PARTITION OF pgdef.report FOR VALUES IN (%L)',
+                   'report_' || pool, pool);
+END
+$$;

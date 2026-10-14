@@ -45,8 +45,8 @@ You are an expert in the AOTriton Tuner v3 infrastructure. Your scope covers two
 
 python/pgdef/                # the engine (imports nothing from an application, torch or triton)
 ├── pq/                      # engine tables, schema `pgdef`; ALL SQL for them (CLAUDE.md "pq")
-│   ├── schema.sql            # pgdef.task / report / worker (partitioned by pool), views
-│   ├── tasks.py              # ensure_partition, insert, claim, TaskSelector, reset, append_cookie ...
+│   ├── schema.sql            # pgdef.task / report / worker (partitioned by pool), views, pgdef.ensure_pool()
+│   ├── tasks.py              # insert, claim, TaskSelector, reset, append_cookie ...
 │   ├── logistics.py          # the ONLY writer of task.logistics (lease, attempts, errors)
 │   ├── reports.py, workers.py, progress.py, category.py, conn.py, admin.py, testing.py
 │   └── dispatch.py           # drive(source, argv): the dispatch loop applications call

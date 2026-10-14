@@ -16,7 +16,7 @@ import pytest
 from psycopg.rows import dict_row
 
 from aotriton.pgdef.pq import logistics as lg
-from aotriton.pgdef.pq import progress, reports, tasks, workers
+from aotriton.pgdef.pq import progress, reports, tasks, testing, workers
 from aotriton.pgdef.pq.tasks import TaskSelector, TaskSpec
 
 pytestmark = pytest.mark.pg
@@ -44,17 +44,18 @@ def _claim(conn, **kw):
 
 @pytest.fixture
 def pool(pg_conn):
-    tasks.ensure_partition(pg_conn, POOL)
+    testing.ensure_pool(pg_conn, POOL)
     return POOL
 
 
 # --- partitions -------------------------------------------------------------
 
-def test_ensure_partition_is_idempotent_and_listed(pg_conn):
-    tasks.ensure_partition(pg_conn, POOL)
-    tasks.ensure_partition(pg_conn, POOL)
-    tasks.ensure_partition(pg_conn, 'gfx942')
-    assert tasks.list_pools(pg_conn) == ['gfx942', 'gfx950']
+def test_ensure_pool_is_idempotent_and_listed(pg_conn):
+    # tune's schema.sql (applied by the fixture) already creates its pools.
+    assert {'gfx942', 'gfx950'} <= set(tasks.list_pools(pg_conn))
+    testing.ensure_pool(pg_conn, 'test_pool')
+    testing.ensure_pool(pg_conn, 'test_pool')
+    assert 'test_pool' in tasks.list_pools(pg_conn)
 
 
 def test_unknown_pool_fails_loudly_at_insert(pg_conn):

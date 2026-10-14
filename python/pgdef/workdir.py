@@ -15,7 +15,6 @@ processes it starts.
 """
 
 import os
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -82,15 +81,3 @@ def load_config(workdir: Path) -> None:
             if '=' in line:
                 key, value = line.split('=', 1)
                 os.environ[key] = value.strip().strip('"').strip("'")
-
-
-def get_registered_archs(workdir: Path) -> list[str]:
-    """The architectures registered in <workdir>/workers.db (host inventory)."""
-    db_path = workdir / 'workers.db'
-    if not db_path.exists():
-        sys.exit(f"Error: workers.db not found at {db_path}")
-    conn = sqlite3.connect(db_path)
-    try:
-        return [row[0] for row in conn.execute("SELECT DISTINCT arch FROM workers ORDER BY arch")]
-    finally:
-        conn.close()

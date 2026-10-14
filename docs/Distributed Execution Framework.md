@@ -36,8 +36,8 @@ A task is one row in `pgdef.task`:
 | `logistics` | pgdef's own bookkeeping (jsonb): attempts, lease, error history |
 | `priority`, `status` | Scheduling. Status is `pending`, `running`, `done`, `failed` or `cancelled` |
 
-`id` identifies a task. Raw results go to `pgdef.report`, one row per tuned
-impl or measured backend, and each row points back to its task. Both tables are
+`id` identifies a task. Raw results go to `pgdef.report`, one row per item a
+task produces (for tune, per tuned impl), and each row points back to its task. Both tables are
 partitioned by `pool`, which is why their primary keys are `(id, pool)`.
 
 **Pairs.** `(pool, subpool)` and the category `(cat_level0, cat_level1)` follow the same
@@ -231,6 +231,18 @@ as `cat_level1`".
 `.tune/bin/initdb`, which is also behind the webui's Init DB button, creates
 every schema for every application. Each `pq` ships an idempotent
 `schema.sql`, and pgdef's runs first. `--recreate` drops and recreates them all.
+
+Partitions are created the same way, explicitly. Each application's
+`schema.sql` lists the pools it anticipates, with the engine's function:
+
+```sql
+SELECT pgdef.ensure_pool('gfx942');
+SELECT pgdef.ensure_pool('gfx950');
+```
+
+A partition for a pool that is not in the fleet is harmless. Dispatching to a
+pool that has none fails, with a message saying to add the pool there and
+rerun initdb.
 
 ## Common operations
 
