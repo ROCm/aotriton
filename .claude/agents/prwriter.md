@@ -194,7 +194,7 @@ bullets.
 | `[gen]` | Generator invocation, build integration, new generator tools |
 | `[shim]` | Generated shim and internal C++ API — including `include/aotriton/_internal/` headers and their `v3src/` companions |
 | `[db]` | Tuning database schema or content |
-| `[tune]` | Tuning infrastructure (`v3python/tune/`) |
+| `[tune]` | Tuning infrastructure (`python/tune/`, `modules/*/tune/`) |
 | `[pq]` | PostgreSQL queue package |
 | `[localq]` | Unix-socket local queue |
 | `[worker]` | GPU tuning worker |

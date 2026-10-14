@@ -1,19 +1,19 @@
 ---
 name: tuner-v3
-description: Use this agent for tasks involving the AOTriton Tuner v3 infrastructure: the .tune/ shell scripts and tooling (excluding .tune/webui), and the Python tuning stack under v3python/tune/ (excluding legacy Celery/Ray files). This covers the PostgreSQL task queue (pq/), the Unix-socket local queue (localq/), GPU worker DAG execution, compute/export of best results, flash kernel tuning logic, and operational scripts (.tune/bin/, .tune/single/, .tune/remote/). Do NOT use for webui (.tune/webui/), the code generator (v3python/codegen/, v3python/rules/), or C++ runtime code.
+description: Use this agent for tasks involving the AOTriton Tuner v3 infrastructure: the .tune/ shell scripts and tooling (excluding .tune/webui), and the Python tuning stack under python/tune/ plus the family plugins under modules/*/tune/ (excluding legacy Celery/Ray files), plus the engine under python/pgdef/. This covers the PostgreSQL task queue (pq/), the Unix-socket local queue (localq/), GPU worker DAG execution, compute/export of best results, flash kernel tuning logic, and operational scripts (.tune/bin/, .tune/single/, .tune/remote/). Do NOT use for webui (.tune/webui/), the code generator (python/codegen/, python/template_instantiation/, modules/*/aot/), or C++ runtime code.
 ---
 
 You are an expert in the AOTriton Tuner v3 infrastructure. Your scope covers two areas:
 
 1. **`.tune/`** — shell scripts and tooling (everything except `.tune/webui/`)
-2. **`v3python/tune/`** — Python tuning stack (excluding legacy Celery/Ray files)
+2. **`python/tune/`** and **`modules/*/tune/`** — Python tuning stack and family plugins (excluding legacy Celery/Ray files)
 
 ## What to ignore (legacy / out of scope)
 
 - Any file referencing Celery (`celery`, `@task`, `@app.task`) — superseded by the pq+localq stack
 - Any file referencing Ray (`ray`, `@ray.remote`, `ActorPool`) — superseded by Unix-socket localq
 - `.tune/remote/rayctl`, `.tune/remote/worker_service.bak` — legacy
-- `v3python/tune/` files with `from celery` or `import ray` imports
+- `python/tune/` files with `from celery` or `import ray` imports
 
 ## Directory map
 
@@ -33,7 +33,8 @@ You are an expert in the AOTriton Tuner v3 infrastructure. Your scope covers two
 ├── single/                  # Per-node scripts (start/stop/restart workers & services)
 ├── remote/                  # Remote/SLURM scripts
 │   ├── testrun_direct       # Direct remote test runner (tested)
-│   ├── worker_service.sh    # Worker service entrypoint
+│   ├── worker_service.sh    # GENERIC DEF node starter (any application): --category/--subpool,
+│   │                        #   never app flags like --tuning_mode
 │   └── slurm_worker_job.sh  # SLURM job submission
 ├── lib/                     # Shared shell library functions
 │   ├── config_load.sh       # Sources config.rc
@@ -42,40 +43,49 @@ You are an expert in the AOTriton Tuner v3 infrastructure. Your scope covers two
 ├── image.scripts/           # Docker image build scripts
 └── DESIGN.md                # Architecture design notes
 
-v3python/tune/
-├── pq/                      # PostgreSQL-based task queue (primary DB layer)
-│   ├── schema.sql            # Table definitions: task_queue, tuning_results, best_tuning_results
-│   ├── queue.py              # TaskQueue class: fetch_tasks, mark_completed, mark_failed, mark_cancelled
-│   ├── results.py            # save_tuning_result, get_task_results
-│   ├── compute_best_results.py  # Aggregates raw results → best_tuning_results
-│   ├── export_best_results.py   # Exports centraldb.sqlite3 (FLASH$attn_fwd etc.)
-│   ├── heartbeat.py          # Worker heartbeat tracking
-│   ├── admin.py              # Admin utilities
-│   ├── dispatcher.py         # Task dispatch logic
-│   ├── worker.py             # PQ worker base class
-│   └── connection.py         # Connection parameter helpers
-├── localq/                  # Unix-socket local queue (replaces Ray/Celery)
-│   ├── broker.py             # LocalBroker: manages DAG workflow, routes to GPU workers
-│   ├── broker_main.py        # Broker process entrypoint
-│   ├── gpu_worker_socket.py  # GPU worker: listens on Unix socket, runs preprocess/probe/tune_hsaco
-│   ├── cpu_worker.py         # CPU-side tasks (postprocess, DB writes)
-│   ├── generic_worker.py     # Base worker class
-│   ├── pg_reader_worker.py   # Reads tasks from PQ and feeds broker
-│   ├── handlers.py           # Request handler dispatch
-│   ├── heartbeat_main.py     # Heartbeat process entrypoint
-│   ├── protocol.py           # JSON-lines message protocol definitions
-│   ├── buffered_socket.py    # Socket I/O with newline-delimited JSON framing
-│   └── README.md             # Architecture notes
-├── flash/                   # Flash attention tuning logic
-│   ├── module.py             # FlashEntry dataclass, parse_text, as_text
-│   ├── kernels.py            # Kernel-specific tuning configs
-│   ├── reference.py          # Reference implementations for correctness checks
-│   └── utils.py              # Flash-specific utilities
-├── utils.py                 # get_db_connection_params, shared utilities
-├── testrun.py               # Testrun orchestration
-├── dispatch_tasks.py        # Task dispatch helpers
-├── kftdesc.py               # Kernel-functional-task descriptor
-└── tdesc.py                 # Task descriptor
+python/pgdef/                # the engine (imports nothing from an application, torch or triton)
+├── pq/                      # engine tables, schema `pgdef`; ALL SQL for them (CLAUDE.md "pq")
+│   ├── schema.sql            # pgdef.task / report / worker (partitioned by pool), views
+│   ├── tasks.py              # ensure_partition, insert, claim, TaskSelector, reset, append_cookie ...
+│   ├── logistics.py          # the ONLY writer of task.logistics (lease, attempts, errors)
+│   ├── reports.py, workers.py, progress.py, category.py, conn.py, admin.py, testing.py
+│   └── dispatch.py           # drive(source, argv): the dispatch loop applications call
+├── localq/                  # per-node runtime (see .claude/docs/localq_design.md)
+│   ├── broker.py, generic_worker.py, pg_reader.py, protocol.py, buffered_socket.py
+│   ├── handlers.py           # MessageHandler (CLASS/QUEUE/EMITS), engine handlers, NodeContext
+│   ├── fanin.py, graph.py, node.py   # join helper, graph printer, run_node_role()
+├── exaid.py                 # ExaidProxy (neutral, spawn_argv) + CommandProcessor/serve skeleton
+└── utils.py                 # safe_readline, logging, by-path family loader
+
+python/tune/                 # the `aotriton-tune` distribution (own pyproject.toml/setup.py),
+│                            #   installed as the aotriton.tune namespace subpackage; app "tune"
+├── node.py, dispatch.py     # entry points: python -m aotriton.tune.{node,dispatch}
+├── handlers.py              # the tune graph: start -> preprocess -> probe -> impl xN -> postprocess
+├── exaid_tuner.py           # ExaidTunerWorker (runner type 'tuner')
+├── pq/                      # tune's pq, schema `tune`; ALL SQL for tune tables
+│   ├── schema.sql            # tune.tuning_results (view over pgdef.report), best_tuning_results,
+│   │                         #   most_accurate_tuning_results, extra_uts
+│   ├── tasks.py              # entry_selector, find_by_entry/ids, find_resettable, reset, get_progress
+│   ├── results.py, extra_uts.py
+│   ├── compute_best_results.py, populate_most_accurate.py, export_best_results.py  # SQL-bearing tools
+│   ├── manual_pick_missing_entry.py
+│   └── visperf.py, export_visperf.py, vis_descriptors/  # webui /perf data
+├── testrun.py               # exaid server side: CommandProcessor (prepare_data/probe/benchmark)
+├── tdesc.py                 # TuningDescription ABC, ImplSelector
+├── kftdesc.py               # KernelForTuneDescription ABC
+├── registry.py              # Loads modules/<family>/tune by path (pgdef.utils.load_family_block)
+├── gpu_utils.py, defaults.py, pytest_node.py
+└── utils.py                 # asdict_shallow, sanitize_*, dacite_tuple
+
+python/pgdef/workdir.py      # get_db_connection_params / load_config / get_registered_archs: config.rc and
+                             #   workers.db (infrastructure side)
+
+modules/flash/tune/          # Flash family tuning plugin: TuneDesc + ImplSelector
+├── desc.py                   # FlashTune: _clamp_memory_usage, _do_gen_ref, run_single_test
+├── level_kernel.py, level_op.py  # kernel-level (hsaco) vs op-level (backend) tuning
+├── entry.py                  # FlashEntry, FlashInputMetadata
+├── reference.py, calls.py, sdpa_math.py, causal.py
+└── pytest_entry.py, sancheck.py
 ```
 
 ## TuneDesc subclass rule: lazy get_kernel initialization
@@ -84,7 +94,7 @@ v3python/tune/
 it with **lazy initialization** — never import kernel modules or instantiate kernel
 objects at module level or in `__init__`.
 
-Kernel modules chain into `flash/reference.py` which imports `torch`. `torch` is only
+Kernel modules chain into `modules/flash/tune/reference.py` which imports `torch`. `torch` is only
 available inside GPU containers. `dispatch_tasks.py` imports every `TuneDesc` subclass
 at startup to build argparse subparsers, so any top-level torch import breaks dispatch
 on machines without torch.
@@ -116,26 +126,33 @@ This rule is documented in `tdesc.py`'s module docstring and enforced by making
 ### Task lifecycle
 
 ```
-dispatch_tasks.py → task_queue (PostgreSQL, status=pending)
-  → pg_reader_worker.py fetches batch
-  → broker.py runs DAG per task:
-      1. preprocess  (any GPU worker)
-      2. probe       (any GPU worker)
-      3. tune_hsaco  (round-robin, parallel across GPUs)
-      4. postprocess (CPU, broker)
-  → results saved via pq/results.py
-  → compute_best_results aggregates → best_tuning_results
+python -m aotriton.tune.dispatch --category tune,kernel --pool gfx950 ...
+  → pgdef.task (PostgreSQL, status=pending; payload {module, entry, max_hsaco?})
+  → PG reader (aotriton.tune.node reader) claims one task (pair-aware claim, lease)
+  → broker runs the handler graph per task (python/tune/handlers.py):
+      tune/start → tune/preprocess → tune/probe → tune/impl × N (parallel across GPUs)
+      → tune/impl_result (CPU: pgdef.report row) → tune/postprocess (fan-in, completes the task)
+  → compute_best_results aggregates → tune.best_tuning_results
   → export_best_results → centraldb.sqlite3
 ```
 
-### PostgreSQL schema (pq/schema.sql)
+Any handler exception becomes the engine's `task_failed` (retry while
+attempts remain; `Permanent` fails at once); expired leases are reaped by the
+readers. There is no manual stale-task cleanup any more.
 
-- **`task_queue`** — partitioned by `arch`. Columns: `id`, `arch`, `module`, `task_config` (JSONB), `status`, `priority`, `worker_id`, `node_hostname`, timestamps, `error`, `retry_count`
-  - `task_config.entry` contains: `dtype`, `hdim`, `seqlen_q`, `seqlen_k`, `causal`, `dropout_p`, `bias_type`
-  - `status` values: `pending`, `running`, `completed`, `failed`, `cancelled`
-- **`tuning_results`** — raw per-kernel results with `impl_desc` (JSONB: psels + copts)
-- **`best_tuning_results`** — aggregated best result per (arch, kernel, task_config)
-- **`optune_results` / `best_optune_results`** — same shape, but for op-mode tuning
+### PostgreSQL schema (python/pgdef/pq/schema.sql, python/tune/pq/schema.sql)
+
+- **`pgdef.task`** — partitioned by `pool` (= the arch; `pgdef.task_<pool>` created by dispatch).
+  Columns: `id`, `pool`, `subpool`, `cat_level0` (`tune`), `cat_level1` (`kernel` | `op`, the old
+  `tuning_level`), `payload` (JSONB, immutable), `appcookie` (JSONB, app progress), `priority`,
+  `status` (`pending`, `running`, `done`, `failed`, `cancelled`), `logistics` (JSONB: attempt,
+  lease, retry policy, error history; only `pgdef/pq/logistics.py` writes it), `created_at`
+  - `payload.entry` contains: `dtype`, `hdim`, `seqlen_q`, `seqlen_k`, `causal`, `dropout_p`, `bias_type`
+- **`pgdef.report`** — raw per-impl results (`rkey` {cat_level1, iface, impl}, `status` OK/NotOK/crash/ERROR,
+  `payload` = benchmark data, `error`, `worker`); `tune.tuning_results` is the typed view over tune's rows
+- **`tune.best_tuning_results`** — aggregated best result per (task, iface); `tune.most_accurate_tuning_results`
+  (anchored to a report, ON DELETE CASCADE); `tune.extra_uts`
+- `iface_name` collides across levels (`attn_fwd` exists at both): always filter on `cat_level1`
 
 ### Arch enumeration: prefer kernel_table, do not union op_table
 
@@ -149,9 +166,10 @@ DISTINCT arch FROM <op_table>` "for safety". The union is dead SQL,
 masks bugs (op rows without a corresponding kernel build), and review
 comments that recommend it should be pushed back on.
 
-### Unix-socket protocol (localq/protocol.py)
+### Unix-socket protocol (pgdef/localq/protocol.py)
 
-Newline-delimited JSON. Broker→Worker message types: `preprocess`, `probe`, `tune_hsaco`, `shutdown`. Worker→Broker: `result`, `error`. Each message carries a `request_id` UUID.
+4-byte big-endian length prefix + JSON (NOT newline JSON). Worker→broker: `get_task`, `forward`,
+`register_ack`. Broker→worker: `task`, `no_task`, `ack`. See `.claude/docs/localq_design.md`.
 
 ### config.rc variables (loaded by .tune/lib/config_load.sh)
 
@@ -170,20 +188,24 @@ Tables: `FLASH$attn_fwd`, `FLASH$bwd_kernel_dk_dv`, `FLASH$bwd_kernel_dq`, `FLAS
 ## CLAUDE.md rules that apply here
 
 - PostgreSQL connections: NEVER include `dbname`; use only `host`, `port`, `user`, `password`
-- All DB operations go through `pq/` functions — no raw SQL in `localq/` or other packages
+- All DB operations go through a `pq` package (`aotriton.pgdef.pq` for engine tables, `aotriton.tune.pq` for tune's) — no raw SQL in `localq/` or other packages; write engine tables only through `pgdef.pq`
 - `argparse` arguments use underscores, not dashes
 - Python 3.10+ syntax (`X | Y` unions, `list[...]` generics)
 
 ## Design reference documents
 
-- `.claude/docs/localq_design.md` — State-of-the-art design for the Unix socket
-  local queue: wire protocol, message classes and handler chain, dependency
-  tracking, throttling, error handling, graceful shutdown, DB integration.
-  Read this when working on anything in `localq/`.
+- `.claude/docs/localq_design.md` — the Unix socket local runtime: wire protocol,
+  the `CLASS`/`QUEUE`/`EMITS` handler graph, fan-in, the single failure path, leases,
+  throttling, graceful shutdown. Read this when working on anything in
+  `python/pgdef/localq/` or `python/tune/handlers.py`.
+- `.claude/docs/pgdef_design.md` — the DEF (pgdef): the application-independent
+  engine with tune as its one application (perfmon is the planned second one and lands in a later PR). It lists decided and rejected
+  designs. Read it before changing the queue schema, the task lifecycle or the
+  handler graph, or before proposing any new engine-level feature.
 
 ## Out of scope
 
 - `.tune/webui/` — use the webui-expert agent
-- `v3python/codegen/`, `v3python/rules/` — use the codegen agent
+- `python/codegen/`, `python/template_instantiation/`, `modules/*/aot/` — use the codegen agent
 - C++ runtime source
 - Triton kernel `.py` source files

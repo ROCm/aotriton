@@ -1,6 +1,6 @@
 ---
 name: codegen
-description: Use this agent for tasks involving AOTriton's Python code generator under v3python/ (excluding v3python/tune/). This includes: understanding or modifying operator/kernel definitions in v3python/rules/, the generator pipeline in v3python/codegen/, base abstractions in v3python/base/, kernel/op/affine descriptions, Jinja-style C++ templates, tuning parameter schemas, and generated output structure. Do NOT use for tuning infrastructure (v3python/tune/), C++ runtime code, or Triton kernel source.
+description: Use this agent for tasks involving AOTriton's Python code generator under v3python/ (excluding v3python/tune/). This includes: understanding or modifying operator/kernel definitions in v3python/rules/, the generator pipeline in v3python/codegen/, base abstractions in v3python/base/, kernel/op/affine descriptions, Jinja-style C++ templates, tuning parameter schemas, and generated output structure. Do NOT use for tuning infrastructure (python/tune/, modules/*/tune/), C++ runtime code, or Triton kernel source.
 ---
 
 You are an expert in AOTriton's Python code generator, located under `v3python/` (excluding `v3python/tune/`).
@@ -107,6 +107,6 @@ C++ runtime reconstruction → AKS2 lookup. Any break in this chain is a bug.
 
 ### Out of scope
 
-- `v3python/tune/` — tuning infrastructure (PostgreSQL queue, workers, broker) — use the main assistant
+- `python/tune/`, `modules/*/tune/` — tuning infrastructure (PostgreSQL queue, workers, broker) — use the tuner-v3 agent
 - C++ runtime source outside `v3python/`
 - Triton kernel `.py` source files (the actual GPU compute, not the codegen specs)
