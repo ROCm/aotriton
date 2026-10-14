@@ -27,12 +27,12 @@ agree with every kernel it hands data to.
 | scores | `S = Q K^T` in fp32; `qk_scale = sm_scale * log2(e)` multiplies the **fp32** `S` | see [Rounding a scaled operand](#1-rounding-a-scaled-operand-to-the-input-dtype) |
 | softmax | base 2: `p = exp2(qk_scale * S + log2(e) * bias - m)`; `m` is the max of the *same* rounded values | see [The max and the exponent](#3-the-max-and-the-exponent-computed-from-differently-rounded-values) |
 | bias | multiplied by `log2(e)` **in fp32**, identically in fwd and bwd | see [Constants multiplied in low precision](#4-constants-multiplied-in-low-precision) |
-| saved LSE | **natural base**, `logsumexp(sm_scale * S + bias)`; the backward multiplies it by `log2(e)` on load | see [LSE base](#5-the-lse-in-the-wrong-base-or-units) |
+| saved LSE | **natural base**, `logsumexp(sm_scale * S + bias)`; the backward multiplies it by `log2(e)` on load; may be null | context parallelism reads it; see [LSE base](#5-the-lse-in-the-wrong-base-or-units) |
 | fully masked row | `O = 0`, `LSE = +inf`, `dQ = 0` | `+inf` makes the backward's `exp(S - LSE)` vanish |
 | `Delta` | `rowsum(dO * O)` in fp32, from the O the forward **stored** | see [Delta in low precision](#6-delta-in-low-precision) |
 | `dS` | `P * (dP - Delta)`, the gradient with respect to the *scaled* logits | `sm_scale` then multiplies dQ and dK exactly once |
 | `dB` | `dS` itself, no `log2(e)`, no `sm_scale` | the bias enters the softmax unscaled |
-| dropout | `l_i` sums P **before** the mask; `1/(1-p)` applied once; identical Philox offsets and word order in every kernel | see [Dropout](#9-dropout) |
+| dropout | `l_i` sums P **before** the mask; `1/(1-p)` applied once; identical Philox offsets and word order in every kernel of every backend | fwd and bwd backends are chosen independently; see [Dropout](#9-dropout) |
 
 ## Why the standard tests pass these mistakes
 
@@ -262,6 +262,22 @@ O/gradient test with a base-2 LSE; only a check on the LSE value itself sees it.
 The contract is the natural-base `logsumexp(sm_scale * S + bias)`. The forward
 multiplies by `ln(2)` on store and the backward by `log2(e)` on load.
 
+**Why natural base, when base 2 is more accurate.** The GPU's transcendental
+instructions are base 2: `v_exp_f32` computes `2**x` and `v_log_f32` computes
+`log2(x)`. The kernels therefore work in base 2 throughout. If the LSE were
+private to the forward and backward, base 2 would be the better choice, because
+the natural-base contract costs two extra fp32 roundings that a base-2 LSE
+never takes: the multiply by `ln(2)` on store and the one by `log2(e)` on load.
+`test_matrix_bias_fwd_bwd_symmetry` measures the round trip at a few `1e-7`. But
+the LSE is not private: PyTorch's context parallelism merges partial attention
+results through it, and that arithmetic is in natural base. So the LSE has to be
+natural base, and the conversion's cost is accepted.
+
+It is not private between backends either. The forward and backward are chosen
+and tuned independently, so one backend's forward can feed another's backward,
+just as with the [dropout mask](#9-dropout). Every backend must store the same
+LSE, not just one that its own backward agrees with.
+
 **Exposed by:** any input, once something checks the LSE. It is off by a factor
 of 1.44.
 
@@ -367,8 +383,18 @@ What can go wrong, and has:
   - `dS = P * (dP - Delta)` uses the *undropped* P.
   - `Delta` sits outside the mask. Before bf27b09e the kernel folded `-Delta`
     into the `dP` accumulator, where the mask would have hit it.
+- **The mask is an interface between backends, not a private detail.** In
+  principle the dropout mask, like the LSE, never leaves the forward/backward
+  pair that made it: the backward regenerates it from the seed and offset rather
+  than reading it. In practice the forward and backward backends are selected
+  and tuned independently, so a flyc forward can be followed by a Triton
+  backward, or the other way round.
+  - Every backend's kernels must therefore produce a bit-identical mask, not
+    only the kernels within one backend: flyc and Triton alike.
+  - That is a contract to keep rather than a hard one to meet: every kernel
+    involved is ours, so the Philox wiring below can be matched exactly.
 - **The mask must be bit-identical in every kernel.** Forward, dq, dk/dv and the
-  fused kernel must use one Philox offset formula:
+  fused kernel, of every backend, must use one Philox offset formula:
   - The stride is tied to `Max_seqlen_k`, not the per-sequence length (varlen).
   - Offsets are 64-bit. Before 0f430532 (#71) they were 32-bit and wrapped once
     `B * H * Sq * Sk` reached `2**32`.
@@ -420,14 +446,20 @@ fp16, and f9bb46f2 stored dV in dK's dtype.
   that splits a non-power-of-two head dimension into power-of-two pieces cannot
   assume only the trailing piece is ragged once `hdim_qk != hdim_vo`. Fixed in
   0373139c (#135).
-- **The 8xD input contract.** Loads and stores are 8 columns wide, so a kernel
-  touches `ceil8(hdim)` columns of every row. A buffer descriptor whose range
-  ends at `hdim` makes the hardware drop the dword holding the last real column
-  and the first pad column. The last element of every slab is then never
-  written or read. Fixed for the gfx950 flyc kernels in 53b677b7 (#231).
-  Guard: `test_prime_hdim` and `test_memory_layouts` fill the slack with NaN.
-  A mask that multiplies by zero instead of discarding hides a finite leak, but
-  not a NaN.
+- **The input contract: a contiguous last dimension, aligned to 16 bytes.**
+  The kernels move each row with 128-bit vector loads and stores, so the head
+  dimension must be contiguous and aligned to 16 bytes. The Triton kernels state
+  the first half as `tl.assume(stride_qk == 1)` and its siblings (1884d3d0).
+  - A kernel therefore touches every row up to the next 16-byte boundary:
+    `ceil8(hdim)` columns for fp16/bf16, which the test comments call the "8xD
+    contract", and `ceil4(hdim)` for fp32. The caller must own those columns.
+  - A buffer descriptor whose range ends at `hdim` makes the hardware drop the
+    dword holding the last real column and the first pad column. The last
+    element of every slab is then never written or read. Fixed for the gfx950
+    flyc kernels in 53b677b7 (#231).
+  - Guard: `test_prime_hdim` and `test_memory_layouts` fill the slack with NaN.
+    A mask that multiplies by zero instead of discarding hides a finite leak,
+    but not a NaN.
 
 ### 12. GQA: per-query-head state
 
@@ -470,13 +502,23 @@ offset, dQ and dB.
 
 ### 15. Optional outputs
 
-A bias whose gradient is not wanted arrives as a null `dB` with all-zero
-strides; PyTorch passes this for every bool-masked SDPA. The kernel must test the
-strides before storing. 00ccbf3c (#22) required **all** strides to be zero for
-"no dB" (it had been "any"). The flyc gfx1201 dq kernel wrote `dB`
-unconditionally until 1c7c973c (#239).
+An output nobody will read can arrive as a null pointer, and the kernel must
+check before storing to it.
 
-**Guard.** `test_fast` with `bias_type='matrix,nograd'`.
+- **`dB`.** A bias whose gradient is not wanted arrives as a null `dB` with
+  all-zero strides; PyTorch passes this for every bool-masked SDPA. The kernel
+  must test the strides before storing.
+  - 00ccbf3c (#22) required **all** strides to be zero for "no dB" (it had been
+    "any").
+  - The flyc gfx1201 dq kernel wrote `dB` unconditionally until 1c7c973c
+    (#239).
+  - Guard: `test_fast` with `bias_type='matrix,nograd'`.
+- **The LSE.** A forward with no backward to follow (inference) may pass a null
+  `L`. The Triton forward tests `L_not_null` (*"Allows null L for
+  training=False"*) before every LSE store, the fully-masked-tile `+inf` store
+  included, and the flyc kernels honour the same contract.
+  - A kernel that stores the LSE unconditionally faults on such a call.
+  - No test passes a null `L` today.
 
 ## Not mistakes: what the hardware does
 
