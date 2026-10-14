@@ -197,6 +197,11 @@ class ExaidProxy(object):
         """
         if self._process is None:
             return
+        if self._process.poll() is not None:
+            # Already dead: forget it. Going through write() would relaunch a
+            # fresh process (the `process` property does) only to tell it to exit.
+            self._reap()
+            return
         pid = self._process.pid
         logger.info(f"Shutting down exaid worker process (pid={pid})")
         try:
