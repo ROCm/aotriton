@@ -180,10 +180,10 @@ class Operator(Interface):
             def discretization(v, bucket=bucket):
                 return bucket.index(v)
             df[f'$$ind_{i}'] = df[ind_key].apply(discretization)
-        for i, gpu in enumerate(f.database_gpus):
+        for i, gpu in enumerate(f.optimized_for):
             if i > 0:
                 lut_tensor[i] = lut_tensor[0]
-            df_i = df[df['gpu'] == gpu]
+            df_i = df[df['target_gpu'] == gpu]
             inds = tuple([df_i[f'$$ind_{j}'] for j in range(nkeys)])
             chosen = df_i[backend_key]
             if True:  # FIXME: Flyc duct tape
