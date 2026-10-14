@@ -115,7 +115,18 @@ class LocalBroker:
     def run(self):
         """Main broker event loop"""
         self.running = True
+        torn_down = False
         while self.running:
+            # Graceful shutdown (SIGHUP): tear blocked messages down WHILE the
+            # loop still runs, so the CPU workers (still alive at this point,
+            # see worker_service.sh's stop order) receive the graceful_cancel
+            # messages and give the tasks back. Tearing down only after the loop
+            # has exited would enqueue them into a broker nobody reads anymore.
+            if self.graceful_shutdown_requested and not torn_down:
+                logger.info("Graceful shutdown flag set, tearing down blocked messages")
+                self._teardown_blocked_messages()
+                torn_down = True
+
             # Wait for socket events (timeout 0.1s for periodic tasks)
             events = self.epoll.poll(timeout=0.1)
 
@@ -133,8 +144,10 @@ class LocalBroker:
                     # Worker disconnected
                     self._remove_worker(fd)
 
-        # Check if graceful shutdown requested
-        if self.graceful_shutdown_requested:
+        # Graceful shutdown requested after the last loop iteration: nothing
+        # will serve the teardown messages any more, but still run it so the
+        # handlers' teardown side effects (e.g. freeing prepared data) happen.
+        if self.graceful_shutdown_requested and not torn_down:
             logger.info("Graceful shutdown flag set, tearing down blocked messages")
             self._teardown_blocked_messages()
 
