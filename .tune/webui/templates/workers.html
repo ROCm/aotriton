@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from 'partials/tuning_mode_section.html' import tuning_mode_radios %}
+{% from 'partials/category_section.html' import category_radios %}
 
 {% block title %}Workers{% endblock %}
 
@@ -34,7 +34,7 @@
 
 <section>
     <h3>Tuning Mode</h3>
-    {{ tuning_mode_radios(tuning_mode, with_own_save_form=true,
+    {{ category_radios(category, with_own_save_form=true,
            description_extra='This sets the default selection in the Bulk Actions section below.') }}
 </section>
 
@@ -45,7 +45,8 @@
     </div>
     <button hx-post="/api/deploy/prepare"
             hx-swap="none"
-            hx-indicator="#prepare-spinner">Prepare Workdir</button>
+            hx-indicator="#prepare-spinner"
+            hx-vals='js:{category: getCategory()}'>Prepare Workdir</button>
     <span id="prepare-spinner" class="htmx-indicator">⏳ Preparing...</span>
     <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
         Initialize the working directory structure, sync configuration files and tuning framework code.
@@ -56,23 +57,24 @@
     <h3>Bulk Actions</h3>
     <button hx-post="/api/workers/all/start"
             hx-swap="none"
-            hx-vals='js:{tuning_mode: getTuningMode()}'>Start All</button>
+            hx-vals='js:{category: getCategory()}'>Start All</button>
     <button hx-post="/api/workers/all/stop" hx-swap="none">Stop All</button>
     <button hx-post="/api/workers/all/restart"
             hx-swap="none"
-            hx-vals='js:{tuning_mode: getTuningMode()}'>Restart All</button>
+            hx-vals='js:{category: getCategory()}'>Restart All</button>
     <button hx-post="/api/workers/all/stop-start"
             hx-swap="none"
-            hx-vals='js:{tuning_mode: getTuningMode()}'>Stop All & Start All</button>
+            hx-vals='js:{category: getCategory()}'>Stop All & Start All</button>
     <button hx-post="/api/deploy/workdir"
             hx-swap="none"
             hx-indicator="#deploy-all-spinner"
-            hx-vals='js:{tuning_mode: getTuningMode()}'>Deploy to All Workers</button>
+            hx-vals='js:{category: getCategory()}'>Deploy to All Workers</button>
     <span id="deploy-all-spinner" class="htmx-indicator">Deploying...</span>
     <br>
     <button hx-post="/api/builds/images"
             hx-swap="none"
             hx-indicator="#build-images-spinner"
+            hx-vals='js:{category: getCategory()}'
             style="margin-top: 0.5rem; background-color: #17a2b8; color: white;">Build Images on All Workers</button>
     <span id="build-images-spinner" class="htmx-indicator">⏳ Building...</span>
     <button hx-post="/api/workers/probe-all-status"
@@ -215,6 +217,16 @@
                                 onclick="document.getElementById('workdir-{{ worker.hostname }}').value = document.getElementById('workdir-{{ worker.hostname }}').getAttribute('data-original')"
                                 style="font-size: 0.75em; padding: 0.2rem 0.4rem; white-space: nowrap;">Reset</button>
                     </form>
+                    <form hx-post="/api/workers/{{ worker.hostname }}/subpool"
+                          hx-swap="none"
+                          hx-on::after-request="location.reload()"
+                          title="Machine group inside {{ worker.arch }}, e.g. MI355. Its readers claim generic tasks plus tasks dispatched for this subpool."
+                          style="display: flex; gap: 0.3rem; align-items: center; margin: 0.3rem 0 0 0;">
+                        <input type="text" name="subpool" value="{{ worker.subpool }}" placeholder="subpool (none)"
+                               style="flex: 1; margin: 0; font-family: monospace;">
+                        <button type="submit"
+                                style="font-size: 0.75em; padding: 0.2rem 0.4rem; white-space: nowrap;">Set subpool</button>
+                    </form>
                     <div style="margin-top: 0.5rem; padding: 0.3rem; border-top: 1px solid #ddd;">
                         <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
                             <label style="font-size: 0.85em; margin: 0; display: flex; align-items: center; gap: 0.3rem;">
@@ -263,10 +275,11 @@
                     <br style="margin: 0.2rem 0;">
                     <button hx-post="/api/deploy/{{ worker.hostname }}"
                             hx-swap="none"
-                            hx-vals='js:{tuning_mode: getTuningMode()}'
+                            hx-vals='js:{category: getCategory()}'
                             style="font-size: 0.8em; padding: 0.3rem 0.5rem; background-color: #17a2b8; color: white;">Deploy</button>
                     <button hx-post="/api/workers/{{ worker.hostname }}/build-image"
                             hx-swap="none"
+                            hx-vals='js:{category: getCategory()}'
                             style="font-size: 0.8em; padding: 0.3rem 0.5rem; background-color: #17a2b8; color: white;">Build Image</button>
                 </td>
                 {% else %}
@@ -359,7 +372,7 @@ function sendWorkerAction(hostname, url) {
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ multi_gpu: multiGpu, tuning_mode: getTuningMode() })
+        body: JSON.stringify({ multi_gpu: multiGpu, category: getCategory() })
     })
     .then(response => {
         if (!response.ok) {

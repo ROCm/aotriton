@@ -112,7 +112,8 @@ def dashboard():
     tuning_progress = tasks.get_tuning_progress(workdir)
     refresh_interval = current_app.config['REFRESH_INTERVAL']
     return render_template('dashboard.html', status=status, workers=workers,
-                           tuning_progress=tuning_progress, refresh_interval=refresh_interval)
+                           tuning_progress=tuning_progress,
+                           refresh_interval=refresh_interval)
 
 
 @bp.route('/workers')
@@ -124,13 +125,13 @@ def workers():
         workers_by_arch, tasks.get_supported_architectures())
     default_workdir = tasks.get_default_workdir(workdir) or '<not set>'
     git_status = tasks.get_git_status(workdir)
-    tuning_mode = tasks.get_tuning_mode(workdir)
+    category = tasks.get_category(workdir)
     return render_template('workers.html',
                           workers_by_arch=workers_by_arch,
                           supported_archs=supported_archs,
                           default_workdir=default_workdir,
                           git_status=git_status,
-                          tuning_mode=tuning_mode)
+                          category=category)
 
 
 @bp.route('/servers')
@@ -139,13 +140,13 @@ def servers():
     workdir = current_app.config['WORKDIR']
     config_vars = tasks.get_config_vars(workdir)
     hostnames = tasks.get_hostnames(workdir)
-    tuning_mode = tasks.get_tuning_mode(workdir)
+    category = tasks.get_category(workdir)
     # Architectures this workdir actually has workers for, same source and same
     # helper the Builds page uses. Not config.TUNING_ARCHITECTURES, which is an
     # aspirational list and would offer arches this workdir has no data for.
     archs = tasks.get_architectures(workdir)
     return render_template('servers.html', config_vars=config_vars, hostnames=hostnames,
-                           tuning_mode=tuning_mode, archs=archs)
+                           category=category, archs=archs)
 
 
 @bp.route('/builds')
@@ -189,8 +190,8 @@ def api_start_all_workers():
     """Start all workers"""
     workdir = current_app.config['WORKDIR']
     options = request.get_json() or {}
-    tuning_mode = options.get('tuning_mode') or tasks.get_tuning_mode(workdir)
-    result = tasks.start_all_workers(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
+    category = options.get('category') or tasks.get_category(workdir)
+    result = tasks.start_all_workers(workdir, category=category, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -207,8 +208,8 @@ def api_restart_all_workers():
     """Restart all workers"""
     workdir = current_app.config['WORKDIR']
     options = request.get_json() or {}
-    tuning_mode = options.get('tuning_mode') or tasks.get_tuning_mode(workdir)
-    result = tasks.restart_all_workers(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
+    category = options.get('category') or tasks.get_category(workdir)
+    result = tasks.restart_all_workers(workdir, category=category, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -217,8 +218,8 @@ def api_stop_start_all_workers():
     """Stop then start all workers"""
     workdir = current_app.config['WORKDIR']
     options = request.get_json() or {}
-    tuning_mode = options.get('tuning_mode') or tasks.get_tuning_mode(workdir)
-    result = tasks.stop_start_all_workers(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
+    category = options.get('category') or tasks.get_category(workdir)
+    result = tasks.stop_start_all_workers(workdir, category=category, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -227,9 +228,9 @@ def api_start_worker(hostname):
     """Start single worker"""
     workdir = current_app.config['WORKDIR']
     options = request.get_json() or {}
-    tuning_mode = options.get('tuning_mode') or tasks.get_tuning_mode(workdir)
+    category = options.get('category') or tasks.get_category(workdir)
     result = tasks.start_worker_single(workdir, hostname, options=options,
-                                       tuning_mode=tuning_mode,
+                                       category=category,
                                        dry_run=should_dryrun())
     return jsonify(result)
 
@@ -247,9 +248,9 @@ def api_restart_worker(hostname):
     """Restart single worker"""
     workdir = current_app.config['WORKDIR']
     options = request.get_json() or {}
-    tuning_mode = options.get('tuning_mode') or tasks.get_tuning_mode(workdir)
+    category = options.get('category') or tasks.get_category(workdir)
     result = tasks.restart_worker_single(workdir, hostname, options=options,
-                                         tuning_mode=tuning_mode,
+                                         category=category,
                                          dry_run=should_dryrun())
     return jsonify(result)
 
@@ -259,9 +260,9 @@ def api_stop_start_worker(hostname):
     """Stop then start single worker"""
     workdir = current_app.config['WORKDIR']
     options = request.get_json() or {}
-    tuning_mode = options.get('tuning_mode') or tasks.get_tuning_mode(workdir)
+    category = options.get('category') or tasks.get_category(workdir)
     result = tasks.stop_start_worker_single(workdir, hostname, options=options,
-                                            tuning_mode=tuning_mode,
+                                            category=category,
                                             dry_run=should_dryrun())
     return jsonify(result)
 
@@ -364,8 +365,8 @@ def api_recreate_schema():
 def api_compute_best_results():
     """Compute best_tuning_results table from raw tuning results"""
     workdir = current_app.config['WORKDIR']
-    tuning_mode = request.form.get('mode', 'kernel')
-    result = tasks.compute_best_results(workdir, tuning_mode=tuning_mode, arch=step_arch(), dry_run=should_dryrun())
+    category = tasks.normalize_tune_category(request.form.get('category'))
+    result = tasks.compute_best_results(workdir, category=category, arch=step_arch(), dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -373,8 +374,8 @@ def api_compute_best_results():
 def api_export_best_results():
     """Export best results to centralized SQLite database"""
     workdir = current_app.config['WORKDIR']
-    tuning_mode = request.form.get('mode', 'kernel')
-    result = tasks.export_best_results(workdir, tuning_mode=tuning_mode, arch=step_arch(),
+    category = tasks.normalize_tune_category(request.form.get('category'))
+    result = tasks.export_best_results(workdir, category=category, arch=step_arch(),
                                        incremental=step_use_base_db(), dry_run=should_dryrun())
     return jsonify(result)
 
@@ -383,8 +384,8 @@ def api_export_best_results():
 def api_recreate_materialized_view():
     """Recreate accuracy table via DROP + CREATE"""
     workdir = current_app.config['WORKDIR']
-    tuning_mode = request.form.get('mode', 'kernel')
-    result = tasks.recreate_materialized_view(workdir, tuning_mode=tuning_mode, arch=step_arch(), dry_run=should_dryrun())
+    category = tasks.normalize_tune_category(request.form.get('category'))
+    result = tasks.recreate_materialized_view(workdir, category=category, arch=step_arch(), dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -392,8 +393,8 @@ def api_recreate_materialized_view():
 def api_sancheck():
     """Run LUT sanity check against the exported centralized database"""
     workdir = current_app.config['WORKDIR']
-    tuning_mode = request.form.get('mode', 'kernel')
-    result = tasks.sancheck(workdir, tuning_mode=tuning_mode, arch=step_arch(), dry_run=should_dryrun())
+    category = tasks.normalize_tune_category(request.form.get('category'))
+    result = tasks.sancheck(workdir, category=category, arch=step_arch(), dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -405,10 +406,10 @@ def api_bake_lut():
       incremental=1          → passes --incremental
       fix=1 + pass_num=N     → passes --fix [hostname:]N  (hostname optional)
       hostname=<h>           → used only when fix=1; sentinel '__all__' means all hosts
-      mode=kernel|op         → tuning mode (from UI radio buttons)
+      category=tune,kernel|tune,op → category (from UI radio buttons)
     """
     workdir = current_app.config['WORKDIR']
-    tuning_mode = request.form.get('mode', 'kernel')
+    category = tasks.normalize_tune_category(request.form.get('category'))
     extra_args: list = []
 
     if request.form.get('fix') == '1':
@@ -421,15 +422,15 @@ def api_bake_lut():
     elif request.form.get('incremental') == '1':
         extra_args = ['--incremental']
 
-    result = tasks.bake_lut(workdir, extra_args or None, tuning_mode=tuning_mode, dry_run=should_dryrun())
+    result = tasks.bake_lut(workdir, extra_args or None, category=category, dry_run=should_dryrun())
     return jsonify(result)
 
 
 @bp.route('/api/servers/update-materialized-view', methods=['POST'])
 def api_update_materialized_view():
     workdir = current_app.config['WORKDIR']
-    tuning_mode = request.form.get('mode', 'kernel')
-    result = tasks.update_materialized_view(workdir, tuning_mode=tuning_mode, arch=step_arch(), dry_run=should_dryrun())
+    category = tasks.normalize_tune_category(request.form.get('category'))
+    result = tasks.update_materialized_view(workdir, category=category, arch=step_arch(), dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -437,8 +438,8 @@ def api_update_materialized_view():
 def api_decomposedb():
     """Decompose centraldb.sqlite3 into per-arch/kernel shards"""
     workdir = current_app.config['WORKDIR']
-    tuning_mode = request.form.get('mode', 'kernel')
-    result = tasks.decomposedb(workdir, tuning_mode=tuning_mode, arch=step_arch(), dry_run=should_dryrun())
+    category = tasks.normalize_tune_category(request.form.get('category'))
+    result = tasks.decomposedb(workdir, category=category, arch=step_arch(), dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -546,8 +547,8 @@ def api_build_images():
 def api_deploy_workdir():
     """Deploy workdir to all workers"""
     workdir = current_app.config['WORKDIR']
-    tuning_mode = request.form.get('tuning_mode') or tasks.get_tuning_mode(workdir)
-    result = tasks.deploy_workdir(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
+    category = request.form.get('category') or tasks.get_category(workdir)
+    result = tasks.deploy_workdir(workdir, category=category, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -556,9 +557,9 @@ def api_deploy_single(hostname):
     """Deploy workdir to a single worker; pass testnode=1 to add --testnode flag"""
     workdir = current_app.config['WORKDIR']
     extra_args = ['--testnode'] if request.form.get('testnode') == '1' else None
-    tuning_mode = request.form.get('tuning_mode') or tasks.get_tuning_mode(workdir)
+    category = request.form.get('category') or tasks.get_category(workdir)
     result = tasks.deploy_workdir_single(workdir, hostname, extra_args=extra_args,
-                                         tuning_mode=tuning_mode,
+                                         category=category,
                                          dry_run=should_dryrun())
     return jsonify(result)
 
@@ -605,6 +606,14 @@ def api_update_worker_workdir(hostname):
     return jsonify(result)
 
 
+@bp.route('/api/workers/<hostname>/subpool', methods=['POST'])
+def api_update_worker_subpool(hostname):
+    """Update the worker's subpool (machine group inside its arch)"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.update_worker_subpool(workdir, hostname, request.form.get('subpool', ''))
+    return jsonify(result)
+
+
 @bp.route('/api/workers/<hostname>/role/<role>', methods=['POST'])
 def api_set_worker_role(hostname, role):
     """Set or clear a role for a worker (body: enabled=true|false)"""
@@ -633,12 +642,12 @@ def api_default_workdir():
     return jsonify(result)
 
 
-@bp.route('/api/config/tuning-mode', methods=['POST'])
-def api_tuning_mode():
-    """Set the WebUI tuning mode (kernel or op)"""
+@bp.route('/api/config/category', methods=['POST'])
+def api_category():
+    """Set the WebUI category (tune,kernel or tune,op)"""
     workdir = current_app.config['WORKDIR']
-    mode = request.form.get('mode', '').strip()
-    result = tasks.set_tuning_mode(workdir, mode)
+    category = request.form.get('category', '').strip()
+    result = tasks.set_category(workdir, category)
     return jsonify(result)
 
 
@@ -719,41 +728,35 @@ def stream_output(action_id):
 
 @bp.route('/api/actions/<action_id>/output', methods=['GET'])
 def get_action_output(action_id):
-    """Get action output as HTML for polling (incremental)"""
+    """Get new action output as plain text, resuming from a sequence cursor.
+
+    The cursor is a monotonic per-line sequence number assigned by the tracker,
+    never an index into a list.  Indices into a merged stdout+stderr list are
+    unusable as a cursor because a newly captured stdout line shifts every
+    stderr line already delivered, which replays old text and drops new text.
+    """
     try:
         tracker = current_app.tracker_registry.get(action_id)
         if not tracker:
             return '(tracker not found)', 404
 
-        # Get offset from query parameter
-        offset = int(request.args.get('offset', 0))
+        try:
+            cursor = int(request.args.get('offset', 0))
+        except (TypeError, ValueError):
+            cursor = 0
 
-        output = tracker.get_output()
+        lines, chunk_start, next_cursor, dropped = tracker.read_output(cursor)
 
-        # Combine stdout and stderr with line numbers to maintain order
-        all_lines = []
-        for i, line in enumerate(output['stdout']):
-            all_lines.append((i, 'stdout', line))
-        for i, line in enumerate(output['stderr']):
-            all_lines.append((i, 'stderr', line))
+        if dropped:
+            lines = [f'[... {dropped} earlier line(s) dropped from the output buffer ...]'] + lines
 
-        # Get only new lines starting from offset
-        new_lines = all_lines[offset:]
-
-        # If no new lines
-        if not new_lines:
-            if offset == 0 and output['status'] in ['completed', 'failed']:
-                return '(no output)\n'
-            return ''  # No new content
-
-        # Build plain text for new lines only
-        lines_text = []
-        for idx, line_type, line in new_lines:
-            lines_text.append(line)
-
-        # Return new lines with updated offset in response header
-        response = '\n'.join(lines_text) + '\n'
-        return response, 200, {'X-Output-Offset': str(len(all_lines))}
+        body = ''.join(line + '\n' for line in lines)
+        headers = {
+            'X-Output-From': str(chunk_start),
+            'X-Output-Offset': str(next_cursor),
+            'Cache-Control': 'no-store',
+        }
+        return body, 200, headers
 
     except Exception as e:
         import traceback
@@ -1231,7 +1234,7 @@ def plotly_cache():
 
 @bp.route('/debug')
 def debug():
-    """Debug page - inspect task_queue entries and all related rows"""
+    """Debug page - inspect pgdef.task entries and all related rows"""
     task_id_str = request.args.get('task_id', '').strip()
     if task_id_str:
         try:

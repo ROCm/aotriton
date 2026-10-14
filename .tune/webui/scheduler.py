@@ -130,14 +130,14 @@ class WorkerScheduler:
 
     def _wkctl(self, action: str, hostname: str):
         """Run wkctl for a single host"""
-        from .tasks import get_tuning_mode
+        from .tasks import get_category
         aotriton_root = Path(__file__).resolve().parent.parent.parent
         wkctl_path = aotriton_root / '.tune/bin/wkctl'
-        tuning_mode = get_tuning_mode(self.workdir)
+        category = get_category(self.workdir)
 
         result = subprocess.run(
             [wkctl_path.as_posix(), self.workdir, action, '--host', hostname,
-             '--tuning_mode', tuning_mode],
+             '--category', category],
             capture_output=True,
             text=True
         )

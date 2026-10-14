@@ -27,7 +27,7 @@ import sys
 import argparse
 
 from aotriton.tune.pytest_node import parse_node_id
-from aotriton.tune.pq.queue import entry_filter
+from aotriton.tune.pq.tasks import entry_selector
 from aotriton.tune.registry import load_family_tune
 
 
@@ -97,7 +97,7 @@ def main() -> None:
         for k, v in entry.items():
             print(f'  {k} = {v!r}')
         print()
-        sql, params = entry_filter(entry)
+        sql, params = entry_selector(entry).where('t')
         print('SQL WHERE clause (no arch filter -- pytest IDs do not encode arch):')
         print(f'  {sql}')
         print(f'  params = {params!r}')
