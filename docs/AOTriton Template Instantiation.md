@@ -288,6 +288,14 @@ struct.
 `Config(kw, num_warps=4, num_stages=2)` — mirrors `triton.Config` API for
 drop-in compatibility.
 
+**The config generator must not depend on a `@ati.tune.fallback` axis.**
+`@ati.tune.fallback(PADDED_HEAD=False)` folds both `PADDED_HEAD` functionals
+onto one tuning entry, and the tuner runs the same `impl_index` (a position in
+the generated list) on both. So every functional sharing an entry must get the
+same configs in the same order. If the lists differ, an index can select no
+kernel on one functional (its candidate is then rejected as broken) or a
+different kernel than the one that was benchmarked, and neither is reported.
+
 ---
 
 ### 3. Metro Kernels — Wiring Collaborating Kernels
