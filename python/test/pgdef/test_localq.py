@@ -131,6 +131,24 @@ def test_semaphore_ignores_other_classes_tasks_and_keyless_messages():
     assert semaphore.resolve(join, _result(1))
 
 
+def test_semaphore_ignores_signals_from_an_older_attempt():
+    join = _join([1])
+    join['attempt'] = 2
+    old = _result(1)
+    old['attempt'] = 1
+    assert not semaphore.resolve(join, old)
+    new = _result(1)
+    new['attempt'] = 2
+    assert semaphore.resolve(join, new)
+
+
+def test_semaphore_rejects_keys_that_cannot_be_aggregated():
+    with pytest.raises(TypeError):
+        _join([{'iface': 'a'}])
+    with pytest.raises(TypeError):
+        semaphore.signal({'class': 'x/result'}, key=('a', {'b': 1}))
+
+
 def test_semaphore_with_no_keys_is_not_blocked():
     join = _join([])
     assert 'depends' not in join and semaphore.get_aggregate_results(join) == {}

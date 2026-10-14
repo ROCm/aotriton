@@ -61,7 +61,10 @@ Only the value travels, not the rest of the signalling message, so put
 everything the join needs into it. Values must be JSON values. They are held
 in the broker until release, so keep them small.
 
-Keys are any JSON values (tuples come back as tuples). With no keys there is
+Keys are JSON scalars, or lists/tuples of them (they come back as tuples);
+anything else, such as a dict, is rejected with TypeError. A signal only
+counts for the semaphore message of the same task AND the same attempt, so
+a retried task is never released by an earlier attempt's leftovers. With no keys there is
 nothing to wait for: `wait()` adds no `depends`, so the message is not
 blocked at all.
 """
@@ -72,7 +75,21 @@ from typing import Any, Iterable
 SEMAPHORE = 'semaphore'   # the message field holding the semaphore's state
 
 
+def _check_key(key) -> None:
+    """A key is a JSON scalar, or a list/tuple of keys. Dicts are rejected:
+    get_aggregate_results() returns the keys as dict keys, so they must be
+    hashable once decoded (lists come back as tuples)."""
+    if key is None or isinstance(key, (str, int, float, bool)):
+        return
+    if isinstance(key, (list, tuple)):
+        for k in key:
+            _check_key(k)
+        return
+    raise TypeError(f'semaphore key must be a JSON scalar or a list/tuple of them, not {key!r}')
+
+
 def _encode(key) -> str:
+    _check_key(key)
     return json.dumps(key, sort_keys=True, separators=(',', ':'))
 
 
@@ -98,6 +115,7 @@ def wait(depends: str | Iterable[str], keys: Iterable, result_msg: dict) -> dict
 def signal(msg: dict, key, value: Any = None) -> dict:
     """Mark `msg` as the signal for `key` of a semaphore message, carrying
     `value`. Returns `msg`."""
+    _check_key(key)
     msg['signal_key'] = key
     msg['signal_value'] = value
     return msg
@@ -113,6 +131,10 @@ def resolve(blocked: dict, incoming: dict) -> bool:
     if incoming.get('class') not in blocked.get('depends', ()):
         return False
     if blocked.get('task_id') != incoming.get('task_id'):
+        return False
+    # A retried task runs a new attempt; signals left over from an older
+    # attempt's graph must not satisfy the new attempt's semaphore.
+    if blocked.get('attempt') != incoming.get('attempt'):
         return False
     if 'signal_key' not in incoming:
         return False
