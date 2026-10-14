@@ -17,7 +17,7 @@ which phases have landed. Landed so far:
 * P2: the engine database layer (`python/pgdef/pq/`), and tune ported onto it
   (`python/tune/pq/`, schema `tune`, `cat_level1` instead of `tuning_level`).
 * P3: the readable local runtime (`python/pgdef/localq/`: handlers with
-  `CLASS`/`QUEUE`/`EMITS`, `fanin`, `graph`, `node.run_node_role`, the single
+  `CLASS`/`QUEUE`/`EMITS`, `semaphore`, `graph`, `node.run_node_role`, the single
   failure path, leases in the reader) and `pgdef.pq.dispatch.drive`; tune's
   `node`, `dispatch` and `handlers`.
 

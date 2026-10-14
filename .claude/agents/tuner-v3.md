@@ -53,7 +53,7 @@ python/pgdef/                # the engine (imports nothing from an application, 
 ├── localq/                  # per-node runtime (see .claude/docs/localq_design.md)
 │   ├── broker.py, generic_worker.py, pg_reader.py, protocol.py, buffered_socket.py
 │   ├── handlers.py           # MessageHandler (CLASS/QUEUE/EMITS), engine handlers, NodeContext
-│   ├── fanin.py, graph.py, node.py   # join helper, graph printer, run_node_role()
+│   ├── semaphore.py, graph.py, node.py   # join helper, graph printer, run_node_role()
 ├── exaid.py                 # ExaidProxy (neutral, spawn_argv) + CommandProcessor/serve skeleton
 └── utils.py                 # logging, by-path family loader (safe_readline: aotriton.utils.line_reader)
 

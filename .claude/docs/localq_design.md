@@ -69,12 +69,12 @@ Engine classes (`pgdef/`): `task_failed`, `graceful_cancel` (handlers) and
 
 ## Joins: fan-in
 
-`pgdef.localq.fanin`: the producer builds the join with
-`fanin.expect(join_msg, keys, depends='app/result')` (no keys: not blocked);
-each parallel result calls `fanin.contribute(msg, key, value)`; the broker
-resolves with `MessageHandler.resolve_dependency` (default `fanin.resolve`,
+`pgdef.localq.semaphore`: the producer builds the join with
+`semaphore.wait(join_msg, keys, depends='app/result')` (no keys: not blocked);
+each parallel result calls `semaphore.signal(msg, key, value)`; the broker
+resolves with `MessageHandler.resolve_dependency` (default `semaphore.resolve`,
 runs on the CLASS in the broker: no database, no runner); the released handler
-reads `fanin.values(msg)`. Emit the join BEFORE the parallel messages so it is
+reads `semaphore.signals(msg)`. Emit the join BEFORE the parallel messages so it is
 blocked before any result can arrive.
 
 ## Failure: one path
@@ -122,7 +122,7 @@ and call `super()`.
 | `broker.py` | epoll loop, queues, dependency + ack tracking, undeliverable handling |
 | `buffered_socket.py`, `protocol.py` | framing |
 | `handlers.py` | `MessageHandler`, `StartHandler`, `HandlerSet`, `NodeContext`, engine handlers |
-| `fanin.py` | join helper |
+| `semaphore.py` | join helper |
 | `generic_worker.py` | worker loop, `EMITS` check, failure path |
 | `pg_reader.py` | claim, throttle, lease renewal, reaping |
 | `node.py` | `run_node_role(app, handlers, start, runners, enrich, argv)` |

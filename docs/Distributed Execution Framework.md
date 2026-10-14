@@ -129,14 +129,14 @@ listing the message classes it waits for. Tune's probe, for example, emits N
 
 `resolve_dependency` is the extension point: a handler can override it to
 release on any condition. The default is the shared helper
-`aotriton.pgdef.localq.fanin`, which covers the usual case, "wait until a
-result has arrived for every expected key":
+`aotriton.pgdef.localq.semaphore`, which covers the usual case, "wait until a
+signal has arrived for every key":
 
 ```python
-join = fanin.expect(postprocess_msg, keys=[('attn_fwd', 0), ('attn_fwd', 1)],
-                    depends='tune/impl_result')       # in the fanning-out handler
-fanin.contribute(result_msg, key=('attn_fwd', 0), value=report)   # in each result
-reports = fanin.values(msg)                           # in the join's handler
+join = semaphore.wait(postprocess_msg, keys=[('attn_fwd', 0), ('attn_fwd', 1)],
+                      depends='tune/impl_result')    # in the fanning-out handler
+semaphore.signal(result_msg, key=('attn_fwd', 0), value=report)   # in each result
+reports = semaphore.signals(msg)                     # in the semaphore message's handler
 ```
 
 If the broker shuts down while a semaphore message is still parked, it calls

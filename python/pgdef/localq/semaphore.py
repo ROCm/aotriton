@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: MIT
 
 """
-Fan-in: a join over the results of N parallel steps of one task.
+Semaphore messages: fan-in (a join) over the results of N parallel steps of
+one task.
 
 How a join works (the mechanism this module plugs into):
 
@@ -24,31 +25,31 @@ The join is a "semaphore message", an ordinary message that carries a
 `resolve_dependency` is the extension point: a handler class may override it
 to release on any condition. This module is the default implementation
 (`MessageHandler.resolve_dependency` calls `resolve()`), which should be
-enough for most cases: wait until a result has arrived for every expected
-key.
+enough for most cases: wait until a signal has arrived for every key.
 
-Usage. A producer emits the join message and N workers; the join waits, in
-the broker, until a result has arrived for every expected key.
+Usage. A producer emits the semaphore message and N parallel messages; each
+parallel step's result signals one key, and the semaphore message is
+released once every key has been signalled.
 
-    # the step that fans out
+    # the step that fans out: the semaphore message waits for one signal per key
     join = child(msg, 'tune/postprocess', target...)          # no target_queue: filled in later
-    fanin.expect(join, keys=[('attn_fwd', 0), ('attn_fwd', 1)], depends='tune/impl_result')
+    semaphore.wait(join, keys=[('attn_fwd', 0), ('attn_fwd', 1)], depends='tune/impl_result')
 
-    # each parallel step's result message
-    fanin.contribute(result_msg, key=('attn_fwd', 0), value=report)
+    # each parallel step's result message signals its key
+    semaphore.signal(result_msg, key=('attn_fwd', 0), value=report)
 
-    # the join's handler, once released
-    reports = fanin.values(msg)       # {('attn_fwd', 0): report, ...}
+    # the semaphore message's handler, once released
+    reports = semaphore.signals(msg)       # {('attn_fwd', 0): report, ...}
 
 Keys are any JSON values (tuples come back as tuples). With no keys there is
-nothing to wait for: `expect()` adds no `depends`, so the join is not blocked
-at all.
+nothing to wait for: `wait()` adds no `depends`, so the message is not
+blocked at all.
 """
 
 import json
 from typing import Any, Iterable
 
-FANIN = 'fanin'
+SEMAPHORE = 'semaphore'   # the message field holding the semaphore's state
 
 
 def _encode(key) -> str:
@@ -61,40 +62,43 @@ def _decode(text: str):
     return tuplify(json.loads(text))
 
 
-def expect(msg: dict, keys: Iterable, *, depends: str) -> dict:
-    """Turn `msg` into a join over `keys`, released by messages of class
-    `depends`. Returns `msg`."""
+def wait(msg: dict, keys: Iterable, *, depends: str) -> dict:
+    """Turn `msg` into a semaphore message that waits for one signal per key
+    in `keys`, from messages of class `depends`. Returns `msg`."""
     encoded = [_encode(k) for k in keys]
     if encoded:
         msg['depends'] = [depends]
-        msg[FANIN] = {'expected': encoded, 'received': {}}
+        msg[SEMAPHORE] = {'expected': encoded, 'received': {}}
     return msg
 
 
-def contribute(msg: dict, key, value: Any = None) -> dict:
-    """Mark `msg` as the result for `key` of a join. Returns `msg`."""
-    msg['fanin_key'] = key
-    msg['fanin_value'] = value
+def signal(msg: dict, key, value: Any = None) -> dict:
+    """Mark `msg` as the signal for `key` of a semaphore message, carrying
+    `value`. Returns `msg`."""
+    msg['signal_key'] = key
+    msg['signal_value'] = value
     return msg
 
 
 def resolve(blocked: dict, incoming: dict) -> bool:
-    """Record `incoming` in `blocked` if it is one of its results; True once
-    every expected key has arrived."""
-    state = blocked.get(FANIN)
+    """Record `incoming` in `blocked` if it is one of its signals; True once a
+    signal has arrived for every key. This is the default
+    `MessageHandler.resolve_dependency`."""
+    state = blocked.get(SEMAPHORE)
     if state is None:
         return False
     if incoming.get('class') not in blocked.get('depends', ()):
         return False
     if blocked.get('task_id') != incoming.get('task_id'):
         return False
-    if 'fanin_key' not in incoming:
+    if 'signal_key' not in incoming:
         return False
-    state['received'][_encode(incoming['fanin_key'])] = incoming.get('fanin_value')
+    state['received'][_encode(incoming['signal_key'])] = incoming.get('signal_value')
     return set(state['expected']) <= set(state['received'])
 
 
-def values(msg: dict) -> dict:
-    """The collected results of a released join, by decoded key."""
-    state = msg.get(FANIN) or {'received': {}}
+def signals(msg: dict) -> dict:
+    """The values the signals of a released semaphore message carried, by
+    decoded key."""
+    state = msg.get(SEMAPHORE) or {'received': {}}
     return {_decode(k): v for k, v in state['received'].items()}

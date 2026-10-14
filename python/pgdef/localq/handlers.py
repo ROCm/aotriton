@@ -35,7 +35,7 @@ from typing import Any
 
 from aotriton.pgdef.pq import tasks as pgtasks
 
-from . import fanin as _fanin
+from . import semaphore as _semaphore
 
 logger = logging.getLogger(__name__)
 
@@ -158,10 +158,11 @@ class MessageHandler:
     def resolve_dependency(cls, blocked_msg: dict, incoming_msg: dict) -> bool:
         """`incoming_msg` arrived; has `blocked_msg`'s dependency been met?
 
-        The default is the shared fan-in (`pgdef.localq.fanin`): a join built
-        with `fanin.expect()` is released once every expected key has arrived.
+        The default is the shared helper (`pgdef.localq.semaphore`): a semaphore
+        message built with `semaphore.wait()` is released once a signal has
+        arrived for every key.
         """
-        return _fanin.resolve(blocked_msg, incoming_msg)
+        return _semaphore.resolve(blocked_msg, incoming_msg)
 
     @classmethod
     def teardown_with_unmet_dependency(cls, msg: dict) -> dict | None:

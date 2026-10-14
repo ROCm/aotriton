@@ -258,7 +258,7 @@ class GenericWorker:
             **task_header(message),
             'error': f"{message['class']}: {type(exc).__name__}: {exc}",
             'permanent': isinstance(exc, Permanent),
-            'origin': {k: v for k, v in message.items() if k not in ('payload', 'fanin')},
+            'origin': {k: v for k, v in message.items() if k not in ('payload', 'semaphore')},
         }
         self._forward_message(failure)
 

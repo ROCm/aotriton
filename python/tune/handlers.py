@@ -27,7 +27,7 @@ import logging
 import shutil
 from pathlib import Path
 
-from aotriton.pgdef.localq import fanin
+from aotriton.pgdef.localq import semaphore
 from aotriton.pgdef.localq.handlers import (DAG_ACK, MessageHandler, Permanent, StartHandler, ack,
                                             child, task_ref)
 from aotriton.pgdef.exaid import ExaidSubprocessNotOK
@@ -198,7 +198,7 @@ class ProbeHandler(MessageHandler):
                 impl_msgs.append(child(msg, IMPL, tmpdir=msg['tmpdir'],
                                        iface_name=iface_name, impl_index=impl_index))
 
-        join = fanin.expect(child(msg, POSTPROCESS, tmpdir=msg['tmpdir']), keys, depends=IMPL_RESULT)
+        join = semaphore.wait(child(msg, POSTPROCESS, tmpdir=msg['tmpdir']), keys, depends=IMPL_RESULT)
         logger.info(f"Probed {len(keys)} impl variant(s) for task_id={msg['task_id']} (tuning_level={level})")
         # The join goes FIRST: it is blocked in the broker before any impl can
         # possibly have reported, so no impl_result can arrive ahead of it.
@@ -245,7 +245,7 @@ class TuneImplHandler(MessageHandler):
             report['error'] = {'stdout': e.stdout, 'stderr': e.stderr}
 
         result = child(msg, IMPL_RESULT, iface_name=iface_name, impl_index=impl_index, report=report)
-        return fanin.contribute(result, key=(iface_name, impl_index), value=None)
+        return semaphore.signal(result, key=(iface_name, impl_index), value=None)
 
 
 class WriteImplResultHandler(MessageHandler):

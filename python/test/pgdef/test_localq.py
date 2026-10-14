@@ -11,7 +11,7 @@ fake of the pq calls, because no PostgreSQL is available here.
 
 import pytest
 
-from aotriton.pgdef.localq import fanin
+from aotriton.pgdef.localq import semaphore
 from aotriton.pgdef.localq.generic_worker import GenericWorker
 from aotriton.pgdef.localq.handlers import (DAG_ACK, GRACEFUL_CANCEL, TASK_FAILED, EmitsViolation,
                                             HandlerSet, MessageHandler, NodeContext, Permanent,
@@ -37,7 +37,7 @@ class ToyStart(StartHandler):
             raise RuntimeError('transient start failure')
         n = msg['payload'].get('n', 3)
         keys = [i for i in range(n)]
-        join = fanin.expect(child(msg, 'toy/join'), keys, depends='toy/result')
+        join = semaphore.wait(child(msg, 'toy/join'), keys, depends='toy/result')
         return [join] + [child(msg, 'toy/work', index=i) for i in keys]
 
     @classmethod
@@ -59,7 +59,7 @@ class ToyWork(MessageHandler):
         if BEHAVIOUR.get('work_sleep'):
             import time
             time.sleep(BEHAVIOUR['work_sleep'])
-        return fanin.contribute(child(msg, 'toy/result', index=msg['index']), key=msg['index'])
+        return semaphore.signal(child(msg, 'toy/result', index=msg['index']), key=msg['index'])
 
 
 class ToyResult(MessageHandler):
@@ -80,7 +80,7 @@ class ToyJoin(MessageHandler):
     def handle(self, msg, ctx):
         from aotriton.pgdef.pq import tasks as pgtasks
         pgtasks.complete(ctx.db_conn, (msg['task_id'], msg['pool']))
-        BEHAVIOUR.setdefault('joined', []).append((msg['task_id'], sorted(fanin.values(msg))))
+        BEHAVIOUR.setdefault('joined', []).append((msg['task_id'], sorted(semaphore.signals(msg))))
         return ack(msg)
 
 
@@ -100,47 +100,47 @@ def _reset_behaviour():
 
 def _join(keys):
     base = {'class': 'x/start', 'task_id': 7, 'pool': 'p', 'payload': {}}
-    return fanin.expect(child(base, 'x/join'), keys, depends='x/result')
+    return semaphore.wait(child(base, 'x/join'), keys, depends='x/result')
 
 
 def _result(key, value=None, task_id=7):
-    return fanin.contribute({'class': 'x/result', 'task_id': task_id}, key, value)
+    return semaphore.signal({'class': 'x/result', 'task_id': task_id}, key, value)
 
 
-def test_fanin_resolves_once_every_key_has_arrived():
+def test_semaphore_resolves_once_every_key_has_arrived():
     join = _join([('a', 0), ('a', 1), ('b', 0)])
     assert join['depends'] == ['x/result']
-    assert not fanin.resolve(join, _result(('a', 0)))
-    assert not fanin.resolve(join, _result(('b', 0)))
-    assert fanin.resolve(join, _result(('a', 1), value={'t': 2}))
-    assert fanin.values(join) == {('a', 0): None, ('b', 0): None, ('a', 1): {'t': 2}}
+    assert not semaphore.resolve(join, _result(('a', 0)))
+    assert not semaphore.resolve(join, _result(('b', 0)))
+    assert semaphore.resolve(join, _result(('a', 1), value={'t': 2}))
+    assert semaphore.signals(join) == {('a', 0): None, ('b', 0): None, ('a', 1): {'t': 2}}
 
 
-def test_fanin_duplicate_delivery_does_not_resolve_early():
+def test_semaphore_duplicate_delivery_does_not_resolve_early():
     join = _join([1, 2])
-    assert not fanin.resolve(join, _result(1))
-    assert not fanin.resolve(join, _result(1))
-    assert fanin.resolve(join, _result(2))
+    assert not semaphore.resolve(join, _result(1))
+    assert not semaphore.resolve(join, _result(1))
+    assert semaphore.resolve(join, _result(2))
 
 
-def test_fanin_ignores_other_classes_tasks_and_keyless_messages():
+def test_semaphore_ignores_other_classes_tasks_and_keyless_messages():
     join = _join([1])
-    assert not fanin.resolve(join, {'class': 'x/other', 'task_id': 7, 'fanin_key': 1})
-    assert not fanin.resolve(join, _result(1, task_id=8))
-    assert not fanin.resolve(join, {'class': 'x/result', 'task_id': 7})
-    assert fanin.resolve(join, _result(1))
+    assert not semaphore.resolve(join, {'class': 'x/other', 'task_id': 7, 'signal_key': 1})
+    assert not semaphore.resolve(join, _result(1, task_id=8))
+    assert not semaphore.resolve(join, {'class': 'x/result', 'task_id': 7})
+    assert semaphore.resolve(join, _result(1))
 
 
-def test_fanin_with_no_keys_is_not_blocked():
+def test_semaphore_with_no_keys_is_not_blocked():
     join = _join([])
-    assert 'depends' not in join and fanin.values(join) == {}
+    assert 'depends' not in join and semaphore.signals(join) == {}
 
 
-def test_fanin_survives_json_roundtrip():
+def test_semaphore_survives_json_roundtrip():
     import json
     join = json.loads(json.dumps(_join([('a', 0)])))
-    assert fanin.resolve(join, json.loads(json.dumps(_result(('a', 0), value=[1]))))
-    assert fanin.values(join) == {('a', 0): [1]}
+    assert semaphore.resolve(join, json.loads(json.dumps(_result(('a', 0), value=[1]))))
+    assert semaphore.signals(join) == {('a', 0): [1]}
 
 
 def test_message_helpers():
