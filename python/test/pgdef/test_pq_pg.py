@@ -4,7 +4,7 @@
 """aotriton.pgdef.pq against a real, disposable PostgreSQL server.
 
 Marker `pg`: skipped unless AOTRITON_PG_TEST_DISPOSABLE=1 and a server answers
-(see aotriton.pgdef.pq.testing). These tests have NOT been run by the author:
+(see aotriton.pgdef.pq.testkit). These tests have NOT been run by the author:
 the development sandbox had no PostgreSQL server. Expect to find a SQL typo.
 """
 
@@ -16,7 +16,7 @@ import pytest
 from psycopg.rows import dict_row
 
 from aotriton.pgdef.pq import logistics as lg
-from aotriton.pgdef.pq import progress, reports, tasks, testing, workers
+from aotriton.pgdef.pq import progress, reports, tasks, testkit, workers
 from aotriton.pgdef.pq.tasks import TaskSelector, TaskSpec
 
 pytestmark = pytest.mark.pg
@@ -44,7 +44,7 @@ def _claim(conn, **kw):
 
 @pytest.fixture
 def pool(pg_conn):
-    testing.ensure_pool(pg_conn, POOL)
+    testkit.ensure_pool(pg_conn, POOL)
     return POOL
 
 
@@ -53,8 +53,8 @@ def pool(pg_conn):
 def test_ensure_pool_is_idempotent_and_listed(pg_conn):
     # tune's schema.sql (applied by the fixture) already creates its pools.
     assert {'gfx942', 'gfx950'} <= set(tasks.list_pools(pg_conn))
-    testing.ensure_pool(pg_conn, 'test_pool')
-    testing.ensure_pool(pg_conn, 'test_pool')
+    testkit.ensure_pool(pg_conn, 'test_pool')
+    testkit.ensure_pool(pg_conn, 'test_pool')
     assert 'test_pool' in tasks.list_pools(pg_conn)
 
 

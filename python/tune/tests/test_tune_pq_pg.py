@@ -4,7 +4,7 @@
 """aotriton.tune.pq against a real, disposable PostgreSQL server.
 
 Marker `pg`: skipped unless AOTRITON_PG_TEST_DISPOSABLE=1 and a server answers
-(see aotriton.pgdef.pq.testing). NOT run by the author: the development sandbox
+(see aotriton.pgdef.pq.testkit). NOT run by the author: the development sandbox
 had no PostgreSQL server.
 """
 

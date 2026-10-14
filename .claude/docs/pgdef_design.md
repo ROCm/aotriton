@@ -248,7 +248,7 @@ Verify these before relying on them.
   development sandbox had no PostgreSQL server. The `pg`-marked tests
   (`python/test/pgdef/test_pq_pg.py`, `python/tune/tests/test_tune_pq_pg.py`)
   are written; run them against a disposable server first
-  (`aotriton.pgdef.pq.testing`).
+  (`aotriton.pgdef.pq.testkit`).
 * **Stale docs:** `.tune/DESIGN.md` still describes Ray, `worker_main.py` and
   `tuning_tasks`. The codegen agent's own paths (`v3python/codegen`, `rules`,
   `base`) have not been updated yet.

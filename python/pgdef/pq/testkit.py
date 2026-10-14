@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: MIT
 
 """
-Helpers for tests that need a real PostgreSQL server (pytest marker `pg`).
+Test kit: for tests only, never used by the engine itself. Helpers for tests
+that need a real PostgreSQL server (pytest marker `pg`). It lives in pq
+because it issues SQL (CLAUDE.md: no raw SQL outside a pq package).
 
 These tests DROP and recreate every layer's schema (pgdef, tune), so
 they must only ever run against a disposable server. They are skipped unless

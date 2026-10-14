@@ -37,23 +37,23 @@ def _one_tree_per_test():
 
 
 # ---------------------------------------------------------------------------
-# PostgreSQL fixtures, for tests marked `pg` (see aotriton.pgdef.pq.testing for
+# PostgreSQL fixtures, for tests marked `pg` (see aotriton.pgdef.pq.testkit for
 # the rules and a docker recipe). python/tune/tests/conftest.py defines the same
 # three from the same helpers.
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope='session')
 def pg_params():
-    from aotriton.pgdef.pq import testing
-    return testing.params_or_skip(pytest)
+    from aotriton.pgdef.pq import testkit
+    return testkit.params_or_skip(pytest)
 
 
 @pytest.fixture
 def pg_conn(pg_params):
     """An autocommit connection to a database whose layer schemas were just
     dropped and re-applied, in initdb's order."""
-    from aotriton.pgdef.pq import testing
-    conn = testing.fresh_schemas(pg_params)
+    from aotriton.pgdef.pq import testkit
+    conn = testkit.fresh_schemas(pg_params)
     yield conn
     conn.close()
 
@@ -61,7 +61,7 @@ def pg_conn(pg_params):
 @pytest.fixture
 def pg_conn2(pg_params, pg_conn):
     """A second connection to the same database, for concurrency tests."""
-    from aotriton.pgdef.pq import testing
-    conn = testing.connect(pg_params)
+    from aotriton.pgdef.pq import testkit
+    conn = testkit.connect(pg_params)
     yield conn
     conn.close()

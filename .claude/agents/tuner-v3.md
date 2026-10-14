@@ -48,7 +48,7 @@ python/pgdef/                # the engine (imports nothing from an application, 
 │   ├── schema.sql            # pgdef.task / report / worker (partitioned by pool), views, pgdef.ensure_pool()
 │   ├── tasks.py              # insert, claim, TaskSelector, reset, append_cookie ...
 │   ├── logistics.py          # the ONLY writer of task.logistics (lease, attempts, errors)
-│   ├── reports.py, workers.py, progress.py, category.py, conn.py, admin.py, testing.py
+│   ├── reports.py, workers.py, progress.py, category.py, conn.py, admin.py, testkit.py
 │   └── dispatch.py           # drive(source, argv): the dispatch loop applications call
 ├── localq/                  # per-node runtime (see .claude/docs/localq_design.md)
 │   ├── broker.py, generic_worker.py, pg_reader.py, protocol.py, buffered_socket.py
