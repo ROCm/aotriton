@@ -75,7 +75,7 @@ result_msg) (no keys: not blocked);
 each parallel result calls `semaphore.signal(msg, key, value)`; the broker
 resolves with `MessageHandler.resolve_dependency` (default `semaphore.resolve`,
 runs on the CLASS in the broker: no database, no runner); the released handler
-reads `semaphore.signals(msg)`. Emit the join BEFORE the parallel messages so it is
+reads `semaphore.get_aggregate_results(msg)`. Emit the join BEFORE the parallel messages so it is
 blocked before any result can arrive.
 
 ## Failure: one path

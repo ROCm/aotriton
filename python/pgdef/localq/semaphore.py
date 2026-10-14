@@ -39,7 +39,7 @@ released once every key has been signalled.
     semaphore.signal(signal_msg, key=('attn_fwd', 0), value=report)
 
     # the semaphore message's handler, once released
-    reports = semaphore.signals(msg)       # {('attn_fwd', 0): report, ...}
+    reports = semaphore.get_aggregate_results(msg)   # {('attn_fwd', 0): report, ...}
 
 Getting the results. A fan-in usually wants the parallel steps' results,
 not just their completion, and the semaphore message collects them:
@@ -54,8 +54,8 @@ not just their completion, and the semaphore message collects them:
   (`msg['semaphore']['expected']`). A repeated key overwrites the earlier
   value.
 - When released, the semaphore message carries all of them to its handler,
-  which reads them from its own input message: `signals(msg)` returns
-  `{key: value}`, with keys decoded (tuples come back as tuples).
+  which reads them from its own input message: `get_aggregate_results(msg)`
+  returns `{key: value}`, with keys decoded (tuples come back as tuples).
 
 Only the value travels, not the rest of the signalling message, so put
 everything the join needs into it. Values must be JSON values. They are held
@@ -120,8 +120,9 @@ def resolve(blocked: dict, incoming: dict) -> bool:
     return set(state['expected']) <= set(state['received'])
 
 
-def signals(msg: dict) -> dict:
-    """The values the signals of a released semaphore message carried, by
-    decoded key."""
+def get_aggregate_results(msg: dict) -> dict:
+    """Read the aggregate results of a released semaphore message: the value
+    each signal carried, as {key: value} with keys decoded. Reading only;
+    `msg` is not changed."""
     state = msg.get(SEMAPHORE) or {'received': {}}
     return {_decode(k): v for k, v in state['received'].items()}

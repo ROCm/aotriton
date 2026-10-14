@@ -80,7 +80,7 @@ class ToyJoin(MessageHandler):
     def handle(self, msg, ctx):
         from aotriton.pgdef.pq import tasks as pgtasks
         pgtasks.complete(ctx.db_conn, (msg['task_id'], msg['pool']))
-        BEHAVIOUR.setdefault('joined', []).append((msg['task_id'], sorted(semaphore.signals(msg))))
+        BEHAVIOUR.setdefault('joined', []).append((msg['task_id'], sorted(semaphore.get_aggregate_results(msg))))
         return ack(msg)
 
 
@@ -113,7 +113,7 @@ def test_semaphore_resolves_once_every_key_has_arrived():
     assert not semaphore.resolve(join, _result(('a', 0)))
     assert not semaphore.resolve(join, _result(('b', 0)))
     assert semaphore.resolve(join, _result(('a', 1), value={'t': 2}))
-    assert semaphore.signals(join) == {('a', 0): None, ('b', 0): None, ('a', 1): {'t': 2}}
+    assert semaphore.get_aggregate_results(join) == {('a', 0): None, ('b', 0): None, ('a', 1): {'t': 2}}
 
 
 def test_semaphore_duplicate_delivery_does_not_resolve_early():
@@ -133,14 +133,14 @@ def test_semaphore_ignores_other_classes_tasks_and_keyless_messages():
 
 def test_semaphore_with_no_keys_is_not_blocked():
     join = _join([])
-    assert 'depends' not in join and semaphore.signals(join) == {}
+    assert 'depends' not in join and semaphore.get_aggregate_results(join) == {}
 
 
 def test_semaphore_survives_json_roundtrip():
     import json
     join = json.loads(json.dumps(_join([('a', 0)])))
     assert semaphore.resolve(join, json.loads(json.dumps(_result(('a', 0), value=[1]))))
-    assert semaphore.signals(join) == {('a', 0): [1]}
+    assert semaphore.get_aggregate_results(join) == {('a', 0): [1]}
 
 
 def test_message_helpers():

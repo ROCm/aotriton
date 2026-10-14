@@ -143,7 +143,7 @@ signal has arrived for every key":
 # in the fanning-out handler: wait(depends, keys, result_msg)
 join = semaphore.wait('tune/impl_result', [('attn_fwd', 0), ('attn_fwd', 1)], postprocess_msg)
 semaphore.signal(signal_msg, key=('attn_fwd', 0), value=report)   # in each result
-reports = semaphore.signals(msg)                     # in the semaphore message's handler
+reports = semaphore.get_aggregate_results(msg)    # in the semaphore message's handler
 ```
 
 **Getting the results.** A fan-in usually needs the parallel steps' results,
@@ -159,7 +159,7 @@ not just their completion. The semaphore message collects them:
   `msg['semaphore']['expected']`.
 * Once released, the semaphore message brings everything it collected to its
   handler. The handler reads it from its own input message:
-  `semaphore.signals(msg)` returns `{key: value}`.
+  `semaphore.get_aggregate_results(msg)` returns `{key: value}`.
 
 Only the value travels, not the rest of the signalling message, so put
 everything the join needs into it. Values must be JSON values, and they are
