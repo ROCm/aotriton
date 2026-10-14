@@ -18,11 +18,11 @@ def _build_query(desc: dict, arch: str, kernel_or_op: str, mode: str,
                  seqlen_min: int, seqlen_max: int) -> tuple[str, list]:
     """Build the SELECT query for a single kernel/op using the descriptor.
 
-    best_tuning_results/tuning_results are a single pair of tables shared by
+    tune.best_tuning_results and the tune.tuning_results view are shared by
     both tuning levels (modular-tune.md §4.3/§4.7); iface_name collides
     across levels (e.g. 'attn_fwd' is valid at both kernel and op level), so
     every predicate on iface_name below is paired with an explicit
-    tuning_level filter. Joins tuning_results to retrieve BATCH and N_HEADS
+    tuning_level filter. Joins tune.tuning_results to retrieve BATCH and N_HEADS
     from result_data->'bim', so the TFLOPS formula accounts for the actual
     benchmark dimensions.
     """
@@ -47,18 +47,18 @@ def _build_query(desc: dict, arch: str, kernel_or_op: str, mode: str,
                 ELSE (r.result_data->'bim'->>'N_HEADS')::int
             END AS n_heads
         FROM {table} b
-        JOIN tuning_results r
+        JOIN tune.tuning_results r
           ON r.task_id = b.task_id
-         AND r.tuning_level = b.tuning_level
+         AND r.cat_level1 = b.cat_level1
          AND r.{name_col} = b.{name_col}
          AND r.impl_index = b.impl_index
         WHERE b.arch = %s
-          AND b.tuning_level = %s
+          AND b.cat_level1 = %s
           AND b.{name_col} = %s
-          AND (b.task_config->'entry'->>'seqlen_q')::int >= %s
-          AND (b.task_config->'entry'->>'seqlen_q')::int <= %s
-          AND (b.task_config->'entry'->>'seqlen_k')::int >= %s
-          AND (b.task_config->'entry'->>'seqlen_k')::int <= %s
+          AND (b.payload->'entry'->>'seqlen_q')::int >= %s
+          AND (b.payload->'entry'->>'seqlen_q')::int <= %s
+          AND (b.payload->'entry'->>'seqlen_k')::int >= %s
+          AND (b.payload->'entry'->>'seqlen_k')::int <= %s
         ORDER BY {dim_groups}
     """
     params = [arch, mode, kernel_or_op, seqlen_min, seqlen_max, seqlen_min, seqlen_max]
@@ -144,13 +144,12 @@ def query_all_best_results(conn, descriptor_id: str = 'flash') -> dict:
 
 def query_cell_detail(conn, task_id: int, kernel: str, mode: str = 'kernel') -> dict:
     """
-    Fetch all candidate tuning_results rows for a single (task_id, kernel)
+    Fetch all candidate tune.tuning_results rows for a single (task_id, kernel)
     cell, plus the per-(test_case, tensor_name) accuracy threshold from
-    most_accurate_tuning_results.
+    tune.most_accurate_tuning_results.
 
-    tuning_results/most_accurate_tuning_results are shared by both tuning
-    levels and iface_name collides across them, so both queries below filter
-    on tuning_level in addition to task_id/iface_name.
+    Both are shared by both tuning levels and iface_name collides across
+    them, so both queries below filter on tuning_level in addition to task_id/iface_name.
 
     Returns:
         {
@@ -176,8 +175,8 @@ def query_cell_detail(conn, task_id: int, kernel: str, mode: str = 'kernel') -> 
         }
     """
     assert mode in ('kernel', 'op'), f"query_cell_detail: invalid mode {mode!r}"
-    results_table = 'tuning_results'
-    accuracy_table = 'most_accurate_tuning_results'
+    results_table = 'tune.tuning_results'
+    accuracy_table = 'tune.most_accurate_tuning_results'
     name_col = 'iface_name'
     idx_col = 'impl_index'
 
@@ -186,7 +185,7 @@ def query_cell_detail(conn, task_id: int, kernel: str, mode: str = 'kernel') -> 
         cur.execute(f"""
             SELECT {idx_col}, result, result_data
               FROM {results_table}
-             WHERE task_id = %s AND tuning_level = %s AND {name_col} = %s
+             WHERE task_id = %s AND cat_level1 = %s AND {name_col} = %s
              ORDER BY {idx_col}
         """, (task_id, mode, kernel))
         for index, result, rd in cur:
@@ -208,7 +207,7 @@ def query_cell_detail(conn, task_id: int, kernel: str, mode: str = 'kernel') -> 
         cur.execute(f"""
             SELECT test_case, tensor_name, absolute_error
               FROM {accuracy_table}
-             WHERE task_id = %s AND tuning_level = %s AND {name_col} = %s
+             WHERE task_id = %s AND cat_level1 = %s AND {name_col} = %s
         """, (task_id, mode, kernel))
         for tc, tn, ae in cur:
             thresholds.append({
@@ -231,7 +230,7 @@ _ARCH_ORDER = ['gfx942', 'gfx950', 'gfx1201', 'gfx90a', 'gfx1100']
 def get_available_archs(conn, descriptor_id: str = 'flash') -> list[str]:
     """Return arches that have best results, either level, in display order.
 
-    Deliberately NOT restricted to tuning_level='kernel'. Although every
+    Deliberately NOT restricted to tuning level 'kernel'. Although every
     operator is backed by Triton kernels, this table holds only what has
     actually been tuned -- and the two levels are tuned by separate runs
     against separate library builds. A database that has seen only op tuning
