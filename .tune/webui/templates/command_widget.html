@@ -252,7 +252,7 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
 
                     // Auto-minimize if completed successfully
                     if (action.status === 'completed' && action.returncode === 0) {
-                        toggleMinimize(action.action_id);
+                        minimizeOutput(action.action_id);
                     }
 
                     // Start polling for this new action
@@ -263,75 +263,119 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
     }
 });
 
-// Poll output for a specific action
+// Actions with a live poll loop. Guarantees exactly one loop per action, so
+// two loops can never append the same chunk into the same textarea.
+const activePolls = new Set();
+
+// Start the poll loop for an action (no-op if one is already running)
 function pollOutput(actionId) {
+    if (activePolls.has(actionId)) return;
+    activePolls.add(actionId);
+    pollOnce(actionId);
+}
+
+function stopPolling(actionId, textarea) {
+    activePolls.delete(actionId);
+    if (textarea && textarea.value === '') {
+        textarea.value = '(no output)\n';
+    }
+}
+
+// One poll iteration: fetch new output, append at the tail, then check status
+function pollOnce(actionId) {
     const textarea = document.getElementById('output-' + actionId);
-    if (!textarea) return;
-
-    const offset = textarea.getAttribute('data-offset') || '0';
-    const status = textarea.getAttribute('data-status');
-
-    // Stop polling if completed, failed, or killed
-    if (status === 'completed' || status === 'failed' || status === 'killed') {
+    if (!textarea) {
+        // Panel was removed from history - drop the loop
+        activePolls.delete(actionId);
         return;
     }
 
-    fetch(`/api/actions/${actionId}/output?offset=${offset}`)
-        .then(response => {
-            const newOffset = response.headers.get('X-Output-Offset');
-            if (newOffset) {
-                textarea.setAttribute('data-offset', newOffset);
-            }
-            return response.text();
-        })
-        .then(text => {
-            if (text) {
-                textarea.value += text;
+    const cursor = parseInt(textarea.dataset.offset || '0', 10);
 
-                // Auto-scroll if checkbox is checked
-                const checkbox = document.getElementById('autoscroll-' + actionId);
-                if (checkbox && checkbox.checked) {
-                    textarea.scrollTop = textarea.scrollHeight;
+    fetch(`/api/actions/${actionId}/output?offset=${cursor}`, {cache: 'no-store'})
+        .then(response => response.text().then(text => ({
+            from: parseInt(response.headers.get('X-Output-From'), 10),
+            next: parseInt(response.headers.get('X-Output-Offset'), 10),
+            text: text,
+        })))
+        .then(chunk => {
+            // Re-read the cursor: it may have moved while this request was in
+            // flight. A chunk starting before the current cursor is a stale or
+            // out-of-order response and would duplicate already-shown text, so
+            // discard it instead of appending.
+            const now = parseInt(textarea.dataset.offset || '0', 10);
+            if (!isNaN(chunk.from) && !isNaN(chunk.next) && chunk.from >= now) {
+                if (chunk.text) {
+                    textarea.value += chunk.text;
+
+                    // Auto-scroll if checkbox is checked
+                    const checkbox = document.getElementById('autoscroll-' + actionId);
+                    if (checkbox && checkbox.checked) {
+                        textarea.scrollTop = textarea.scrollHeight;
+                    }
+                }
+                if (chunk.next > now) {
+                    textarea.dataset.offset = String(chunk.next);
                 }
             }
 
-            // Check if status changed
-            fetch(`/api/actions/${actionId}/status`)
-                .then(r => r.json())
-                .then(data => {
-                    textarea.setAttribute('data-status', data.status);
-
-                    // Update status badge in UI
-                    const panel = document.getElementById('panel-' + actionId);
-                    if (panel) {
-                        const statusText = panel.querySelector('.status-text');
-                        const statusColor = data.status === 'completed' ? '#28a745' :
-                                          data.status === 'failed' ? '#dc3545' :
-                                          data.status === 'killed' ? '#6c757d' : '#ffc107';
-                        if (statusText) {
-                            statusText.innerHTML = `Status: <strong>${data.status}</strong>${data.returncode !== null ? ' | Exit code: ' + data.returncode : ''}`;
-                            statusText.parentElement.style.color = statusColor;
-                        }
-
-                        // Hide kill button if not running
-                        const killBtn = document.getElementById('kill-' + actionId);
-                        if (killBtn && data.status !== 'running') {
-                            killBtn.classList.remove('visible');
-                        }
-
-                        // Auto-minimize if completed successfully (exit code 0)
-                        if (data.status === 'completed' && data.returncode === 0) {
-                            toggleMinimize(actionId);
-                        }
-                    }
-
-                    // Continue polling if still running
-                    if (data.status === 'running' || data.status === 'queued') {
-                        setTimeout(() => pollOutput(actionId), 1000);
-                    }
-                });
+            return fetch(`/api/actions/${actionId}/status`, {cache: 'no-store'})
+                .then(r => r.json());
         })
-        .catch(err => console.error('Poll error:', err));
+        .then(data => {
+            textarea.dataset.status = data.status;
+
+            // Update status badge in UI
+            const panel = document.getElementById('panel-' + actionId);
+            if (panel) {
+                const statusText = panel.querySelector('.status-text');
+                const statusColor = data.status === 'completed' ? '#28a745' :
+                                  data.status === 'failed' ? '#dc3545' :
+                                  data.status === 'killed' ? '#6c757d' : '#ffc107';
+                if (statusText) {
+                    statusText.innerHTML = `Status: <strong>${data.status}</strong>${data.returncode !== null && data.returncode !== undefined ? ' | Exit code: ' + data.returncode : ''}`;
+                    statusText.parentElement.style.color = statusColor;
+                }
+
+                // Hide kill button if not running
+                const killBtn = document.getElementById('kill-' + actionId);
+                if (killBtn && data.status !== 'running') {
+                    killBtn.classList.remove('visible');
+                }
+            }
+
+            if (data.status === 'running' || data.status === 'queued') {
+                setTimeout(() => pollOnce(actionId), 1000);
+                return;
+            }
+
+            if (textarea.dataset.final !== 'done') {
+                // The process ended after the output fetch above. Do one final
+                // read so lines written between the two requests are not lost.
+                textarea.dataset.final = 'done';
+                setTimeout(() => pollOnce(actionId), 200);
+                return;
+            }
+
+            stopPolling(actionId, textarea);
+
+            // Auto-minimize if completed successfully (exit code 0)
+            if (data.status === 'completed' && data.returncode === 0) {
+                minimizeOutput(actionId);
+            }
+        })
+        .catch(err => {
+            console.error('Poll error:', err);
+            activePolls.delete(actionId);
+        });
+}
+
+// Minimize once, idempotently (auto-minimize can fire from several paths)
+function minimizeOutput(actionId) {
+    const textarea = document.getElementById('output-' + actionId);
+    if (textarea && !textarea.classList.contains('minimized')) {
+        toggleMinimize(actionId);
+    }
 }
 
 // Toggle minimize state for output textarea
