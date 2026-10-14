@@ -39,7 +39,9 @@ def _aotriton_version() -> str:
 # Sub-packages under python/ (e.g. 'codegen', 'template_instantiation.compat').
 # modules/ holds user application source (Triton kernels, AOT artifacts)
 # compiled BY aotriton, so it's excluded; tune/tune.* is excluded because it's
-# the separate `aotriton-tune` distribution (python/tune/setup.py).
+# the separate `aotriton-tune` distribution (python/tune/setup.py). pgdef/ IS in
+# this distribution: find_packages() picks it up because it has an __init__.py
+# (its pq/ subpackage's *.sql file needs the package_data entry below).
 #
 # Must stay find_packages(), never find_namespace_packages(): the latter
 # would sweep the standalone python/pytest-gpu-lease/ project (its own
@@ -68,6 +70,9 @@ _package_data = {
         'template/*.cc', 'template/*.h',
         'template/snippet/*.cc', 'template/snippet/*.h',
     ],
+    # Applied by .tune/bin/initdb straight from a checkout, and also read from
+    # the installed package by aotriton.pgdef.pq.
+    'aotriton.pgdef.pq': ['*.sql'],
 }
 
 setup(
