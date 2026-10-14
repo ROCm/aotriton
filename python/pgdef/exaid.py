@@ -33,7 +33,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .utils import safe_readline
+from aotriton.utils.line_reader import safe_readline
 
 logger = logging.getLogger(__name__)
 

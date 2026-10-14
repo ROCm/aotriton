@@ -55,7 +55,7 @@ python/pgdef/                # the engine (imports nothing from an application, 
 │   ├── handlers.py           # MessageHandler (CLASS/QUEUE/EMITS), engine handlers, NodeContext
 │   ├── fanin.py, graph.py, node.py   # join helper, graph printer, run_node_role()
 ├── exaid.py                 # ExaidProxy (neutral, spawn_argv) + CommandProcessor/serve skeleton
-└── utils.py                 # safe_readline, logging, by-path family loader
+└── utils.py                 # logging, by-path family loader (safe_readline: aotriton.utils.line_reader)
 
 python/tune/                 # the `aotriton-tune` distribution (own pyproject.toml/setup.py),
 │                            #   installed as the aotriton.tune namespace subpackage; app "tune"
