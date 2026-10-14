@@ -128,8 +128,8 @@ listing the message classes it waits for. Tune's probe, for example, emits N
    it parks it under each class it depends on.
 3. Every later message of one of those classes is offered to the parked
    message: the broker calls `resolve_dependency(blocked, incoming)` on the
-   **parked message's handler class**. This runs in the broker, with no
-   database. The incoming message is still delivered to its own queue as usual.
+   **parked message's handler class**. This runs in the broker. The incoming
+   message is still delivered to its own queue as usual.
 4. When `resolve_dependency` returns true, the broker removes `depends` and
    forwards the semaphore message to its queue. Its handler then runs like any
    other.
@@ -147,21 +147,23 @@ reports = semaphore.signals(msg)                     # in the semaphore message'
 ```
 
 **Getting the results.** A fan-in usually needs the parallel steps' results,
-not just their completion:
+not just their completion. The semaphore message collects them:
 
-* **Small results** travel in the signals. `semaphore.signal(msg, key, value)`
-  stores `value` in the parked message, and the released handler reads every
-  value with `semaphore.signals(msg)`, a `{key: value}` dict. Values must be
-  JSON values and should stay small: they are held in broker memory until
-  release, and they are not durable.
-* **Large or durable results** go to the database (e.g. `pgdef.report`) in the
-  step that produces them. The signal is sent after the write, and the
-  released handler reads the rows back through the application's `pq`.
+* Each parallel step returns a message marked with
+  `semaphore.signal(msg, key, value)`, where `value` is that step's result.
+* While the semaphore message is held in the broker, `resolve()` (the default
+  `resolve_dependency`) accumulates every matching message into it. A message
+  matches if its class is in `depends`, it belongs to the same task, and it
+  carries a key. Its value is stored in the semaphore message's own state:
+  `msg['semaphore']['received'][key] = value`, next to the expected keys in
+  `msg['semaphore']['expected']`.
+* Once released, the semaphore message brings everything it collected to its
+  handler. The handler reads it from its own input message:
+  `semaphore.signals(msg)` returns `{key: value}`.
 
-A signal counts when its message is **forwarded**, that is, returned by a
-handler, not when that message's own handler has run. So the released handler
-cannot assume the signalling messages were handled. If it needs what their
-handlers write, the signal has to come from the step after the write.
+Only the value travels, not the rest of the signalling message, so put
+everything the join needs into it. Values must be JSON values, and they are
+held in the broker until release, so keep them small.
 
 If the broker shuts down while a semaphore message is still parked, it calls
 the handler's `teardown_with_unmet_dependency()`. By default that gives the task

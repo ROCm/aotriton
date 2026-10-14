@@ -14,7 +14,7 @@ The join is a "semaphore message", an ordinary message that carries a
   under each class it depends on.
 - Every later message of one of those classes is offered to it: the broker
   calls `resolve_dependency(blocked, incoming)` on the parked message's
-  handler class. This runs in the broker, with no database. The incoming
+  handler class. This runs in the broker. The incoming
   message is still delivered to its own queue.
 - When that returns True, the broker removes `depends` and forwards the
   semaphore message, and its handler runs as usual.
@@ -42,24 +42,24 @@ released once every key has been signalled.
     reports = semaphore.signals(msg)       # {('attn_fwd', 0): report, ...}
 
 Getting the results. A fan-in usually wants the parallel steps' results,
-not just their completion:
+not just their completion, and the semaphore message collects them:
 
-- Small results: carry them in the signal. `signal(msg, key, value)` stores
-  `value` in the semaphore message's state in the broker, and the released
-  handler reads all of them with `signals(msg)` as `{key: value}`. Values
-  must be JSON values. Keep them small: every value is held in broker memory
-  until release, and the released message carries them all. They are not
-  durable; if the node dies, the task is retried or failed, never resumed
-  from them.
-- Large or durable results: write them to the database (e.g. a
-  pgdef.report row) in the step that produces them, signal after the write,
-  and read them back in the released handler through the application's pq.
+- Each parallel step returns a message marked with `signal(msg, key, value)`.
+  `value` is that step's result.
+- While the semaphore message is held in the broker, `resolve()` (the default
+  `resolve_dependency`) accumulates every matching message into it: a
+  message whose class is in `depends`, whose task is the same, and which
+  carries a key. Its value is stored in the semaphore message's own state,
+  `msg['semaphore']['received'][key] = value`, next to the expected keys
+  (`msg['semaphore']['expected']`). A repeated key overwrites the earlier
+  value.
+- When released, the semaphore message carries all of them to its handler,
+  which reads them from its own input message: `signals(msg)` returns
+  `{key: value}`, with keys decoded (tuples come back as tuples).
 
-Timing: a signal is recorded when its message is FORWARDED, that is, when a
-handler returns it, not when that message's own handler has run. So the
-released handler must not assume the signalling messages were handled. If
-it needs what their handlers write, the signal must come from the step
-after the write, not from the message that triggers the write.
+Only the value travels, not the rest of the signalling message, so put
+everything the join needs into it. Values must be JSON values. They are held
+in the broker until release, so keep them small.
 
 Keys are any JSON values (tuples come back as tuples). With no keys there is
 nothing to wait for: `wait()` adds no `depends`, so the message is not
