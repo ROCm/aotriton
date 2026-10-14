@@ -305,19 +305,22 @@ def renew(conn, task_ref: TaskRef, *, worker: str,
     return _logistics.renew(conn, task_ref, worker=worker, lease_s=lease_s)
 
 
-def complete(conn, task_ref: TaskRef, *, owner: str | None = None) -> bool:
-    """Mark a running task done. Pass the claiming reader as `owner` (the
-    message header's `lease_owner`) so a graph that outlived its claim cannot
-    complete a later claim of the same task."""
+# complete/fail/release require `owner`, the reader holding the claim (the
+# message header's `lease_owner`): a graph that outlived its claim, because its
+# lease expired and the task was claimed again, must not settle the new claim.
+# Pass owner=None explicitly to mean "don't care" (no lease check).
+
+def complete(conn, task_ref: TaskRef, *, owner: str | None) -> bool:
+    """Mark a running task done while `owner` holds its lease."""
     return _logistics.complete(conn, task_ref, owner=owner)
 
 
-def fail(conn, task_ref: TaskRef, error: str, *, permanent: bool = False,
-         owner: str | None = None) -> str | None:
-    return _logistics.fail(conn, task_ref, error, permanent=permanent, owner=owner)
+def fail(conn, task_ref: TaskRef, error: str, *, owner: str | None,
+         permanent: bool = False) -> str | None:
+    return _logistics.fail(conn, task_ref, error, owner=owner, permanent=permanent)
 
 
-def release(conn, task_ref: TaskRef, *, owner: str | None = None) -> bool:
+def release(conn, task_ref: TaskRef, *, owner: str | None) -> bool:
     """Give a running task back (graceful shutdown). The attempt is not consumed."""
     return _logistics.release(conn, task_ref, owner=owner)
 

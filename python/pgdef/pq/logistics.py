@@ -59,11 +59,12 @@ DEFAULT_LEASE_SECONDS = 300.0
 # clocks still agree on whether a lease has lapsed.
 NOW = 'extract(epoch from now())'
 
-# Optional guard on the statements a task's own graph runs (complete, fail,
-# release): with %(owner)s non-NULL, the row is touched only while that reader
-# still holds the lease. A graph that outlived its claim (its lease lapsed and
-# the task was reaped and claimed again, or an operator reset it) must not
-# settle the NEW claim's task.
+# Guard on the statements a task's own graph runs (complete, fail, release):
+# the row is touched only while that reader still holds the lease. A graph
+# that outlived its claim (the lease expired, and the task was reaped and
+# claimed again, or an operator reset it) must not settle the NEW claim. The
+# owner argument is required, because the race is rare but an expired lease can
+# be "stolen". Passing owner=None explicitly means "don't care": no lease check.
 _OWNED = "(%(owner)s::text IS NULL OR t.logistics->'lease'->>'owner' = %(owner)s::text)"
 
 # Columns every task read returns, in the order Task.from_row() expects.
@@ -343,20 +344,30 @@ def renew(conn, task_ref, *, worker: str, lease_s: float = DEFAULT_LEASE_SECONDS
         return cur.rowcount == 1
 
 
-def complete(conn, task_ref, *, owner: str | None = None) -> bool:
-    """Mark a running task done. With `owner`, only while that reader holds
-    its lease (see _OWNED). False if nothing was changed."""
+def _require_owner(owner) -> str | None:
+    """`owner` is a reader id, or None for "don't care" (no lease check)."""
+    if owner is not None and (not isinstance(owner, str) or not owner):
+        raise ValueError(f'owner must be the reader holding the lease, or None, got {owner!r}')
+    return owner
+
+
+def complete(conn, task_ref, *, owner: str | None) -> bool:
+    """Mark a running task done, only while `owner` holds its lease (see
+    _OWNED; owner=None: don't care). False if nothing was changed."""
+    _require_owner(owner)
     task_id, pool = task_ref
     with conn.cursor() as cur:
         cur.execute(complete_sql(), {'id': task_id, 'pool': pool, 'owner': owner})
         return cur.rowcount == 1
 
 
-def fail(conn, task_ref, error: str, *, permanent: bool = False,
-         owner: str | None = None) -> str | None:
+def fail(conn, task_ref, error: str, *, owner: str | None,
+         permanent: bool = False) -> str | None:
     """Fail one attempt. Returns the task's new status: 'pending' if it will be
     retried, 'failed' if the attempts are used up or `permanent`; None if the
-    task was not running (or, with `owner`, no longer leased to it)."""
+    task was not running or no longer leased to `owner` (owner=None: don't
+    care)."""
+    _require_owner(owner)
     task_id, pool = task_ref
     with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute(fail_sql(), {'id': task_id, 'pool': pool, 'permanent': bool(permanent),
@@ -366,7 +377,10 @@ def fail(conn, task_ref, error: str, *, permanent: bool = False,
     return row[0] if row else None
 
 
-def release(conn, task_ref, *, owner: str | None = None) -> bool:
+def release(conn, task_ref, *, owner: str | None) -> bool:
+    """Give a running task back (attempt not consumed), only while `owner`
+    holds its lease (owner=None: don't care)."""
+    _require_owner(owner)
     task_id, pool = task_ref
     with conn.cursor() as cur:
         cur.execute(release_sql(), {'id': task_id, 'pool': pool, 'owner': owner})

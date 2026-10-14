@@ -79,7 +79,7 @@ class ToyJoin(MessageHandler):
 
     def handle(self, msg, ctx):
         from aotriton.pgdef.pq import tasks as pgtasks
-        pgtasks.complete(ctx.db_conn, (msg['task_id'], msg['pool']))
+        pgtasks.complete(ctx.db_conn, (msg['task_id'], msg['pool']), owner=msg['lease_owner'])
         BEHAVIOUR.setdefault('joined', []).append((msg['task_id'], sorted(semaphore.get_aggregate_results(msg))))
         return ack(msg)
 

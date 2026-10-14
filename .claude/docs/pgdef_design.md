@@ -240,6 +240,9 @@ Verify these before relying on them.
   `reap_expired` before claiming. Staleness by log mtime and `reset_task` for
   stranded rows are gone (the operator's `reset_task --select stale` remains
   as an override for a live-but-wedged reader).
+* **Settling is lease-guarded.** `complete`/`fail`/`release` take a required
+  keyword `owner` (`handlers.owner_of(msg)`); a mismatch changes nothing.
+  `owner=None` is the explicit "don't care".
 * **No leaked reader slot:** any handler exception becomes `task_failed`
   (`GenericWorker._report_failure`); a message for a queue with no workers fails
   the task (`LocalBroker._undeliverable`).

@@ -76,6 +76,9 @@ pending ──claim──> running ──> done
 * **Lease.** The claiming worker renews a lease while it runs the task. If the
   worker or its node dies, the lease expires and other workers mark the task
   `failed`. There is no manual cleanup of stuck rows.
+  + Completing, failing or releasing a task names the lease owner (the
+    message's `lease_owner`), so a graph whose lease expired and was taken
+    over cannot settle the new claim. `owner=None` explicitly skips the check.
 * **Retry is opt-in.** By default a task gets one attempt (`max_attempts` = 1),
   so any failure or expired lease ends in `failed`, and redoing it is an
   operator reset. pgdef retries automatically only if a task is dispatched with

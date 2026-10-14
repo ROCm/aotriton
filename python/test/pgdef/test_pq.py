@@ -252,10 +252,10 @@ def test_claim_with_a_generic_reader():
 
 def test_complete_fail_release_renew_reap_use_their_statements():
     conn = FakeConn(rows=[[], [], [], [('pending',)], [(5, 'failed'), (6, 'pending')]])
-    assert tasks.complete(conn, (1, 'gfx950')) is True
+    assert tasks.complete(conn, (1, 'gfx950'), owner='w') is True
     assert tasks.renew(conn, (1, 'gfx950'), worker='w') is True
-    assert tasks.release(conn, (1, 'gfx950')) is True
-    assert tasks.fail(conn, (1, 'gfx950'), 'boom', permanent=True) == 'pending'
+    assert tasks.release(conn, (1, 'gfx950'), owner='w') is True
+    assert tasks.fail(conn, (1, 'gfx950'), 'boom', owner='w', permanent=True) == 'pending'
     assert tasks.reap_expired(conn, 'gfx950') == [(5, 'failed'), (6, 'pending')]
     for text, params in conn.calls:
         check_statement(text, params)
@@ -266,7 +266,7 @@ def test_complete_fail_release_renew_reap_use_their_statements():
 
 def test_fail_of_a_task_that_is_not_running_returns_none():
     conn = FakeConn(rows=[[]])
-    assert tasks.fail(conn, (1, 'gfx950'), 'x') is None
+    assert tasks.fail(conn, (1, 'gfx950'), 'x', owner=None) is None
 
 
 def test_renew_reports_a_lost_lease():
@@ -533,6 +533,21 @@ def test_positional_readers_ask_for_tuple_rows():
     conn = FakeConn(rows=[[(7,)], [(3,)], [('pending',)], [(9, 'pending')]])
     reports.insert(conn, (1, 'gfx950'), cat_level0='tune', attempt=1, rkey={}, status='OK')
     tasks.count(conn, tasks.TaskSelector(pool='gfx950'))
-    lg.fail(conn, (1, 'gfx950'), 'boom')
+    lg.fail(conn, (1, 'gfx950'), 'boom', owner='w')
     lg.reap_expired(conn, 'gfx950')
     assert conn.row_factories == [tuple_row] * 4
+
+
+def test_settling_a_task_requires_an_owner_or_an_explicit_none():
+    # The owner guards the lease-expiry race; it is a required keyword, and
+    # None means "don't care" (the SQL then skips the lease check).
+    conn = FakeConn(rows=[[], [], []])
+    with pytest.raises(TypeError):
+        tasks.complete(conn, (1, 'gfx950'))
+    with pytest.raises(ValueError):
+        tasks.release(conn, (1, 'gfx950'), owner='')
+    tasks.complete(conn, (1, 'gfx950'), owner=None)
+    tasks.complete(conn, (1, 'gfx950'), owner='h/reader-0')
+    (none_sql, none_params), (own_sql, own_params) = conn.calls
+    assert none_params['owner'] is None and own_params['owner'] == 'h/reader-0'
+    assert "%(owner)s::text IS NULL OR t.logistics->'lease'->>'owner' = %(owner)s::text" in own_sql

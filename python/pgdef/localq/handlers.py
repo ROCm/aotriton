@@ -81,11 +81,12 @@ def task_ref(msg: dict) -> pgtasks.TaskRef:
     return (msg['task_id'], msg['pool'])
 
 
-def owner_of(msg: dict) -> str | None:
-    """The reader whose claim `msg` belongs to; pass it as `owner=` to
-    pq.tasks.complete/fail/release so a graph that outlived its claim (lease
-    lapsed and the task was claimed again, or reset) cannot settle the new one."""
-    return msg.get('lease_owner')
+def owner_of(msg: dict) -> str:
+    """The reader whose claim `msg` belongs to (header `lease_owner`, set by
+    the PG reader and copied by child()). Pass it as `owner=` to
+    pq.tasks.complete/fail/release, which require it, so a graph that outlived
+    its claim cannot settle a later claim of the same task."""
+    return msg['lease_owner']
 
 
 def ack(msg: dict, *, negative: bool = False, error: str | None = None) -> dict:

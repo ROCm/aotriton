@@ -75,7 +75,7 @@ def test_reset_with_delete_results_cascades_into_most_accurate(pg_conn):
     _dispatch(pg_conn, [_entry()])
     (t,) = _claim_all(pg_conn)
     rid = results.save_tuning_result(pg_conn, t.ref, _report(t.ref), attempt=1)
-    pgtasks.complete(pg_conn, t.ref)
+    pgtasks.complete(pg_conn, t.ref, owner='h/r0')
     with pg_conn.cursor() as cur:
         cur.execute(
             'INSERT INTO tune.most_accurate_tuning_results '
@@ -101,7 +101,7 @@ def test_extra_uts_survive_reset_and_die_with_the_task(pg_conn):
     (t,) = _claim_all(pg_conn)
     extra_uts.insert_extra_uts(pg_conn, t.ref, ['a=1', 'b=2'])
     extra_uts.insert_extra_uts(pg_conn, t.ref, ['a=1'])          # upsert, no duplicate
-    pgtasks.complete(pg_conn, t.ref)
+    pgtasks.complete(pg_conn, t.ref, owner='h/r0')
     tune.reset(pg_conn, [t.id], 'kernel', delete_results=True)
     assert extra_uts.get_extra_uts(pg_conn, t.id) == ['a=1', 'b=2']
     pgtasks.delete(pg_conn, TaskSelector(ids=(t.id,)))
@@ -111,8 +111,8 @@ def test_extra_uts_survive_reset_and_die_with_the_task(pg_conn):
 def test_find_resettable_and_progress(pg_conn):
     _dispatch(pg_conn, [_entry(seq=s) for s in (1, 2, 3)])
     t1, t2, t3 = _claim_all(pg_conn)
-    pgtasks.complete(pg_conn, t1.ref)
-    pgtasks.fail(pg_conn, t2.ref, 'x', permanent=True)
+    pgtasks.complete(pg_conn, t1.ref, owner='h/r0')
+    pgtasks.fail(pg_conn, t2.ref, 'x', owner='h/r0', permanent=True)
     failed = tune.find_resettable(pg_conn, 'failed')
     assert [r['id'] for r in failed] == [t2.id]
     assert tune.find_resettable(pg_conn, 'stale', timeout_seconds=3600) == []
@@ -128,7 +128,7 @@ def test_find_resettable_and_progress(pg_conn):
 def test_completed_payloads_for_skip_completed(pg_conn):
     _dispatch(pg_conn, [_entry(seq=1), _entry(seq=2)])
     t1, t2 = _claim_all(pg_conn)
-    pgtasks.complete(pg_conn, t1.ref)
+    pgtasks.complete(pg_conn, t1.ref, owner='h/r0')
     done = tune.completed_payloads(pg_conn, 'flash', 'kernel')
     assert [(a, p['entry']['seqlen_q']) for a, p in done] == [(ARCH, 1)]
 

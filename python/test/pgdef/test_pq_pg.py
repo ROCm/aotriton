@@ -111,20 +111,20 @@ def test_identical_tasks_are_legal(pg_conn, pool):
 def test_complete(pg_conn, pool):
     tasks.insert(pg_conn, pool, [_spec()])
     (t,) = _claim(pg_conn)
-    assert tasks.complete(pg_conn, t.ref)
+    assert tasks.complete(pg_conn, t.ref, owner='w0')
     row = _row(pg_conn, t.ref)
     assert row['status'] == 'done' and 'lease' not in row['logistics']
     assert row['logistics']['finished'] > 0
-    assert not tasks.complete(pg_conn, t.ref)          # not running any more
+    assert not tasks.complete(pg_conn, t.ref, owner='w0')          # not running any more
 
 
 def test_fail_retries_until_attempts_are_used_up(pg_conn, pool):
     tasks.insert(pg_conn, pool, [_spec(max_attempts=2)])
     (t,) = _claim(pg_conn)
-    assert tasks.fail(pg_conn, t.ref, 'boom 1') == 'pending'
+    assert tasks.fail(pg_conn, t.ref, 'boom 1', owner='w0') == 'pending'
     (t,) = _claim(pg_conn)
     assert t.logistics.attempt == 2
-    assert tasks.fail(pg_conn, t.ref, 'boom 2') == 'failed'
+    assert tasks.fail(pg_conn, t.ref, 'boom 2', owner='w0') == 'failed'
     row = _row(pg_conn, t.ref)
     assert [e['detail'] for e in row['logistics']['errors']] == ['boom 1', 'boom 2']
     assert _claim(pg_conn) == []
@@ -133,14 +133,14 @@ def test_fail_retries_until_attempts_are_used_up(pg_conn, pool):
 def test_permanent_failure_does_not_retry(pg_conn, pool):
     tasks.insert(pg_conn, pool, [_spec()])
     (t,) = _claim(pg_conn)
-    assert tasks.fail(pg_conn, t.ref, 'bad input', permanent=True) == 'failed'
+    assert tasks.fail(pg_conn, t.ref, 'bad input', owner='w0', permanent=True) == 'failed'
 
 
 def test_error_history_is_capped(pg_conn, pool):
     tasks.insert(pg_conn, pool, [_spec(max_attempts=100)])
     for i in range(lg.ERROR_HISTORY_CAP + 4):
         (t,) = _claim(pg_conn)
-        tasks.fail(pg_conn, t.ref, f'e{i}')
+        tasks.fail(pg_conn, t.ref, f'e{i}', owner='w0')
     errors = _row(pg_conn, (t.id, t.pool))['logistics']['errors']
     assert len(errors) == lg.ERROR_HISTORY_CAP
     assert errors[-1]['detail'] == f'e{lg.ERROR_HISTORY_CAP + 3}'      # newest last
@@ -168,6 +168,20 @@ def test_expired_lease_is_reaped_back_to_pending_and_keeps_the_appcookie(pg_conn
     assert again.logistics.attempt == 2 and again.appcookie == {'done': [1]}
 
 
+def test_a_stolen_lease_cannot_be_settled_by_its_old_owner(pg_conn, pool):
+    # w0's lease expired and w1 claimed the task again: w0's graph, still
+    # running, must not settle w1's claim. owner=None means "don't care".
+    tasks.insert(pg_conn, pool, [_spec(max_attempts=2)])
+    (t,) = _claim(pg_conn, lease_s=-1)
+    tasks.reap_expired(pg_conn, pool)
+    (t,) = _claim(pg_conn, worker='w1')
+    assert not tasks.complete(pg_conn, t.ref, owner='w0')
+    assert tasks.fail(pg_conn, t.ref, 'late', owner='w0') is None
+    assert not tasks.release(pg_conn, t.ref, owner='w0')
+    assert _row(pg_conn, t.ref)['status'] == 'running'
+    assert tasks.complete(pg_conn, t.ref, owner=None)
+
+
 def test_reaping_fails_a_task_that_is_out_of_attempts(pg_conn, pool):
     tasks.insert(pg_conn, pool, [_spec(max_attempts=1)])
     (t,) = _claim(pg_conn, lease_s=-1)
@@ -183,7 +197,7 @@ def test_reap_leaves_live_leases_alone(pg_conn, pool):
 def test_release_does_not_consume_the_attempt(pg_conn, pool):
     tasks.insert(pg_conn, pool, [_spec(max_attempts=1)])
     (t,) = _claim(pg_conn)
-    assert tasks.release(pg_conn, t.ref)
+    assert tasks.release(pg_conn, t.ref, owner='w0')
     (t,) = _claim(pg_conn)
     assert t.logistics.attempt == 1
 
@@ -234,7 +248,7 @@ def _finish_with_report(conn, pool, **kw):
     (t,) = _claim(conn)
     rid = reports.insert(conn, t.ref, cat_level0='tune', attempt=1,
                          rkey={'iface': 'attn_fwd', 'impl': 0}, status='OK', payload={'t': 1.5})
-    tasks.complete(conn, t.ref)
+    tasks.complete(conn, t.ref, owner='w0')
     return t, rid
 
 
@@ -294,7 +308,7 @@ def test_selectors_find_by_payload(pg_conn, pool):
 def test_views(pg_conn, pool):
     tasks.insert(pg_conn, pool, [_spec(0), _spec(1, ('tune', 'op')), _spec(2, ('other', None))])
     (t,) = _claim(pg_conn)
-    tasks.complete(pg_conn, t.ref)
+    tasks.complete(pg_conn, t.ref, owner='w0')
     rows = progress.queue_progress(pg_conn, ('tune', 'kernel'))
     assert rows[0]['done'] == 1 and rows[0]['total'] == 1
     assert len(progress.queue_progress(pg_conn)) == 3
