@@ -108,6 +108,41 @@ class ProbeHandler(MessageHandler):
 `python -m aotriton.pgdef.localq.graph tune` prints the whole graph. If any
 handler raises, the task fails through one common path.
 
+### Fan-in: semaphore messages
+
+A step that waits for several others (a join) is not a waiting handler. It
+is a **semaphore message**: an ordinary message that carries a `depends` key,
+listing the message classes it waits for. Tune's probe, for example, emits N
+`tune/impl` messages plus one `tune/postprocess` that depends on
+`tune/impl_result`.
+
+1. A handler returns the semaphore message like any other message.
+2. The broker's `forward()` sees `depends`. Instead of queueing the message,
+   it parks it under each class it depends on.
+3. Every later message of one of those classes is offered to the parked
+   message: the broker calls `resolve_dependency(blocked, incoming)` on the
+   **parked message's handler class**. This runs in the broker, with no
+   database. The incoming message is still delivered to its own queue as usual.
+4. When `resolve_dependency` returns true, the broker removes `depends` and
+   forwards the semaphore message to its queue. Its handler then runs like any
+   other.
+
+`resolve_dependency` is the extension point: a handler can override it to
+release on any condition. The default is the shared helper
+`aotriton.pgdef.localq.fanin`, which covers the usual case, "wait until a
+result has arrived for every expected key":
+
+```python
+join = fanin.expect(postprocess_msg, keys=[('attn_fwd', 0), ('attn_fwd', 1)],
+                    depends='tune/impl_result')       # in the fanning-out handler
+fanin.contribute(result_msg, key=('attn_fwd', 0), value=report)   # in each result
+reports = fanin.values(msg)                           # in the join's handler
+```
+
+If the broker shuts down while a semaphore message is still parked, it calls
+the handler's `teardown_with_unmet_dependency()`. By default that gives the task
+back to the queue.
+
 GPU work runs in a supervised child process (**exaid**) that speaks a line
 protocol: send a command, read back `OK <json>` or an error. A crash or a
 timeout restarts the child without killing the worker.
