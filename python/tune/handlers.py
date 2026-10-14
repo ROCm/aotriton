@@ -95,7 +95,8 @@ class TuneStartHandler(StartHandler):
 class PreprocessHandler(MessageHandler):
     """Prepares the test data for the entry in the node's tmpfs.
 
-    Input: preprocess message. Output: probe message.
+    Input: preprocess message.
+    Output: probe message.
     """
     CLASS = PREPROCESS
     QUEUE = 'gpu'
@@ -213,7 +214,8 @@ class TuneImplHandler(MessageHandler):
     A benchmark that crashes or is rejected is a RESULT (`crash`, `NotOK`), not
     a failure of the task: it is reported and the sweep continues.
 
-    Input: impl message. Output: impl_result message.
+    Input: impl message.
+    Output: impl_result message.
     """
     CLASS = IMPL
     QUEUE = 'gpu'
@@ -251,8 +253,9 @@ class TuneImplHandler(MessageHandler):
 class WriteImplResultHandler(MessageHandler):
     """Writes an impl benchmark result as a pgdef.report row.
 
-    Input: impl_result message. Output: none; the broker also feeds the message
-    to the join (fan-in) that is waiting for it.
+    Input: impl_result message.
+    Output: none. (The broker also offers the message to the join, the fan-in,
+    that is waiting for it.)
     """
     CLASS = IMPL_RESULT
     QUEUE = 'cpu'
@@ -271,8 +274,8 @@ class PostprocessHandler(MessageHandler):
     """Completes the task and frees its prepared data, once every impl has
     reported.
 
-    Input: postprocess message (released by the fan-in). Output: dag_ack, which
-    releases the PG reader.
+    Input: postprocess message (released by the fan-in).
+    Output: dag_ack, which releases the PG reader.
     """
     CLASS = POSTPROCESS
     QUEUE = 'cpu'
