@@ -146,6 +146,23 @@ semaphore.signal(signal_msg, key=('attn_fwd', 0), value=report)   # in each resu
 reports = semaphore.signals(msg)                     # in the semaphore message's handler
 ```
 
+**Getting the results.** A fan-in usually needs the parallel steps' results,
+not just their completion:
+
+* **Small results** travel in the signals. `semaphore.signal(msg, key, value)`
+  stores `value` in the parked message, and the released handler reads every
+  value with `semaphore.signals(msg)`, a `{key: value}` dict. Values must be
+  JSON values and should stay small: they are held in broker memory until
+  release, and they are not durable.
+* **Large or durable results** go to the database (e.g. `pgdef.report`) in the
+  step that produces them. The signal is sent after the write, and the
+  released handler reads the rows back through the application's `pq`.
+
+A signal counts when its message is **forwarded**, that is, returned by a
+handler, not when that message's own handler has run. So the released handler
+cannot assume the signalling messages were handled. If it needs what their
+handlers write, the signal has to come from the step after the write.
+
 If the broker shuts down while a semaphore message is still parked, it calls
 the handler's `teardown_with_unmet_dependency()`. By default that gives the task
 back to the queue.
