@@ -372,7 +372,9 @@ class LocalBroker:
                 parked = self.blocked_messages.get(dep_class)
                 if parked is None:
                     continue
+                # Remove msg from this list in place (by identity, not ==).
                 parked[:] = [m for m in parked if m is not msg]
+                # Then drop the key only if nothing else is parked under it.
                 if not parked:
                     del self.blocked_messages[dep_class]
 
