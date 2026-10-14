@@ -217,9 +217,9 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
     {% endif %}
 </section>
 
-{# ── best_tune.tuning_results (kernel level) ──────────────────────────────────── #}
+{# ── tune.best_tuning_results (kernel level) ──────────────────────────────────── #}
 <section>
-    <h3>best_tune.tuning_results ({{ debug_data.best_results | length }} rows) <small style="font-weight: normal; color: #777;">— tuning level 'kernel'</small></h3>
+    <h3>tune.best_tuning_results ({{ debug_data.best_results | length }} rows) <small style="font-weight: normal; color: #777;">— tuning level 'kernel'</small></h3>
     {% if debug_data.best_results %}
     <table style="width: 100%;">
         <thead>
@@ -252,7 +252,7 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
 
 {# ── most_accurate_tuning_results ────────────────────────────────────────── #}
 <section>
-    <h3>most_accurate_tune.tuning_results ({{ debug_data.accurate_results | length }} rows)</h3>
+    <h3>tune.most_accurate_tuning_results ({{ debug_data.accurate_results | length }} rows)</h3>
     {% if debug_data.accurate_results %}
     <table style="width: 100%;">
         <thead>
@@ -337,7 +337,7 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
     {% endif %}
 </section>
 
-{# ── best_tune.tuning_results (op level) ──────────────────────────────────────── #}
+{# ── tune.best_tuning_results (op level) ──────────────────────────────────────── #}
 <section>
     <h3>best_optune_results ({{ debug_data.best_optune_results | length }} rows) <small style="font-weight: normal; color: #777;">— tune.best_tuning_results WHERE cat_level1 = 'op'</small></h3>
     {% if debug_data.best_optune_results %}
