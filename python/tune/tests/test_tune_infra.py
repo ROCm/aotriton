@@ -389,7 +389,7 @@ def test_load_family_visperf_flash_descriptor_dims_match_js():
     mod = load_family_visperf('flash', modules_dir=_MODULES_DIR)
     desc = mod.DESCRIPTOR
     assert desc['id'] == 'flash'
-    assert desc['kernel_table'] == 'best_tuning_results'
+    assert desc['kernel_table'] == 'tune.best_tuning_results'
     assert desc['name_col'] == 'iface_name'
 
     dim_aliases = {alias for _expr, alias in desc['dims']}

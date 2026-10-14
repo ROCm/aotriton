@@ -20,7 +20,7 @@ run_single_benchmark() below, alongside their own lazy `import torch` --
 those are the only two methods that need dacite, and both already require
 a live GPU anyway.
 
-dispatch_tasks.py instantiates FlashTune() for EVERY registered tuning module
+dispatch.py instantiates FlashTune() for EVERY registered tuning module
 at CLI startup (to build argparse subparsers from get_entry_choices()), so
 this file must stay torch-free at import time and at construction time --
 FlashTune() takes no arguments and does no per-level resolution up front.

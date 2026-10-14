@@ -17,7 +17,7 @@ unmarked default) and otherwise never touches it -- see desc.py's docstring
 for the exact dispatch and F3's lazy-import boundary.
 
 IMPORTANT: this module must stay torch/pyaotriton-free AT MODULE SCOPE --
-dispatch_tasks.py instantiates `TuneDesc()` for *every* registered tuning
+dispatch.py instantiates `TuneDesc()` for *every* registered tuning
 module at CLI startup, purely to build argparse subparsers from
 get_entry_choices(), on machines that may not have torch/pyaotriton installed
 at all (see tdesc.py's module docstring). All torch/pyaotriton imports below
