@@ -451,9 +451,9 @@ fp16, and f9bb46f2 stored dV in dK's dtype.
   loads and stores. The Triton kernels state the contiguity half as
   `tl.assume(stride_qk == 1)` and its siblings (1884d3d0).
   - It is called 8xD, as in the flyc kernels, because 8 is the number PyTorch
-    enforces: its callers of the flash and memory-efficient attention backends
-    pad the head dimension to a multiple of 8. For fp16/bf16 that is exactly 16
-    bytes.
+    enforces: the `F.scaled_dot_product_attention` glue code pads the head
+    dimension to a multiple of 8 before it calls the flash or memory-efficient
+    attention backend. For fp16/bf16 that is exactly 16 bytes.
   - A kernel therefore touches `ceil8(hdim)` columns of every row, and the
     caller must own them.
   - A buffer descriptor whose range ends at `hdim` makes the hardware drop the
