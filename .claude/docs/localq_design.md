@@ -10,9 +10,22 @@ overview. The code lives in `python/pgdef/localq/`; tune's graph is
 ## Process topology
 
 ```
-PG readers (one task each) ──> broker ──> GPU workers ──> runner per GPU (exaid)
-                                     └──> CPU workers ──> database writes
+┌──────────────────────────────────────────────────────────────┐
+│                         LocalBroker                          │
+│  (epoll event loop, non-blocking sockets, BufferedSocket)    │
+│  Queues: one per queue name with workers (gpu, cpu)          │
+│  Dependency tracker: blocked_messages dict                   │
+│  Ack tracker: pending_acks dict                              │
+└──────────────────────────────────────────────────────────────┘
+    ↕  Unix socket (blocking, select+wakeup_fd)
+    ├── PGReader × R          (pg_reader.py)
+    ├── GenericWorker/GPU × N (generic_worker.py, gpu queue)
+    └── GenericWorker/CPU × M (generic_worker.py, cpu queue)
 ```
+
+The broker is the hub; processes never talk to each other directly. Every
+connection is two-way: any process may `forward` a message to any queue, and
+the broker sends workers their `task`s and readers their `ack`/nak.
 
 One broker, R readers, N GPU workers, M CPU workers, all connected by one Unix
 socket, all processes of ONE application (`python -m aotriton.<app>.node

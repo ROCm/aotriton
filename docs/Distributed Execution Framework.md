@@ -93,9 +93,18 @@ Each node runs **one application**. It has one broker and three types of
 worker, all connected through a Unix socket:
 
 ```
-PG readers (one task each) ──> broker ──> GPU workers ──> subprocess runner per GPU (exaid)
-                                     └──> CPU workers ──> write results to PostgreSQL
+                  ┌────────────┐
+                  │   broker   │   queues: gpu, cpu
+                  └────────────┘
+                        ↕  Unix socket
+    ├── PG readers   (claim a task each; get its ack from the broker)
+    ├── GPU workers  (one per GPU; run the subprocess runners, exaid)
+    └── CPU workers  (write results to PostgreSQL)
 ```
+
+The broker is the hub, and every connection is two-way. A handler on any
+worker can send a message to any queue, and the broker tells the reader when
+its task is finished.
 
 A task runs as a small graph of **handlers**. Each handler's return value is
 the next message. There is no DAG language. Instead, every handler declares
