@@ -183,6 +183,8 @@ bullets.
   spaces).
 - Backtick the tag when the tag is a literal module/tool name:
   `` [`flash_op`] ``, `` [`table_tool`] ``.
+- A tag may name a submodule as `module/submodule` when the bullet is scoped
+  to one part of a larger subsystem: `[pgdef/pg]`, `[test/adiffs]`.
 
 ### Tag Conventions
 
@@ -195,8 +197,10 @@ bullets.
 | `[shim]` | Generated shim and internal C++ API — including `include/aotriton/_internal/` headers and their `v3src/` companions |
 | `[db]` | Tuning database schema or content |
 | `[tune]` | Tuning infrastructure (`python/tune/`, `modules/*/tune/`) |
-| `[pq]` | PostgreSQL queue package |
-| `[localq]` | Unix-socket local queue |
+| `[pgdef]` | Distributed Execution Framework engine (`python/pgdef/`) |
+| `[pgdef/pg]` | pgdef's engine database layer (`python/pgdef/pq/`, schema `pgdef`) |
+| `[pq]` | An application's PostgreSQL package (e.g. `python/tune/pq/`) |
+| `[pgdef/localq]` | pgdef's node runtime: broker, workers, PG reader, handlers (`python/pgdef/localq/`) |
 | `[worker]` | GPU tuning worker |
 | `[webui]` | Web UI |
 | `[api]` | Public C++ API |
