@@ -51,7 +51,7 @@ that breadth, cut.
 
 ### Per-item budget (strict, numeric)
 
-Assume each line is **78 characters**. Then:
+Assume each line is **72 characters**. Then:
 
 - **Every bullet at every level** (`*`, `+`, `-`) is less than **2 lines**
   on its own (≤ ~155 characters).
@@ -68,8 +68,8 @@ Assume each line is **78 characters**. Then:
   overflow to italic sub-items** (`+ *...*`) rather than expanding the
   bullet. Italic = optional context the reader may skip.
 
-Count lines as the rendered output would wrap at 78 chars, not as you
-typed them. A "one-line" bullet that wraps to 3 lines on a 78-char
+Count lines as the rendered output would wrap at 72 chars, not as you
+typed them. A "one-line" bullet that wraps to 3 lines on a 72-char
 terminal is **over budget**.
 
 ### How to cut
