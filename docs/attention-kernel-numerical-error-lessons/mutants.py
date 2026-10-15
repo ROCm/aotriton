@@ -116,6 +116,8 @@ MUTANTS = {
 
 
 def make(name):
+    if name not in MUTANTS:
+        raise SystemExit(f'unknown mutant {name}')
     dst = OUT_DIR / name
     if dst.exists():
         shutil.rmtree(dst)
