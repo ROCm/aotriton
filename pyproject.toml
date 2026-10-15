@@ -27,6 +27,9 @@ testpaths = ["python/test", "python/pytest-gpu-lease/tests"]
 # deliberately not collected here: tuning is not part of this CI, tuning
 # uses CI.
 # GPU integration tests live under modules/flash/tests/ and require hardware; keep them separate.
+markers = [
+    "pg: needs a disposable PostgreSQL server (AOTRITON_PG_TEST_DISPOSABLE=1 and PG* variables); skipped otherwise",
+]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

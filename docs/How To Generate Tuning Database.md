@@ -406,7 +406,7 @@ In the WebUI **Servers** tab, under **PostgreSQL**, click **Start Server** first
 Then under **Database Schema**, click **Initialize Schema**.
 
 This runs `python/tune/pq/schema.sql` against the database and creates
-per-arch partitions (`task_queue_gfx942`, etc.) for each worker in `workers.db`.
+per-pool partitions of `pgdef.task` and `pgdef.report` (`pgdef.task_gfx942`, etc., created on demand at dispatch) for each worker in `workers.db`.
 Re-run whenever new GPU architectures are added.
 
 To drop all data and recreate from scratch, click **Recreate Schema (Danger)**.
@@ -423,7 +423,7 @@ CLI equivalents:
 
 ```bash
 .tune/bin/psql <working_directory>       # interactive shell
-.tune/bin/psql <working_directory> -c "SELECT COUNT(*) FROM task_queue;"
+.tune/bin/psql <working_directory> -c "SELECT COUNT(*) FROM pgdef.task;"
 ```
 
 ## Start GPU Workers
@@ -477,20 +477,20 @@ Use the CLI to dispatch tasks (WebUI dispatch is not yet available):
   --dtype float16 --seqlen_q 128 256 --seqlen_k 128 256
 ```
 
-Tasks are inserted into `task_queue_<arch>`. PostgreSQL readers pick them up,
+Tasks are inserted into `pgdef.task` (partition `pgdef.task_<arch>`). PostgreSQL readers pick them up,
 the broker distributes them to GPU workers, and results are written to
-`tuning_results`.
+`pgdef.report` (read through the `tune.tuning_results` view).
 
 ## Monitor Tuning Progress
 
-The WebUI **Dashboard** shows a per-arch table (pending / running / completed /
+The WebUI **Dashboard** shows a per-arch table (pending / running / done /
 failed / cancelled / total / ETA) that auto-refreshes every 30 seconds.
 
 For raw queries:
 
 ```bash
-.tune/bin/psql ~/wkdir.tuning -c "SELECT * FROM queue_progress;"
-.tune/bin/psql ~/wkdir.tuning -c "SELECT * FROM completion_eta;"
+.tune/bin/psql ~/wkdir.tuning -c "SELECT * FROM pgdef.queue_progress;"
+.tune/bin/psql ~/wkdir.tuning -c "SELECT * FROM pgdef.completion_eta;"
 ```
 
 ## Export Tuning Results
@@ -510,7 +510,7 @@ Individual steps (for debugging or partial re-runs):
 | **Rebuild Accuracy Table** | Recreates the most-accurate materialized view from scratch |
 | **Update Accuracy Table** | Incremental MV update using `scratch/retry_task_ids.txt` |
 | **Compute Best Results** | Selects fastest `hsaco_index` meeting 3× accuracy threshold |
-| **Export Best Results** | Writes `scratch/centraldb.sqlite3` from `best_tuning_results` |
+| **Export Best Results** | Writes `scratch/centraldb.sqlite3` from `tune.best_tuning_results` |
 | **Sancheck** | Verifies LUT integrity; writes `scratch/dbreport.txt` listing missing entries (see [Fix Incomplete/Broken Entries](#fix-incompletebroken-entries)) |
 | **Decompose DB** | Shards `scratch/centraldb.sqlite3` into `installed/database/amd/<arch>/...` |
 
@@ -662,7 +662,7 @@ If test failures indicate tuning defects (not known accuracy limits), use
 
 # Fix Incomplete/Broken Entries
 
-Two CLI tools reset task_queue rows back to `pending` for re-tuning:
+Two CLI tools reset `pgdef.task` rows back to `pending` for re-tuning:
 
 - **`retry_missing_entries`** — targets entries the LUT sancheck flagged as
   missing or incomplete.
@@ -677,7 +677,7 @@ changes.
 Use this after running **Sancheck** (part of Bake LUT). Sancheck writes
 `<workdir>/scratch/dbreport.txt` listing every LUT entry that could not be
 satisfied. `retry_missing_entries` parses that report, finds the corresponding
-`task_queue` rows, and resets them to `pending`.
+`pgdef.task` rows, and resets them to `pending`.
 
 ```bash
 .tune/bin/retry_missing_entries <workdir>
@@ -695,7 +695,7 @@ recomputation to the affected tasks.
 Use this after a correctness test run has produced `.out` files on a worker
 node. The tool SSHes into the test host, runs `pytest2entry.py` on the pytest
 output files for the given pass number to extract failing task IDs, stores them
-in `scratch/broken_entries.db`, and then resets those `task_queue` rows to
+in `scratch/broken_entries.db`, and then resets those `pgdef.task` rows to
 `pending`. It also propagates any extra UT constraints from the test results
 into the PostgreSQL `task_extra_uts` table so that re-tuned tasks are validated
 against the specific inputs that failed.
@@ -748,7 +748,7 @@ git commit -m "database: update gfx1100 tuning database"
 1. PostgreSQL is running: `.tune/bin/srvctl <workdir> status`
 2. Workers are running: `ssh <worker> docker ps`
 3. Database connection works: `.tune/bin/psql <workdir>`
-4. Tasks exist in queue: `SELECT COUNT(*) FROM task_queue WHERE status='pending';`
+4. Tasks exist in queue: `SELECT COUNT(*) FROM pgdef.task WHERE status='pending';`
 
 **Common issues:**
 - Incorrect `POSTGRES_PORT` in config.rc
@@ -763,7 +763,7 @@ git commit -m "database: update gfx1100 tuning database"
 - Database connection lost during task execution
 
 **Solutions:**
-- Reset stale tasks: `SELECT reset_stale_tasks(7200);` (2 hour timeout)
+- Stuck tasks: readers reap expired leases automatically; `.tune/bin/reset_task --select stale` forces a reset. `SELECT * FROM pgdef.expired_leases;` lists lapsed leases
 - Restart workers: `.tune/bin/wkctl <workdir> restart`
 
 ## Permission Errors During Rsync
@@ -837,14 +837,14 @@ Local Broker (Unix socket /wkdir/run/broker.sock)
 ```
 
 **Message flow:**
-1. PG reader fetches task from `task_queue_<arch>`, marks as "running"
+1. PG reader claims a task from `pgdef.task` (partition `pgdef.task_<arch>`), marks as "running"
 2. PG reader sends `tune_kernel` message to broker
 3. Broker forwards to `gpu_queue`
 4. GPU worker picks up task, runs preprocess → probe → tune_hsaco (parallel)
 5. GPU worker sends `hsaco_result` messages back to broker
 6. Broker forwards to `cpu_queue`
-7. CPU worker aggregates results, writes to `tuning_results` table
-8. PG reader marks task as "completed" in `task_queue_<arch>`
+7. CPU worker aggregates results, writes `pgdef.report` rows (view `tune.tuning_results`)
+8. PG reader marks task as "done" in `pgdef.task`
 
 # SLURM Support
 

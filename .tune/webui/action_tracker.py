@@ -12,6 +12,11 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
+# Maximum number of output lines retained in memory per action.  Older lines
+# are dropped from the head of the ring buffer; the full output always remains
+# in the on-disk .stdout/.stderr logs.
+OUTPUT_BUFFER_LINES = 5000
+
 
 class ActionTracker:
     """Tracks single command execution with real-time output capture"""
@@ -30,9 +35,15 @@ class ActionTracker:
         self.status = 'queued'  # queued → running → completed/failed
         self.returncode = None
 
-        # Output buffers (line-by-line)
-        self.stdout_buffer = deque(maxlen=1000)
-        self.stderr_buffer = deque(maxlen=1000)
+        # Single merged output buffer holding (seq, stream, line) tuples in
+        # arrival order.  stdout and stderr MUST share one buffer and one
+        # sequence counter: with two independent buffers there is no stable
+        # index that a client can use as a resume cursor, because a new stdout
+        # line inserts itself *before* every stderr line already delivered.
+        # `seq` is monotonic and never reused, so it stays a valid cursor even
+        # after the ring buffer rotates.
+        self._output = deque(maxlen=OUTPUT_BUFFER_LINES)
+        self._next_seq = 0
 
         # Timing
         self.created_at = datetime.now()
@@ -87,12 +98,12 @@ class ActionTracker:
             # Spawn capture threads
             stdout_thread = threading.Thread(
                 target=self._capture_stream,
-                args=(self.process.stdout, self.stdout_buffer, self.stdout_log),
+                args=(self.process.stdout, 'stdout', self.stdout_log),
                 daemon=True
             )
             stderr_thread = threading.Thread(
                 target=self._capture_stream,
-                args=(self.process.stderr, self.stderr_buffer, self.stderr_log),
+                args=(self.process.stderr, 'stderr', self.stderr_log),
                 daemon=True
             )
 
@@ -108,14 +119,18 @@ class ActionTracker:
             )
             monitor_thread.start()
 
-    def _capture_stream(self, stream, buffer, log_file):
-        """Capture stream line-by-line to buffer and log file"""
+    def _capture_stream(self, stream, stream_name, log_file):
+        """Capture stream line-by-line to the merged buffer and the log file"""
         with open(log_file, 'w') as f:
             for line in iter(stream.readline, ''):
                 if not line:
                     break
                 with self._lock:
-                    buffer.append(line.rstrip('\n'))
+                    # Sequence numbers are handed out under the shared lock, so
+                    # the two capture threads interleave in arrival order and
+                    # never collide on a seq.
+                    self._output.append((self._next_seq, stream_name, line.rstrip('\n')))
+                    self._next_seq += 1
                 f.write(line)
                 f.flush()
 
@@ -150,16 +165,49 @@ class ActionTracker:
                     return False
             return False
 
-    def get_output(self, from_line=0):
-        """Get output lines starting from from_line"""
+    def read_output(self, cursor: int = 0):
+        """Read merged output starting at sequence number `cursor`.
+
+        Returns (lines, chunk_start, next_cursor, dropped):
+          lines        -- interleaved stdout/stderr lines in arrival order
+          chunk_start  -- seq of the first returned line; may be *greater* than
+                          `cursor` when the ring buffer already dropped the
+                          requested lines.  Clients compare this against their
+                          own cursor to reject stale/out-of-order responses.
+          next_cursor  -- cursor to pass to the next call
+          dropped      -- number of lines lost to buffer rotation
+        """
+        if cursor < 0:
+            cursor = 0
         with self._lock:
-            stdout_lines = list(self.stdout_buffer)[from_line:]
-            stderr_lines = list(self.stderr_buffer)[from_line:]
+            snapshot = list(self._output)
+            next_seq = self._next_seq
+
+        if not snapshot:
+            return [], min(cursor, next_seq), next_seq, 0
+
+        oldest_seq = snapshot[0][0]
+        start = min(cursor, next_seq)
+        dropped = 0
+        if start < oldest_seq:
+            dropped = oldest_seq - start
+            start = oldest_seq
+
+        lines = [line for seq, _stream, line in snapshot if seq >= start]
+        return lines, start, next_seq, dropped
+
+    def get_output(self, from_line=0):
+        """Get output lines starting from from_line (per-stream, legacy view)"""
+        with self._lock:
+            stdout_lines = [line for _s, stream, line in self._output
+                            if stream == 'stdout'][from_line:]
+            stderr_lines = [line for _s, stream, line in self._output
+                            if stream == 'stderr'][from_line:]
             return {
                 'stdout': stdout_lines,
                 'stderr': stderr_lines,
-                'total_stdout': len(self.stdout_buffer),
-                'total_stderr': len(self.stderr_buffer),
+                'total_stdout': len(stdout_lines),
+                'total_stderr': len(stderr_lines),
                 'status': self.status,
                 'returncode': self.returncode
             }

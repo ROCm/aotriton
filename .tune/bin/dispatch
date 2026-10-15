@@ -2,7 +2,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Wrapper script for aotriton.tune.dispatch_tasks
+# Wrapper script for aotriton.tune.dispatch
 # This script sets up the Python environment and calls the actual dispatch module
 
 if [ -z "$BASH_VERSION" ]; then
@@ -17,16 +17,20 @@ AOTRITON_ROOT="$(cd "$TUNE_ROOT/.." && pwd)"
 
 print_help_and_exit() {
   echo "Error: Missing arguments" >&2
-  echo "Usage: $0 <module> <workdir> [module-options]" >&2
+  echo "Usage: $0 <module> <workdir> [--category tune,kernel|tune,op] [--pool <arch>...] [--subpool <name>] [module-options]" >&2
   echo "       For more details, create a workdir and call $0 <module> <workdir> -h" >&2
   exit 1
 }
 
-# Get module and workdir from first two arguments
+# Get module and workdir from first two arguments. They are the application's
+# own options (--module, --workdir) in aotriton.tune.dispatch; the rest of the
+# command line (--category, --pool/--arch, --subpool, --dry_run, ...) is passed
+# through unchanged.
 if [ "$#" -lt 2 ]; then
   print_help_and_exit
 fi
 
+MODULE="$1"
 WORKDIR="$2"
 
 # Validate workdir
@@ -69,7 +73,7 @@ if [ ! -f "$INSTALLED_MARKER" ] || [ "$REQUIREMENTS_FILE" -nt "$INSTALLED_MARKER
 fi
 
 # Editable-install the 'aotriton' package (python/ -> aotriton, see repo-root
-# setup.py) into this private venv so `-m aotriton.tune.dispatch_tasks` can
+# setup.py) into this private venv so `-m aotriton.tune.dispatch` can
 # find it below. requirements-tuning.txt does not install it (it has no
 # reference to this checkout's path), so this is a separate, dedicated step.
 AOTRITON_INSTALLED_MARKER="$VENV_DIR/.aotriton_installed"
@@ -93,4 +97,4 @@ fi
 # aotriton.tune.registry's modules_dir default (AOTRITON_MODULES_DIR env var,
 # else <cwd>/modules) resolves to $AOTRITON_ROOT/modules.
 cd "$AOTRITON_ROOT"
-exec "$VENV_PYTHON" -m aotriton.tune.dispatch_tasks "$@"
+exec "$VENV_PYTHON" -m aotriton.tune.dispatch --module "$MODULE" --workdir "$WORKDIR" "${@:3}"

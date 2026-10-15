@@ -821,7 +821,7 @@ function renderCellDetail(container, cd) {
   const cands = cd.data.candidates || [];
   if (!cands.length) {
     const p = document.createElement('p');
-    p.textContent = 'No candidate tuning_results rows for this cell.';
+    p.textContent = 'No candidate tune.tuning_results rows for this cell.';
     container.appendChild(p);
     return;
   }

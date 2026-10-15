@@ -1,6 +1,6 @@
 ---
 name: webui-expert
-description: Use this agent for tasks involving the AOTriton Tuner v3 WebUI under .tune/webui/. This covers Flask routes, Jinja2 templates, HTMX interactions, the action tracker (background process management), scheduler, task functions, and all frontend HTML/JS. Use for adding new pages, buttons, API endpoints, polling patterns, or debugging UI behavior. Do NOT use for the tuning backend (.tune/bin/, v3python/tune/), the code generator, or C++ code.
+description: Use this agent for tasks involving the AOTriton Tuner v3 WebUI under .tune/webui/. This covers Flask routes, Jinja2 templates, HTMX interactions, the action tracker (background process management), scheduler, task functions, and all frontend HTML/JS. Use for adding new pages, buttons, API endpoints, polling patterns, or debugging UI behavior. Do NOT use for the tuning backend (.tune/bin/, python/tune/), the code generator, or C++ code.
 ---
 
 You are an expert in the AOTriton Tuner v3 WebUI, located entirely under `.tune/webui/`.
@@ -27,7 +27,7 @@ You are an expert in the AOTriton Tuner v3 WebUI, located entirely under `.tune/
     ├── builds.html          # Builds tab: library/image build buttons
     ├── deploy.html          # Deploy tab: deploy + prepare workdir
     ├── slurm.html           # SLURM tab: job submission
-    ├── debug.html           # Debug tab: task_queue inspector, TUNE_V3BIS entry lookup
+    ├── debug.html           # Debug tab: pgdef.task inspector, TUNE_V3BIS entry lookup
     ├── dashboard.html       # Dashboard tab: overall progress
     ├── guest_dashboard.html # Read-only guest view
     ├── commands.html        # Mobile-friendly command list
@@ -161,10 +161,10 @@ return run_command(['ssh', hostname, 'cat /remote/file'], ...)
 
 ### Role-based host filtering (workers.db)
 
-Workers have roles via the `worker_roles(hostname, role_name)` junction table. Role names: `Tuner`, `Builder`, `Tester`.
+Workers have roles via the `worker_roles(hostname, role_name)` junction table. Role names: `Tuner`, `Builder`, `Tester`. (The tune manifest's `deploy.role` is `Tuner`; a later application adds its own role.)
 
 - In templates: show controls only for hosts with the relevant role using `{% if worker.is_tuner %}...{% else %}<td></td><td></td>{% endif %}`. Use strikethrough on the hostname (`style="text-decoration: line-through;"`) when a host lacks the role — do not change background color.
-- Bulk actions iterate only role-filtered hosts via `get_tuner_hostnames()` / `get_tester_hostnames()` in tasks.py, never all workers.
+- Bulk actions iterate only role-filtered hosts via `get_role_hostnames()` (`get_tuner_hostnames()` / `get_tester_hostnames()`) in tasks.py, never all workers. Worker bulk actions pick the role from the category's application (`ROLE_OF_APP`).
 - Role toggle is a plain `fetch()` POST (not HTMX) followed by `location.reload()` so the row re-renders correctly.
 
 ### Command Output widget: always use textarea + JS polling, never HTMX swap
@@ -213,7 +213,7 @@ Just add to `routes.py` — no template needed. Return `jsonify(result)`.
 
 ### DB query functions (tasks.py)
 
-Non-command functions in `tasks.py` query PostgreSQL directly using `psycopg` and return dicts/lists for template rendering. They use `get_db_connection_params(Path(workdir))` from `v3python.tune.utils`.
+Non-command functions in `tasks.py` open a `psycopg` connection and call `aotriton.tune.pq` / `aotriton.pgdef.pq` functions (no SQL in the webui) and return dicts/lists for template rendering. They use `get_db_connection_params(Path(workdir))` from `aotriton.pgdef.workdir`.
 
 ## Route organization (routes.py)
 
@@ -235,14 +235,35 @@ Non-command functions in `tasks.py` query PostgreSQL directly using `psycopg` an
 
 ## Notes for `/perf` (visperf)
 
-- The arch dropdown is populated by `v3python.tune.pq.visperf.get_available_archs`,
+- The arch dropdown is populated by `aotriton.tune.pq.visperf.get_available_archs`,
   which queries `kernel_table` only. This is intentional and complete:
   every AOTriton op is backed by one or more Triton kernels, so any arch
-  the library is built for shows up in `best_tuning_results`. Do not
+  the library is built for shows up in `tune.best_tuning_results`. Do not
   "fix" this by unioning `best_optune_results` — the union is dead SQL.
+
+## Planned engine change (pgdef)
+
+The tuning backend is being redesigned as the DEF (pgdef). See
+`.claude/docs/pgdef_design.md`. For the webui this means:
+- The webui's `tuning_mode` is now `category` (`tune,kernel` / `tune,op`), passed to the shared scripts as `--category` alone (worker
+  start/restart, deploy, sync, fetchbuild); they derive the application from its
+  first component. The image tools (prepwkdir, imgbld, build_image) are tune's,
+  as in 0.14, and get no application.
+  `normalize_category` in `tasks.py` is the one compatibility read of the old
+  `webui::tuning_mode` config key; the tuning-only tools (best results, LUT
+  export, sancheck, ...) use `normalize_tune_category` (today the same as
+  `normalize_category`; it is the hook for when a second application adds categories). (Perf-page `mode` stays a bare cat_level1.)
+- The webui has no perfmon pages: perfmon is the planned second application and
+  its config page, progress section and role toggle land with its PR.
+- Progress comes from the engine views via `aotriton.tune.pq.tasks.get_progress`
+  (`pgdef.queue_progress`; status `done`, not `completed`); worker health will
+  come from `pgdef.worker_health`.
+- Machines gain a `subpool` in `workers.db`.
+
+Check that document before adding UI around task routing or progress.
 
 ## Out of scope
 
 - `.tune/bin/` scripts and their internals — use the tuner-v3 agent
-- `v3python/tune/` Python tuning stack — use the tuner-v3 agent
-- `v3python/codegen/`, `v3python/rules/` — use the codegen agent
+- `python/tune/`, `modules/*/tune/` Python tuning stack — use the tuner-v3 agent
+- `python/codegen/`, `python/template_instantiation/`, `modules/*/aot/` — use the codegen agent

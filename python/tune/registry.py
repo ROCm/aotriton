@@ -19,33 +19,13 @@ argument -- it lists and resolves impls of every tuning level directly, keyed
 by DSL name (see `aotriton.tune.tdesc.TuningDescription`).
 """
 
-import hashlib
-import os
-import sys
 import importlib
-import importlib.util
+import os
 from pathlib import Path
 
+from aotriton.pgdef.utils import (default_modules_dir, load_family_block,  # noqa: F401  (re-exported)
+                                  tree_cache_key as _tree_cache_key)
 
-def _tree_cache_key(modules_dir, family: str, block: str) -> str:
-    """Synthetic module name for `<modules_dir>/<family>/<block>`.
-
-    Keyed on a digest of the RESOLVED `modules_dir`, not on the family name
-    alone -- exactly as `python/codegen/parser.py`'s `load_family_aot` is, and
-    for the same reason. Two trees can supply the same family (the real
-    `modules/` and `python/test/fakefamily/` both have a `flash`), and a
-    name-only key means whichever tree loaded first serves both. That is
-    invisible while the two agree and silently wrong the moment they diverge.
-
-    Without this per-tree keying, this module's loaders (`load_family_tune`,
-    `load_family_visperf`, ...) would effectively be keyed by family name
-    alone: whichever tree loaded first for a family would silently serve
-    every later caller too, process-wide, instead of raising the ImportError
-    that would expose a mismatch.
-    """
-    digest = hashlib.blake2b(str(Path(modules_dir).resolve()).encode(),
-                             digest_size=6).hexdigest()
-    return f'_aotriton_modules_{digest}_{family}_{block}'
 
 # Family names (as used in the CLI / task_queue.module column) registered
 # under modules/<family>/tune/.
@@ -59,35 +39,6 @@ _FAMILIES = ('flash',)
 def available_module_names() -> list[str]:
     """Flat family names registered for the tuning CLI/queue."""
     return sorted(_FAMILIES)
-
-
-def default_modules_dir() -> Path:
-    """Resolve the repo's `modules/` directory.
-
-    `modules/` is DATA beside the package source (like codegen's --root_dir),
-    never shipped inside the installed `aotriton` package (see setup.py), so
-    it cannot be reliably derived from this file's location alone -- a
-    non-editable install copies `python/` out of the checkout but never
-    ships `modules/` alongside it.
-
-    Resolution order:
-      1. `AOTRITON_MODULES_DIR` env var, if set -- the explicit override.
-      2. `<cwd>/modules` -- all `.tune/bin/*` / `.tune/remote/*` wrappers `cd`
-         into `$AOTRITON_ROOT` before invoking `python3 -m aotriton.tune.*`
-         (see e.g. `.tune/bin/dispatch`), so this covers every production
-         call site.
-      3. `<repo root inferred from this file>/modules` -- last-resort
-         fallback for ad-hoc invocation (e.g. running pytest from the repo
-         root with an editable install); only correct when `aotriton` is
-         installed editable from this exact checkout.
-    """
-    env = os.environ.get('AOTRITON_MODULES_DIR')
-    if env:
-        return Path(env)
-    cwd_candidate = Path.cwd() / 'modules'
-    if cwd_candidate.is_dir():
-        return cwd_candidate
-    return Path(__file__).resolve().parent.parent.parent / 'modules'
 
 
 def default_tune_root() -> Path:
@@ -121,28 +72,9 @@ def load_family_tune(family: str, modules_dir: 'Path | None' = None):
     `modules/flash/tune/__init__.py`). Cached in `sys.modules`, under a key
     that includes the module TREE -- see `_tree_cache_key`.
     """
-    # modules_dir is resolved BEFORE the cache probe, not after: the key is a
-    # function of the tree, so there is no key to look up until the tree is
-    # known.
     if modules_dir is None:
         modules_dir = default_modules_dir()
-    modname = _tree_cache_key(modules_dir, family, 'tune')
-    cached = sys.modules.get(modname)
-    if cached is not None:
-        return cached
-    tune_dir = Path(modules_dir) / family / 'tune'
-    init_path = tune_dir / '__init__.py'
-    if not init_path.is_file():
-        raise ImportError(
-            f"No tune block for family '{family}': {init_path} not found "
-            f"(modules_dir={modules_dir}). Set AOTRITON_MODULES_DIR or run "
-            f"from the repo root.")
-    spec = importlib.util.spec_from_file_location(
-        modname, init_path, submodule_search_locations=[str(tune_dir)])
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[modname] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    return load_family_block(family, 'tune', modules_dir)
 
 
 def load_family_visperf(family: str, modules_dir: 'Path | None' = None):
@@ -162,23 +94,7 @@ def load_family_visperf(family: str, modules_dir: 'Path | None' = None):
     """
     if modules_dir is None:
         modules_dir = default_modules_dir()
-    modname = _tree_cache_key(modules_dir, family, 'visperf')
-    cached = sys.modules.get(modname)
-    if cached is not None:
-        return cached
-    visperf_dir = Path(modules_dir) / family / 'visperf'
-    init_path = visperf_dir / '__init__.py'
-    if not init_path.is_file():
-        raise ImportError(
-            f"No visperf block for family '{family}': {init_path} not found "
-            f"(modules_dir={modules_dir}). Set AOTRITON_MODULES_DIR or run "
-            f"from the repo root.")
-    spec = importlib.util.spec_from_file_location(
-        modname, init_path, submodule_search_locations=[str(visperf_dir)])
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[modname] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    return load_family_block(family, 'visperf', modules_dir)
 
 
 def load_tune_module(module_name: str, modules_dir: 'Path | None' = None):

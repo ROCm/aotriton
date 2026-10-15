@@ -44,6 +44,11 @@ IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
 
 WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
+# Keep the worker's subpool (machine group inside its arch, host inventory in
+# workers.db) across a restart, as start_worker.sh does at start.
+SUBPOOL="$(get_worker_subpool "$WORKDIR" "$HOSTNAME")"
+EXTRA_ARGS+=(${SUBPOOL:+--subpool "$SUBPOOL"})
+
 ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "${EXTRA_ARGS[@]}" <<'EOF'
 WORKER_WORKDIR="$1"
 ARCH="$2"

@@ -3,13 +3,12 @@
 # SPDX-License-Identifier: MIT
 
 """
-Force a specific tuning_results row to be the "best" result for its
+Force a specific tune.tuning_results row to be the "best" result for its
 (task_id, iface_name), overriding whatever compute_best_results picked --
-without touching most_accurate_tuning_results.
+without touching tune.most_accurate_tuning_results.
 
-Unified schema (modular-tune.md §4.3/§4.7): tuning_results/best_tuning_results
-serve both tuning levels; iface_name/impl_index replace the old
-kernel_name/hsaco_index and op_name/backend_index column pairs, and
+tune.tuning_results/tune.best_tuning_results serve both tuning levels;
+iface_name/impl_index are the one column pair for both, and
 tuning_level distinguishes 'kernel' from 'op' rows sharing the same table.
 
 Use this when an entry is reported missing/broken but a specific existing
@@ -19,13 +18,13 @@ selection for that one (task_id, iface_name).
 
 WARNING: this override is only durable until the next FULL compute_best_results
 run (one with none of --incremental/--fix/--ids given) for the SAME
-tuning_level -- that mode deletes this level's slice of best_tuning_results
+tuning_level -- that mode deletes this level's slice of tune.best_tuning_results
 and repopulates it purely from automatic selection, silently discarding any
 manual pick made here. If the override needs to survive, re-run this command
 again after any such full recompute.
 
 Usage:
-    python -m aotriton.tune.pq.manual_pick_missing_entry --workdir /path/to/workdir --id <tuning_results.id>
+    python -m aotriton.tune.pq.manual_pick_missing_entry --workdir /path/to/workdir --id <tune.tuning_results.id>
     python -m aotriton.tune.pq.manual_pick_missing_entry --workdir /path/to/workdir --id <id> --tuning_mode op
     python -m aotriton.tune.pq.manual_pick_missing_entry --workdir /path/to/workdir --id <id> --dry_run
 """
@@ -37,7 +36,8 @@ from pathlib import Path
 import psycopg
 from psycopg.types.json import Jsonb
 
-from ..utils import get_db_connection_params
+from aotriton.pgdef.workdir import get_db_connection_params
+
 from .compute_best_results import SqlStatements
 
 logging.basicConfig(
@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 def pick(conn, sql: SqlStatements, result_id: int, *, dry_run: bool = False) -> None:
     with conn.cursor() as cur:
         cur.execute(
-            f'SELECT task_id, tuning_level, {sql.key_col}, {sql.index_col}, result, result_data '
+            f'SELECT task_id, cat_level1, {sql.key_col}, {sql.index_col}, result, result_data '
             f'FROM {sql.results_table} WHERE id = %s',
             (result_id,))
         row = cur.fetchone()
@@ -61,7 +61,7 @@ def pick(conn, sql: SqlStatements, result_id: int, *, dry_run: bool = False) -> 
         if tuning_level != sql.tuning_level:
             raise ValueError(
                 f'{sql.results_table}.id={result_id} has tuning_level={tuning_level!r}, '
-                f'but --tuning_mode={sql.tuning_level!r} was given; refusing to cross levels')
+                f'but --tuning_mode {sql.tuning_level}  was given; refusing to cross levels')
 
         if not result_data or not result_data.get('times'):
             raise ValueError(
@@ -70,11 +70,11 @@ def pick(conn, sql: SqlStatements, result_id: int, *, dry_run: bool = False) -> 
         median_time = result_data['times'][0]
         impl_desc = result_data.get('impl_desc')
 
-        cur.execute('SELECT arch, task_config FROM task_queue WHERE id = %s', (task_id,))
+        cur.execute('SELECT pool, payload FROM pgdef.task WHERE id = %s', (task_id,))
         task_row = cur.fetchone()
         if task_row is None:
-            raise ValueError(f'task_queue row not found for task_id={task_id}')
-        arch, task_config = task_row
+            raise ValueError(f'pgdef.task row not found for task_id={task_id}')
+        arch, payload = task_row
 
         cur.execute(
             f'SELECT {sql.index_col}, median_time FROM {sql.best_table} '
@@ -99,14 +99,14 @@ def pick(conn, sql: SqlStatements, result_id: int, *, dry_run: bool = False) -> 
 
         cur.execute(f"""
             INSERT INTO {sql.best_table}
-                (task_id, arch, tuning_level, task_config, {sql.key_col}, {sql.index_col}, median_time, impl_desc)
+                (task_id, arch, cat_level1, payload, {sql.key_col}, {sql.index_col}, median_time, impl_desc)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (task_id, {sql.key_col}) DO UPDATE
                 SET {sql.index_col} = EXCLUDED.{sql.index_col},
                     median_time = EXCLUDED.median_time,
                     impl_desc   = EXCLUDED.impl_desc,
                     computed_at = NOW()
-        """, (task_id, arch, tuning_level, Jsonb(task_config), key_name, index, median_time,
+        """, (task_id, arch, tuning_level, Jsonb(payload), key_name, index, median_time,
               Jsonb(impl_desc) if impl_desc is not None else None))
     conn.commit()
     logger.info('Done: %s.id=%d is now the picked best for task_id=%d %s=%s',
@@ -126,7 +126,8 @@ def main() -> None:
     parser.add_argument('--id', required=True, type=int,
                         help='tuning_results.id to pick as best (must belong to the '
                              'tuning_level given by --tuning_mode)')
-    parser.add_argument('--tuning_mode', choices=['kernel', 'op'], default='kernel')
+    parser.add_argument('--tuning_mode', choices=['kernel', 'op'], default='kernel',
+                        help='Selects the kernel or op slice (tuning_level) of tune\'s tables')
     parser.add_argument('--dry_run', action='store_true',
                         help='Show what would change without writing to best_tuning_results')
     args = parser.parse_args()

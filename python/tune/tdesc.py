@@ -17,7 +17,7 @@ IMPORTANT — lazy kernel initialization rule for get_impl():
     Subclasses of TuningDescription MUST NOT import kernel modules or
     instantiate kernel objects at module level or in __init__. Kernel modules
     typically import torch (via reference.py), which is unavailable outside
-    GPU containers. dispatch_tasks.py instantiates every TuneDesc subclass at
+    GPU containers. dispatch.py instantiates every TuneDesc subclass at
     startup (to build argparse subparsers from get_entry_choices()), so a
     top-level torch import breaks dispatch on machines without torch.
 

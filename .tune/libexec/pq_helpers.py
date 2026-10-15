@@ -23,7 +23,7 @@ except ImportError:
         f"  Install it with: pip install -e '{_REPO_ROOT}'"
     )
 
-from aotriton.tune.pq.queue import TaskQueue
+from aotriton.tune.pq import tasks as tune_tasks
 from aotriton.tune.registry import load_flash_entry_module
 
 FlashEntry = load_flash_entry_module().FlashEntry
@@ -31,29 +31,28 @@ FlashEntry = load_flash_entry_module().FlashEntry
 
 def fetch_matches(conn, entries: list[tuple[str, FlashEntry]],
                   tuning_level: str) -> list[dict]:
-    """Query task_queue for matching rows at one tuning level.
+    """Query pgdef.task for matching rows at one level (tuning_level).
 
-    tuning_level is required: entries match on arch and task_config fields,
-    which both levels share, so an unfiltered query returns each entry's
-    kernel and op rows together. Callers use the result to report a count and
-    to write scratch/retry_task_ids.txt, so double-counting would inflate the
+    tuning_level is required: entries match on arch and payload fields, which
+    both levels share, so an unfiltered query returns each entry's kernel and
+    op rows together. Callers use the result to report a count and to write
+    scratch/retry_task_ids.txt, so double-counting would inflate the
     confirmation prompt and feed the other level's ids to the recompute.
     """
-    tq = TaskQueue(conn)
     rows: list[dict] = []
     for arch, entry in entries:
-        rows.extend(tq.find_by_entry(entry, arch=arch, tuning_level=tuning_level,
-                                     columns='id, arch, status'))
+        rows.extend(tune_tasks.find_by_entry(conn, entry, arch=arch, tuning_level=tuning_level))
     return rows
 
 
 def fetch_matches_by_ids(conn, task_ids: list[int]) -> list[dict]:
-    """Query task_queue for specific task_ids, return list of row dicts."""
-    return TaskQueue(conn).find_by_ids(task_ids, columns='id, arch, status')
+    """Query pgdef.task for specific task_ids, return list of row dicts
+    ({id, arch, module, tuning_level, status})."""
+    return tune_tasks.find_by_ids(conn, task_ids)
 
 
 def print_summary(label: str, count: int, matches: list[dict]) -> None:
-    """Print a summary of matched task_queue rows by arch and status."""
+    """Print a summary of matched pgdef.task rows by arch and status."""
     by_arch: Counter = Counter()
     by_status: Counter = Counter()
     for r in matches:
@@ -61,7 +60,7 @@ def print_summary(label: str, count: int, matches: list[dict]) -> None:
         by_status[r['status']] += 1
 
     print(f'\n{label} (de-duplicated): {count}')
-    print(f'Matching task_queue rows:        {len(matches)}')
+    print(f'Matching pgdef.task rows:        {len(matches)}')
 
     if not matches:
         return
@@ -77,25 +76,24 @@ def print_summary(label: str, count: int, matches: list[dict]) -> None:
 
 def find_resettable(conn, what: str, *,
                     timeout_seconds: int | None = None) -> list[dict]:
-    """Stale or failed task_queue rows. Thin wrapper over
-    aotriton.tune.pq.queue.TaskQueue.find_resettable, which owns the SQL."""
-    return TaskQueue(conn).find_resettable(what, timeout_seconds=timeout_seconds)
+    """Stale or failed tune tasks. Thin wrapper over
+    aotriton.tune.pq.tasks.find_resettable, which owns the SQL."""
+    return tune_tasks.find_resettable(conn, what, timeout_seconds=timeout_seconds)
 
 
 def find_resettable_by_ids(conn, task_ids: list[int]) -> list[dict]:
-    """task_queue rows for explicitly named ids, shaped like find_resettable.
-    Thin wrapper over aotriton.tune.pq.queue.TaskQueue.find_resettable_by_ids."""
-    return TaskQueue(conn).find_resettable_by_ids(task_ids)
+    """Tune tasks for explicitly named ids, shaped like find_resettable.
+    Thin wrapper over aotriton.tune.pq.tasks.find_resettable_by_ids."""
+    return tune_tasks.find_resettable_by_ids(conn, task_ids)
 
 
 def reset_to_pending(conn, row_ids: list[int], tuning_level: str, *,
                      delete_results: bool) -> int:
-    """Reset the given task_queue ids to pending. Returns affected row count.
+    """Reset the given task ids to pending. Returns affected row count.
 
-    Thin wrapper over aotriton.tune.pq.queue.TaskQueue.reset_to_pending, which
-    owns the SQL. delete_results stays keyword-only and required here too --
-    forwarding it with a default would hide from this layer's callers that it
-    can drop their tuning_results / most_accurate_tuning_results rows.
+    Thin wrapper over aotriton.tune.pq.tasks.reset, which owns the SQL.
+    delete_results stays keyword-only and required here too -- forwarding it
+    with a default would hide from this layer's callers that it can drop their
+    reports and most_accurate_tuning_results rows.
     """
-    return TaskQueue(conn).reset_to_pending(row_ids, tuning_level,
-                                            delete_results=delete_results)
+    return tune_tasks.reset(conn, row_ids, tuning_level, delete_results=delete_results)

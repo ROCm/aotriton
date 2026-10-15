@@ -32,7 +32,7 @@ shift 2
 # worker_service.sh's arg loop, which rejects it as an unknown option.
 #
 # So separators are accepted anywhere and dropped; no extra arg is ever a bare
-# '--' (they are --multi_gpu/--tuning_mode and their values).
+# '--' (they are --multi_gpu/--category and their values).
 EXTRA_ARGS=()
 for _arg in "$@"; do
   [ "$_arg" = "--" ] || EXTRA_ARGS+=("$_arg")
@@ -57,8 +57,10 @@ IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
 
 WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
-# Add --hostname to extra args
-EXTRA_ARGS=(--hostname "$HOSTNAME" "${EXTRA_ARGS[@]}")
+# Add --hostname to extra args, and the worker's subpool (machine group inside
+# its arch, host inventory in workers.db) when it has one
+SUBPOOL="$(get_worker_subpool "$WORKDIR" "$HOSTNAME")"
+EXTRA_ARGS=(--hostname "$HOSTNAME" "${EXTRA_ARGS[@]}" ${SUBPOOL:+--subpool "$SUBPOOL"})
 
 ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$CELERY_WORKER_IMAGE" "${EXTRA_ARGS[@]}" <<'EOF'
 WORKER_WORKDIR="$1"
@@ -67,25 +69,18 @@ CELERY_WORKER_IMAGE="$3"
 shift 3
 EXTRA_ARGS=("$@")
 
-# Parse --tuning_mode from EXTRA_ARGS; strip it, set WORKER_PYTHONPATH, re-append explicitly.
-TUNING_MODE="kernel"
-REMAINING_ARGS=()
-set -- "${EXTRA_ARGS[@]}"
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --tuning_mode)
-      TUNING_MODE="$2"
-      shift 2
-      ;;
-    *)
-      REMAINING_ARGS+=("$1")
-      shift
-      ;;
-  esac
+# Read --category from EXTRA_ARGS. It is forwarded to worker_service.sh as it
+# is, which validates it. Here it only selects the tune build on PYTHONPATH, as
+# --tuning_mode did. (Tune-specific, kept minimal; generalising the container
+# setup per application is left to the next application's change.)
+CATEGORY=""
+_prev=""
+for _arg in "${EXTRA_ARGS[@]}"; do
+  [ "$_prev" = "--category" ] && CATEGORY="$_arg"
+  _prev="$_arg"
 done
-EXTRA_ARGS=("${REMAINING_ARGS[@]}" --tuning_mode "$TUNING_MODE")
 
-if [ "$TUNING_MODE" = "op" ]; then
+if [ "$CATEGORY" = "tune,op" ]; then
   WORKER_PYTHONPATH="/wkdir/installed/test/$ARCH/lib"
 else
   WORKER_PYTHONPATH="/wkdir/installed/$ARCH/lib"

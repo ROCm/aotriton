@@ -22,6 +22,7 @@ import pytest
 _HERE = Path(__file__).resolve().parent          # python/test/
 
 sys.path.insert(0, str(_HERE))                   # for registry.py / fakekernels.py
+sys.path.insert(0, str(_HERE / 'pgdef'))         # pgdef test fakes: localq_harness.py, pgfake.py
 
 
 @pytest.fixture(autouse=True)
@@ -33,3 +34,34 @@ def _one_tree_per_test():
     reset_loaded_aot()
     yield
     reset_loaded_aot()
+
+
+# ---------------------------------------------------------------------------
+# PostgreSQL fixtures, for tests marked `pg` (see aotriton.pgdef.pq.testkit for
+# the rules and a docker recipe). python/tune/tests/conftest.py defines the same
+# three from the same helpers.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope='session')
+def pg_params():
+    from aotriton.pgdef.pq import testkit
+    return testkit.params_or_skip(pytest)
+
+
+@pytest.fixture
+def pg_conn(pg_params):
+    """An autocommit connection to a database whose layer schemas were just
+    dropped and re-applied, in initdb's order."""
+    from aotriton.pgdef.pq import testkit
+    conn = testkit.fresh_schemas(pg_params)
+    yield conn
+    conn.close()
+
+
+@pytest.fixture
+def pg_conn2(pg_params, pg_conn):
+    """A second connection to the same database, for concurrency tests."""
+    from aotriton.pgdef.pq import testkit
+    conn = testkit.connect(pg_params)
+    yield conn
+    conn.close()

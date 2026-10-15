@@ -6,7 +6,7 @@
 Private helper for retry_broken_entries.
 
 Reads task_ids from broken_entries.db for the given pass and host,
-shows a summary of matching task_queue rows, asks for confirmation,
+shows a summary of matching pgdef.task rows, asks for confirmation,
 and resets them to 'pending'.
 
 Usage (called by retry_broken_entries, not directly):
@@ -33,15 +33,17 @@ except ImportError:
 import psycopg
 from psycopg.rows import dict_row
 
-from aotriton.tune.utils import get_db_connection_params
+from aotriton.pgdef.workdir import get_db_connection_params
 from aotriton.tune.pq.extra_uts import insert_extra_uts
 from pq_helpers import fetch_matches_by_ids, print_summary, reset_to_pending
 
 
 def _load_task_ids(db_path: Path, hostname: str, pass_num: int, tuning_level: str) -> list[int]:
     # module is always 'flash' now (modular-tune.md §4.3), so it no longer
-    # distinguishes kernel vs op rows -- filter on tuning_level instead
-    # (written by broken_entries_to_db into the same broken_entries table).
+    # distinguishes kernel vs op rows -- filter on the level instead. The
+    # workdir-local SQLite file keeps its `tuning_level` column name (it is data
+    # on disk, written by broken_entries_to_db into the same broken_entries table);
+    # its value is the task's tuning level.
     with sqlite3.connect(db_path) as db:
         cur = db.execute(
             'SELECT task_id FROM broken_entries WHERE host = ? AND pass = ? AND tuning_level = ? ORDER BY task_id',
@@ -78,10 +80,11 @@ def main() -> None:
         '--tuning_mode',
         choices=['kernel', 'op'],
         default='kernel',
-        help='Selects the tuning_level slice of broken_entries.db to reset '
+        help='Selects the kernel or op slice of broken_entries.db to reset '
              '(module is always the unified \'flash\' module)',
     )
     args = parser.parse_args()
+    tuning_level = args.tuning_mode
 
     workdir = Path(args.workdir)
     db_path = workdir / 'scratch' / 'broken_entries.db'
@@ -89,14 +92,14 @@ def main() -> None:
     if not db_path.is_file():
         sys.exit(f'Error: broken_entries.db not found at {db_path}')
 
-    task_ids = _load_task_ids(db_path, args.hostname, args.pass_num, args.tuning_mode)
+    task_ids = _load_task_ids(db_path, args.hostname, args.pass_num, tuning_level)
     if not task_ids:
         print(f'No entries in broken_entries.db for host={args.hostname} pass={args.pass_num}.')
         return
 
     conn_params = get_db_connection_params(workdir)
     with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
-        print('Querying task_queue …')
+        print('Querying pgdef.task …')
         matches = fetch_matches_by_ids(conn, task_ids)
         print_summary(
             f'Broken entries (host={args.hostname} pass={args.pass_num})',
@@ -119,12 +122,13 @@ def main() -> None:
         # Insert extra UTs into PG before resetting status to pending,
         # so workers always see them when they claim the task.
         extra_uts_map = _load_extra_uts(db_path, args.pass_num, row_ids)
+        arch_of = {r['id']: r['arch'] for r in matches}
         for task_id, im_texts in extra_uts_map.items():
-            insert_extra_uts(conn, task_id, im_texts)
+            insert_extra_uts(conn, (task_id, arch_of[task_id]), im_texts)
         total_extra = sum(len(v) for v in extra_uts_map.values())
         print(f'Inserted {total_extra} extra UT entries for {len(extra_uts_map)} tasks.')
 
-        affected = reset_to_pending(conn, row_ids, tuning_level=args.tuning_mode,
+        affected = reset_to_pending(conn, row_ids, tuning_level=tuning_level,
                                    delete_results=True)
         conn.commit()
         print(f'Done: {affected} rows reset to pending.')

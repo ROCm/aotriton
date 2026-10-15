@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-Export best_tuning_results from PostgreSQL to a centralized SQLite database.
+Export tune.best_tuning_results from PostgreSQL to a centralized SQLite database.
 
 The output file matches the schema of modules/flash/database/tuning_database.sqlite3
 and can be fed directly into database_decompose.py to produce per-arch sharded
@@ -62,7 +62,8 @@ from pathlib import Path
 import psycopg
 from psycopg.rows import dict_row
 
-from ..utils import get_db_connection_params
+from aotriton.pgdef.workdir import get_db_connection_params
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -78,7 +79,7 @@ logger = logging.getLogger(__name__)
 # Column lists per kernel table.
 # Tuples: (sqlite_col, source, key)
 #   source = 'gpu'     → constant "{arch}_mod0"
-#   source = 'entry'   → task_config['entry'][key]
+#   source = 'entry'   → payload['entry'][key]
 #   source = 'psels'   → impl_desc['psels'][key]
 #   source = 'copts'   → impl_desc['copts'][key]
 #   source = 'derived' → special derivation (handled below)
@@ -394,22 +395,22 @@ def patch_missing_dtypes(db: sqlite3.Connection, kernel: str, cols: list,
 def export(conn_params: dict, output_path: Path, arch: str | None = None) -> None:
     t0 = time.monotonic()
 
-    logger.info('Querying best_tuning_results (tuning_level=kernel)...')
+    logger.info('Querying tune.best_tuning_results (tuning_level=kernel)...')
     with psycopg.connect(**conn_params, autocommit=True,
                          row_factory=dict_row) as pg:
         with pg.cursor() as cur:
             cur.execute("""
-                SELECT b.task_id, b.arch, b.iface_name, b.task_config, b.impl_desc
-                FROM best_tuning_results b
-                JOIN task_queue t ON t.id = b.task_id AND t.arch = b.arch
-                WHERE t.status != 'cancelled' AND b.tuning_level = 'kernel'
+                SELECT b.task_id, b.arch, b.iface_name, b.payload, b.impl_desc
+                FROM tune.best_tuning_results b
+                JOIN pgdef.task t ON t.id = b.task_id AND t.pool = b.arch
+                WHERE t.status != 'cancelled' AND b.cat_level1 = 'kernel'
                   {arch_clause}
                 ORDER BY b.arch, b.iface_name
             """.format(arch_clause='AND b.arch = %s' if arch else ''),
                         [arch] if arch else None)
             rows = cur.fetchall()
 
-    logger.info('Fetched %d rows from best_tuning_results (tuning_level=kernel%s)',
+    logger.info('Fetched %d rows from tune.best_tuning_results (tuning_level=kernel%s)',
                 len(rows), f', arch={arch}' if arch else '')
 
     counts: dict[str, int] = {}
@@ -428,7 +429,7 @@ def export(conn_params: dict, output_path: Path, arch: str | None = None) -> Non
             # last instead of to the one the caller asked for (or to all).
             row_arch    = row['arch']
             iface_name  = row['iface_name']
-            task_config = row['task_config']
+            payload = row['payload']
             impl_desc   = row['impl_desc']
 
             if impl_desc is None:
@@ -445,7 +446,7 @@ def export(conn_params: dict, output_path: Path, arch: str | None = None) -> Non
                 skipped += 1
                 continue
 
-            entry  = task_config['entry']
+            entry  = payload['entry']
             psels  = impl_desc.get('psels') or {}
             copts  = impl_desc.get('copts') or {}
             gpu    = f'{row_arch}_mod0'
@@ -636,7 +637,7 @@ def export_op_incremental(conn_params: dict, output_path: Path, base_db: Path,
 
 def export_op_into(db: sqlite3.Connection, conn_params: dict,
                    arch: str | None = None) -> int:
-    """Fill `db` with the op slice of best_tuning_results. Returns the row count.
+    """Fill `db` with the op slice of tune.best_tuning_results. Returns the row count.
 
     Takes an open connection rather than a path so the same body serves both the
     plain export (a file) and --base_db (an in-memory staging db merged into the
@@ -644,23 +645,23 @@ def export_op_into(db: sqlite3.Connection, conn_params: dict,
     """
     t0 = time.monotonic()
 
-    logger.info('Querying best_tuning_results (tuning_level=op)...')
+    logger.info('Querying tune.best_tuning_results (tuning_level=op)...')
     with psycopg.connect(**conn_params, autocommit=True,
                          row_factory=dict_row) as pg:
         with pg.cursor() as cur:
             cur.execute("""
-                SELECT b.task_id, b.arch, b.iface_name, b.task_config,
+                SELECT b.task_id, b.arch, b.iface_name, b.payload,
                        b.impl_desc, b.impl_index
-                FROM best_tuning_results b
-                JOIN task_queue t ON t.id = b.task_id AND t.arch = b.arch
-                WHERE t.status != 'cancelled' AND b.tuning_level = 'op'
+                FROM tune.best_tuning_results b
+                JOIN pgdef.task t ON t.id = b.task_id AND t.pool = b.arch
+                WHERE t.status != 'cancelled' AND b.cat_level1 = 'op'
                   {arch_clause}
                 ORDER BY b.arch, b.iface_name
             """.format(arch_clause='AND b.arch = %s' if arch else ''),
                         [arch] if arch else None)
             rows = cur.fetchall()
 
-    logger.info('Fetched %d rows from best_tuning_results (tuning_level=op)', len(rows))
+    logger.info('Fetched %d rows from tune.best_tuning_results (tuning_level=op)', len(rows))
 
     counts: dict[str, int] = {}
     skipped = 0
@@ -675,7 +676,7 @@ def export_op_into(db: sqlite3.Connection, conn_params: dict,
         # rule.
         row_arch    = row['arch']
         iface_name  = row['iface_name']
-        task_config = row['task_config']
+        payload = row['payload']
         impl_index  = row['impl_index']
 
         # This column is a BACKEND INDEX; impl_index is a position in the
@@ -699,7 +700,7 @@ def export_op_into(db: sqlite3.Connection, conn_params: dict,
             continue
 
         cols, _ = OP_SCHEMAS[table_name]
-        entry = task_config['entry']
+        entry = payload['entry']
         gpu   = f'{row_arch}_mod0'
 
         try:
@@ -777,8 +778,7 @@ def main() -> None:
     parser.add_argument('--output', required=True, type=Path,
                         help='Output SQLite file path (e.g. tuning_database.sqlite3)')
     parser.add_argument('--tuning_mode', choices=['kernel', 'op'], default='kernel',
-                        help='Selects the tuning_level slice of the unified '
-                             'best_tuning_results table to export')
+                        help='Selects the kernel or op slice (tuning_level) of tune\'s tables')
     parser.add_argument('--arch', default=None,
                         help='Export only this architecture. The output file is '
                              'REPLACED, not merged into, so it will then contain '
@@ -792,12 +792,13 @@ def main() -> None:
                              "0.13b's single op$backend column to the ranked "
                              'op$best1st/op$best2nd pair on the way in.')
     args = parser.parse_args()
+    tuning_level = args.tuning_mode
 
     if args.base_db is not None:
         # op-only because the kernel path already has a partial-update story --
         # per-arch shards that accumulate under installed/database/amd/<arch>/ --
         # whereas the op database is installed wholesale and has no accumulator.
-        if args.tuning_mode != 'op':
+        if tuning_level != 'op':
             parser.error('--base_db requires --tuning_mode op '
                          '(kernel mode accumulates through per-arch shards instead)')
         if not args.base_db.is_file():
@@ -821,7 +822,7 @@ def main() -> None:
         # accumulator, so say plainly what the caller is about to install.
         logger.warning('Exporting arch=%s ONLY. %s is replaced, not merged.',
                        args.arch, args.output)
-        if args.tuning_mode == 'op' and args.base_db is None:
+        if tuning_level == 'op' and args.base_db is None:
             logger.warning('op mode: the resulting database is INCOMPLETE. '
                            'decomposedb --tuning_mode op installs it wholesale, '
                            'with no per-architecture shards, so the installed op '
@@ -829,7 +830,7 @@ def main() -> None:
                            'seed the output from an existing database first.',
                            args.arch)
 
-    if args.tuning_mode == 'op':
+    if tuning_level == 'op':
         export_op(conn_params, args.output, arch=args.arch, base_db=args.base_db)
     else:
         export(conn_params, args.output, arch=args.arch)

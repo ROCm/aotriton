@@ -55,6 +55,21 @@ fi
 
 load_config "$WORKDIR"
 
+# .tune/bin/remotebld runs this inside CELERY_WORKER_IMAGE with
+# `--user "$(id -u):$(id -g)"` (so build artifacts land owned by the invoking
+# uid, not root) and no matching passwd entry for that uid, which leaves HOME
+# at "/". build_triton_wheel.sh's fallback path shells out to
+# runc-build-triton-wheel.sh, which runs pip -- and pip's own download cache
+# defaults to $HOME/.cache/pip, i.e. /.cache/pip, which that uid cannot write:
+#     WARNING: The directory '/.cache/pip' or its parent directory is not
+#     owned or is not writable by the current user. The cache has been
+#     disabled.
+# testbld (this script's sibling, run the same way for --workload test) hit
+# the same thing and fixed it with a scratch HOME; do the same here so the
+# tuning build path gets it too.
+mkdir -p "$WORKDIR/scratch/fakehome"
+export HOME="$WORKDIR/scratch/fakehome"
+
 # Step 1: Build Triton wheel (cached)
 echo "Step 1: Building Triton wheel..."
 TRITON_WHEEL=$("$TUNE_ROOT/single/build_triton_wheel.sh" "$WORKDIR")

@@ -3,19 +3,19 @@
 # SPDX-License-Identifier: MIT
 
 """
-Compute best_tuning_results table using Python multiprocessing.
+Compute tune.best_tuning_results using Python multiprocessing.
 
-Unified (modular-tune.md §4.3/§4.7): a single results_table/accuracy_table/
-best_table trio (tuning_results/most_accurate_tuning_results/best_tuning_results)
-serves both tuning levels; `tuning_level` ('kernel' | 'op', selected by
---tuning_mode) is a filter column, not a table/column-name switch. iface_name/
-impl_index replace the old kernel_name/hsaco_index and op_name/backend_index
+A single results_table/accuracy_table/best_table trio
+(tune.tuning_results/tune.most_accurate_tuning_results/tune.best_tuning_results)
+serves both tuning levels; the tuning level ('kernel' | 'op', selected by
+--tuning_mode kernel|op; column cat_level1) is a filter, not a table/column-name
+switch. iface_name/impl_index replace the old kernel_name/hsaco_index and op_name/backend_index
 column pairs.
 
 kernel mode (default):
     For each (task_id, iface_name): find the fastest impl_index that passes
     the accuracy threshold — absolute_error <= 10x the minimum across all
-    (test_case, tensor_name) pairs in most_accurate_tuning_results.
+    (test_case, tensor_name) pairs in tune.most_accurate_tuning_results.
 
 op mode (--tuning_mode op):
     For each (task_id, iface_name): find the fastest impl_index that passes.
@@ -26,7 +26,7 @@ op mode (--tuning_mode op):
 reference_error IS NULL  → tensor genuinely inapplicable → pass
 absolute_error IS NULL with real reference_error → kernel/backend broken → fail
 
-One worker process is spawned per arch (matching task_queue's arch partitions).
+One worker process is spawned per arch (matching pgdef.task's pool partitions).
 Each worker opens its own DB connection and streams only its arch's rows,
 so no result_data is ever sent over IPC — only small result tuples are returned.
 
@@ -51,7 +51,8 @@ from pathlib import Path
 import psycopg
 from psycopg.types.json import Jsonb
 
-from ..utils import get_db_connection_params
+from aotriton.pgdef.workdir import get_db_connection_params
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -85,20 +86,20 @@ SKIP_TEST_CASES: frozenset[str] = frozenset()
 
 # ---------------------------------------------------------------------------
 # SQL name bundle — table/column names are fixed (unified schema); only
-# `tuning_level` varies with --tuning_mode, and every query against
-# tuning_results/most_accurate_tuning_results/best_tuning_results must filter
-# on it since iface_name collides across levels (modular-tune.md §4.3/§4.7).
+# the tuning level varies with --tuning_mode, and every query against
+# tune.tuning_results/most_accurate_tuning_results/best_tuning_results must filter
+# on it (column cat_level1) since iface_name collides across levels (modular-tune.md §4.3/§4.7).
 # ---------------------------------------------------------------------------
 
 class SqlStatements:
-    results_table = 'tuning_results'
-    accuracy_table = 'most_accurate_tuning_results'
-    best_table = 'best_tuning_results'
+    results_table = 'tune.tuning_results'
+    accuracy_table = 'tune.most_accurate_tuning_results'
+    best_table = 'tune.best_tuning_results'
     key_col = 'iface_name'
     index_col = 'impl_index'
 
-    def __init__(self, tuning_mode: str):
-        self.tuning_level = tuning_mode  # 'kernel' | 'op'
+    def __init__(self, tuning_level: str):
+        self.tuning_level = tuning_level  # 'kernel' | 'op'
 
     @property
     def retry_ids_file(self) -> str:
@@ -109,7 +110,7 @@ class SqlStatements:
     @property
     def broken_table(self) -> str:
         # Single unified SQLite table (see .tune/libexec/broken_entries_to_db);
-        # kernel vs. op is a `tuning_level` column there too, not a table name.
+        # kernel vs. op is a level column there too, not a table name.
         return 'broken_entries'
 
 
@@ -126,14 +127,14 @@ class Audit(NamedTuple):
 
 def _find_best_candidate(task_id: int, key_name: str,
                          group_rows: list, thresholds: dict,
-                         tuning_mode: str = 'kernel',
+                         tuning_level: str = 'kernel',
                          verbose: bool = False) -> tuple | None:
     """
     Find the fastest hsaco/backend that passes the accuracy threshold.
 
     group_rows:   [(index, result_data), ...]  (result_data is a dict, already parsed)
     thresholds:   {(test_case, tensor_name): min_absolute_error}
-    tuning_mode:  'kernel' or 'op'
+    tuning_level: 'kernel' or 'op'
     verbose:      if True, log per-candidate and per-tensor audit details
 
     op mode: negative adiffs (early-reject) are treated as passed per tensor;
@@ -145,7 +146,7 @@ def _find_best_candidate(task_id: int, key_name: str,
     if not thresholds:
         log.warning('task_id=%d key=%s: thresholds empty — no accuracy gating, '
                     'fastest candidate wins unconditionally', task_id, key_name)
-    if tuning_mode == 'op':
+    if tuning_level == 'op':
         def tensor_audit(abs_err, tc, tname) -> Audit:
             if abs_err is not None and abs_err < 0:
                 return Audit(passes=True, executed=False)   # early-reject sentinel
@@ -240,7 +241,7 @@ def _find_best_candidate(task_id: int, key_name: str,
         if gate and (best is None or median_time < best[1]):
             best = (index, median_time, impl_desc)
         if True:  # FIXME: Flyc duct tape
-            if gate and tuning_mode == 'op':
+            if gate and tuning_level == 'op':
                 gated.append((median_time, (impl_desc or {}).get('backend_index', index)))
 
     if best is None:
@@ -248,9 +249,9 @@ def _find_best_candidate(task_id: int, key_name: str,
     index, median_time, impl_desc = best
     if True:  # FIXME: Flyc duct tape
         # Runner-up backend, behind the same accuracy gate as the winner.
-        # Stashed in the existing impl_desc JSONB so best_tuning_results needs
+        # Stashed in the existing impl_desc JSONB so tune.best_tuning_results needs
         # no new column; export_best_results.py reads it back as op$best2nd.
-        if tuning_mode == 'op':
+        if tuning_level == 'op':
             won = (impl_desc or {}).get('backend_index', index)
             alt = [b for _, b in sorted(gated) if b != won]
             impl_desc = dict(impl_desc or {})
@@ -287,13 +288,13 @@ def load_thresholds(conn, sql: SqlStatements, task_ids: list[int] | None = None,
             cur.execute(f"""
                 SELECT arch, task_id, {sql.key_col}, test_case, tensor_name, absolute_error
                 FROM {sql.accuracy_table}
-                WHERE tuning_level = %s AND task_id = ANY(%s){arch_clause}
+                WHERE cat_level1 = %s AND task_id = ANY(%s){arch_clause}
             """, [sql.tuning_level, task_ids] + arch_params)
         else:
             cur.execute(f"""
                 SELECT arch, task_id, {sql.key_col}, test_case, tensor_name, absolute_error
                 FROM {sql.accuracy_table}
-                WHERE tuning_level = %s{arch_clause}
+                WHERE cat_level1 = %s{arch_clause}
             """, [sql.tuning_level] + arch_params)
         for arch, task_id, key_name, test_case, tensor_name, abs_err in cur:
             tk = thresholds.setdefault(arch, {}).setdefault(task_id, {}).setdefault(key_name, {})
@@ -319,7 +320,7 @@ def get_archs(conn, sql: SqlStatements, arch: str | None = None) -> list[str]:
     "that arch has no data" and "there is no data at all", and the former has a
     specific cause worth naming: Rebuild Accuracy Table has not been run for it.
     """
-    where = 'WHERE tuning_level = %s'
+    where = 'WHERE cat_level1 = %s'
     params: list = [sql.tuning_level]
     if arch:
         where += ' AND arch = %s'
@@ -337,7 +338,7 @@ def get_archs(conn, sql: SqlStatements, arch: str | None = None) -> list[str]:
 def worker_process_arch(arch: str, worker_index: int,
                         task_id_lo: int, task_id_hi: int,
                         conn_params: dict, arch_thresholds: dict,
-                        tuning_mode: str, verbose: bool = False,
+                        tuning_level: str, verbose: bool = False,
                         filter_task_ids: list[int] | None = None) -> list:
     """
     Runs in a child process. Streams results for one (arch, task_id range),
@@ -352,7 +353,7 @@ def worker_process_arch(arch: str, worker_index: int,
 
     Returns list of (task_id, key_name, index, median_time, impl_desc).
     """
-    sql = SqlStatements(tuning_mode)
+    sql = SqlStatements(tuning_level)
 
     # Each worker configures its own logger (basicConfig not inherited reliably).
     logging.basicConfig(
@@ -380,9 +381,9 @@ def worker_process_arch(arch: str, worker_index: int,
             cur.execute(f"""
                 SELECT tr.task_id, tr.{sql.key_col}, tr.{sql.index_col}, tr.result_data
                 FROM {sql.results_table} tr
-                JOIN task_queue tq ON tq.id = tr.task_id AND tq.arch = %s
                 WHERE tr.result_data IS NOT NULL
-                  AND tr.tuning_level = %s
+                  AND tr.arch = %s
+                  AND tr.cat_level1 = %s
                   AND tr.task_id = ANY(%s)
                 ORDER BY tr.task_id, tr.{sql.key_col}
             """, (arch, sql.tuning_level, filter_task_ids))
@@ -394,9 +395,9 @@ def worker_process_arch(arch: str, worker_index: int,
             cur.execute(f"""
                 SELECT tr.task_id, tr.{sql.key_col}, tr.{sql.index_col}, tr.result_data
                 FROM {sql.results_table} tr
-                JOIN task_queue tq ON tq.id = tr.task_id AND tq.arch = %s
                 WHERE tr.result_data IS NOT NULL
-                  AND tr.tuning_level = %s
+                  AND tr.arch = %s
+                  AND tr.cat_level1 = %s
                   AND tr.task_id BETWEEN %s AND %s
                 ORDER BY tr.task_id, tr.{sql.key_col}
             """, (arch, sql.tuning_level, task_id_lo, task_id_hi))
@@ -423,7 +424,7 @@ def worker_process_arch(arch: str, worker_index: int,
 
                 task_thresholds = arch_thresholds.get(task_id, {}).get(key_name, {})
                 result = _find_best_candidate(task_id, key_name, group_rows, task_thresholds,
-                                              tuning_mode=tuning_mode, verbose=verbose)
+                                              tuning_level=tuning_level, verbose=verbose)
                 if result is not None:
                     results.append(result)
 
@@ -451,10 +452,10 @@ def worker_process_arch(arch: str, worker_index: int,
 def write_results(conn, sql: SqlStatements, arch_results: list, incremental: bool = False,
                   arch: str | None = None) -> None:
     """
-    Writes rows to best_tuning_results (tuning_level column distinguishes
+    Writes rows to tune.best_tuning_results (cat_level1 column distinguishes
     kernel vs. op within the single unified table).
     Full mode: deletes this run's tuning_level slice first (NOT TRUNCATE --
-    best_tuning_results is shared by both levels now, so a full 'kernel' run
+    tune.best_tuning_results is shared by both levels, so a full 'kernel' run
     must not discard 'op' rows and vice versa), and when `arch` is given, only
     that architecture's part of the slice -- the run computed only that
     architecture, so deleting the rest would discard rows nothing is going to
@@ -465,40 +466,35 @@ def write_results(conn, sql: SqlStatements, arch_results: list, incremental: boo
     t0 = time.monotonic()
 
     task_ids = list({r[0] for r in arch_results})
-    task_config_map: dict = {}
-    with conn.cursor() as cur:
-        for i in range(0, len(task_ids), 1000):
-            batch = task_ids[i:i + 1000]
-            cur.execute('SELECT id, task_config FROM task_queue WHERE id = ANY(%s)', (batch,))
-            for row in cur.fetchall():
-                task_config_map[row[0]] = row[1]
-
+    payload_map: dict = {}
     arch_map: dict = {}
     with conn.cursor() as cur:
         for i in range(0, len(task_ids), 1000):
             batch = task_ids[i:i + 1000]
-            cur.execute('SELECT id, arch FROM task_queue WHERE id = ANY(%s)', (batch,))
+            cur.execute('SELECT id, payload, pool FROM pgdef.task '
+                        "WHERE cat_level0 = 'tune' AND id = ANY(%s)", (batch,))
             for row in cur.fetchall():
-                arch_map[row[0]] = row[1]
+                payload_map[row[0]] = row[1]
+                arch_map[row[0]] = row[2]
 
     rows_to_insert = []
     for task_id, key_name, index, median_time, impl_desc in arch_results:
-        task_config = task_config_map.get(task_id)
+        payload = payload_map.get(task_id)
         # NOT `arch`: that name is this function's requested filter, and the
         # DELETE below is scoped by it. Rebinding it here would leave an
         # unfiltered run deleting only the last row's architecture while the
         # INSERT repopulates every one of them -- the exact predicate
         # imbalance that leaves stale rows behind for all the others.
         row_arch = arch_map.get(task_id)
-        if task_config is None or row_arch is None:
+        if payload is None or row_arch is None:
             continue
-        rows_to_insert.append((task_id, row_arch, sql.tuning_level, Jsonb(task_config), key_name,
+        rows_to_insert.append((task_id, row_arch, sql.tuning_level, Jsonb(payload), key_name,
                                index, median_time,
                                Jsonb(impl_desc) if impl_desc is not None else None))
 
     with conn.cursor() as cur:
         if not incremental:
-            # NOT TRUNCATE: best_tuning_results is shared by both tuning
+            # NOT TRUNCATE: tune.best_tuning_results is shared by both tuning
             # levels, so only this run's level may be cleared -- and, when the
             # run was restricted to one architecture, only that architecture's
             # rows within the level. Same argument, one dimension over.
@@ -506,16 +502,16 @@ def write_results(conn, sql: SqlStatements, arch_results: list, incremental: boo
             # idx_best_tuning_results_lookup leads with arch, so the narrower
             # DELETE is cheaper than the wide one, not dearer.
             if arch:
-                cur.execute(f'DELETE FROM {sql.best_table} WHERE tuning_level = %s AND arch = %s',
+                cur.execute(f'DELETE FROM {sql.best_table} WHERE cat_level1 = %s AND arch = %s',
                             (sql.tuning_level, arch))
             else:
-                cur.execute(f'DELETE FROM {sql.best_table} WHERE tuning_level = %s',
+                cur.execute(f'DELETE FROM {sql.best_table} WHERE cat_level1 = %s',
                             (sql.tuning_level,))
         for i in range(0, len(rows_to_insert), INSERT_BATCH_SIZE):
             batch = rows_to_insert[i:i + INSERT_BATCH_SIZE]
             cur.executemany(f"""
                 INSERT INTO {sql.best_table}
-                    (task_id, arch, tuning_level, task_config, {sql.key_col},
+                    (task_id, arch, cat_level1, payload, {sql.key_col},
                      {sql.index_col}, median_time, impl_desc)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (task_id, {sql.key_col}) DO UPDATE
@@ -553,7 +549,7 @@ def _resolve_task_ids_fix(workdir: Path, sql: SqlStatements, fix_spec: str) -> l
 
     broken_entries is a single unified SQLite table (see
     .tune/libexec/broken_entries_to_db); it stores both tuning levels, so the
-    query must filter on tuning_level too, not just host/pass.
+    query must filter on the level column too, not just host/pass.
     """
     import sqlite3
     if ':' in fix_spec:
@@ -567,16 +563,20 @@ def _resolve_task_ids_fix(workdir: Path, sql: SqlStatements, fix_spec: str) -> l
         raise FileNotFoundError(f'--fix: {db_path} not found')
 
     with sqlite3.connect(db_path) as db:
+        # workdir-local file: its level column is `cat_level1` when written by
+        # the current broken_entries_to_db, `tuning_level` in older files.
+        cols = {r[1] for r in db.execute(f'PRAGMA table_info({sql.broken_table})')}
+        level_col = 'cat_level1' if 'cat_level1' in cols else 'tuning_level'
         if hostname:
             cur = db.execute(
                 f'SELECT task_id FROM {sql.broken_table} '
-                f'WHERE pass = ? AND host = ? AND tuning_level = ? ORDER BY task_id',
+                f'WHERE pass = ? AND host = ? AND {level_col} = ? ORDER BY task_id',
                 (pass_num, hostname, sql.tuning_level),
             )
         else:
             cur = db.execute(
                 f'SELECT task_id FROM {sql.broken_table} '
-                f'WHERE pass = ? AND tuning_level = ? ORDER BY task_id',
+                f'WHERE pass = ? AND {level_col} = ? ORDER BY task_id',
                 (pass_num, sql.tuning_level),
             )
         ids = [row[0] for row in cur.fetchall()]
@@ -607,11 +607,10 @@ def main() -> None:
                       help='Debug: compute for specific task_id(s). Runs inline (no multiprocessing). Prints results; does NOT write to DB.')
 
     parser.add_argument('--tuning_mode', choices=['kernel', 'op'], default='kernel',
-                        help='Selects the tuning_level filter applied to the unified '
-                             'tuning_results/best_tuning_results tables')
+                        help='Selects the kernel or op slice (tuning_level) of tune\'s tables')
     parser.add_argument('--arch', default=None,
                         help='Restrict to one architecture (e.g. gfx942). Other '
-                             'architectures\' best_tuning_results rows are left untouched. '
+                             'architectures\' tune.best_tuning_results rows are left untouched. '
                              'Default: every architecture with accuracy rows.')
     parser.add_argument('--verbose', action='store_true',
                         help='Debug: print per-candidate per-tensor accuracy details (implies DEBUG log level)')
@@ -674,9 +673,8 @@ def main() -> None:
                 cur.execute(f"""
                     SELECT tr.task_id, tr.{sql.key_col}, tr.{sql.index_col}, tr.result_data
                     FROM {sql.results_table} tr
-                    JOIN task_queue tq ON tq.id = tr.task_id
                     WHERE tr.result_data IS NOT NULL
-                      AND tr.tuning_level = %s
+                      AND tr.cat_level1 = %s
                       AND tr.task_id IN ({placeholders})
                     ORDER BY tr.task_id, tr.{sql.key_col}
                 """, [sql.tuning_level] + args.ids)
@@ -700,7 +698,7 @@ def main() -> None:
             logger.info('--- task_id=%d key=%s: %d candidates, %d thresholds ---',
                         task_id, key_name, len(group_rows), len(task_thresholds))
             result = _find_best_candidate(task_id, key_name, group_rows, task_thresholds,
-                                          tuning_mode=args.tuning_mode, verbose=args.verbose)
+                                          tuning_level=sql.tuning_level, verbose=args.verbose)
             if result is not None:
                 _, _, index, median_time, impl_desc = result
                 logger.info('  → best: index=%d median_time=%.3fms impl=%s',
@@ -743,7 +741,7 @@ def main() -> None:
             pool.apply_async(
                 worker_process_arch,
                 (arch, worker_index, band_lo, band_hi, conn_params, thresholds[arch],
-                 args.tuning_mode, args.verbose, filter_task_ids)
+                 sql.tuning_level, args.verbose, filter_task_ids)
             )
             for arch, worker_index, band_lo, band_hi in work_items
         ]

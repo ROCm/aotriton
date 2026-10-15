@@ -1,0 +1,11 @@
+# Runtime dependencies of the engine (pgdef, python/pgdef): what a worker needs to
+# talk to the queue and run a handler graph, whatever application sits on top. The
+# tuning image installs them via requirements-tuning.txt.
+#
+# Keep application-specific packages OUT. torch and triton are the ones that matter:
+# they belong to the tuning image alone, and an application image that does not run
+# Python kernels would otherwise get them through this file.
+
+-r requirements.txt
+psycopg[binary,pool]  # PostgreSQL adapter for task queue
+dacite

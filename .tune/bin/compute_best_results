@@ -2,7 +2,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Compute best_tuning_results table using Python multiprocessing.
+# Compute tune.best_tuning_results using Python multiprocessing.
 # Reads connection parameters from <workdir>/config.rc.
 #
 # Usage:

@@ -32,17 +32,19 @@ v3src/flash/                      # C++ dispatcher implementations
 ├── attn_bwd_fused.cc             # Fused bwd dispatcher
 └── attn_check.cc / attn_debug.cc # Validation and debug helpers
 
-v3python/tune/flash/              # Python tuning harness
-├── module.py                     # FlashModule: _clamp_memory_usage,
+modules/flash/tune/               # Python tuning harness (flash plugin)
+├── desc.py                       # FlashTune: _clamp_memory_usage,
 │                                 #   _do_gen_ref, run_single_test
 ├── reference.py                  # SdpaReference: generate_inputs,
 │                                 #   direct_call (golden outputs)
-├── kernels.py                    # attn_fwd, bwd_kernel_dk_dv,
-│                                 #   bwd_kernel_dq, bwd_kernel_fuse
-└── utils.py                      # sdpa_logsumexp, sdpa_odo, round_to_8x
+├── calls.py, level_kernel.py,    # per-kernel / per-op direct calls;
+│   level_op.py                   #   kernel-level vs op-level tuning
+├── entry.py                      # FlashEntry, FlashInputMetadata
+├── causal.py                     # translate_causal
+└── sdpa_math.py                  # sdpa_logsumexp, round_to_8x
 
-v3python/tune/gpu_utils.py        # translate_causal, target_fudge_factor,
-                                  #   mk_aotensor, adiff1/2
+python/tune/gpu_utils.py          # target_fudge_factor, adiff1/2,
+                                  #   mk_aotensor_{cpu,cuda}torch
 ```
 
 ## SDPA math reference
@@ -509,10 +511,10 @@ thing `attn_options.force_backend_index` sees.
 
 ## Out of scope
 
-- Code generator (`v3python/rules/`, `v3python/codegen/`) — use the
-  `codegen` agent
-- PostgreSQL tuning queue (`v3python/tune/pq/`) — use the main assistant
-- Worker/broker infrastructure (`v3python/tune/localq/`) — use the main
-  assistant
+- Code generator (`python/codegen/`, `python/template_instantiation/`,
+  `modules/*/aot/`) — use the `codegen` agent
+- PostgreSQL tuning queue (`python/tune/pq/`) — use the `tuner-v3` agent
+- Worker/broker infrastructure (`python/tune/localq/`) — use the `tuner-v3`
+  agent
 
 <!-- vim: set tw=78: -->

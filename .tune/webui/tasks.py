@@ -36,8 +36,8 @@ except ImportError:
         f"  Install it with: pip install -e '{AOTRITON_ROOT}'"
     )
 
-from aotriton.tune.utils import get_db_connection_params
-from aotriton.tune.pq.queue import TaskQueue
+from aotriton.pgdef.workdir import get_db_connection_params
+from aotriton.tune.pq import tasks as tune_tasks
 from aotriton.tune.pq.results import get_task_debug_snapshot
 from aotriton.tune.registry import load_flash_entry_module
 from .pytest_entry_parser import parse_pytest_node_id
@@ -195,7 +195,7 @@ def _merge_progress_rows(progress_rows, speed_rows, stale_rows):
         effective_total = data['total'] - cancelled
         data['effective_total'] = effective_total
         data['pct_complete'] = round(
-            100.0 * data['completed'] / effective_total, 1
+            100.0 * data['done'] / effective_total, 1
         ) if effective_total > 0 else 0.0
         result.append(data)
     return result
@@ -204,15 +204,14 @@ def _merge_progress_rows(progress_rows, speed_rows, stale_rows):
 def get_tuning_progress(workdir):
     """Get kernel and op tuning progress for both tuning levels.
 
-    The queries live in aotriton.tune.pq.queue; this only merges and formats
-    what they return.
+    The queries live in aotriton.tune.pq.tasks (over the engine views); this
+    only merges and formats what they return.
     """
     try:
         conn_params = get_db_connection_params(Path(workdir))
         with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
-            tq = TaskQueue(conn)
-            kernel = tq.get_progress('kernel')
-            op = tq.get_progress('op')
+            kernel = tune_tasks.get_progress(conn, 'kernel')
+            op = tune_tasks.get_progress(conn, 'op')
             return {
                 'kernel': _merge_progress_rows(kernel['progress'], kernel['speed'], kernel['stale']),
                 'op': _merge_progress_rows(op['progress'], op['speed'], op['stale']),
@@ -227,10 +226,10 @@ _TUNE_V3BIS_MARKER = 'TUNE_V3BIS testrun Item: '
 
 def _resolve_pytest_entry(workdir, line: str) -> dict:
     """
-    Resolve a pytest node ID to a task_queue id.
+    Resolve a pytest node ID to a task id.
 
     Delegates parsing to pytest_entry_parser.parse_pytest_node_id(), then
-    queries task_queue without an arch filter (pytest IDs do not encode arch).
+    queries pgdef.task (through aotriton.tune.pq.tasks) without an arch filter (pytest IDs do not encode arch).
     Returns {'matches': [{'task_id': int, 'arch': str, 'module': str}, ...]} or {'error': str}.
     """
     try:
@@ -243,12 +242,11 @@ def _resolve_pytest_entry(workdir, line: str) -> dict:
     try:
         conn_params = get_db_connection_params(Path(workdir))
         with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
-            # No arch or tuning_level filter: a pytest node ID encodes
+            # No arch or tuning-level filter: a pytest node ID encodes
             # neither, so every matching row is reported and the caller picks.
-            rows = TaskQueue(conn).find_by_entry(
-                entry, columns='id, arch, module')
+            rows = tune_tasks.find_by_entry(conn, entry)
         if not rows:
-            return {'error': f'No task_queue row found for {parsed_desc}'}
+            return {'error': f'No task found for {parsed_desc}'}
         return {'matches': [{'task_id': r['id'], 'arch': r['arch'], 'module': r['module']} for r in rows]}
     except Exception as e:
         logging.error('_resolve_pytest_entry failed: %s', e)
@@ -258,7 +256,7 @@ def _resolve_pytest_entry(workdir, line: str) -> dict:
 def resolve_tune_entry(workdir, line: str) -> dict:
     """
     Parse a TUNE_V3BIS testrun line or pytest node ID and return the matching
-    task_queue id.
+    task id.
 
     Accepts:
       - A TUNE_V3BIS testrun Item line (full or payload only)
@@ -284,21 +282,19 @@ def resolve_tune_entry(workdir, line: str) -> dict:
     d = asdict(entry)
 
     # An entry is dispatched at both levels and they share arch and every
-    # task_config field, so the level has to come from somewhere: without it
+    # payload field, so the level has to come from somewhere: without it
     # the WHERE matches two rows and LIMIT 1 picks arbitrarily. Use the mode
     # the UI is actually showing rather than assuming 'kernel', so resolving a
     # line from an op-mode dbreport finds the op task.
-    tuning_level = get_tuning_mode(workdir)
+    tuning_level = _tune_level(get_category(workdir))
 
     try:
         conn_params = get_db_connection_params(Path(workdir))
         with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
-            rows = TaskQueue(conn).find_by_entry(
-                d, arch=arch, tuning_level=tuning_level,
-                columns='id', limit=1)
+            rows = tune_tasks.find_by_entry(conn, d, arch=arch, tuning_level=tuning_level, limit=1)
         row = rows[0] if rows else None
         if row is None:
-            return {'error': f'No task_queue row found for arch={arch} {entry_part}'}
+            return {'error': f'No task found for arch={arch} {entry_part}'}
         return {'task_id': row['id']}
     except Exception as e:
         logging.error('resolve_tune_entry failed: %s', e)
@@ -448,9 +444,9 @@ class ComputeBestResultsCommand(CommandBuilder):
     """Compute best_tuning_results table from raw tuning results"""
     RELATIVE = '.tune/bin/compute_best_results'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+    def exec(self, workdir, category: str = 'tune,kernel', arch: str | None = None,
              dry_run: bool = False):
-        args = [workdir, '--tuning_mode', tuning_mode]
+        args = [workdir, '--tuning_mode', _tune_level(category)]
         if arch:
             args += ['--arch', arch]
         label = 'Compute best tuning results' + (f' ({arch})' if arch else '')
@@ -467,9 +463,9 @@ class ExportBestResultsCommand(CommandBuilder):
     """Export best results to centralized SQLite database"""
     RELATIVE = '.tune/bin/export_best_results'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+    def exec(self, workdir, category: str = 'tune,kernel', arch: str | None = None,
              incremental: bool = False, dry_run: bool = False):
-        args = [workdir, '--tuning_mode', tuning_mode]
+        args = [workdir, '--tuning_mode', _tune_level(category)]
         if arch:
             args += ['--arch', arch]
         if incremental:
@@ -484,9 +480,9 @@ class RecreateMaterializedViewCommand(CommandBuilder):
     """Recreate accuracy table via DROP + CREATE (faster than REFRESH CONCURRENTLY)"""
     RELATIVE = '.tune/bin/recreate_materialized_view'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+    def exec(self, workdir, category: str = 'tune,kernel', arch: str | None = None,
              dry_run: bool = False):
-        args = [workdir, '--tuning_mode', tuning_mode]
+        args = [workdir, '--tuning_mode', _tune_level(category)]
         if arch:
             args += ['--arch', arch]
         label = 'Recreate materialized view' + (f' ({arch})' if arch else '')
@@ -497,9 +493,9 @@ class UpdateMaterializedViewCommand(CommandBuilder):
     """Incremental upsert of accuracy table for cached task_ids"""
     RELATIVE = '.tune/bin/update_materialized_view'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+    def exec(self, workdir, category: str = 'tune,kernel', arch: str | None = None,
              dry_run: bool = False):
-        args = [workdir, '--tuning_mode', tuning_mode]
+        args = [workdir, '--tuning_mode', _tune_level(category)]
         if arch:
             args += ['--arch', arch]
         label = 'Update materialized view (incremental)' + (f' ({arch})' if arch else '')
@@ -510,9 +506,9 @@ class SancheckCommand(CommandBuilder):
     """Run LUT sanity check against the exported centralized database"""
     RELATIVE = '.tune/bin/sancheck'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+    def exec(self, workdir, category: str = 'tune,kernel', arch: str | None = None,
              dry_run: bool = False):
-        args = [workdir, '--tuning_mode', tuning_mode]
+        args = [workdir, '--tuning_mode', _tune_level(category)]
         if arch:
             args += ['--arch', arch]
         label = 'LUT sanity check' + (f' ({arch})' if arch else '')
@@ -523,9 +519,9 @@ class DecomposeDbCommand(CommandBuilder):
     """Decompose centraldb.sqlite3 into per-arch/kernel shards under <workdir>/installed/database/"""
     RELATIVE = '.tune/bin/decomposedb'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+    def exec(self, workdir, category: str = 'tune,kernel', arch: str | None = None,
              dry_run: bool = False):
-        args = [workdir, '--tuning_mode', tuning_mode]
+        args = [workdir, '--tuning_mode', _tune_level(category)]
         if arch:
             args += ['--arch', arch]
         label = 'Decompose database' + (f' ({arch})' if arch else '')
@@ -536,8 +532,8 @@ class BakeLutCommand(CommandBuilder):
     """Bake LUT: convert raw PG tuning results into the aotriton SQLite DB"""
     RELATIVE = '.tune/bin/bake_lut'
 
-    def exec(self, workdir, extra_args: list | None = None, tuning_mode: str = 'kernel', dry_run: bool = False):
-        args = [workdir, '--tuning_mode', tuning_mode] + (extra_args or [])
+    def exec(self, workdir, extra_args: list | None = None, category: str = 'tune,kernel', dry_run: bool = False):
+        args = [workdir, '--tuning_mode', _tune_level(category)] + (extra_args or [])
         label = 'Bake LUT' + (f' ({" ".join(extra_args)})' if extra_args else '')
         return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
@@ -607,8 +603,9 @@ class DeployAllCommand(DeployCommand):
     RELATIVE = '.tune/bin/deploy'
     DESCRIPTION = 'Deploy to all workers'
 
-    def exec(self, workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
-        return self._run(self.RELATIVE, [workdir, '--tuning_mode', tuning_mode], workdir, self.DESCRIPTION, dry_run=dry_run)
+    def exec(self, workdir, category: str = 'tune,kernel', dry_run: bool = False):
+        return self._run(self.RELATIVE, [workdir, '--category', category],
+                         workdir, f'{self.DESCRIPTION} ({category})', dry_run=dry_run)
 
 
 class PrepareWorkdirCommand(DeployCommand):
@@ -658,9 +655,9 @@ _prepare_workdir = PrepareWorkdirCommand()
 
 # Worker control functions
 
-def start_worker_single(workdir, hostname, options=None, tuning_mode: str = 'kernel', dry_run: bool = False):
+def start_worker_single(workdir, hostname, options=None, category: str = 'tune,kernel', dry_run: bool = False):
     """Start single worker"""
-    extra = ['--tuning_mode', tuning_mode]
+    extra = ['--category', category]
     return _start_worker.exec(workdir, hostname, options, extra_args=extra, dry_run=dry_run)
 
 
@@ -669,42 +666,44 @@ def stop_worker_single(workdir, hostname, dry_run: bool = False):
     return _stop_worker.exec(workdir, hostname, dry_run=dry_run)
 
 
-def restart_worker_single(workdir, hostname, options=None, tuning_mode: str = 'kernel', dry_run: bool = False):
+def restart_worker_single(workdir, hostname, options=None, category: str = 'tune,kernel', dry_run: bool = False):
     """Restart single worker"""
-    extra = ['--tuning_mode', tuning_mode]
+    extra = ['--category', category]
     return _restart_worker.exec(workdir, hostname, options, extra_args=extra, dry_run=dry_run)
 
 
-def stop_start_worker_single(workdir, hostname, options=None, tuning_mode: str = 'kernel', dry_run: bool = False):
+def stop_start_worker_single(workdir, hostname, options=None, category: str = 'tune,kernel', dry_run: bool = False):
     """Stop then start single worker"""
-    extra = ['--tuning_mode', tuning_mode]
+    extra = ['--category', category]
     return _stopstart_worker.exec(workdir, hostname, options, extra_args=extra, dry_run=dry_run)
 
 
-def _bulk_worker_action(workdir, action, options=None, tuning_mode: str = 'kernel', dry_run: bool = False):
-    """Run a worker action on all Tuner-role hosts."""
-    hostnames = get_tuner_hostnames(workdir)
+def _bulk_worker_action(workdir, action, options=None, category: str = 'tune,kernel', dry_run: bool = False):
+    """Run a worker action on all hosts that have the application's role
+    (Tuner for tune: the manifest's deploy.role)."""
+    role = ROLE_OF_APP[app_of(category)]
+    hostnames = get_role_hostnames(workdir, role)
     if not hostnames:
-        return {'status': 'ok', 'message': 'No Tuner-role workers configured', 'output': ''}
+        return {'status': 'ok', 'message': f'No {role}-role workers configured', 'output': ''}
     results = []
     for hostname in hostnames:
         if action == 'start':
-            r = start_worker_single(workdir, hostname, options, tuning_mode=tuning_mode, dry_run=dry_run)
+            r = start_worker_single(workdir, hostname, options, category=category, dry_run=dry_run)
         elif action == 'stop':
             r = stop_worker_single(workdir, hostname, dry_run=dry_run)
         elif action == 'restart':
-            r = restart_worker_single(workdir, hostname, options, tuning_mode=tuning_mode, dry_run=dry_run)
+            r = restart_worker_single(workdir, hostname, options, category=category, dry_run=dry_run)
         elif action == 'stop-start':
-            r = stop_start_worker_single(workdir, hostname, options, tuning_mode=tuning_mode, dry_run=dry_run)
+            r = stop_start_worker_single(workdir, hostname, options, category=category, dry_run=dry_run)
         else:
             r = {'status': 'error', 'message': f'Unknown action: {action}'}
         results.append(f"{hostname}: {r.get('status', 'unknown')}")
     return {'status': 'ok', 'message': '\n'.join(results), 'output': '\n'.join(results)}
 
 
-def start_all_workers(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+def start_all_workers(workdir, category: str = 'tune,kernel', dry_run: bool = False):
     """Start all Tuner-role workers"""
-    return _bulk_worker_action(workdir, 'start', tuning_mode=tuning_mode, dry_run=dry_run)
+    return _bulk_worker_action(workdir, 'start', category=category, dry_run=dry_run)
 
 
 def stop_all_workers(workdir, dry_run: bool = False):
@@ -712,14 +711,14 @@ def stop_all_workers(workdir, dry_run: bool = False):
     return _bulk_worker_action(workdir, 'stop', dry_run=dry_run)
 
 
-def restart_all_workers(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+def restart_all_workers(workdir, category: str = 'tune,kernel', dry_run: bool = False):
     """Restart all Tuner-role workers"""
-    return _bulk_worker_action(workdir, 'restart', tuning_mode=tuning_mode, dry_run=dry_run)
+    return _bulk_worker_action(workdir, 'restart', category=category, dry_run=dry_run)
 
 
-def stop_start_all_workers(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+def stop_start_all_workers(workdir, category: str = 'tune,kernel', dry_run: bool = False):
     """Stop then start all Tuner-role workers"""
-    return _bulk_worker_action(workdir, 'stop-start', tuning_mode=tuning_mode, dry_run=dry_run)
+    return _bulk_worker_action(workdir, 'stop-start', category=category, dry_run=dry_run)
 
 
 # Server control functions
@@ -749,43 +748,43 @@ def recreate_schema(workdir, dry_run: bool = False):
     return _recreate_schema.exec(workdir, dry_run=dry_run)
 
 
-def compute_best_results(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):
+def compute_best_results(workdir, category: str = 'tune,kernel', arch: str | None = None, dry_run: bool = False):
     """Compute best_tuning_results table from raw tuning results"""
-    return _compute_best_results.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
+    return _compute_best_results.exec(workdir, category=category, arch=arch, dry_run=dry_run)
 
 
-def export_best_results(workdir, tuning_mode: str = 'kernel', arch: str | None = None,
+def export_best_results(workdir, category: str = 'tune,kernel', arch: str | None = None,
                         incremental: bool = False, dry_run: bool = False):
     """Export best results to centralized SQLite database"""
-    return _export_best_results.exec(workdir, tuning_mode=tuning_mode, arch=arch,
+    return _export_best_results.exec(workdir, category=category, arch=arch,
                                      incremental=incremental, dry_run=dry_run)
 
 
-def recreate_materialized_view(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):
+def recreate_materialized_view(workdir, category: str = 'tune,kernel', arch: str | None = None, dry_run: bool = False):
     """Recreate accuracy table via DROP + CREATE"""
-    return _recreate_materialized_view.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
+    return _recreate_materialized_view.exec(workdir, category=category, arch=arch, dry_run=dry_run)
 
 
-def sancheck(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):
+def sancheck(workdir, category: str = 'tune,kernel', arch: str | None = None, dry_run: bool = False):
     """Run LUT sanity check against the exported centralized database"""
-    return _sancheck.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
+    return _sancheck.exec(workdir, category=category, arch=arch, dry_run=dry_run)
 
 
-def bake_lut(workdir, extra_args: list | None = None, tuning_mode: str = 'kernel', dry_run: bool = False):
+def bake_lut(workdir, extra_args: list | None = None, category: str = 'tune,kernel', dry_run: bool = False):
     """Bake LUT: convert raw PG tuning results into the aotriton SQLite DB.
 
     extra_args examples: ['--incremental'], ['--fix', 'gpu01:0'], ['--fix', '0']
     """
-    return _bake_lut.exec(workdir, extra_args, tuning_mode=tuning_mode, dry_run=dry_run)
+    return _bake_lut.exec(workdir, extra_args, category=category, dry_run=dry_run)
 
 
-def update_materialized_view(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):
-    return _update_materialized_view.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
+def update_materialized_view(workdir, category: str = 'tune,kernel', arch: str | None = None, dry_run: bool = False):
+    return _update_materialized_view.exec(workdir, category=category, arch=arch, dry_run=dry_run)
 
 
-def decomposedb(workdir, tuning_mode: str = 'kernel', arch: str | None = None, dry_run: bool = False):
+def decomposedb(workdir, category: str = 'tune,kernel', arch: str | None = None, dry_run: bool = False):
     """Decompose centraldb.sqlite3 into per-arch/kernel shards"""
-    return _decomposedb.exec(workdir, tuning_mode=tuning_mode, arch=arch, dry_run=dry_run)
+    return _decomposedb.exec(workdir, category=category, arch=arch, dry_run=dry_run)
 
 
 def get_git_status(workdir):
@@ -931,7 +930,7 @@ def fetch_tuning_build(workdir, dry_run: bool = False):
     hostname = cfg.get('hostname', '')
     if not hostname:
         return {'status': 'error', 'message': 'Remote build node hostname is not configured'}
-    cmd = ['.tune/bin/fetchbuild', workdir, '--tuning']
+    cmd = ['.tune/bin/fetchbuild', workdir, '--category', 'tune,kernel']
     return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
                        description=f'Fetch tuning build from {hostname}', dry_run=dry_run)
 
@@ -942,7 +941,7 @@ def fetch_test_build(workdir, dry_run: bool = False):
     hostname = cfg.get('hostname', '')
     if not hostname:
         return {'status': 'error', 'message': 'Remote build node hostname is not configured'}
-    cmd = ['.tune/bin/fetchbuild', workdir, '--test']
+    cmd = ['.tune/bin/fetchbuild', workdir, '--category', 'tune,op']
     return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
                        description=f'Fetch test build from {hostname}', dry_run=dry_run)
 
@@ -959,15 +958,16 @@ def build_image_on_worker(workdir, hostname, dry_run: bool = False):
 
 # Deploy functions
 
-def deploy_workdir(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+def deploy_workdir(workdir, category: str = 'tune,kernel', dry_run: bool = False):
     """Deploy to all workers"""
-    return _deploy_all.exec(workdir, tuning_mode=tuning_mode, dry_run=dry_run)
+    return _deploy_all.exec(workdir, category=category, dry_run=dry_run)
 
 
-def deploy_workdir_single(workdir, hostname, extra_args=None, tuning_mode: str = 'kernel', dry_run: bool = False):
+def deploy_workdir_single(workdir, hostname, extra_args=None, category: str = 'tune,kernel', dry_run: bool = False):
     """Deploy to single worker"""
-    testnode_args = ['--testnode'] if tuning_mode == 'op' else []
-    combined = testnode_args + list(extra_args or [])
+    # sync_workdir.sh asks the application's manifest where the build for this
+    # category is installed.
+    combined = ['--category', category] + list(extra_args or [])
     return _deploy_worker.exec(workdir, hostname, extra_args=combined or None, dry_run=dry_run)
 
 
@@ -989,6 +989,7 @@ def init_workers_db(workdir):
                 hostname TEXT NOT NULL UNIQUE,
                 arch TEXT NOT NULL,
                 workdir_override TEXT,
+                subpool TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -1046,6 +1047,11 @@ def init_workers_db(workdir):
                 PRIMARY KEY (hostname, role_name)
             );
         """)
+        # A workers.db made before pgdef has no subpool column. It is host
+        # inventory, not the queue database: add the column in place.
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(workers)")]
+        if 'subpool' not in columns:
+            conn.execute("ALTER TABLE workers ADD COLUMN subpool TEXT")
 
 
 def get_supported_architectures():
@@ -1123,6 +1129,7 @@ def get_workers_by_architecture(workdir):
     # Group workers by architecture
     workers_by_arch = {arch: [] for arch in TUNING_ARCHITECTURES}
 
+    subpools = get_worker_subpools(workdir)
     for hostname, arch, workdir_override in workers:
         if arch in workers_by_arch:
             gpu_info = gpu_info_map.get(hostname, {})
@@ -1131,6 +1138,7 @@ def get_workers_by_architecture(workdir):
                 'hostname': hostname,
                 'arch': arch,
                 'workdir': workdir_override or '',
+                'subpool': subpools.get(hostname, ''),
                 'gpu_arch': gpu_info.get('arch', ''),
                 'gpu_pciid': gpu_info.get('pciid', ''),
                 'gpu_number': gpu_info.get('number', ''),
@@ -1200,6 +1208,34 @@ def update_worker_workdir(workdir, hostname, workdir_override):
         return {'success': False, 'error': str(e)}
 
 
+def update_worker_subpool(workdir, hostname, subpool):
+    """Set a worker's subpool: the machine group inside its arch (e.g. MI355)
+    whose readers claim generic tasks plus tasks dispatched for that subpool.
+    Empty means none (generic tasks only)."""
+    init_workers_db(workdir)  # Ensure database exists
+    subpool = (subpool or '').strip() or None
+    if subpool is not None and not re.match(r'^[A-Za-z0-9_]+$', subpool):
+        return {'success': False, 'error': f"Invalid subpool {subpool!r}: expected letters, digits and underscore"}
+    db_path = Path(workdir) / 'workers.db'
+    try:
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            cursor = conn.execute("UPDATE workers SET subpool = ? WHERE hostname = ?", (subpool, hostname))
+            if cursor.rowcount == 0:
+                return {'success': False, 'error': f"Worker '{hostname}' not found"}
+        return {'success': True, 'message': f"Worker '{hostname}' subpool updated successfully"}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+def get_worker_subpools(workdir):
+    """{hostname: subpool} for the workers that have one."""
+    init_workers_db(workdir)  # Ensure database exists
+    db_path = Path(workdir) / 'workers.db'
+    with sqlite3.connect(db_path.as_posix()) as conn:
+        return {h: sp for h, sp in conn.execute(
+            "SELECT hostname, subpool FROM workers WHERE subpool IS NOT NULL AND subpool != ''")}
+
+
 def get_worker_role(workdir, hostname, role):
     """Return True if hostname has the given role."""
     init_workers_db(workdir)
@@ -1231,6 +1267,16 @@ def set_worker_role(workdir, hostname, role, enabled):
         return {'success': True}
     except Exception as e:
         return {'success': False, 'error': str(e)}
+
+
+def get_role_hostnames(workdir, role: str):
+    """Return list of hostnames that have the given role."""
+    init_workers_db(workdir)
+    db_path = Path(workdir) / 'workers.db'
+    with sqlite3.connect(db_path.as_posix()) as conn:
+        cursor = conn.execute(
+            "SELECT hostname FROM worker_roles WHERE role_name = ? ORDER BY hostname", (role,))
+        return [row[0] for row in cursor.fetchall()]
 
 
 def get_tuner_hostnames(workdir):
@@ -1525,34 +1571,87 @@ def set_test_build_use_installed_db(workdir, enabled: bool):
         return {'success': False, 'error': str(e)}
 
 
-def get_tuning_mode(workdir) -> str:
-    """Get the WebUI tuning mode from workers.db; defaults to 'kernel'."""
+# The categories the WebUI offers, and the application each runs. The first
+# component of a category is its application (cat_level0): the shared scripts
+# take only --category and read the application's manifest by its first level.
+CATEGORIES = ('tune,kernel', 'tune,op')
+
+# The workers.db role of the hosts that run each application (the manifest's deploy.role)
+ROLE_OF_APP = {'tune': 'Tuner'}
+
+
+def app_of(category: str) -> str:
+    """The application of a category: 'tune,op' -> 'tune'."""
+    return category.split(',', 1)[0]
+
+
+def _tune_level(category: str) -> str:
+    """The tune level ('kernel' | 'op') of a category."""
+    return tune_tasks.level_of(category)
+
+
+def normalize_category(value: str | None) -> str:
+    """The WebUI's category as 'tune,kernel' | 'tune,op' (the
+    `--category` value every script takes).
+
+    The one compatibility read of the old vocabulary: a bare 'kernel' or 'op'
+    (the old `tuning_mode` value, as stored in workers.db under
+    'webui::tuning_mode' or posted by a stale page) means 'tune,<value>'.
+    Empty means the default, 'tune,kernel'. Anything else is an error.
+    """
+    if not value:
+        return 'tune,kernel'
+    if value in tune_tasks.LEVELS:
+        value = f'tune,{value}'
+    if value not in CATEGORIES:
+        raise ValueError(f"unknown category {value!r}; expected one of {list(CATEGORIES)}")
+    return value
+
+
+def normalize_tune_category(value: str | None) -> str:
+    """normalize_category() for the tuning-only tools (best results, LUT export,
+    sancheck, ...)."""
+    return normalize_category(value)
+
+
+def get_category(workdir) -> str:
+    """Get the WebUI category from workers.db; defaults to 'tune,kernel'.
+
+    Reads 'webui::category', falling back to the pre-category key
+    'webui::tuning_mode' (values kernel|op) so existing saved sessions keep
+    their choice. (workers.db's own host table keeps its `tuning_mode`
+    column for now; it is mapped to a category at the script boundary.)
+    """
     init_workers_db(workdir)
-    workdir_path = Path(workdir)
-    db_path = workdir_path / 'workers.db'
+    db_path = Path(workdir) / 'workers.db'
     try:
         with sqlite3.connect(db_path.as_posix()) as conn:
-            cursor = conn.execute("SELECT value FROM config WHERE key = 'webui::tuning_mode'")
-            row = cursor.fetchone()
-            return row[0] if row else 'kernel'
+            for key in ('webui::category', 'webui::tuning_mode'):
+                row = conn.execute("SELECT value FROM config WHERE key = ?", (key,)).fetchone()
+                if row:
+                    return normalize_category(row[0])
+            return 'tune,kernel'
     except Exception:
-        return 'kernel'
+        return 'tune,kernel'
 
 
-def set_tuning_mode(workdir, mode: str):
-    """Set the WebUI tuning mode in workers.db. mode must be 'kernel' or 'op'."""
-    if mode not in ('kernel', 'op'):
-        return {'success': False, 'error': f"Invalid tuning mode: {mode!r}"}
+def set_category(workdir, category: str):
+    """Set the WebUI category in workers.db: 'tune,kernel' or 'tune,op'."""
+    try:
+        category = normalize_category(category) if category else None
+        if category is None:
+            raise ValueError('empty category')
+    except ValueError:
+        return {'success': False, 'error': f"Invalid category: {category!r}"}
     init_workers_db(workdir)
-    workdir_path = Path(workdir)
-    db_path = workdir_path / 'workers.db'
+    db_path = Path(workdir) / 'workers.db'
     try:
         with sqlite3.connect(db_path.as_posix()) as conn:
             conn.execute("""
-                INSERT INTO config (key, value) VALUES ('webui::tuning_mode', ?)
+                INSERT INTO config (key, value) VALUES ('webui::category', ?)
                 ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
-            """, (mode, mode))
-        return {'success': True, 'message': f"Tuning mode set to: {mode}"}
+            """, (category, category))
+        return {'success': True, 'message': f"Category set to: {category}"}
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
@@ -1887,7 +1986,7 @@ def get_scheduled_workers(workdir):
 # ---------------------------------------------------------------------------
 
 def get_perf_archs(workdir: str) -> list[str]:
-    """Return sorted list of arches with best_tuning_results data."""
+    """Return sorted list of arches with tune.best_tuning_results data."""
     try:
         conn_params = get_db_connection_params(Path(workdir))
         with psycopg.connect(**conn_params, autocommit=True) as conn:

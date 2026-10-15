@@ -6,7 +6,7 @@
 {#
   Error text is capped twice, for two different problems.
 
-  ERROR_MAX_CHARS bounds what reaches the page at all. A task_queue.error can
+  ERROR_MAX_CHARS bounds what reaches the page at all. A task's logistics.errors entry can
   carry an exaid OSError, which embeds the worker's whole stdout AND stderr --
   megabytes of traceback, per row, in a table that shows many rows. Clamping
   that with CSS alone would still ship every byte to the browser.
@@ -30,7 +30,7 @@
 
 <section>
     <form method="get" action="/debug" style="display: flex; gap: 0.5rem; align-items: center;">
-        <label for="task_id_input">task_queue.id:</label>
+        <label for="task_id_input">pgdef.task.id:</label>
         <input id="task_id_input" type="number" name="task_id"
                value="{{ task_id if task_id is not none else '' }}"
                placeholder="e.g. 38712" style="width: 12rem;">
@@ -79,7 +79,7 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
             document.getElementById('task_id_input').closest('form').submit();
         } else if (data.matches !== undefined) {
             if (data.matches.length === 0) {
-                errEl.textContent = 'No matching task_queue rows found.';
+                errEl.textContent = 'No matching tasks found.';
                 return;
             }
             if (data.matches.length === 1) {
@@ -119,39 +119,49 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
 </section>
 {% else %}
 
-{# ── task_queue ─────────────────────────────────────────────────────────── #}
+{# ── pgdef.task ─────────────────────────────────────────────────────────── #}
 <section>
-    <h3>task_queue row</h3>
+    <h3>pgdef.task row</h3>
     {% if debug_data.task %}
     {% set t = debug_data.task %}
     <table>
         <tbody>
             <tr><td><strong>id</strong></td><td><code>{{ t.id }}</code></td></tr>
-            <tr><td><strong>arch</strong></td><td><code>{{ t.arch }}</code></td></tr>
-            <tr><td><strong>module</strong></td><td><code>{{ t.module }}</code></td></tr>
+            <tr><td><strong>pool (arch)</strong></td><td><code>{{ t.pool }}</code></td></tr>
+            <tr><td><strong>subpool</strong></td><td><code>{{ t.subpool or '—' }}</code></td></tr>
+            <tr><td><strong>category</strong></td><td><code>{{ t.cat_level0 }}{% if t.cat_level1 %},{{ t.cat_level1 }}{% endif %}</code></td></tr>
+            <tr><td><strong>module</strong></td><td><code>{{ t.payload.module }}</code></td></tr>
             <tr><td><strong>status</strong></td><td>{{ t.status }}</td></tr>
             <tr><td><strong>priority</strong></td><td>{{ t.priority }}</td></tr>
-            <tr><td><strong>worker_id</strong></td><td><code>{{ t.worker_id or '—' }}</code></td></tr>
-            <tr><td><strong>node_hostname</strong></td><td><code>{{ t.node_hostname or '—' }}</code></td></tr>
-            <tr><td><strong>retry_count</strong></td><td>{{ t.retry_count }}</td></tr>
+            <tr><td><strong>attempt</strong></td><td>{{ t.attempt }}{% if t.max_attempts %} / {{ t.max_attempts }}{% endif %}</td></tr>
+            <tr><td><strong>lease_owner</strong></td><td><code>{{ t.lease_owner or '—' }}</code></td></tr>
+            <tr><td><strong>lease_until</strong></td><td>{{ t.lease_until or '—' }}</td></tr>
             <tr><td><strong>created_at</strong></td><td>{{ t.created_at }}</td></tr>
             <tr><td><strong>started_at</strong></td><td>{{ t.started_at or '—' }}</td></tr>
-            <tr><td><strong>completed_at</strong></td><td>{{ t.completed_at or '—' }}</td></tr>
-            <tr><td><strong>error</strong></td><td><pre class="err-cell">{{ (t.error | string | truncate(ERROR_MAX_CHARS, True, '\n… [truncated, full text in the worker log]')) if t.error else '—' }}</pre></td></tr>
+            <tr><td><strong>finished_at</strong></td><td>{{ t.finished_at or '—' }}</td></tr>
+            <tr><td><strong>errors</strong> ({{ t.error_count }})</td><td><pre class="err-cell">{{ (t.logistics.errors | tojson(indent=2) | truncate(ERROR_MAX_CHARS, True, '\n… [truncated, full text in the worker log]')) if t.error_count else '—' }}</pre></td></tr>
             <tr>
-                <td><strong>task_config</strong></td>
-                <td><pre style="white-space: pre-wrap; font-size: 0.85em; margin: 0;">{{ t.task_config | tojson(indent=2) }}</pre></td>
+                <td><strong>payload</strong></td>
+                <td><pre style="white-space: pre-wrap; font-size: 0.85em; margin: 0;">{{ t.payload | tojson(indent=2) }}</pre></td>
+            </tr>
+            <tr>
+                <td><strong>appcookie</strong></td>
+                <td><pre style="white-space: pre-wrap; font-size: 0.85em; margin: 0;">{{ (t.appcookie | tojson(indent=2)) if t.appcookie is not none else '—' }}</pre></td>
+            </tr>
+            <tr>
+                <td><strong>logistics</strong></td>
+                <td><pre style="white-space: pre-wrap; font-size: 0.85em; margin: 0;">{{ t.logistics | tojson(indent=2) }}</pre></td>
             </tr>
         </tbody>
     </table>
     {% else %}
-    <p>No task_queue row found for id {{ task_id }}.</p>
+    <p>No pgdef.task row found for id {{ task_id }}.</p>
     {% endif %}
 </section>
 
-{# ── tuning_results (kernel level) ───────────────────────────────────────── #}
+{# ── tune.tuning_results (kernel level) ───────────────────────────────────────── #}
 <section>
-    <h3>tuning_results ({{ debug_data.tuning_results | length }} rows) <small style="font-weight: normal; color: #777;">— tuning_level = 'kernel'</small></h3>
+    <h3>tune.tuning_results ({{ debug_data.tuning_results | length }} rows) <small style="font-weight: normal; color: #777;">— tuning level 'kernel'</small></h3>
     {% if debug_data.tuning_results %}
     <table style="width: 100%;">
         <thead>
@@ -163,7 +173,7 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
                 <th>times (ms) med/p20/p80</th>
                 <th>adiffs</th>
                 <th>error</th>
-                <th>gpu_id</th>
+                <th>worker</th>
                 <th>created_at</th>
             </tr>
         </thead>
@@ -196,7 +206,7 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
                     </table>
                     {% else %}—{% endif %}</td>
                 <td><pre class="err-cell">{{ (r.error | tojson | truncate(ERROR_MAX_CHARS, True, '… [truncated]')) if r.error else '—' }}</pre></td>
-                <td>{{ r.gpu_id if r.gpu_id is not none else '—' }}</td>
+                <td>{{ r.worker or '—' }}</td>
                 <td>{{ r.created_at }}</td>
             </tr>
             {% endfor %}
@@ -207,9 +217,9 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
     {% endif %}
 </section>
 
-{# ── best_tuning_results (kernel level) ──────────────────────────────────── #}
+{# ── tune.best_tuning_results (kernel level) ──────────────────────────────────── #}
 <section>
-    <h3>best_tuning_results ({{ debug_data.best_results | length }} rows) <small style="font-weight: normal; color: #777;">— tuning_level = 'kernel'</small></h3>
+    <h3>tune.best_tuning_results ({{ debug_data.best_results | length }} rows) <small style="font-weight: normal; color: #777;">— tuning level 'kernel'</small></h3>
     {% if debug_data.best_results %}
     <table style="width: 100%;">
         <thead>
@@ -242,7 +252,7 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
 
 {# ── most_accurate_tuning_results ────────────────────────────────────────── #}
 <section>
-    <h3>most_accurate_tuning_results ({{ debug_data.accurate_results | length }} rows)</h3>
+    <h3>tune.most_accurate_tuning_results ({{ debug_data.accurate_results | length }} rows)</h3>
     {% if debug_data.accurate_results %}
     <table style="width: 100%;">
         <thead>
@@ -271,9 +281,9 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
     {% endif %}
 </section>
 
-{# ── tuning_results (op level) ───────────────────────────────────────────── #}
+{# ── tune.tuning_results (op level) ───────────────────────────────────────────── #}
 <section>
-    <h3>optune_results ({{ debug_data.optune_results | length }} rows) <small style="font-weight: normal; color: #777;">— tuning_results WHERE tuning_level = 'op'</small></h3>
+    <h3>optune_results ({{ debug_data.optune_results | length }} rows) <small style="font-weight: normal; color: #777;">— tune.tuning_results WHERE cat_level1 = 'op'</small></h3>
     {% if debug_data.optune_results %}
     <table style="width: 100%;">
         <thead>
@@ -327,9 +337,9 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
     {% endif %}
 </section>
 
-{# ── best_tuning_results (op level) ──────────────────────────────────────── #}
+{# ── tune.best_tuning_results (op level) ──────────────────────────────────────── #}
 <section>
-    <h3>best_optune_results ({{ debug_data.best_optune_results | length }} rows) <small style="font-weight: normal; color: #777;">— best_tuning_results WHERE tuning_level = 'op'</small></h3>
+    <h3>best_optune_results ({{ debug_data.best_optune_results | length }} rows) <small style="font-weight: normal; color: #777;">— tune.best_tuning_results WHERE cat_level1 = 'op'</small></h3>
     {% if debug_data.best_optune_results %}
     <table style="width: 100%;">
         <thead>

@@ -51,7 +51,7 @@ that breadth, cut.
 
 ### Per-item budget (strict, numeric)
 
-Assume each line is **78 characters**. Then:
+Assume each line is **72 characters**. Then:
 
 - **Every bullet at every level** (`*`, `+`, `-`) is less than **2 lines**
   on its own (≤ ~155 characters).
@@ -68,8 +68,8 @@ Assume each line is **78 characters**. Then:
   overflow to italic sub-items** (`+ *...*`) rather than expanding the
   bullet. Italic = optional context the reader may skip.
 
-Count lines as the rendered output would wrap at 78 chars, not as you
-typed them. A "one-line" bullet that wraps to 3 lines on a 78-char
+Count lines as the rendered output would wrap at 72 chars, not as you
+typed them. A "one-line" bullet that wraps to 3 lines on a 72-char
 terminal is **over budget**.
 
 ### How to cut
@@ -183,6 +183,8 @@ bullets.
   spaces).
 - Backtick the tag when the tag is a literal module/tool name:
   `` [`flash_op`] ``, `` [`table_tool`] ``.
+- A tag may name a submodule as `module/submodule` when the bullet is scoped
+  to one part of a larger subsystem: `[pgdef/pg]`, `[test/adiffs]`.
 
 ### Tag Conventions
 
@@ -194,9 +196,11 @@ bullets.
 | `[gen]` | Generator invocation, build integration, new generator tools |
 | `[shim]` | Generated shim and internal C++ API — including `include/aotriton/_internal/` headers and their `v3src/` companions |
 | `[db]` | Tuning database schema or content |
-| `[tune]` | Tuning infrastructure (`v3python/tune/`) |
-| `[pq]` | PostgreSQL queue package |
-| `[localq]` | Unix-socket local queue |
+| `[tune]` | Tuning infrastructure (`python/tune/`, `modules/*/tune/`) |
+| `[pgdef]` | Distributed Execution Framework engine (`python/pgdef/`) |
+| `[pgdef/pg]` | pgdef's engine database layer (`python/pgdef/pq/`, schema `pgdef`) |
+| `[pq]` | An application's PostgreSQL package (e.g. `python/tune/pq/`) |
+| `[pgdef/localq]` | pgdef's node runtime: broker, workers, PG reader, handlers (`python/pgdef/localq/`) |
 | `[worker]` | GPU tuning worker |
 | `[webui]` | Web UI |
 | `[api]` | Public C++ API |

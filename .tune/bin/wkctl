@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: MIT
 
 # Worker control orchestration
-# Usage: wkctl <workdir> <action> [--host <hostname>]...
+# Usage: wkctl <workdir> <action> --category <app>[,<level1>] [--host <hostname>]...
+# The application is the category's first level; it picks the hosts (its manifest's deploy.role).
 # Actions: start|stop|graceful|restart|stopwait
 # GPU selection is read from the workers DB and applied automatically for start/restart.
 
@@ -16,13 +17,15 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 . "$TUNE_ROOT/lib/config_load.sh"
 . "$TUNE_ROOT/lib/db_query.sh"
 . "$TUNE_ROOT/lib/host_filter.sh"
+. "$TUNE_ROOT/lib/manifest.sh"
+. "$TUNE_ROOT/lib/category.sh"
 
 # Parse arguments
 parse_host_filter "$@"
 
-# Remove --host options from args; extract --tuning_mode
+# Remove --host options from args; extract --category
 ARGS=()
-TUNING_MODE="kernel"
+CATEGORY=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --host)
@@ -31,8 +34,8 @@ while [[ $# -gt 0 ]]; do
                 shift
             done
             ;;
-        --tuning_mode)
-            TUNING_MODE="$2"
+        --category)
+            CATEGORY="$2"
             shift 2
             ;;
         *)
@@ -45,8 +48,8 @@ done
 WORKDIR="${ARGS[0]}"
 ACTION="${ARGS[1]}"
 
-if [ -z "$WORKDIR" ] || [ -z "$ACTION" ]; then
-    echo "Usage: $0 <workdir> <action> [--host <hostname>]..." >&2
+if [ -z "$WORKDIR" ] || [ -z "$ACTION" ] || [ -z "$CATEGORY" ]; then
+    echo "Usage: $0 <workdir> <action> --category <app>[,<level1>] [--host <hostname>]..." >&2
     echo "" >&2
     echo "Actions:" >&2
     echo "  start      Start worker (applies GPU selection from workers DB)" >&2
@@ -56,20 +59,28 @@ if [ -z "$WORKDIR" ] || [ -z "$ACTION" ]; then
     echo "  stopwait   Stop worker and wait for full shutdown" >&2
     echo "" >&2
     echo "Options:" >&2
-    echo "  --host <hostname>...  Filter to specific worker hosts (can be repeated)" >&2
+    echo "  --category <app>[,<level1>]  Required. The application (its first level) picks the hosts;" >&2
+    echo "                               start/restart pass it to the workers, e.g. tune,kernel or tune,op" >&2
+    echo "  --host <hostname>...         Filter to specific worker hosts (can be repeated)" >&2
     echo "" >&2
     echo "Examples:" >&2
-    echo "  $0 /path/to/workdir start" >&2
-    echo "  $0 /path/to/workdir graceful --host gpu1.example.com" >&2
-    echo "  $0 /path/to/workdir stop --host gpu1.example.com gpu2.example.com" >&2
+    echo "  $0 /path/to/workdir start --category tune,kernel" >&2
+    echo "  $0 /path/to/workdir graceful --category tune,kernel --host gpu1.example.com" >&2
+    echo "  $0 /path/to/workdir stop --category tune,op --host gpu1.example.com gpu2.example.com" >&2
     exit 1
 fi
+# Entry script: validate early so a typo fails before any ssh (the worker node
+# checks it again). Only level 0 is used here, to pick hosts; the category is
+# forwarded to the workers as it is.
+validate_category "$CATEGORY" || exit 1
+parse_category "$CATEGORY"
 
 # Load config
 load_config "$WORKDIR"
 
 # Get workers and iterate
-mapfile -t WORKERS < <(get_workers "$WORKDIR" Tuner)
+# The hosts that run the application are those with its role (manifest deploy.role)
+mapfile -t WORKERS < <(get_workers "$WORKDIR" "$(app_manifest "$CAT_LEVEL0" deploy.role)")
 
 COUNT=0
 for worker in "${WORKERS[@]}"; do
@@ -108,7 +119,7 @@ for worker in "${WORKERS[@]}"; do
 
     case "$ACTION" in
         start)
-            "$TUNE_ROOT/single/start_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}" -- --tuning_mode "$TUNING_MODE"
+            "$TUNE_ROOT/single/start_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}" -- --category "$CATEGORY"
             ;;
         stop)
             "$TUNE_ROOT/single/stop_worker.sh" "$WORKDIR" "$hostname"
@@ -117,7 +128,7 @@ for worker in "${WORKERS[@]}"; do
             "$TUNE_ROOT/single/stop_worker.sh" "$WORKDIR" "$hostname" --graceful
             ;;
         restart)
-            "$TUNE_ROOT/single/restart_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}" -- --tuning_mode "$TUNING_MODE"
+            "$TUNE_ROOT/single/restart_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}" -- --category "$CATEGORY"
             ;;
         stopwait)
             "$TUNE_ROOT/single/stopwait_worker.sh" "$WORKDIR" "$hostname"

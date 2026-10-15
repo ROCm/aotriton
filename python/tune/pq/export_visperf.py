@@ -28,7 +28,7 @@ from pathlib import Path
 import psycopg
 
 from .visperf import query_all_best_results
-from ..utils import get_db_connection_params
+from aotriton.pgdef.workdir import get_db_connection_params
 from ..registry import (default_modules_dir, default_tune_root,
                         available_module_names)
 
