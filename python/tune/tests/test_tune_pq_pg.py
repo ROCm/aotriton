@@ -30,7 +30,7 @@ def _entry(hdim=(64, 128), seq=128, causal=True):
 
 
 def _dispatch(conn, entries, level='kernel', arch=ARCH):
-    # tune's schema.sql creates the partitions of every pool tune anticipates.
+    pgtasks.ensure_pool(conn, arch)
     return pgtasks.insert(conn, arch, [
         TaskSpec({'module': 'flash', 'entry': e}, tune.category(level)) for e in entries])
 

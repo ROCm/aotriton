@@ -20,7 +20,7 @@ this module is the tune TaskSource:
    pool and the level its category, not payload fields.
 
 `--arch` is accepted as a synonym of `--pool` (tune's word for it). A pool is
-required: each must be one tune's pq/schema.sql creates partitions for.
+required; the engine creates its partitions on first dispatch.
 """
 
 import argparse

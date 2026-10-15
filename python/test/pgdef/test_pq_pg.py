@@ -16,7 +16,7 @@ import pytest
 from psycopg.rows import dict_row
 
 from aotriton.pgdef.pq import logistics as lg
-from aotriton.pgdef.pq import progress, reports, tasks, testkit, workers
+from aotriton.pgdef.pq import progress, reports, tasks, workers
 from aotriton.pgdef.pq.tasks import TaskSelector, TaskSpec
 
 pytestmark = pytest.mark.pg
@@ -44,21 +44,21 @@ def _claim(conn, **kw):
 
 @pytest.fixture
 def pool(pg_conn):
-    testkit.ensure_pool(pg_conn, POOL)
+    tasks.ensure_pool(pg_conn, POOL)
     return POOL
 
 
 # --- partitions -------------------------------------------------------------
 
 def test_ensure_pool_is_idempotent_and_listed(pg_conn):
-    # tune's schema.sql (applied by the fixture) already creates its pools.
-    assert {'gfx942', 'gfx950'} <= set(tasks.list_pools(pg_conn))
-    testkit.ensure_pool(pg_conn, 'test_pool')
-    testkit.ensure_pool(pg_conn, 'test_pool')
+    assert 'test_pool' not in tasks.list_pools(pg_conn)
+    tasks.ensure_pool(pg_conn, 'test_pool')
+    tasks.ensure_pool(pg_conn, 'test_pool')
     assert 'test_pool' in tasks.list_pools(pg_conn)
 
 
-def test_unknown_pool_fails_loudly_at_insert(pg_conn):
+def test_insert_without_ensure_pool_fails_loudly(pg_conn):
+    # No DEFAULT partition: dispatch must call ensure_pool() first.
     with pytest.raises(psycopg.errors.CheckViolation):     # "no partition of relation found for row"
         tasks.insert(pg_conn, 'gfx000', [_spec()])
 

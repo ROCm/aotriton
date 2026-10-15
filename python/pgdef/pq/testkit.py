@@ -52,10 +52,3 @@ def fresh_schemas(params: dict):
     for path in admin.all_schema_files():
         admin.apply_schema(conn, path)
     return conn
-
-
-def ensure_pool(conn, pool: str) -> None:
-    """Create `pool`'s partitions, as an application's schema.sql does with
-    `SELECT pgdef.ensure_pool(...)`; for tests that need a pool of their own."""
-    with conn.cursor() as cur:
-        cur.execute('SELECT pgdef.ensure_pool(%s)', (pool,))

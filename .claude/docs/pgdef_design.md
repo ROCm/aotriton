@@ -335,13 +335,14 @@ below describe that version and the PR that brings it in.
 * **Indexing logistics times.** Store them as epoch float8. `text::timestamptz`
   is not IMMUTABLE, so it cannot be used in an expression index.
 * **Partitions.** One level, by `pool` (`pgdef.task_<pool>`,
-  `pgdef.report_<pool>`), created explicitly. The engine's SQL function
-  `pgdef.ensure_pool(pool)` validates the name and quotes the leaf with `%I`.
-  Each application's `pq/schema.sql` calls it for every pool it anticipates
-  (tune: gfx90a, gfx942, gfx950, gfx1100, gfx1151, gfx1201, gfx1250). An unused
-  partition is harmless. Nothing creates partitions at dispatch, and nothing
-  reads workers.db for pools. There is no DEFAULT partition, so a pool without
-  one fails at insert, and dispatch turns that into a message naming the fix.
+  `pgdef.report_<pool>`), created on demand: `dispatch.drive` calls
+  `tasks.ensure_pool(conn, pool)` before inserting, which runs the SQL function
+  `pgdef.ensure_pool(%s)` with the pool as a bound argument (DDL takes no
+  parameters, so the function builds the leaf name, validated and quoted with
+  `%I`). An existing leaf is skipped via `to_regclass` before any DDL, so the
+  parent is not locked; a concurrent creation is tolerated. Nothing reads
+  workers.db for pools. There is no DEFAULT partition, so `tasks.insert`
+  without `ensure_pool` fails loudly.
   All other SQL targets the parent table with `pool = %s` (partition pruning);
   never build leaf names with f-strings.
 * **NULL comparisons.** A reader with a NULL `cat_level1` or subpool compares

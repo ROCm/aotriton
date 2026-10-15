@@ -235,17 +235,9 @@ as `cat_level1`".
 every schema for every application. Each `pq` ships an idempotent
 `schema.sql`, and pgdef's runs first. `--recreate` drops and recreates them all.
 
-Partitions are created the same way, explicitly. Each application's
-`schema.sql` lists the pools it anticipates, with the engine's function:
-
-```sql
-SELECT pgdef.ensure_pool('gfx942');
-SELECT pgdef.ensure_pool('gfx950');
-```
-
-A partition for a pool that is not in the fleet is harmless. Dispatching to a
-pool that has none fails, with a message saying to add the pool there and
-rerun initdb.
+Partitions need no setup. Dispatch creates a pool's partitions the first time
+it inserts into that pool, by calling the engine's SQL function
+`pgdef.ensure_pool(pool)` with the pool name as a query argument.
 
 ## Common operations
 

@@ -187,14 +187,8 @@ def drive(source, argv: list[str] | None = None, *, prog: str | None = None, con
         for pool, specs in plans:
             if not specs:
                 continue
-            try:
-                inserted += _tasks.insert(get_conn(), pool, specs, batch_size=1000)
-            except psycopg.errors.CheckViolation as e:
-                if 'no partition' not in str(e):
-                    raise
-                raise SystemExit(
-                    f"pool {pool!r} has no partition: add `SELECT pgdef.ensure_pool('{pool}');` "
-                    f"to the application's pq/schema.sql and rerun initdb") from e
+            _tasks.ensure_pool(get_conn(), pool)
+            inserted += _tasks.insert(get_conn(), pool, specs, batch_size=1000)
         print(f'Dispatched {inserted} task(s)')
         return 0
     finally:

@@ -155,13 +155,18 @@ def test_reset_keeps_the_retry_policy_only():
 
 def test_ensure_pool_is_the_engines_partition_api():
     # Partitions are created by the SQL function pgdef.ensure_pool(), which
-    # applications call from their own schema.sql. It validates the name and
-    # quotes the leaf with %I, so a pool name can never inject SQL.
+    # dispatch calls with the pool as a bound argument. It validates the name
+    # and quotes the leaf with %I, so a pool name can never inject SQL.
     sql_text = (pathlib.Path(tasks.__file__).parent / 'schema.sql').read_text()
     fn = sql_text[sql_text.index('CREATE OR REPLACE FUNCTION pgdef.ensure_pool'):]
     assert "pool !~ '^[a-z0-9_]+$'" in fn
-    assert "'task_' || pool" in fn and "'report_' || pool" in fn
-    assert fn.count('CREATE TABLE IF NOT EXISTS pgdef.%I PARTITION OF') == 2
+    assert "ARRAY['task', 'report']" in fn
+    assert 'CREATE TABLE IF NOT EXISTS pgdef.%I PARTITION OF pgdef.%I' in fn
+    conn = FakeConn()
+    tasks.ensure_pool(conn, 'gfx950')
+    assert conn.calls == [('SELECT pgdef.ensure_pool(%s)', ('gfx950',))]
+    with pytest.raises(ValueError):
+        tasks.ensure_pool(conn, 'gfx950; DROP TABLE pgdef.task')
 
 
 @pytest.mark.parametrize('bad', ['', 'GFX950', 'gfx950; DROP TABLE pgdef.task', 'a b', "x'y", 'gfx-950', None])
@@ -382,8 +387,8 @@ def test_schema_sql_is_plain_and_idempotent():
     import re
     text = re.sub(r'--[^\n]*', '', admin.schema_path().read_text())
     assert '\\' not in text.replace('\\n', ''), 'psql meta-command in schema.sql'
-    # The engine creates no partition itself: no DEFAULT one, and pool leaves
-    # only through pgdef.ensure_pool(), which applications call.
+    # No DEFAULT partition, and no static pool leaves: they come only from
+    # pgdef.ensure_pool(), which dispatch calls.
     static = re.sub(r'CREATE OR REPLACE FUNCTION pgdef\.ensure_pool.*?\$\$;', '', text, flags=re.S)
     assert 'DEFAULT PARTITION' not in static.upper() and 'FOR VALUES' not in static.upper()
     assert 'CREATE OR REPLACE FUNCTION pgdef.ensure_pool' in text
@@ -448,23 +453,13 @@ def test_drive_inserts_into_each_pool(capsys):
     src = _Source()
     assert _drive(src, ['--pool', 'gfx942', 'gfx950', '--subpool', 'MI355', '--count', '2'], conn) == 0
     assert src.configured == 2
-    assert not any('PARTITION OF' in t for t, _ in conn.calls)   # partitions come from schema.sql
+    ensured = [p for t, p in conn.calls if t == 'SELECT pgdef.ensure_pool(%s)']
+    assert ensured == [('gfx942',), ('gfx950',)]                   # each pool, before its insert
     inserts = [p for t, p in conn.calls if t.startswith('INSERT INTO pgdef.task')]
     assert len(inserts) == 2 and all(len(batch) == 2 for batch in inserts)
     spec = inserts[0][0]
     assert (spec['cat_level0'], spec['cat_level1'], spec['subpool']) == ('toy', None, 'MI355')
     assert 'Dispatched 4 task(s)' in capsys.readouterr().out
-
-
-def test_drive_names_the_fix_for_a_pool_without_partitions(monkeypatch):
-    import psycopg
-    from aotriton.pgdef.pq import dispatch
-
-    def no_partition(*a, **kw):
-        raise psycopg.errors.CheckViolation('no partition of relation "task" found for row')
-    monkeypatch.setattr(dispatch._tasks, 'insert', no_partition)
-    with pytest.raises(SystemExit, match=r"ensure_pool\('gfx9999'\).*rerun initdb"):
-        _drive(_Source(), ['--pool', 'gfx9999', '--count', '1'], FakeConn())
 
 
 def test_drive_dry_run_touches_nothing(capsys):

@@ -10,8 +10,8 @@ explicitly, so they work on a connection with any default row factory (and on
 `ReconnectableConn`, which only offers `cursor()`).
 
 All statements target the PARENT table with `pool = %s`, relying on partition
-pruning; no code here builds a leaf table name. Partitions are created by the
-SQL function pgdef.ensure_pool(), which applications call from their schema.sql.
+pruning; no code here builds a leaf table name. Partitions are created on
+demand by ensure_pool(), which dispatch calls before inserting into a pool.
 """
 
 import re
@@ -92,6 +92,14 @@ def validate_pool(pool: str) -> str:
     if not isinstance(pool, str) or not POOL_RE.match(pool):
         raise ValueError(f"invalid pool {pool!r}: expected {POOL_RE.pattern}")
     return pool
+
+
+def ensure_pool(conn, pool: str) -> None:
+    """Create `pool`'s partitions if absent (SQL function pgdef.ensure_pool,
+    which builds and quotes the leaf names; the pool is a bound argument)."""
+    validate_pool(pool)
+    with conn.cursor() as cur:
+        cur.execute('SELECT pgdef.ensure_pool(%s)', (pool,))
 
 
 def list_pools(conn) -> list[str]:
