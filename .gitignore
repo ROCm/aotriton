@@ -5,6 +5,7 @@ __pycache__/
 *.swp
 modules/flash/kernel/tune-*.json
 *.csv
+!/modules/*/database/**/*.csv
 *.png
 1
 2
