@@ -9,6 +9,11 @@
 #
 # Effects: sets ROCM_PATH (normal variable), appends to CMAKE_PREFIX_PATH, and
 # calls find_package(hip) exactly once on the success path.
+#
+# Caveat: ROCM_PATH is a search hint, not an enforcement. find_package(hip) also
+# searches CMake's default locations, so it may succeed with a HIP package from
+# outside ROCM_PATH (e.g. a system install) when none exists under ROCM_PATH.
+# This corner case is deliberately not checked.
 
 set(_aotriton_rocm_cmake_prefix "")
 if(DEFINED ENV{ROCM_PATH})
