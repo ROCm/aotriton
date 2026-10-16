@@ -60,7 +60,6 @@ else()
   endif()
 endif()
 
-set(ENV{ROCM_PATH} "${ROCM_PATH}")
 list(APPEND CMAKE_PREFIX_PATH "${_aotriton_rocm_cmake_prefix}")
 unset(_aotriton_rocm_cmake_prefix)
 
