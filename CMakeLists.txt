@@ -298,21 +298,23 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/aotriton/config.h
   DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}/aotriton)
 
 # Kernel Storage V2 uses xz/LZMA for compression
-if(UNIX)
+# Prefer CMake's FindLibLZMA; fall back to pkg-config (UNIX) or liblzma's own
+# CONFIG package (elsewhere) when it finds nothing.
+add_library(lzma_interface INTERFACE)
+find_package(LibLZMA)
+if(LibLZMA_FOUND)
+  message(STATUS "[AOTriton] LibLZMA found: ${LIBLZMA_VERSION_STRING}")
+  target_link_libraries(lzma_interface INTERFACE LibLZMA::LibLZMA)
+elseif(UNIX)
+  message(STATUS "[AOTriton] FindLibLZMA found nothing, falling back to pkg-config")
   include(FindPkgConfig)
   pkg_search_module(LZMA REQUIRED liblzma)
-  add_library(lzma_interface INTERFACE)
   target_link_libraries(lzma_interface INTERFACE ${LZMA_LIBRARIES})
   target_link_directories(lzma_interface INTERFACE ${LZMA_LIBRARY_DIRS})
   target_include_directories(lzma_interface INTERFACE ${LZMA_INCLUDE_DIRS})
 else()
   find_package(liblzma REQUIRED CONFIG)
-  if(NOT liblzma_FOUND)
-    message(FATAL_ERROR "liblzma package not found")
-  else()
-    message(STATUS "liblzma found: ${liblzma_VERSION}")
-  endif()
-  add_library(lzma_interface INTERFACE)
+  message(STATUS "[AOTriton] liblzma found: ${liblzma_VERSION}")
   target_link_libraries(lzma_interface INTERFACE liblzma::liblzma)
 endif()
 
