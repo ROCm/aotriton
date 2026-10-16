@@ -24,19 +24,28 @@ if(DEFINED ENV{ROCM_PATH})
 else()
   find_program(ROCM_SDK_EXECUTABLE rocm-sdk)
   if(ROCM_SDK_EXECUTABLE)
+    # A failing rocm-sdk (e.g. rocm-sdk-core installed without rocm[devel]) is
+    # fatal: falling back to /opt/rocm would silently pick a different ROCm.
     execute_process(
       COMMAND "${ROCM_SDK_EXECUTABLE}" path --root
       OUTPUT_VARIABLE _rocm_sdk_root
+      ERROR_VARIABLE _rocm_sdk_root_error
       OUTPUT_STRIP_TRAILING_WHITESPACE
-      RESULT_VARIABLE _rocm_sdk_root_result
-      ERROR_QUIET)
+      ERROR_STRIP_TRAILING_WHITESPACE
+      RESULT_VARIABLE _rocm_sdk_root_result)
+    if(NOT _rocm_sdk_root_result EQUAL 0)
+      message(FATAL_ERROR
+        "[AOTriton] `${ROCM_SDK_EXECUTABLE} path --root` failed "
+        "(exit status ${_rocm_sdk_root_result}):\n"
+        "${_rocm_sdk_root_error}${_rocm_sdk_root}")
+    endif()
     execute_process(
       COMMAND "${ROCM_SDK_EXECUTABLE}" path --cmake
       OUTPUT_VARIABLE _rocm_sdk_cmake
       OUTPUT_STRIP_TRAILING_WHITESPACE
       RESULT_VARIABLE _rocm_sdk_cmake_result
       ERROR_QUIET)
-    if(_rocm_sdk_root_result EQUAL 0 AND EXISTS "${_rocm_sdk_root}")
+    if(EXISTS "${_rocm_sdk_root}")
       file(TO_CMAKE_PATH "${_rocm_sdk_root}" ROCM_PATH)
       message(STATUS "[AOTriton] Found ROCm via rocm-sdk at: ${ROCM_PATH}")
       if(_rocm_sdk_cmake_result EQUAL 0 AND EXISTS "${_rocm_sdk_cmake}")
