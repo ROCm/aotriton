@@ -9,6 +9,51 @@ updates.
 This document describes the on-disk format. All examples are taken from
 `modules/flash/database/`.
 
+## Design Principles
+
+### Avoid massive updates
+
+A change to the database, or to the code that consumes it, should only touch
+the entries it is about. A diff that rewrites thousands of unrelated lines
+cannot be reviewed, and it conflicts with every other contribution in flight.
+Each of the following mechanisms keeps updates local:
+
+- **Append-only IDs.** Rows of `.metadata/` tables are never renumbered or
+  removed. New functionals, psels, copts and hsaco options are appended, so
+  existing tensor cells keep pointing at the same rows.
+- **Functional IDs are not godel numbers.** The code generator numbers
+  functionals by enumerating the functional space, so extending an axis
+  (e.g. adding hdim=384) renumbers it. The database assigns its own IDs and
+  appends the new functionals after the existing ones instead.
+- **Backends are stored by name, not by index.** `op_backend.csv` maps each
+  backend name, as declared by `@ati.backend`, to the small integer stored in
+  the tensors. The index of a backend in the ATI DSL, and the C++ enum value
+  derived from it, never appear in the database. Reordering or inserting
+  backends in the operator declaration therefore leaves every operator tensor
+  unchanged; only the mapping from name to backend in the code generator
+  follows the new declaration.
+- **Per-interface tables.** Each kernel and operator has its own
+  `functional.csv`, `psels.csv`, `hsaco_options.csv` and `op_backend.csv`,
+  so retuning one kernel never shifts the IDs of another.
+- **Patches and symlinks.** A partially tuned architecture symlinks its base
+  architecture and stores only its own entries in `.patch<N>` files. The base
+  is not copied, and retuning the base does not touch the patches.
+- **Line-oriented tensors.** Each tensor row is one line, and run-length
+  encoding never crosses lines, so changing one cell changes one line.
+
+### Diffable and deterministic
+
+The database is plain text, and the writer's output is canonical: blocks are
+sorted by functional ID, and run-length encoding is applied exactly where it
+is shorter. Regenerating unchanged data produces identical files, so a diff
+only ever shows real changes.
+
+### Explicit where it is cheap
+
+Large tables use implicit row IDs to stay compact. `op_backend.csv` has only
+a handful of rows, so it lists its integers explicitly: a reader can decode
+an operator tensor without counting lines.
+
 ## Directory Layout
 
 ```
