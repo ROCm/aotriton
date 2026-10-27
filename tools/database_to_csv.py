@@ -80,6 +80,10 @@ Tensor rows are run-length encoded: n consecutive copies of a value v, blank
 included, are written as v[n] when that is shorter, e.g. 104[10]. Runs never
 cross lines.
 
+The first line of a tensor file is a shebang, #!/usr/bin/env -S python -m
+aotriton.database.interpreter, and the file is executable: running it exports
+its tensors. Readers skip a first line starting with "#!/".
+
 Incremental changes: <iface>.<N>-<name>.dbpatch next to <iface>.csv overlays
 it, named like git format-patch output: N is zero-padded to 4 digits, <name>
 describes the change. A patch uses the same tensor format, and its tuning keys
@@ -112,6 +116,7 @@ Only patches may be sparse.
 import argparse
 import csv
 import itertools
+import os
 import re
 import sqlite3
 from pathlib import Path
@@ -139,6 +144,8 @@ PRECEDENCE_BITS = 4
 PRECEDENCE_CHARS = 1
 BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 PATCH_SUFFIX = '.dbpatch'
+# Makes a tensor file executable: running it exports its tensors
+SHEBANG = '#!/usr/bin/env -S python -m aotriton.database.interpreter'
 RLE_RUN = re.compile(r'(.*)\[(\d+)\]')
 # Not consumed by codegen, and 0.0 in every row
 UNSTORED_COLUMNS = ['op$tflops']
@@ -417,6 +424,7 @@ class Exporter(object):
                                  ladders=ladders, sparse=sparse)
                 else:
                     write_tensor(f, lut_names, entries, 'hsaco_options', ladders=ladders, sparse=sparse)
+            os.chmod(fn, 0o755)
             print(f'{fn}: {len(entries)} entries')
 
     @staticmethod
@@ -520,6 +528,7 @@ def write_tensor(f, lut_names, entries, target, metadata={}, ladders=None, spars
     cells = {}
     for fid, lut, tid in entries:
         cells.setdefault(fid, {})[lut] = tid
+    print(SHEBANG, file=f)
     print(TENSOR_KEYS, file=f)
     for name, ladder in zip(lut_names, ladders):
         print(','.join([name] + [str(v) for v in ladder]), file=f)
@@ -602,13 +611,16 @@ def parse_sparse_cells(text):
 def read_sections(fn):
     '''
     Split a file into {section: [fields]}. "#!" starts a metadata section,
-    other "#" lines are comments.
+    other "#" lines are comments. A first line starting with "#!/" is a
+    shebang and is skipped; section names never start with "/".
     '''
     sections = {}
     current = None
     with open(fn) as f:
-        for line in f:
+        for n, line in enumerate(f):
             line = line.rstrip('\n')
+            if n == 0 and line.startswith('#!/'):
+                continue
             if line.startswith('#!'):
                 current = line[2:].strip()
                 continue

@@ -137,6 +137,29 @@ In tensor files (`amd/<arch>/<iface>.csv` and their patches):
 - Any other line starting with `#` is a comment and is ignored.
 - Blank lines are ignored.
 
+### Shebang
+
+The first line of a tensor file or patch is a shebang:
+
+```
+#!/usr/bin/env -S python -m aotriton.database.interpreter
+```
+
+and the file is executable (mode 755). Readers ignore a first line that
+starts with `#!/`; section names never start with `/`, so it cannot be
+mistaken for a section.
+
+Running the file exports its tensors, e.g.
+`./amd/gfx942/attn_fwd.csv --output x.npz`; the exporter is
+`aotriton.database.interpreter`.
+
+- The kernel appends the path the file was invoked as, so a symlinked
+  `amd/gfx1150/attn_fwd.csv` is interpreted as gfx1150, with the
+  `.dbpatch` files of gfx1150 applied, not as the gfx1100 file it links to.
+- Running a `.dbpatch` exports the patch alone, not the patched base.
+- `python` is the one of the venv `aotriton` is installed in, which always
+  provides it.
+
 ## Metadata Tables
 
 ### functional.csv
