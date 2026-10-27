@@ -123,19 +123,26 @@ its own `functional.csv`, with exactly its own input columns:
 
 ```
 # .metadata/attn_fwd/functional.csv
-Q_dtype,CAUSAL_TYPE,BLOCK_DMODEL,ENABLE_DROPOUT,PADDED_HEAD,BIAS_TYPE,USE_ALIBI,INT8,INT8_KV,USE_P_SCALE
-torch.bfloat16,0,16,0,0,0,0,0,0,0
-torch.bfloat16,0,16,0,0,1,0,0,0,0
+T_io,CAUSAL_TYPE,BLOCK_DMODEL,ENABLE_DROPOUT,PADDED_HEAD,BIAS_TYPE,USE_ALIBI,INT8,INT8_KV,USE_P_SCALE
+bf16,0,16,0,0,0,0,0,0,0
+bf16,0,16,0,0,1,0,0,0,0
 ...
 
 # .metadata/bwd_kernel_dq/functional.csv
-Q_dtype,CAUSAL_TYPE,BLOCK_DMODEL,ENABLE_DROPOUT,PADDED_HEAD,BIAS_TYPE
-torch.bfloat16,0,16,0,0,0
+T_io,CAUSAL_TYPE,BLOCK_DMODEL,ENABLE_DROPOUT,PADDED_HEAD,BIAS_TYPE
+bf16,0,16,0,0,0
 ...
 ```
 
-Tensor dtypes are spelled `torch.float16`, `torch.bfloat16`, `torch.float32`.
-Boolean inputs are `0`/`1`.
+Columns use ATI notation:
+
+- A tensor dtype axis is named after its ATI type variable, e.g. `T_io` from
+  `@ati.type_var('T_io', ...)`. It is not named after a tensor argument
+  (`Q`), because several tensors share the type variable.
+- Dtypes are spelled the way ATI declares them, without the pointer and
+  alignment: `*fp16:16` is stored as `fp16`, likewise `bf16`, `fp32`.
+- Other columns are named after the kernel argument (`CAUSAL_TYPE`,
+  `BLOCK_DMODEL`, ...). Boolean inputs are `0`/`1`.
 
 Functional IDs are local to the database. They are deliberately not the godel
 numbers the code generator assigns, so the database stays stable when the
@@ -346,7 +353,7 @@ Which variant of `attn_fwd` does gfx1100 use for functional 13 at
 
 1. `amd/gfx1100/attn_fwd.csv`, block `13,`, first line, first cell: `67`.
 2. `.metadata/attn_fwd/functional.csv`, ID 13:
-   `torch.bfloat16,0,64,0,0,0,0,0,0,0`, i.e. bf16, no causal, hdim 64,
+   `bf16,0,64,0,0,0,0,0,0,0`, i.e. bf16, no causal, hdim 64,
    no dropout, no padded head, no bias.
 3. `.metadata/attn_fwd/hsaco_options.csv`, ID 67: `13,11`, i.e. psels 13,
    copts 11.
