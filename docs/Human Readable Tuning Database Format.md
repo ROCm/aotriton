@@ -277,12 +277,12 @@ Within a line, `n` consecutive copies of a value `v` may be written `v[n]`:
 ### Precedence
 
 Operator tensors store, per cell, the backends to use in order of preference,
-packed into a hexadecimal integer. The packing is described by its own
-section:
+as a string of base62 digits (`0`-`9`, `A`-`Z`, `a`-`z`, with values 0-61):
 
 ```
 #! precedence
 bits_per_slot,4
+chars_per_slot,1
 #! tuning tensor
 functional,tuning keys->precedence
 1,
@@ -290,14 +290,33 @@ functional,tuning keys->precedence
 ...
 ```
 
-- Each slot holds a bcode from `.metadata/<iface>/op_backend.csv`, in
-  `bits_per_slot` bits.
-- Slots are little endian: the most preferred backend is in the lowest bits.
-- bcode 0 means "no backend" and ends the list.
-- Values are written in lowercase hexadecimal, without a `0x` prefix.
+- A precedence is a sequence of slots, each holding one bcode from
+  `.metadata/<iface>/op_backend.csv`.
+- Slots are little endian: the most preferred backend is the last slot, so a
+  precedence is read right to left.
+- bcode 0 is reserved for "no backend" and never appears in a precedence.
 
-With 4 bits per slot, each hex digit is one slot, read right to left. Example
-for `op_attn_bwd`:
+The `#! precedence` section has two entries:
+
+- `chars_per_slot` is the number of base62 characters per slot. It is 1, so
+  each character is one backend and an operator can have up to 61 backends.
+  Should an operator ever need more, `chars_per_slot` 2, 3 or 4 allows up to
+  3843, 238327 or 14776335. Each slot is then a fixed-width base62 number,
+  most significant digit first and zero-padded: with `chars_per_slot` 2,
+  bcodes (1, 5), most preferred first, are written `0501`. The length of a
+  precedence is always a multiple of `chars_per_slot`.
+- `bits_per_slot` is not used to write the database. It is the width of a
+  slot when the code generator packs a precedence into an integer for the
+  runtime: the most preferred bcode in the lowest `bits_per_slot` bits, the
+  next one above it, and so on.
+
+Every bcode in the file must fit both: below `62**chars_per_slot` and below
+`2**bits_per_slot`. With `bits_per_slot` 4 and `chars_per_slot` 1, a
+precedence is identical to the uppercase hexadecimal form of the packed
+integer: bcodes (15, 10, 1), most preferred first, are written `1AF`, and
+pack to `0x1AF`.
+
+Example for `op_attn_bwd`:
 
 | Cell | bcodes, most preferred first | Backends |
 |---|---|---|
@@ -308,6 +327,29 @@ for `op_attn_bwd`:
 The format records a full precedence of any length. Databases migrated from
 sqlite carry at most two slots (the former `best1st`/`best2nd` columns); a
 single slot means there was no runner-up.
+
+#### Why base62
+
+- **One character per backend.** With `chars_per_slot` 1, a precedence can be
+  read, and edited, backend by backend without any arithmetic.
+- **Capacity.** Hexadecimal digits would also give one character per
+  backend, but only for up to 15 backends. Base62 is a superset of uppercase
+  hexadecimal: it reads the same up to 15 backends, and keeps one character
+  per backend up to 61. `chars_per_slot` covers the unlikely case beyond
+  that, without changing the encoding.
+- **Explicit, without redundancy.** Base62 is the only encoding, so the file
+  does not declare it: an `encoding,base62` line would be redundant, and
+  would only invite files that disagree with the format. The slot width is
+  stated explicitly instead, as `chars_per_slot`, because a reader cannot
+  split a precedence into slots without it.
+- **Text independent of the packing.** `bits_per_slot` parameterizes the code
+  generator, not the text. Changing it, e.g. to 6 once an operator has more
+  than 15 backends, changes only the section line, not a single precedence in
+  the file.
+- **Visually similar characters** (`0`/`O`, `1`/`l`/`I`) are a font problem,
+  not an encoding problem. Read and review the database with a monospace font
+  that distinguishes them, rather than removing characters from the alphabet
+  and making the digit-to-bcode mapping irregular.
 
 ## Incremental Changes
 

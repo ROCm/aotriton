@@ -48,18 +48,27 @@ hsaco_options IDs:
     2,
     ...
 
-For operators the tensor holds the backend precedence, in hex:
+For operators the tensor holds the backend precedence instead:
 
     #! precedence
     bits_per_slot,4
+    chars_per_slot,1
     #! tuning tensor
     functional,tuning keys->precedence
 
-The precedence packs backend codes (bcode) into fixed-width slots, little
-endian (the most preferred backend is in the lowest bits). bcode 0 is reserved
-for "no backend", which ends the precedence. With 4 bits per slot, each hex
-digit is one slot, read right to left: bcodes (3, 2, 1) are
-3 | 2 << 4 | 1 << 8 = 0x123, written as `123`.
+A precedence is a sequence of slots, each holding a backend code (bcode) as a
+base62 number (digits 0-9, A-Z, a-z) of chars_per_slot characters, most
+significant digit first and zero-padded. With chars_per_slot 1, each character
+is one backend and bcodes range from 1 to 61. Slots are little endian: the
+most preferred backend is the last slot, and a precedence is read right to
+left. bcode 0 is reserved for "no backend" and never written. bcodes
+(3, 2, 1), most preferred first, are written as `123`.
+
+bits_per_slot does not change how a precedence is written. It is the slot
+width the code generator uses to pack a precedence into an integer. Every
+bcode in the file must fit both bits_per_slot and chars_per_slot. With
+bits_per_slot 4 and chars_per_slot 1, a precedence is identical to the
+uppercase hex of the packed integer.
 
 op_backend.csv maps the name @ati.backend declared to its bcode. bcodes are
 private to the tuning database and need not match the C++ backend enum.
@@ -97,6 +106,8 @@ TENSOR_SECTION = '#! tuning tensor'
 TENSOR_HEADER = 'functional,tuning keys->{}'
 PRECEDENCE_SECTION = '#! precedence'
 PRECEDENCE_BITS = 4
+PRECEDENCE_CHARS = 1
+BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 PATCH_SUFFIX = '.dbpatch'
 RLE_RUN = re.compile(r'(.*)\[(\d+)\]')
 # Not consumed by codegen, and 0.0 in every row
@@ -251,6 +262,9 @@ class OpBackendTable(object):
     def get(self, bcode):
         return self._names[bcode]
 
+    def bcodes(self):
+        return self._bcodes.values()
+
     def write(self):
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._path, 'w', newline='') as f:
@@ -353,8 +367,11 @@ class Exporter(object):
                 fn = patch_name(fn, 1, fn.parent.name)
             with open(fn, 'w', newline='') as f:
                 if op_cols:
+                    assert all(b < (1 << PRECEDENCE_BITS) for b in op_backend.bcodes()), \
+                        f'{iface}: bcodes do not fit bits_per_slot {PRECEDENCE_BITS}'
                     write_tensor(f, lut_names, entries, 'precedence',
-                                 {PRECEDENCE_SECTION: [['bits_per_slot', PRECEDENCE_BITS]]})
+                                 {PRECEDENCE_SECTION: [['bits_per_slot', PRECEDENCE_BITS],
+                                                       ['chars_per_slot', PRECEDENCE_CHARS]]})
                 else:
                     write_tensor(f, lut_names, entries, 'hsaco_options')
             print(f'{fn}: {len(entries)} entries')
@@ -394,21 +411,36 @@ class Exporter(object):
                 link.symlink_to(rel)
                 print(f'{link} -> {rel}')
 
-def encode_precedence(ids, bits=PRECEDENCE_BITS):
-    value = 0
-    for slot, i in enumerate(ids):
-        assert 0 < i < (1 << bits), f'bcode {i} does not fit {bits} bits'
-        value |= i << (slot * bits)
-    return f'{value:x}'
+def encode_precedence(bcodes, chars=PRECEDENCE_CHARS):
+    '''
+    bcodes, most preferred first -> base62 string, most preferred last, with
+    chars characters per slot
+    '''
+    slots = []
+    for b in bcodes:
+        assert 0 < b < len(BASE62) ** chars, f'bcode {b} does not fit {chars} base62 characters'
+        digits = ''
+        for _ in range(chars):
+            b, d = divmod(b, len(BASE62))
+            digits = BASE62[d] + digits
+        slots.append(digits)
+    return ''.join(reversed(slots))
 
-def decode_precedence(text, bits):
-    value = int(text, 16)
-    ids = []
-    while value:
-        ids.append(value & ((1 << bits) - 1))
-        value >>= bits
-    assert 0 not in ids, f'"no backend" inside precedence {text}'
-    return ids
+def decode_precedence(text, chars=PRECEDENCE_CHARS):
+    '''
+    Inverse of encode_precedence
+    '''
+    assert text, 'empty precedence'
+    assert len(text) % chars == 0, f'precedence {text} is not a multiple of {chars} characters'
+    bcodes = []
+    for i in reversed(range(0, len(text), chars)):
+        b = 0
+        for c in text[i:i + chars]:
+            assert c in BASE62, f'{c!r} in precedence {text} is not a base62 digit'
+            b = b * len(BASE62) + BASE62.index(c)
+        bcodes.append(b)
+    assert 0 not in bcodes, f'"no backend" inside precedence {text}'
+    return bcodes
 
 def rle_encode(cells):
     out = []
@@ -561,8 +593,11 @@ def load_tensor_csv(fn, tables):
             **{COPTS + c: x for c, x in tables.copts.get(int(hsaco['copts'])).items()},
         }
     def precedence(text):
-        bits = int(dict(tensor.metadata['precedence'])['bits_per_slot'])
-        names = [tables(iface, 'op_backend').get(i) for i in decode_precedence(text, bits)]
+        section = dict(tensor.metadata['precedence'])
+        bits = int(section['bits_per_slot'])
+        bcodes = decode_precedence(text, int(section['chars_per_slot']))
+        assert all(b < (1 << bits) for b in bcodes), f'{fn}: precedence {text} does not fit bits_per_slot {bits}'
+        names = [tables(iface, 'op_backend').get(b) for b in bcodes]
         backends = [str(SQLITE_OP_BACKENDS[iface].index(n)) for n in names]
         return {OP + 'best1st': backends[0], OP + 'best2nd': backends[min(1, len(backends) - 1)]}
     expanders = {TENSOR_HEADER.format(e.__name__): e for e in [hsaco_options, precedence]}
