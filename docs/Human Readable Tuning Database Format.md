@@ -277,6 +277,41 @@ After the header, the file lists one block per functional:
 The size of each block is inferred from `#! tuning keys`. A blank cell means
 the entry is missing.
 
+#### More than two tuning keys
+
+Any number of tuning keys is allowed; the tensor of a functional has one
+dimension per key. The layout above is the general rule: a block has one
+line per combination of all keys but the last, in row-major order (the
+last of those keys varies fastest), and each line has one cell per bucket
+of the last key. A block therefore has `|key 1| x ... x |key n-1|` lines.
+
+With three keys, the writer also leaves a blank line between the slices of
+the first key, so a reader can tell where a slice starts without counting
+lines. Readers ignore blank lines, so the separators carry no meaning. In
+general, a blank line separates the slices of the keys before the last two.
+For example, with keys `q` (2 buckets), `k` (3) and `h` (3):
+
+```
+#! tuning keys
+q,16,32
+k,16,32,64
+h,64,128,256
+#! tuning tensor
+functional,tuning keys->hsaco_options
+1,
+10,10,11
+10,10,11
+10,10,11
+
+11,11,12
+11,11,12
+11,11,12
+```
+
+The block has 2 x 3 = 6 lines. Its first three lines are `q=16` with
+`k` = 16, 32 and 64, the next three are `q=32`, and each line holds the
+cells for `h` = 64, 128 and 256.
+
 ### Run-Length Encoding
 
 Within a line, `n` consecutive copies of a value `v` may be written `v[n]`:

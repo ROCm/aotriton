@@ -35,7 +35,8 @@ dtypes are spelled as ATI declares them without pointer and alignment (fp16,
 bf16, fp32; sqlite: torch.float16, torch.bfloat16, torch.float32). See
 SQLITE_INPUT_COLUMNS and SQLITE_DTYPES.
 
-Every <iface>.csv stores one tensor per functional. "#!" starts a metadata
+Every <iface>.csv stores one tensor per functional, with one dimension per
+tuning key; any number of tuning keys is allowed. "#!" starts a metadata
 section, other "#" lines are comments. For kernels the tensor holds
 hsaco_options ordinals:
 
@@ -469,7 +470,8 @@ def write_tensor(f, lut_names, entries, target, metadata={}):
     metadata: {section: [fields]}, written before the tuning tensor
     Each functional is followed by its tuning tensor in row-major order, one
     line per combination of all tuning keys but the last. Missing entries are
-    left blank.
+    left blank. With 3 or more tuning keys, a blank line separates the slices
+    of the keys before the last two.
     '''
     ladders = [sorted({lut[i] for _, lut, _ in entries}) for i in range(len(lut_names))]
     cells = {}
@@ -486,7 +488,9 @@ def write_tensor(f, lut_names, entries, target, metadata={}):
     print(TENSOR_HEADER.format(target), file=f)
     for fid in sorted(cells):
         print(f'{fid},', file=f)
-        for prefix in itertools.product(*ladders[:-1]):
+        for n, prefix in enumerate(itertools.product(*ladders[:-1])):
+            if len(ladders) > 2 and n > 0 and n % len(ladders[-2]) == 0:
+                print(file=f)
             line = [cells[fid].get((*prefix, v), '') for v in ladders[-1]]
             print(','.join(rle_encode(line)), file=f)
 
