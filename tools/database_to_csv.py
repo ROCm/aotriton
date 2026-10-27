@@ -109,6 +109,21 @@ SQLITE_DTYPES = {
     'torch.bfloat16': 'bf16',
     'torch.float32': 'fp32',
 }
+# functional.csv columns follow the kernel signature, which is also ATI's axis
+# order. Operators follow the kernel that owns their functional axes. Columns
+# that are not kernel arguments go last.
+_FWD_SIGNATURE = ['T_io', 'BLOCK_DMODEL', 'PADDED_HEAD', 'ENABLE_DROPOUT', 'CAUSAL_TYPE',
+                  'BIAS_TYPE', 'USE_ALIBI', 'INT8', 'INT8_KV', 'USE_P_SCALE']
+_BWD_SIGNATURE = ['T_io', 'BLOCK_DMODEL', 'CAUSAL_TYPE', 'ENABLE_DROPOUT', 'PADDED_HEAD',
+                  'BIAS_TYPE']
+FUNCTIONAL_COLUMNS = {
+    'attn_fwd': _FWD_SIGNATURE,
+    'op_attn_fwd': _FWD_SIGNATURE,
+    'bwd_kernel_dk_dv': _BWD_SIGNATURE,
+    'bwd_kernel_dq': _BWD_SIGNATURE,
+    'bwd_kernel_fuse': _BWD_SIGNATURE,
+    'op_attn_bwd': _BWD_SIGNATURE,
+}
 # sqlite op$best1st/op$best2nd store the C++ backend enum value, which is the
 # @ati.backend index in modules/flash/aot/__init__.py
 SQLITE_OP_BACKENDS = {
@@ -195,6 +210,15 @@ class IdTable(object):
 
     def get(self, rid):
         return self._rows[rid - 1]
+
+    def order_columns(self, columns, order):
+        '''
+        Set the column order of a new table: columns listed in order first
+        (in that order), then the rest. An existing table keeps its order.
+        '''
+        if self._columns:
+            return
+        self._columns = [c for c in order if c in columns] + [c for c in columns if c not in order]
 
     def write(self):
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -295,6 +319,9 @@ class Exporter(object):
         if self._args.arch is not None:
             rows = [r for r in rows if r[icol['gpu']].startswith(self._args.arch + '_')]
         functional = self.tables(iface, 'functional')
+        functional.order_columns([SQLITE_INPUT_COLUMNS.get(c.removeprefix(INPUTS), c.removeprefix(INPUTS))
+                                  for c in func_cols],
+                                 FUNCTIONAL_COLUMNS.get(iface, []))
         # Sort so functional IDs are assigned deterministically
         func_order = sorted({tuple(r[icol[c]] for c in func_cols) for r in rows})
         for ftuple in func_order:

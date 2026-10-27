@@ -123,14 +123,14 @@ its own `functional.csv`, with exactly its own input columns:
 
 ```
 # .metadata/attn_fwd/functional.csv
-T_io,CAUSAL_TYPE,BLOCK_DMODEL,ENABLE_DROPOUT,PADDED_HEAD,BIAS_TYPE,USE_ALIBI,INT8,INT8_KV,USE_P_SCALE
-bf16,0,16,0,0,0,0,0,0,0
-bf16,0,16,0,0,1,0,0,0,0
+T_io,BLOCK_DMODEL,PADDED_HEAD,ENABLE_DROPOUT,CAUSAL_TYPE,BIAS_TYPE,USE_ALIBI,INT8,INT8_KV,USE_P_SCALE
+bf16,16,0,0,0,0,0,0,0,0
+bf16,16,0,0,0,1,0,0,0,0
 ...
 
 # .metadata/bwd_kernel_dq/functional.csv
-T_io,CAUSAL_TYPE,BLOCK_DMODEL,ENABLE_DROPOUT,PADDED_HEAD,BIAS_TYPE
-bf16,0,16,0,0,0
+T_io,BLOCK_DMODEL,CAUSAL_TYPE,ENABLE_DROPOUT,PADDED_HEAD,BIAS_TYPE
+bf16,16,0,0,0,0
 ...
 ```
 
@@ -143,6 +143,11 @@ Columns use ATI notation:
   alignment: `*fp16:16` is stored as `fp16`, likewise `bf16`, `fp32`.
 - Other columns are named after the kernel argument (`CAUSAL_TYPE`,
   `BLOCK_DMODEL`, ...). Boolean inputs are `0`/`1`.
+- Columns follow the kernel signature, which is also ATI's axis order: a
+  column is placed where its first argument appears in the kernel source
+  (`T_io` at `Q`). An operator follows the kernel that owns its functional
+  axes (`attn_fwd` for `op_attn_fwd`, `bwd_kernel_dk_dv` for `op_attn_bwd`).
+  Columns that are not arguments of that kernel go last.
 
 Functional IDs are local to the database. They are deliberately not the godel
 numbers the code generator assigns, so the database stays stable when the
@@ -362,8 +367,8 @@ Which variant of `attn_fwd` does gfx1100 use for functional 13 at
 
 1. `amd/gfx1100/attn_fwd.csv`, block `13,`, first line, first cell: `67`.
 2. `.metadata/attn_fwd/functional.csv`, ID 13:
-   `bf16,0,64,0,0,0,0,0,0,0`, i.e. bf16, no causal, hdim 64,
-   no dropout, no padded head, no bias.
+   `bf16,64,0,0,0,0,0,0,0,0`, i.e. bf16, hdim 64, no padded head,
+   no dropout, no causal, no bias.
 3. `.metadata/attn_fwd/hsaco_options.csv`, ID 67: `13,11`, i.e. psels 13,
    copts 11.
 4. `.metadata/attn_fwd/psels.csv`, ID 13: `PERSISTENT_TYPE=0`,
