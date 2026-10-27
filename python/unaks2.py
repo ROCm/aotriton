@@ -65,6 +65,8 @@ def main():
         print(f'{sum(e.image_size for e in directory):>10} {"":>8} {"":>7}  {len(directory)} file(s)')
         return
     for e in directory:
+        if e.offset + e.image_size > len(images):
+            sys.exit(f'{args.aks2}: image range out of bounds for {e.filename}')
         out = safe_path(args.d, e.filename)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(images[e.offset:e.offset + e.image_size])
