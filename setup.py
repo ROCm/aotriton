@@ -47,7 +47,12 @@ def _aotriton_version() -> str:
 # would sweep the standalone python/pytest-gpu-lease/ project (its own
 # pyproject.toml, no __init__.py) into this wheel too.
 _subs = find_packages(where=str(_PYDIR), exclude=['modules', 'modules.*', 'tune', 'tune.*'])
-_packages = [f'aotriton.{p}' for p in _subs]
+# 'aotriton' itself is listed so that an editable install (pip install -e)
+# works: setuptools' editable finder only resolves a mapped package that has an
+# __init__.py, or one it knows to be a namespace, and it learns the namespaces
+# from `packages`. Listing it ships no aotriton/__init__.py (python/ has none),
+# so the regular wheel stays a namespace package with the same files.
+_packages = ['aotriton'] + [f'aotriton.{p}' for p in _subs]
 _package_dir = {f'aotriton.{p}': 'python/' + p.replace('.', '/')
                 for p in _subs}
 
@@ -55,9 +60,7 @@ _package_dir = {f'aotriton.{p}': 'python/' + p.replace('.', '/')
 # generate.py, flyc_compile.py, ...) have no __init__.py, so find_packages()
 # never sees them -- but they're load-bearing (e.g. codegen/root.py shells out
 # to `python -m aotriton.flyc_compile`). Each needs an explicit py_modules
-# entry now that `aotriton` has no `__init__.py` of its own. 'aotriton' is
-# deliberately NOT added to `packages` above -- that would ship an
-# __init__.py-bearing artifact for it, unmaking the namespace package.
+# entry now that `aotriton` has no `__init__.py` of its own.
 _top_level_modules = sorted(p.stem for p in _PYDIR.glob('*.py'))
 _py_modules = [f'aotriton.{m}' for m in _top_level_modules]
 _package_dir['aotriton'] = str(_PYDIR.relative_to(_ROOT))
