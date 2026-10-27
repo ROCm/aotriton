@@ -196,10 +196,12 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     -m aotriton.write_image_signature
     --build_dir "${AOTRITON_V2_BUILD_DIR}"
     --root_dir "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+    --tuning_database_root "${AOTRITON_TUNING_DATABASE_DIR}"
     --git_sha1 ${AOTRITON_GIT_SHA1}
     --git_treesha1 ${AOTRITON_GIT_TREESHA1}
     --target_arch ${AOTRITON_TARGET_ARCH}
     --output_file "${SIGNATURE_FILE}"
+    DEPENDS ${AOTRITON_TUNING_DATABASE_FILES}
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
   )
 

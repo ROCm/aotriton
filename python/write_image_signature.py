@@ -9,19 +9,21 @@ import triton
 import hashlib
 import itertools
 import importlib.metadata
-from .database import Factories as DatabaseFactories
-from .codegen.linker import Linker
 
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('--build_dir', type=Path, required=True)
     p.add_argument('--root_dir', type=Path, default='.', help="Root of repository directory")
+    p.add_argument('--tuning_database_root', type=Path, default=None,
+                   help='Root of the tuning databases, <root>/<family>/database. Default: <root_dir>/modules')
     p.add_argument('--git_sha1', required=True)
     p.add_argument('--git_treesha1', required=True)
     p.add_argument('--target_arch', nargs='+')
     p.add_argument('--vendors', nargs='*', default=['amd'])
     p.add_argument('--output_file', required=True)
     args = p.parse_args()
+    if args.tuning_database_root is None:
+        args.tuning_database_root = args.root_dir / 'modules'
     return args
 
 def hashfile(fn):
@@ -32,42 +34,58 @@ def hashfile(fn):
             m.update(chunk)
     return m.hexdigest()
 
+def hash_iface(files):
+    '''
+    Combine the content hashes of an interface's files into one. The names are
+    part of the hash because the order of the patches is.
+    '''
+    m = hashlib.sha256()
+    for fn in files:
+        m.update(f'{fn.name}\0{hashfile(fn)}\n'.encode())
+    return m.hexdigest()
+
+def patch_order(fn):
+    # <iface>.<NNNN>-<name>.dbpatch, applied in numeric order
+    return int(fn.name.split('.')[1].split('-')[0]), fn.name
+
 '''
-Note: here we hash the uncompressed sqlite3 file, because hash of tar file is
-affected by metadata like owner/mdate
+Note: the database is hashed by content, so a symlink (an arch sharing a base)
+is read through. Retuning the base changes the signature of every arch that
+links it, and a patch changes the effective tensors without touching the base.
 '''
-def hash_primary(args, vendor, arch, k):
-    fn = args.build_dir / k.FAMILY / 'database' / vendor / arch / f'{k.NAME}.sqlite3'
-    if fn.is_file():
-        return hashfile(fn)
-    return None
+def hash_primary(database, vendor, arch):
+    '''
+    {<iface>: hash} for amd/<arch>/ and its mod<N>/ subdirectories: the
+    <iface>.csv tensor file followed by its patches in application order.
+    '''
+    result = {}
+    arch_dir = database / vendor / arch
+    for d in [arch_dir] + sorted(arch_dir.glob('mod[0-9]*')):
+        if not d.is_dir():
+            continue
+        for csv in sorted(d.glob('*.csv')):
+            patches = sorted(d.glob(f'{csv.stem}.*.dbpatch'), key=patch_order)
+            name = csv.stem if d == arch_dir else f'{d.name}/{csv.stem}'
+            result[name] = hash_iface([csv] + patches)
+    return result
+
+def hash_metadata(database):
+    '''The tables shared by all arches: every file under .metadata/'''
+    return hash_iface(sorted(p for p in (database / '.metadata').rglob('*') if p.is_file()))
 
 def main():
     args = parse()
-    kernels, _operators, _affine_kernels, _flyc_kernels = \
-        Linker(args.root_dir / 'modules').link_all_families()
     sig = {}
     sig['AOTRITON_GIT_SHA1'] = args.git_sha1
     sig['AOTRITON_GIT_TREESHA1'] = args.git_treesha1
-    families = sorted({k.FAMILY for k in kernels})
+    # <root>/<family>/database, same as aotriton.generate
+    databases = {d.parent.name: d for d in sorted(args.tuning_database_root.glob('*/database'))}
     db = {}
     def gen_primary_db_hash():
         for vendor, arch in itertools.product(args.vendors, args.target_arch):
-            d = {}
-            for k in kernels:
-                if k.FAMILY not in d:
-                    d[k.FAMILY] = {}
-                dbhash = hash_primary(args, vendor, arch, k)
-                if dbhash is not None:
-                    d[k.FAMILY][k.NAME] = dbhash
-            yield arch, d
+            yield arch, {family: hash_primary(d, vendor, arch) for family, d in databases.items()}
     db['primary'] = dict(gen_primary_db_hash())
-    def gen_secondary_db_hash():
-        for family in families:
-            fac = DatabaseFactories.create_factory(args.build_dir / family)
-            for k, v in fac.SECONDARY_DATABASES.items():
-                yield f'{family}.{k}', hashfile(args.build_dir / family / v)
-    db['secondary'] = dict(gen_secondary_db_hash())
+    db['secondary'] = {f'{family}.metadata': hash_metadata(d) for family, d in databases.items()}
     sig['DB_SHA256'] = db
     sig['TRITON_VERSION'] = str(importlib.metadata.version("triton"))
     try:
