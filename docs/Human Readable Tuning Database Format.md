@@ -429,6 +429,55 @@ The content:
 A patch is an overlay rather than a textual diff, so it keeps applying when
 its base changes, e.g. when the base architecture is retuned.
 
+#### Sparse patches
+
+A patch may store its tensor sparse, with a `#! sparse tuning tensor`
+section in place of `#! tuning tensor`. Each functional lists its values
+once, each followed by the cells it goes to:
+
+```
+#! tuning keys
+Max_seqlen_q,16,32,64,128,256,512,1024,2048
+Max_seqlen_k,16,32,64,128,256,512,1024,2048
+#! sparse tuning tensor
+functional,hsaco_options<-coordinates
+13,
+95<-0{0}1{1}2{1}3{0}
+33<-0{1}
+15<-0{2,3}1{6}2{4,5}3{2-4,6,7}
+...
+```
+
+- The header mirrors the lines: `functional,hsaco_options<-coordinates`
+  (`functional,precedence<-coordinates` for operators). Blocks start with a
+  `<functional ordinal>,` line, as in dense tensors, and each further line
+  is a value, `<-`, and the coordinates of its cells.
+- Cells are given by 0-based indices into the `#! tuning keys` ladders.
+  `3{2-4,6,7}` reads as row 3, columns 2 to 4, 6 and 7, i.e.
+  `Max_seqlen_q=128` with `Max_seqlen_k` 64, 128, 256, 1024 and 2048.
+- A group of cells is one index per tuning key but the last, then a
+  `{...}` list of indices and inclusive ranges `a-b` for the last key. A
+  group is therefore part of exactly one line of the dense tensor, see
+  [More than two tuning keys](#more-than-two-tuning-keys): with three keys,
+  `0,3{2,3}` is the cells (0,3,2) and (0,3,3), and with a single key the
+  group is just the list, e.g. `{2-4}`. Groups follow each other without a
+  separator, since `}` ends a group.
+- Cells not listed keep the base value, like blank cells in a dense patch.
+  A cell may be listed only once, also across groups.
+- Since a patch repeats its base's tuning keys, a changed ladder fails to
+  load instead of shifting cells.
+- Writers emit one canonical form: one group per dense line, ranges for runs
+  of 3 or more indices, no spaces. Readers also accept spaces.
+- Only patches may be sparse: an `<iface>.csv` is always dense.
+
+Braces, not brackets, mark the lists: `v[n]` already means run-length
+encoding in dense tensors, and `1[6]` must not mean both "six 1s" and
+"row 1, column 6".
+
+A dense patch is shorter when a patch sets most cells of its functionals,
+and a sparse one when it sets a few. The gfx1151 patches are sparse, and
+the gfx1150 patches dense, to show both forms on the same data.
+
 ### Sharing a Base Through Symlinks
 
 An architecture that is tuned only partially uses another architecture's
@@ -487,6 +536,7 @@ tools/database_to_csv.py \
     --op_database <dir>/op_database.sqlite3 \
     --output modules/flash/database \
     --patch_on gfx1150=gfx1100 gfx1151=gfx1100 \
+    --sparse_patch gfx1151 \
     --verify
 ```
 
@@ -495,5 +545,6 @@ tools/database_to_csv.py \
 - `--patch_on <arch>=<base>` writes `<arch>`'s entries as
   `<iface>.0001-<arch>.dbpatch` and symlinks the base architecture's tensor
   files.
+- `--sparse_patch <arch>` writes those patches as sparse tuning tensors.
 - `--verify` reads the result back, with patches applied, and checks that it
   reproduces every row of the sqlite input.

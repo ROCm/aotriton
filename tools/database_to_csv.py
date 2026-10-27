@@ -12,7 +12,8 @@ Usage, from the repository root:
     tools/database_to_csv.py --kernel_databases <dir>/<arch>/*.sqlite3 \
         --op_database <dir>/op_database.sqlite3 \
         --output modules/flash/database \
-        --patch_on gfx1150=gfx1100 gfx1151=gfx1100 --verify
+        --patch_on gfx1150=gfx1100 gfx1151=gfx1100 --sparse_patch gfx1151 \
+        --verify
 
 Layout:
 
@@ -82,12 +83,30 @@ cross lines.
 Incremental changes: <iface>.<N>-<name>.dbpatch next to <iface>.csv overlays
 it, named like git format-patch output: N is zero-padded to 4 digits, <name>
 describes the change. A patch uses the same tensor format, and its tuning keys
-and metadata sections must equal the base's. Patches apply in order of N. Each functional listed in
-a patch overrides the base's cells, where a blank patch cell keeps the base
-value; functionals absent from the base are added. The base is often a
-symlink to another arch, e.g. amd/gfx1150/attn_fwd.csv -> ../gfx1100/attn_fwd.csv,
-plus amd/gfx1150/attn_fwd.0001-gfx1150.dbpatch with what gfx1150 tuned on its
-own.
+and metadata sections must equal the base's. Patches apply in order of N.
+Each functional listed in a patch overrides the base's cells, where a blank
+patch cell keeps the base value; functionals absent from the base are added.
+The base is often a symlink to another arch, e.g.
+amd/gfx1150/attn_fwd.csv -> ../gfx1100/attn_fwd.csv, plus
+amd/gfx1150/attn_fwd.0001-gfx1150.dbpatch with what gfx1150 tuned on its own.
+
+A patch may store its tensor sparse instead, listing each value once with the
+cells it goes to, as 0-based indices into the tuning key ladders:
+
+    #! sparse tuning tensor
+    functional,hsaco_options<-coordinates
+    13,
+    104<-0{0}5{3}
+    15<-0{2,3}1{6}2{4,5}3{2-4,6,7}
+
+A group of cells gives one index per tuning key but the last, then a {list}
+of indices and inclusive ranges for the last key. A group is thus part of one
+line of the dense tensor: 3{2-4,6,7} is row 3, columns 2-4, 6 and 7; with
+three tuning keys, 0,3{2,3} is (0,3,2) and (0,3,3). Writers emit one group
+per line, ranges for runs of 3 or more, and no spaces; readers accept
+spaces.
+Cells not listed keep the base value, and a cell may be listed only once.
+Only patches may be sparse.
 '''
 
 import argparse
@@ -105,7 +124,16 @@ LUT_KEYS = ('max_seqlen_q', 'max_seqlen_k')
 METADATA = '.metadata'
 TENSOR_KEYS = '#! tuning keys'
 TENSOR_SECTION = '#! tuning tensor'
+SPARSE_TENSOR_SECTION = '#! sparse tuning tensor'
+SPARSE_FUNCTIONAL = re.compile(r'(\d+),')
+SPARSE_VALUE = re.compile(r'([^\s<]+)\s*<-\s*(.*)')
+_INDEX_LIST = r'\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*'
+# A group of cells: one index per tuning key but the last, then a {list} for
+# the last key, e.g. 3{2-4,6,7}, i.e. part of one line of the dense tensor
+SPARSE_GROUP = re.compile(rf'(\d+(?:,\d+)*)?\{{({_INDEX_LIST})\}}')
 TENSOR_HEADER = 'functional,tuning keys->{}'
+SPARSE_TENSOR_HEADER = 'functional,{}<-coordinates'
+TENSOR_TARGETS = ('hsaco_options', 'precedence')
 PRECEDENCE_SECTION = '#! precedence'
 PRECEDENCE_BITS = 4
 PRECEDENCE_CHARS = 1
@@ -158,6 +186,9 @@ def parse():
                    help='<arch>=<base arch>: link the base arch\'s files and '
                         'store <arch> as <iface>.0001-<arch>.dbpatch, '
                         'e.g. gfx1150=gfx1100')
+    p.add_argument('--sparse_patch', nargs='*', default=[],
+                   help='Arches of --patch_on whose patches are written as '
+                        'sparse tuning tensors')
     p.add_argument('--verify', action='store_true',
                    help='Load the CSVs back and compare with the sqlite input')
     return p.parse_args()
@@ -305,6 +336,8 @@ class Exporter(object):
         self._args = args
         self.tables = Tables(args.output)
         self.patch_on = dict(x.split('=') for x in args.patch_on)
+        self.sparse_patch = set(args.sparse_patch)
+        assert self.sparse_patch <= set(self.patch_on), '--sparse_patch arches must be in --patch_on'
 
     def kernel_csv(self, gpu, iface):
         arch, mod = gpu.split('_')
@@ -366,7 +399,13 @@ class Exporter(object):
         lut_names = [c.removeprefix(INPUTS) for c in lut_cols]
         for gpu, entries in by_gpu.items():
             fn = self.kernel_csv(gpu, iface)
+            ladders = None
+            sparse = False
             if fn.parent.name in self.patch_on:
+                # A patch shares the base's ladders, whichever cells it sets
+                base = self._args.output / self._args.vendor / self.patch_on[fn.parent.name] / fn.name
+                ladders = [[int(v) for v in ladder] for _, ladder in Tensor(base).keys]
+                sparse = fn.parent.name in self.sparse_patch
                 fn = patch_name(fn, 1, fn.parent.name)
             with open(fn, 'w', newline='') as f:
                 if op_cols:
@@ -374,9 +413,10 @@ class Exporter(object):
                         f'{iface}: bords do not fit bits_per_slot {PRECEDENCE_BITS}'
                     write_tensor(f, lut_names, entries, 'precedence',
                                  {PRECEDENCE_SECTION: [['bits_per_slot', PRECEDENCE_BITS],
-                                                       ['chars_per_slot', PRECEDENCE_CHARS]]})
+                                                       ['chars_per_slot', PRECEDENCE_CHARS]]},
+                                 ladders=ladders, sparse=sparse)
                 else:
-                    write_tensor(f, lut_names, entries, 'hsaco_options')
+                    write_tensor(f, lut_names, entries, 'hsaco_options', ladders=ladders, sparse=sparse)
             print(f'{fn}: {len(entries)} entries')
 
     @staticmethod
@@ -464,16 +504,19 @@ def rle_decode(fields):
             out.append(field)
     return out
 
-def write_tensor(f, lut_names, entries, target, metadata={}):
+def write_tensor(f, lut_names, entries, target, metadata={}, ladders=None, sparse=False):
     '''
     entries: [(functional ordinal, tuning key values, value of target)]
     metadata: {section: [fields]}, written before the tuning tensor
+    ladders: the tuning key ladders, by default the values found in entries
     Each functional is followed by its tuning tensor in row-major order, one
     line per combination of all tuning keys but the last. Missing entries are
     left blank. With 3 or more tuning keys, a blank line separates the slices
-    of the keys before the last two.
+    of the keys before the last two. With sparse, each functional lists its values instead, in the
+    order of their first cell, each with its cells in row-major order.
     '''
-    ladders = [sorted({lut[i] for _, lut, _ in entries}) for i in range(len(lut_names))]
+    if ladders is None:
+        ladders = [sorted({lut[i] for _, lut, _ in entries}) for i in range(len(lut_names))]
     cells = {}
     for fid, lut, tid in entries:
         cells.setdefault(fid, {})[lut] = tid
@@ -484,15 +527,77 @@ def write_tensor(f, lut_names, entries, target, metadata={}):
         print(section, file=f)
         for fields in lines:
             print(','.join(str(x) for x in fields), file=f)
-    print(TENSOR_SECTION, file=f)
-    print(TENSOR_HEADER.format(target), file=f)
+    print(SPARSE_TENSOR_SECTION if sparse else TENSOR_SECTION, file=f)
+    print((SPARSE_TENSOR_HEADER if sparse else TENSOR_HEADER).format(target), file=f)
     for fid in sorted(cells):
         print(f'{fid},', file=f)
+        if sparse:
+            groups = {}
+            for index in itertools.product(*(range(len(ladder)) for ladder in ladders)):
+                lut = tuple(ladder[i] for ladder, i in zip(ladders, index))
+                if lut in cells[fid]:
+                    groups.setdefault(cells[fid][lut], []).append(index)
+            for value, indices in groups.items():
+                print(f'{value}<-{format_sparse_cells(indices)}', file=f)
+            continue
         for n, prefix in enumerate(itertools.product(*ladders[:-1])):
             if len(ladders) > 2 and n > 0 and n % len(ladders[-2]) == 0:
                 print(file=f)
             line = [cells[fid].get((*prefix, v), '') for v in ladders[-1]]
             print(','.join(rle_encode(line)), file=f)
+
+def format_index_list(indices):
+    '''
+    Sorted indices -> "2-4,6,7": runs of 3 or more become inclusive ranges
+    '''
+    parts = []
+    i = 0
+    while i < len(indices):
+        j = i
+        while j + 1 < len(indices) and indices[j + 1] == indices[j] + 1:
+            j += 1
+        if j - i >= 2:
+            parts.append(f'{indices[i]}-{indices[j]}')
+        else:
+            parts += [str(x) for x in indices[i:j + 1]]
+        i = j + 1
+    return ','.join(parts)
+
+def format_sparse_cells(indices):
+    '''
+    Cells in row-major order -> groups, one per combination of all tuning keys
+    but the last, i.e. per dense line, e.g. [(0,2),(0,3),(3,2)] -> "0{2,3}3{2}"
+    '''
+    groups = {}
+    for index in indices:
+        groups.setdefault(index[:-1], []).append(index[-1])
+    return ''.join(','.join(map(str, prefix)) + f'{{{format_index_list(last)}}}'
+                   for prefix, last in groups.items())
+
+def parse_index_list(text):
+    '''
+    "2-4,6,7" -> [2, 3, 4, 6, 7]
+    '''
+    indices = []
+    for part in text.split(','):
+        a, _, b = part.partition('-')
+        a, b = int(a), int(b or a)
+        assert a <= b, f'empty range {part}'
+        indices += range(a, b + 1)
+    return indices
+
+def parse_sparse_cells(text):
+    '''
+    Inverse of format_sparse_cells, also accepting the groups of a line in
+    any order and repeated. Yields index tuples.
+    '''
+    text = ''.join(text.split())    # readers tolerate whitespace
+    groups = list(SPARSE_GROUP.finditer(text))
+    assert groups and ''.join(m[0] for m in groups) == text, f'malformed cells {text}'
+    for m in groups:
+        prefix = tuple(int(i) for i in m[1].split(',')) if m[1] else ()
+        for last in parse_index_list(m[2]):
+            yield (*prefix, last)
 
 def read_sections(fn):
     '''
@@ -532,7 +637,7 @@ def patch_files(fn):
 
 class Tensor(object):
     '''
-    A parsed tensor CSV: tuning keys, metadata sections, header, and
+    A parsed tensor CSV: tuning keys, metadata sections, target, and
     {functional ordinal: [[cell]]} with one row per combination of all tuning keys
     but the last.
     '''
@@ -540,12 +645,21 @@ class Tensor(object):
         self.fn = fn
         sections = read_sections(fn)
         self.keys = [(line[0], line[1:]) for line in sections.pop('tuning keys')]
-        self.header, *lines = sections.pop('tuning tensor')
+        self.sparse = 'sparse tuning tensor' in sections
+        assert not (self.sparse and 'tuning tensor' in sections), f'{fn}: both dense and sparse tensors'
+        header, *lines = sections.pop('sparse tuning tensor' if self.sparse else 'tuning tensor')
+        headers = {(SPARSE_TENSOR_HEADER if self.sparse else TENSOR_HEADER).format(t): t
+                   for t in TENSOR_TARGETS}
+        assert ','.join(header) in headers, f'{fn}: unsupported tensor header {",".join(header)}'
+        self.target = headers[','.join(header)]
         self.metadata = sections
         nrows = 1
         for _, ladder in self.keys[:-1]:
             nrows *= len(ladder)
         self.cells = {}
+        if self.sparse:
+            self._parse_sparse(lines, nrows)
+            return
         for i in range(0, len(lines), nrows + 1):
             fline = lines[i]
             assert len(fline) == 2 and fline[1] == '', f'{fn}: expect "<functional>," got {fline}'
@@ -555,9 +669,37 @@ class Tensor(object):
                 assert len(row) == len(self.keys[-1][1]), f'{fn}: functional {fline[0]} has a malformed row {row}'
             self.cells[int(fline[0])] = rows
 
+    def _parse_sparse(self, lines, nrows):
+        sizes = [len(ladder) for _, ladder in self.keys]
+        rows = None
+        for fields in lines:
+            text = ','.join(fields)   # read_sections split the line on commas
+            m = SPARSE_FUNCTIONAL.fullmatch(text)
+            if m:
+                rows = [[''] * sizes[-1] for _ in range(nrows)]
+                self.cells[int(m[1])] = rows
+                continue
+            m = SPARSE_VALUE.fullmatch(text)
+            assert m and rows is not None, f'{self.fn}: expect "<functional>," or "<value><-<cells>" got {text}'
+            value = m[1]
+            try:
+                indices = list(parse_sparse_cells(m[2]))
+            except AssertionError as e:
+                raise AssertionError(f'{self.fn}: {e}') from e
+            for index in indices:
+                assert len(index) == len(sizes), \
+                    f'{self.fn}: cell {tuple(index)} has {len(index)} indices, expected {len(sizes)}'
+                assert all(0 <= i < n for i, n in zip(index, sizes)), \
+                    f'{self.fn}: cell {tuple(index)} outside the tuning keys'
+                row = 0
+                for i, n in zip(index[:-1], sizes[:-1]):
+                    row = row * n + i
+                assert rows[row][index[-1]] == '', f'{self.fn}: cell {tuple(index)} listed twice'
+                rows[row][index[-1]] = value
+
     def apply(self, patch):
         assert patch.keys == self.keys, f'{patch.fn}: tuning keys differ from {self.fn}'
-        assert patch.header == self.header, f'{patch.fn}: header differs from {self.fn}'
+        assert patch.target == self.target, f'{patch.fn}: target differs from {self.fn}'
         assert patch.metadata == self.metadata, f'{patch.fn}: metadata differs from {self.fn}'
         for fid, rows in patch.cells.items():
             if fid not in self.cells:
@@ -571,6 +713,7 @@ def load_tensor(fn):
     Load <iface>.csv (following symlinks) and apply its patches.
     '''
     tensor = Tensor(fn)
+    assert not tensor.sparse, f'{fn}: only patches may be sparse'
     for patch in patch_files(fn):
         tensor.apply(Tensor(patch))
     return tensor
@@ -606,9 +749,7 @@ def load_tensor_csv(fn, tables):
         names = [tables(iface, 'op_backend').get(b) for b in bords]
         backends = [str(SQLITE_OP_BACKENDS[iface].index(n)) for n in names]
         return {OP + 'best1st': backends[0], OP + 'best2nd': backends[min(1, len(backends) - 1)]}
-    expanders = {TENSOR_HEADER.format(e.__name__): e for e in [hsaco_options, precedence]}
-    assert ','.join(tensor.header) in expanders, f'{fn}: unsupported tensor header {tensor.header}'
-    expand = expanders[','.join(tensor.header)]
+    expand = {'hsaco_options': hsaco_options, 'precedence': precedence}[tensor.target]
     names = [INPUTS + name for name, _ in tensor.keys]
     ladders = [ladder for _, ladder in tensor.keys]
     for fid, rows in sorted(tensor.cells.items()):
