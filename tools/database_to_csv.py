@@ -19,14 +19,15 @@ Layout:
     <output>/.metadata/copts.csv                       (shared by all triton kernels)
     <output>/.metadata/<iface>/functional.csv
     <output>/.metadata/<iface>/psels.csv               (kernels)
-    <output>/.metadata/<iface>/hsaco_options.csv       (kernels, psels,copts ID pairs)
+    <output>/.metadata/<iface>/hsaco_options.csv       (kernels, psels,copts code pairs)
     <output>/.metadata/<iface>/op_backend.csv          (operators, name,bcode)
     <output>/<vendor>/<arch>/[mod<N>/]<iface>.csv      (tuning tensors)
     <output>/<vendor>/<arch>/[mod<N>/]<iface>.<NNNN>-<name>.dbpatch
 
-Implicit ID: line 0 of every CSV is the header, so the first data row has ID 1.
-The exception is op_backend.csv, which is small and lists its backend codes
-explicitly.
+Codes: rows of the .metadata/ tables are referred to by integer codes. A code
+is implicit: line 0 of every CSV is the header, so the first data row has
+code 1. The exception is op_backend.csv, which is small and lists its codes,
+the bcodes, explicitly.
 
 functional.csv uses ATI notation, which differs from sqlite: the tensor dtype
 column is named after the ATI type variable (T_io, sqlite: Q_dtype), and
@@ -36,7 +37,7 @@ SQLITE_INPUT_COLUMNS and SQLITE_DTYPES.
 
 Every <iface>.csv stores one tensor per functional. "#!" starts a metadata
 section, other "#" lines are comments. For kernels the tensor holds
-hsaco_options IDs:
+hsaco_options codes:
 
     #! tuning keys
     Max_seqlen_q,16,32,...
@@ -44,7 +45,7 @@ hsaco_options IDs:
     #! tuning tensor
     functional,tuning keys->hsaco_options
     1,
-    <one line per Max_seqlen_q, one hsaco_options ID per Max_seqlen_k>
+    <one line per Max_seqlen_q, one hsaco_options code per Max_seqlen_k>
     2,
     ...
 
@@ -187,9 +188,9 @@ def functional_to_sqlite(row):
         ret[c] = v
     return ret
 
-class IdTable(object):
+class CodeTable(object):
     '''
-    A CSV table with implicit IDs. Rows are dicts of the columns they define.
+    A CSV table with implicit codes. Rows are dicts of the columns they define.
     '''
     def __init__(self, path):
         self._path = path
@@ -206,7 +207,7 @@ class IdTable(object):
     def _append(self, row):
         key = tuple(sorted(row.items()))
         self._rows.append(row)
-        self._index[key] = len(self._rows)    # Implicit ID, first data row is 1
+        self._index[key] = len(self._rows)    # Implicit code, first data row is 1
         return self._index[key]
 
     def lookup(self, row):
@@ -219,8 +220,8 @@ class IdTable(object):
                 self._columns.append(k)
         return self._append(row)
 
-    def get(self, rid):
-        return self._rows[rid - 1]
+    def get(self, code):
+        return self._rows[code - 1]
 
     def order_columns(self, columns, order):
         '''
@@ -281,14 +282,14 @@ class Tables(object):
 
     def __init__(self, root):
         self._meta = root / METADATA
-        self.copts = IdTable(self._meta / 'copts.csv')
+        self.copts = CodeTable(self._meta / 'copts.csv')
         self._iface = {}
 
     def __call__(self, iface, name):
         assert name in self.PER_IFACE, name
         key = (iface, name)
         if key not in self._iface:
-            cls = OpBackendTable if name == 'op_backend' else IdTable
+            cls = OpBackendTable if name == 'op_backend' else CodeTable
             self._iface[key] = cls(self._meta / iface / f'{name}.csv')
         return self._iface[key]
 
@@ -336,7 +337,7 @@ class Exporter(object):
         functional.order_columns([SQLITE_INPUT_COLUMNS.get(c.removeprefix(INPUTS), c.removeprefix(INPUTS))
                                   for c in func_cols],
                                  FUNCTIONAL_COLUMNS.get(iface, []))
-        # Sort so functional IDs are assigned deterministically
+        # Sort so functional codes are assigned deterministically
         func_order = sorted({tuple(r[icol[c]] for c in func_cols) for r in rows})
         for ftuple in func_order:
             functional.lookup(functional_from_sqlite({c.removeprefix(INPUTS): v for c, v in zip(func_cols, ftuple)}))
@@ -463,7 +464,7 @@ def rle_decode(fields):
 
 def write_tensor(f, lut_names, entries, target, metadata={}):
     '''
-    entries: [(functional ID, tuning key values, value of target)]
+    entries: [(functional code, tuning key values, value of target)]
     metadata: {section: [fields]}, written before the tuning tensor
     Each functional is followed by its tuning tensor in row-major order, one
     line per combination of all tuning keys but the last. Missing entries are
@@ -527,7 +528,7 @@ def patch_files(fn):
 class Tensor(object):
     '''
     A parsed tensor CSV: tuning keys, metadata sections, header, and
-    {functional ID: [[cell]]} with one row per combination of all tuning keys
+    {functional code: [[cell]]} with one row per combination of all tuning keys
     but the last.
     '''
     def __init__(self, fn):

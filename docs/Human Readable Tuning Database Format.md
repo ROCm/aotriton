@@ -13,18 +13,19 @@ This document describes the on-disk format. All examples are taken from
 
 ### Avoid massive updates
 
-A change to the database, or to the code that consumes it, should only touch
-the entries it is about. A diff that rewrites thousands of unrelated lines
-cannot be reviewed, and it conflicts with every other contribution in flight.
-Each of the following mechanisms keeps updates local:
+A change to the database, or to the tools and code generator that consume it,
+should only touch the entries it is about. A diff that rewrites thousands of
+unrelated lines cannot be reviewed, and it conflicts with every other
+contribution in flight. Each of the following mechanisms keeps updates local:
 
-- **Append-only IDs.** Rows of `.metadata/` tables are never renumbered or
+- **Append-only codes.** Rows of `.metadata/` tables are never renumbered or
   removed. New functionals, psels, copts and hsaco options are appended, so
   existing tensor cells keep pointing at the same rows.
-- **Functional IDs are not godel numbers.** The code generator numbers
+- **Functional codes are not godel numbers.** The code generator numbers
   functionals by enumerating the functional space, so extending an axis
-  (e.g. adding hdim=384) renumbers it. The database assigns its own IDs and
-  appends the new functionals after the existing ones instead.
+  (e.g. adding hdim=384) renumbers it. The database assigns its own
+  functional codes and appends the new functionals after the existing ones
+  instead.
 - **Backends are stored by name, not by index.** `op_backend.csv` maps each
   backend name, as declared by `@ati.backend`, to the backend code (bcode)
   stored in the tensors. The index of a backend in the ATI DSL, and the C++
@@ -34,7 +35,7 @@ Each of the following mechanisms keeps updates local:
   generator follows the new declaration.
 - **Per-interface tables.** Each kernel and operator has its own
   `functional.csv`, `psels.csv`, `hsaco_options.csv` and `op_backend.csv`,
-  so retuning one kernel never shifts the IDs of another.
+  so retuning one kernel never shifts the codes of another.
 - **Patches and symlinks.** A partially tuned architecture symlinks its base
   architecture and stores only its own entries in `.dbpatch` files. The base
   is not copied, and retuning the base does not touch the patches.
@@ -44,14 +45,14 @@ Each of the following mechanisms keeps updates local:
 ### Diffable and deterministic
 
 The database is plain text, and the writer's output is canonical: blocks are
-sorted by functional ID, and run-length encoding is applied exactly where it
+sorted by functional code, and run-length encoding is applied exactly where it
 is shorter. Regenerating unchanged data produces identical files, so a diff
 only ever shows real changes.
 
 ### Explicit where it is cheap
 
-Large tables use implicit row IDs to stay compact. `op_backend.csv` has only
-a handful of rows, so it lists its backend codes explicitly: a reader can
+Large tables use implicit codes to stay compact. `op_backend.csv` has only a
+handful of rows, so it lists its codes, the bcodes, explicitly: a reader can
 decode an operator tensor without counting lines.
 
 ## Directory Layout
@@ -84,25 +85,31 @@ those of `<arch>_mod<N>`.
 
 ## Common Conventions
 
-### Implicit IDs
+### Implicit Codes
+
+The database refers to a row of a `.metadata/` table by an integer **code**:
+tensor cells hold hsaco_options codes, hsaco_options rows hold psels and copts
+codes, and so on. The tensors are written in codes, and `.metadata/` decodes
+them.
 
 Every table under `.metadata/` is a CSV file with a header line. Rows are
-referred to by their **implicit ID**: the line number, counting the header as
-line 0. The first data row therefore has ID 1, which matches the line number
-shown by most editors minus one.
+referred to by their **implicit code**: the line number, counting the header
+as line 0. The first data row therefore has code 1, which matches the line
+number shown by most editors minus one.
 
 ```
 waves_per_eu,num_warps,num_stages      <- line 0, header
-2,4,1                                  <- ID 1
-1,4,1                                  <- ID 2
+2,4,1                                  <- code 1
+1,4,1                                  <- code 2
 ```
 
-IDs are append-only. A row, once referenced, keeps its ID: new entries are
+Codes are append-only. A row, once referenced, keeps its code: new entries are
 appended at the end of the table, and existing rows are never reordered or
 removed. Adding a new value (e.g. a new head dimension) appends new
 functionals after the existing ones instead of renumbering them.
 
-`op_backend.csv` is the one exception, see [Operator Backends](#operator-backends).
+`op_backend.csv` is the one exception: its codes, the bcodes, are explicit,
+see [Operator Backends](#operator-backends).
 
 ### Comments and Sections
 
@@ -149,7 +156,7 @@ Columns use ATI notation:
   axes (`attn_fwd` for `op_attn_fwd`, `bwd_kernel_dk_dv` for `op_attn_bwd`).
   Columns that are not arguments of that kernel go last.
 
-Functional IDs are local to the database. They are deliberately not the godel
+Functional codes are local to the database. They are deliberately not the godel
 numbers the code generator assigns, so the database stays stable when the
 functional space is extended.
 
@@ -179,10 +186,10 @@ PERSISTENT_TYPE,GRID_CU_MULTIP,BLOCK_M,BLOCK_N,PRE_LOAD_V
 
 ### hsaco_options.csv
 
-Each row is one compiled variant of the kernel: a pair of IDs into the
+Each row is one compiled variant of the kernel: a pair of codes into the
 kernel's `psels.csv` and the shared `copts.csv`. Tensors of triton kernels
-refer to this table, so a single ID identifies everything needed to build the
-HSACO. Other compiler backends can add their own option tables later.
+refer to this table, so a single code identifies everything needed to build
+the HSACO. Other compiler backends can add their own option tables later.
 
 ```
 # .metadata/attn_fwd/hsaco_options.csv
@@ -198,7 +205,7 @@ psels,copts
 `@ati.backend` declaration gives it, to its **backend code** (`bcode`): the
 integer that represents the backend in operator tensors. Unlike other tables,
 `op_backend.csv` is small, and its rows carry their bcodes explicitly instead
-of using implicit row IDs:
+of using implicit codes:
 
 ```
 # .metadata/op_attn_bwd/op_backend.csv
@@ -247,12 +254,12 @@ naming what the tensor cells contain:
 
 | Header | Used by | Cell content |
 |---|---|---|
-| `functional,tuning keys->hsaco_options` | kernels | ID in `.metadata/<iface>/hsaco_options.csv` |
+| `functional,tuning keys->hsaco_options` | kernels | code in `.metadata/<iface>/hsaco_options.csv` |
 | `functional,tuning keys->precedence` | operators | backend precedence, see [Precedence](#precedence) |
 
 After the header, the file lists one block per functional:
 
-- A line `<functional ID>,` (note the trailing comma) starts the block.
+- A line `<functional code>,` (note the trailing comma) starts the block.
 - It is followed by the tensor in row-major order, one line per combination of
   all tuning keys but the last, one cell per bucket of the last key. With the
   two keys above, a block has 10 lines (`Max_seqlen_q` = 16 ... 8192) of 10
@@ -408,14 +415,14 @@ Which variant of `attn_fwd` does gfx1100 use for functional 13 at
 `Max_seqlen_q=16`, `Max_seqlen_k=16`?
 
 1. `amd/gfx1100/attn_fwd.csv`, block `13,`, first line, first cell: `67`.
-2. `.metadata/attn_fwd/functional.csv`, ID 13:
+2. `.metadata/attn_fwd/functional.csv`, code 13:
    `bf16,64,0,0,0,0,0,0,0,0`, i.e. bf16, hdim 64, no padded head,
    no dropout, no causal, no bias.
-3. `.metadata/attn_fwd/hsaco_options.csv`, ID 67: `13,11`, i.e. psels 13,
-   copts 11.
-4. `.metadata/attn_fwd/psels.csv`, ID 13: `PERSISTENT_TYPE=0`,
+3. `.metadata/attn_fwd/hsaco_options.csv`, code 67: `13,11`, i.e. psels
+   code 13, copts code 11.
+4. `.metadata/attn_fwd/psels.csv`, code 13: `PERSISTENT_TYPE=0`,
    `GRID_CU_MULTIP=2`, `BLOCK_M=16`, `BLOCK_N=16`, `PRE_LOAD_V=1`.
-5. `.metadata/copts.csv`, ID 11: `waves_per_eu=1`, `num_warps=4`,
+5. `.metadata/copts.csv`, code 11: `waves_per_eu=1`, `num_warps=4`,
    `num_stages=2`.
 
 For gfx1150, `amd/gfx1150/attn_fwd.csv` resolves to the same gfx1100 file, but
@@ -438,8 +445,8 @@ tools/database_to_csv.py \
     --verify
 ```
 
-- Existing `.metadata/` tables are loaded first, so existing IDs are kept and
-  new rows are appended.
+- Existing `.metadata/` tables are loaded first, so existing codes are kept
+  and new rows are appended.
 - `--patch_on <arch>=<base>` writes `<arch>`'s entries as
   `<iface>.0001-<arch>.dbpatch` and symlinks the base architecture's tensor
   files.
