@@ -11,6 +11,19 @@ This document describes the on-disk format. All examples are taken from
 
 ## Design Principles
 
+### Explicit where it is cheap
+
+Large tables use implicit ordinals to stay compact. `op_backend.csv` has only a
+handful of rows, so it lists its ordinals, the bords, explicitly: a reader can
+decode an operator tensor without counting lines.
+
+### Diffable and deterministic
+
+The database is plain text, and the writer's output is canonical: blocks are
+sorted by functional ordinal, and run-length encoding is applied exactly where
+it is shorter. Regenerating unchanged data produces identical files, so a diff
+only ever shows real changes.
+
 ### Avoid massive updates
 
 A change to the database, or to the tools and code generator that consume it,
@@ -41,19 +54,6 @@ contribution in flight. Each of the following mechanisms keeps updates local:
   is not copied, and retuning the base does not touch the patches.
 - **Line-oriented tensors.** Each tensor row is one line, and run-length
   encoding never crosses lines, so changing one cell changes one line.
-
-### Diffable and deterministic
-
-The database is plain text, and the writer's output is canonical: blocks are
-sorted by functional ordinal, and run-length encoding is applied exactly where
-it is shorter. Regenerating unchanged data produces identical files, so a diff
-only ever shows real changes.
-
-### Explicit where it is cheap
-
-Large tables use implicit ordinals to stay compact. `op_backend.csv` has only a
-handful of rows, so it lists its ordinals, the bords, explicitly: a reader can
-decode an operator tensor without counting lines.
 
 ## Directory Layout
 
