@@ -50,15 +50,14 @@ between the legacy and ATI IRs; see the `_normalize` docstring in `golden.py`).
 |---|---|---|
 | `--arch ARCH` | `gfx942_mod0` | target GPU passed to `--target_gpus` |
 | `--keep_dir DIR` | *(temp dir)* | generate into `DIR` and keep the full tree on disk for file-level diffing instead of a throwaway temp dir |
-| `AOTRITON_GOLDEN_DB` | `/tmp/ati_golden_fused_db` | directory holding the prebuilt fused `tuning_database.sqlite3` (+ optional `op_database.sqlite3`). If absent, the harness falls back to composing the decomposed DB from the schema tarballs. |
+| `AOTRITON_GOLDEN_DB` | `<repo>/modules` | root of the tuning databases, `<root>/<family>/database` (the CSV tree). Passed to the generator as `--tuning_database_root`. |
 
 ## Notes for automation / AI agents
 
 - Always invoke with the repo's Python interpreter and from the repo root; the
   harness resolves paths relative to its own location, but the generator
   subprocess runs with `cwd=<repo root>`.
-- The tool shells out to `python -m aotriton.generate` and
-  `aotriton.database_compose`; the `aotriton` package must be importable
+- The tool shells out to `python -m aotriton.generate`; the `aotriton` package must be importable
   (install it, or run inside the build venv).
 - Treat a clean `--check` (exit 0) as the pass condition for "no codegen
   regression". Do not commit anything under `snapshot/`.
