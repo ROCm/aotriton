@@ -31,9 +31,11 @@ should only touch the entries it is about. A diff that rewrites thousands of
 unrelated lines cannot be reviewed, and it conflicts with every other
 contribution in flight. Each of the following mechanisms keeps updates local:
 
-- **Append-only ordinals.** Rows of `.metadata/` tables are never renumbered or
-  removed. New functionals, psels, copts and hsaco options are appended, so
-  existing tensor cells keep pointing at the same rows.
+- **Append-only ordinals.** By default, rows of `.metadata/` tables are not
+  renumbered or removed: new functionals, psels, copts and hsaco options are
+  appended, so existing tensor cells keep pointing at the same rows. This
+  can be overridden with a justification, see
+  [Implicit Ordinals](#implicit-ordinals).
 - **Functional ordinals are not godel numbers.** The code generator numbers
   functionals by enumerating the functional space, so extending an axis
   (e.g. adding hdim=384) renumbers it. The database assigns its own
@@ -103,10 +105,17 @@ waves_per_eu,num_warps,num_stages      <- line 0, header
 1,4,1                                  <- ordinal 2
 ```
 
-Ordinals are append-only. A row, once referenced, keeps its ordinal: new
-entries are appended at the end of the table, and existing rows are never
-reordered or removed. Adding a new value (e.g. a new head dimension) appends
-new functionals after the existing ones instead of renumbering them.
+Ordinals are append-only by default. A row, once referenced, keeps its
+ordinal: new entries are appended at the end of the table, and existing rows
+are not reordered or removed. Adding a new value (e.g. a new head dimension)
+appends new functionals after the existing ones instead of renumbering them.
+
+The rule exists to minimize the changeset, so follow it in general. It can be
+overridden when there is a justification, e.g. a table that has accumulated
+many rows no tensor refers to any more, and is cleaned up. Renumbering a
+table rewrites every file that refers to it, so state the justification in
+the change, and keep the renumbering in its own commit, apart from any change
+of tuning results, so that each can be reviewed.
 
 `op_backend.csv` is the one exception: its ordinals, the bords, are explicit,
 see [Operator Backends](#operator-backends).
