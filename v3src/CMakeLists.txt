@@ -42,44 +42,31 @@ if(AOTRITON_COMMON_LIBRARY)
       "<prefix>/lib/libaotriton_common.a of an "
       "AOTRITON_COMMON_LIBRARY_ONLY_MODE install tree.")
   endif()
-  message(STATUS "Reusing ${AOTRITON_COMMON_LIBRARY}; skipping database compose and codegen")
+  message(STATUS "Reusing ${AOTRITON_COMMON_LIBRARY}; skipping codegen")
 endif()
 
-if(NOT AOTRITON_COMMON_LIBRARY)
+# The tuning database is read in place: <root>/<family>/database holds the CSV
+# tree (amd/<arch>/<iface>.csv, .dbpatch files and .metadata/), nothing is
+# extracted or composed. AOTRITON_TUNING_DATABASE_ROOT overrides the in-tree
+# modules/, with the same per-family shape.
 if(AOTRITON_TUNING_DATABASE_ROOT)
-  # External override: same per-family shape as modules/*/database
-  # (<family>/database/amd/<arch>/...), just rooted elsewhere.
-  file(GLOB DBXZ_BASES "${AOTRITON_TUNING_DATABASE_ROOT}/*/database")
+  set(AOTRITON_TUNING_DATABASE_DIR "${AOTRITON_TUNING_DATABASE_ROOT}")
   message(STATUS "Using external tuning database root: ${AOTRITON_TUNING_DATABASE_ROOT}")
 else()
-  # Per-family databases: each modules/<family>/database is its own base. A new
-  # family drops in modules/<fam>/database, no edit here.
-  file(GLOB DBXZ_BASES "${PROJECT_SOURCE_DIR}/modules/*/database")
+  set(AOTRITON_TUNING_DATABASE_DIR "${PROJECT_SOURCE_DIR}/modules")
 endif()
-foreach(DBXZ_BASE IN LISTS DBXZ_BASES)
-  # Compose independently into build_dir/<family>/database/ - matching the
-  # per-family Factory lookup (DatabaseFactories.create_factory(build_dir /
-  # family)). No cross-family merge: each family's tuning_database/op_database
-  # stays self-contained.
-  cmake_path(GET DBXZ_BASE PARENT_PATH DBXZ_FAMILY_DIR)
-  cmake_path(GET DBXZ_FAMILY_DIR FILENAME DBXZ_FAMILY)
-  set(FAMILY_DB_DIR "${AOTRITON_V2_BUILD_DIR}/${DBXZ_FAMILY}/database")
-  file(GLOB_RECURSE DB_TARS CONFIGURE_DEPENDS "${DBXZ_BASE}/*.sqlite3.tar.xz")
-  foreach(DBXZ IN LISTS DB_TARS)
-    cmake_path(RELATIVE_PATH DBXZ BASE_DIRECTORY "${DBXZ_BASE}" OUTPUT_VARIABLE REL_DBXZ)
-    cmake_path(REMOVE_FILENAME REL_DBXZ)
-    file(ARCHIVE_EXTRACT INPUT "${DBXZ}" DESTINATION "${FAMILY_DB_DIR}/${REL_DBXZ}")
-    message(STATUS "Extracting ${DBXZ} to ${FAMILY_DB_DIR}/${REL_DBXZ}")
-  endforeach(DBXZ)
-  message(STATUS "Assembling ${DBXZ_FAMILY} Database...")
-  execute_process(
-      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
-      "${VENV_BIN_PYTHON}" -m aotriton.database_compose
-      --database_file "${FAMILY_DB_DIR}/tuning_database.sqlite3"
-      --decomposed "${FAMILY_DB_DIR}"
-      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
-      COMMAND_ERROR_IS_FATAL ANY)
-endforeach(DBXZ_BASE)
+if(NOT AOTRITON_COMMON_LIBRARY)
+# GLOB_RECURSE descends into the hidden .metadata/ directory and lists symlinked
+# files (the arches sharing a base) like regular ones.
+file(GLOB AOTRITON_TUNING_DATABASE_DIRS "${AOTRITON_TUNING_DATABASE_DIR}/*/database")
+set(AOTRITON_TUNING_DATABASE_FILES "")
+foreach(DB_DIR IN LISTS AOTRITON_TUNING_DATABASE_DIRS)
+  file(GLOB_RECURSE DB_FILES CONFIGURE_DEPENDS "${DB_DIR}/*.csv" "${DB_DIR}/*.dbpatch")
+  list(APPEND AOTRITON_TUNING_DATABASE_FILES ${DB_FILES})
+endforeach(DB_DIR)
+# CONFIGURE_DEPENDS above only notices added or removed files. Listing every file
+# here makes an edited one re-run configure, hence the generator, as well.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${AOTRITON_TUNING_DATABASE_FILES})
 
 get_filename_component(AOTRITON_COMPILER "${CMAKE_CURRENT_LIST_DIR}/../python/compile.py" ABSOLUTE)
 message("AOTRITON_COMPILER ${AOTRITON_COMPILER}")
@@ -192,6 +179,7 @@ AOTRITON_DEBUG_SKIP_TRITON_KERNELS=${AOTRITON_DEBUG_SKIP_TRITON_KERNELS_ENV}
 --target_gpus ${EFFECTIVE_TARGET_GPUS}
 --build_dir "${AOTRITON_V2_BUILD_DIR}"
 --root_dir "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+--tuning_database_root "${AOTRITON_TUNING_DATABASE_DIR}"
 ${GENERATE_OPTION}
 COMMAND_ECHO STDOUT
 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
@@ -457,6 +445,7 @@ if(AOTRITON_BUILD_FOR_TUNING)
     --target_gpus ${EFFECTIVE_TARGET_GPUS}
     --build_dir "${AOTRITON_V2_BUILD_DIR}"
     --root_dir "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+    --tuning_database_root "${AOTRITON_TUNING_DATABASE_DIR}"
     ${GENERATE_OPTION}
     --build_for_tuning_second_pass
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}")
