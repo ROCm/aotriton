@@ -18,16 +18,16 @@ should only touch the entries it is about. A diff that rewrites thousands of
 unrelated lines cannot be reviewed, and it conflicts with every other
 contribution in flight. Each of the following mechanisms keeps updates local:
 
-- **Append-only codes.** Rows of `.metadata/` tables are never renumbered or
+- **Append-only ordinals.** Rows of `.metadata/` tables are never renumbered or
   removed. New functionals, psels, copts and hsaco options are appended, so
   existing tensor cells keep pointing at the same rows.
-- **Functional codes are not godel numbers.** The code generator numbers
+- **Functional ordinals are not godel numbers.** The code generator numbers
   functionals by enumerating the functional space, so extending an axis
   (e.g. adding hdim=384) renumbers it. The database assigns its own
-  functional codes and appends the new functionals after the existing ones
+  functional ordinals and appends the new functionals after the existing ones
   instead.
 - **Backends are stored by name, not by index.** `op_backend.csv` maps each
-  backend name, as declared by `@ati.backend`, to the backend code (bcode)
+  backend name, as declared by `@ati.backend`, to the backend ordinal (bord)
   stored in the tensors. The index of a backend in the ATI DSL, and the C++
   enum value derived from it, never appear in the database. Reordering or
   inserting backends in the operator declaration therefore leaves every
@@ -35,7 +35,7 @@ contribution in flight. Each of the following mechanisms keeps updates local:
   generator follows the new declaration.
 - **Per-interface tables.** Each kernel and operator has its own
   `functional.csv`, `psels.csv`, `hsaco_options.csv` and `op_backend.csv`,
-  so retuning one kernel never shifts the codes of another.
+  so retuning one kernel never shifts the ordinals of another.
 - **Patches and symlinks.** A partially tuned architecture symlinks its base
   architecture and stores only its own entries in `.dbpatch` files. The base
   is not copied, and retuning the base does not touch the patches.
@@ -45,14 +45,14 @@ contribution in flight. Each of the following mechanisms keeps updates local:
 ### Diffable and deterministic
 
 The database is plain text, and the writer's output is canonical: blocks are
-sorted by functional code, and run-length encoding is applied exactly where it
-is shorter. Regenerating unchanged data produces identical files, so a diff
+sorted by functional ordinal, and run-length encoding is applied exactly where
+it is shorter. Regenerating unchanged data produces identical files, so a diff
 only ever shows real changes.
 
 ### Explicit where it is cheap
 
-Large tables use implicit codes to stay compact. `op_backend.csv` has only a
-handful of rows, so it lists its codes, the bcodes, explicitly: a reader can
+Large tables use implicit ordinals to stay compact. `op_backend.csv` has only a
+handful of rows, so it lists its ordinals, the bords, explicitly: a reader can
 decode an operator tensor without counting lines.
 
 ## Directory Layout
@@ -65,7 +65,7 @@ modules/<family>/database/
       functional.csv                  functionals of this kernel/operator
       psels.csv                       performance selections        (kernels)
       hsaco_options.csv               (psels, copts) pairs          (kernels)
-      op_backend.csv                  backend name -> bcode         (operators)
+      op_backend.csv                  backend name -> bord          (operators)
   amd/
     <arch>/
       <iface>.csv                     tuning tensors for <arch>, mod0
@@ -85,30 +85,30 @@ those of `<arch>_mod<N>`.
 
 ## Common Conventions
 
-### Implicit Codes
+### Implicit Ordinals
 
-The database refers to a row of a `.metadata/` table by an integer **code**:
-tensor cells hold hsaco_options codes, hsaco_options rows hold psels and copts
-codes, and so on. The tensors are written in codes, and `.metadata/` decodes
-them.
+The database refers to a row of a `.metadata/` table by an integer
+**ordinal**, in the same sense as a GPU device ordinal: tensor cells hold
+hsaco_options ordinals, hsaco_options rows hold psels and copts ordinals, and
+so on. The tensors are written in ordinals, and `.metadata/` decodes them.
 
 Every table under `.metadata/` is a CSV file with a header line. Rows are
-referred to by their **implicit code**: the line number, counting the header
-as line 0. The first data row therefore has code 1, which matches the line
+referred to by their **implicit ordinal**: the line number, counting the header
+as line 0. The first data row therefore has ordinal 1, which matches the line
 number shown by most editors minus one.
 
 ```
 waves_per_eu,num_warps,num_stages      <- line 0, header
-2,4,1                                  <- code 1
-1,4,1                                  <- code 2
+2,4,1                                  <- ordinal 1
+1,4,1                                  <- ordinal 2
 ```
 
-Codes are append-only. A row, once referenced, keeps its code: new entries are
-appended at the end of the table, and existing rows are never reordered or
-removed. Adding a new value (e.g. a new head dimension) appends new
-functionals after the existing ones instead of renumbering them.
+Ordinals are append-only. A row, once referenced, keeps its ordinal: new
+entries are appended at the end of the table, and existing rows are never
+reordered or removed. Adding a new value (e.g. a new head dimension) appends
+new functionals after the existing ones instead of renumbering them.
 
-`op_backend.csv` is the one exception: its codes, the bcodes, are explicit,
+`op_backend.csv` is the one exception: its ordinals, the bords, are explicit,
 see [Operator Backends](#operator-backends).
 
 ### Comments and Sections
@@ -156,9 +156,9 @@ Columns use ATI notation:
   axes (`attn_fwd` for `op_attn_fwd`, `bwd_kernel_dk_dv` for `op_attn_bwd`).
   Columns that are not arguments of that kernel go last.
 
-Functional codes are local to the database. They are deliberately not the godel
-numbers the code generator assigns, so the database stays stable when the
-functional space is extended.
+Functional ordinals are local to the database. They are deliberately not the
+godel numbers the code generator assigns, so the database stays stable when
+the functional space is extended.
 
 ### copts.csv
 
@@ -186,9 +186,9 @@ PERSISTENT_TYPE,GRID_CU_MULTIP,BLOCK_M,BLOCK_N,PRE_LOAD_V
 
 ### hsaco_options.csv
 
-Each row is one compiled variant of the kernel: a pair of codes into the
+Each row is one compiled variant of the kernel: a pair of ordinals into the
 kernel's `psels.csv` and the shared `copts.csv`. Tensors of triton kernels
-refer to this table, so a single code identifies everything needed to build
+refer to this table, so a single ordinal identifies everything needed to build
 the HSACO. Other compiler backends can add their own option tables later.
 
 ```
@@ -202,24 +202,24 @@ psels,copts
 ### Operator Backends
 
 `op_backend.csv` maps each backend of an operator, by the name its
-`@ati.backend` declaration gives it, to its **backend code** (`bcode`): the
+`@ati.backend` declaration gives it, to its **backend ordinal** (`bord`): the
 integer that represents the backend in operator tensors. Unlike other tables,
-`op_backend.csv` is small, and its rows carry their bcodes explicitly instead
-of using implicit codes:
+`op_backend.csv` is small, and its rows carry their bords explicitly instead
+of using implicit ordinals:
 
 ```
 # .metadata/op_attn_bwd/op_backend.csv
-name,bcode
+name,bord
 triton_split,1
 triton_fuse,2
 aiter,3
 flyc,4
 ```
 
-bcodes belong to the tuning database only. They do not have to equal the
+bords belong to the tuning database only. They do not have to equal the
 values of the C++ backend enum, and may diverge from them, e.g. when backends
-are reordered or added in the operator declaration. Code reading the database
-maps bcodes to backends by name. bcode 0 is reserved for "no backend" (see
+are reordered or added in the operator declaration. Readers of the database
+map bords to backends by name. bord 0 is reserved for "no backend" (see
 [Precedence](#precedence)).
 
 ## Tensor Files
@@ -254,12 +254,12 @@ naming what the tensor cells contain:
 
 | Header | Used by | Cell content |
 |---|---|---|
-| `functional,tuning keys->hsaco_options` | kernels | code in `.metadata/<iface>/hsaco_options.csv` |
+| `functional,tuning keys->hsaco_options` | kernels | ordinal in `.metadata/<iface>/hsaco_options.csv` |
 | `functional,tuning keys->precedence` | operators | backend precedence, see [Precedence](#precedence) |
 
 After the header, the file lists one block per functional:
 
-- A line `<functional code>,` (note the trailing comma) starts the block.
+- A line `<functional ordinal>,` (note the trailing comma) starts the block.
 - It is followed by the tensor in row-major order, one line per combination of
   all tuning keys but the last, one cell per bucket of the last key. With the
   two keys above, a block has 10 lines (`Max_seqlen_q` = 16 ... 8192) of 10
@@ -297,11 +297,12 @@ functional,tuning keys->precedence
 ...
 ```
 
-- A precedence is a sequence of slots, each holding one bcode from
+- A precedence is a sequence of slots, each holding one bord from
   `.metadata/<iface>/op_backend.csv`.
 - Slots are little endian: the most preferred backend is the last slot, so a
-  precedence is read right to left.
-- bcode 0 is reserved for "no backend" and never appears in a precedence.
+  precedence is read right to left. A slot's position is the backend's
+  **rank** in the precedence, not to be confused with its ordinal (bord).
+- bord 0 is reserved for "no backend" and never appears in a precedence.
 
 The `#! precedence` section has two entries:
 
@@ -310,22 +311,22 @@ The `#! precedence` section has two entries:
   Should an operator ever need more, `chars_per_slot` 2, 3 or 4 allows up to
   3843, 238327 or 14776335. Each slot is then a fixed-width base62 number,
   most significant digit first and zero-padded: with `chars_per_slot` 2,
-  bcodes (1, 5), most preferred first, are written `0501`. The length of a
+  bords (1, 5), most preferred first, are written `0501`. The length of a
   precedence is always a multiple of `chars_per_slot`.
 - `bits_per_slot` is not used to write the database. It is the width of a
   slot when the code generator packs a precedence into an integer for the
-  runtime: the most preferred bcode in the lowest `bits_per_slot` bits, the
+  runtime: the most preferred bord in the lowest `bits_per_slot` bits, the
   next one above it, and so on.
 
-Every bcode in the file must fit both: below `62**chars_per_slot` and below
+Every bord in the file must fit both: below `62**chars_per_slot` and below
 `2**bits_per_slot`. With `bits_per_slot` 4 and `chars_per_slot` 1, a
 precedence is identical to the uppercase hexadecimal form of the packed
-integer: bcodes (15, 10, 1), most preferred first, are written `1AF`, and
+integer: bords (15, 10, 1), most preferred first, are written `1AF`, and
 pack to `0x1AF`.
 
 Example for `op_attn_bwd`:
 
-| Cell | bcodes, most preferred first | Backends |
+| Cell | bords, most preferred first | Backends |
 |---|---|---|
 | `12` | 2, 1 | `triton_fuse`, then `triton_split` |
 | `42` | 2, 4 | `triton_fuse`, then `flyc` |
@@ -356,7 +357,7 @@ single slot means there was no runner-up.
 - **Visually similar characters** (`0`/`O`, `1`/`l`/`I`) are a font problem,
   not an encoding problem. Read and review the database with a monospace font
   that distinguishes them, rather than removing characters from the alphabet
-  and making the digit-to-bcode mapping irregular.
+  and making the digit-to-bord mapping irregular.
 
 ## Incremental Changes
 
@@ -415,14 +416,14 @@ Which variant of `attn_fwd` does gfx1100 use for functional 13 at
 `Max_seqlen_q=16`, `Max_seqlen_k=16`?
 
 1. `amd/gfx1100/attn_fwd.csv`, block `13,`, first line, first cell: `67`.
-2. `.metadata/attn_fwd/functional.csv`, code 13:
+2. `.metadata/attn_fwd/functional.csv`, ordinal 13:
    `bf16,64,0,0,0,0,0,0,0,0`, i.e. bf16, hdim 64, no padded head,
    no dropout, no causal, no bias.
-3. `.metadata/attn_fwd/hsaco_options.csv`, code 67: `13,11`, i.e. psels
-   code 13, copts code 11.
-4. `.metadata/attn_fwd/psels.csv`, code 13: `PERSISTENT_TYPE=0`,
+3. `.metadata/attn_fwd/hsaco_options.csv`, ordinal 67: `13,11`, i.e. psels
+   ordinal 13, copts ordinal 11.
+4. `.metadata/attn_fwd/psels.csv`, ordinal 13: `PERSISTENT_TYPE=0`,
    `GRID_CU_MULTIP=2`, `BLOCK_M=16`, `BLOCK_N=16`, `PRE_LOAD_V=1`.
-5. `.metadata/copts.csv`, code 11: `waves_per_eu=1`, `num_warps=4`,
+5. `.metadata/copts.csv`, ordinal 11: `waves_per_eu=1`, `num_warps=4`,
    `num_stages=2`.
 
 For gfx1150, `amd/gfx1150/attn_fwd.csv` resolves to the same gfx1100 file, but
@@ -445,7 +446,7 @@ tools/database_to_csv.py \
     --verify
 ```
 
-- Existing `.metadata/` tables are loaded first, so existing codes are kept
+- Existing `.metadata/` tables are loaded first, so existing ordinals are kept
   and new rows are appended.
 - `--patch_on <arch>=<base>` writes `<arch>`'s entries as
   `<iface>.0001-<arch>.dbpatch` and symlinks the base architecture's tensor

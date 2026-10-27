@@ -19,15 +19,15 @@ Layout:
     <output>/.metadata/copts.csv                       (shared by all triton kernels)
     <output>/.metadata/<iface>/functional.csv
     <output>/.metadata/<iface>/psels.csv               (kernels)
-    <output>/.metadata/<iface>/hsaco_options.csv       (kernels, psels,copts code pairs)
-    <output>/.metadata/<iface>/op_backend.csv          (operators, name,bcode)
+    <output>/.metadata/<iface>/hsaco_options.csv       (kernels, psels,copts ordinal pairs)
+    <output>/.metadata/<iface>/op_backend.csv          (operators, name,bord)
     <output>/<vendor>/<arch>/[mod<N>/]<iface>.csv      (tuning tensors)
     <output>/<vendor>/<arch>/[mod<N>/]<iface>.<NNNN>-<name>.dbpatch
 
-Codes: rows of the .metadata/ tables are referred to by integer codes. A code
-is implicit: line 0 of every CSV is the header, so the first data row has
-code 1. The exception is op_backend.csv, which is small and lists its codes,
-the bcodes, explicitly.
+Ordinals: rows of the .metadata/ tables are referred to by integer ordinals.
+An ordinal is implicit: line 0 of every CSV is the header, so the first data
+row has ordinal 1. The exception is op_backend.csv, which is small and lists
+its ordinals, the bords, explicitly.
 
 functional.csv uses ATI notation, which differs from sqlite: the tensor dtype
 column is named after the ATI type variable (T_io, sqlite: Q_dtype), and
@@ -37,7 +37,7 @@ SQLITE_INPUT_COLUMNS and SQLITE_DTYPES.
 
 Every <iface>.csv stores one tensor per functional. "#!" starts a metadata
 section, other "#" lines are comments. For kernels the tensor holds
-hsaco_options codes:
+hsaco_options ordinals:
 
     #! tuning keys
     Max_seqlen_q,16,32,...
@@ -45,7 +45,7 @@ hsaco_options codes:
     #! tuning tensor
     functional,tuning keys->hsaco_options
     1,
-    <one line per Max_seqlen_q, one hsaco_options code per Max_seqlen_k>
+    <one line per Max_seqlen_q, one hsaco_options ordinal per Max_seqlen_k>
     2,
     ...
 
@@ -57,21 +57,21 @@ For operators the tensor holds the backend precedence instead:
     #! tuning tensor
     functional,tuning keys->precedence
 
-A precedence is a sequence of slots, each holding a backend code (bcode) as a
-base62 number (digits 0-9, A-Z, a-z) of chars_per_slot characters, most
+A precedence is a sequence of slots, each holding a backend ordinal (bord) as
+a base62 number (digits 0-9, A-Z, a-z) of chars_per_slot characters, most
 significant digit first and zero-padded. With chars_per_slot 1, each character
-is one backend and bcodes range from 1 to 61. Slots are little endian: the
+is one backend and bords range from 1 to 61. Slots are little endian: the
 most preferred backend is the last slot, and a precedence is read right to
-left. bcode 0 is reserved for "no backend" and never written. bcodes
-(3, 2, 1), most preferred first, are written as `123`.
+left. bord 0 is reserved for "no backend" and never written. bords (3, 2, 1),
+most preferred first, are written as `123`.
 
 bits_per_slot does not change how a precedence is written. It is the slot
 width the code generator uses to pack a precedence into an integer. Every
-bcode in the file must fit both bits_per_slot and chars_per_slot. With
+bord in the file must fit both bits_per_slot and chars_per_slot. With
 bits_per_slot 4 and chars_per_slot 1, a precedence is identical to the
 uppercase hex of the packed integer.
 
-op_backend.csv maps the name @ati.backend declared to its bcode. bcodes are
+op_backend.csv maps the name @ati.backend declared to its bord. bords are
 private to the tuning database and need not match the C++ backend enum.
 
 Tensor rows are run-length encoded: n consecutive copies of a value v, blank
@@ -188,9 +188,10 @@ def functional_to_sqlite(row):
         ret[c] = v
     return ret
 
-class CodeTable(object):
+class OrdinalTable(object):
     '''
-    A CSV table with implicit codes. Rows are dicts of the columns they define.
+    A CSV table with implicit ordinals. Rows are dicts of the columns they
+    define.
     '''
     def __init__(self, path):
         self._path = path
@@ -207,7 +208,7 @@ class CodeTable(object):
     def _append(self, row):
         key = tuple(sorted(row.items()))
         self._rows.append(row)
-        self._index[key] = len(self._rows)    # Implicit code, first data row is 1
+        self._index[key] = len(self._rows)    # Implicit ordinal, first data row is 1
         return self._index[key]
 
     def lookup(self, row):
@@ -220,8 +221,8 @@ class CodeTable(object):
                 self._columns.append(k)
         return self._append(row)
 
-    def get(self, code):
-        return self._rows[code - 1]
+    def get(self, ordinal):
+        return self._rows[ordinal - 1]
 
     def order_columns(self, columns, order):
         '''
@@ -242,37 +243,37 @@ class CodeTable(object):
 
 class OpBackendTable(object):
     '''
-    name,bcode rows. bcode 0 is reserved for "no backend".
+    name,bord rows. bord 0 is reserved for "no backend".
     '''
     def __init__(self, path):
         self._path = path
-        self._bcodes = {}
+        self._bords = {}
         if path.is_file():
             with open(path, newline='') as f:
                 for row in csv.DictReader(f):
-                    self._bcodes[row['name']] = int(row['bcode'])
-        self._names = {b: n for n, b in self._bcodes.items()}
+                    self._bords[row['name']] = int(row['bord'])
+        self._names = {b: n for n, b in self._bords.items()}
 
     def lookup(self, name):
-        if name not in self._bcodes:
-            new_bcode = max(self._bcodes.values(), default=0) + 1
-            self._bcodes[name] = new_bcode
-            self._names[new_bcode] = name
-        return self._bcodes[name]
+        if name not in self._bords:
+            new_bord = max(self._bords.values(), default=0) + 1
+            self._bords[name] = new_bord
+            self._names[new_bord] = name
+        return self._bords[name]
 
-    def get(self, bcode):
-        return self._names[bcode]
+    def get(self, bord):
+        return self._names[bord]
 
-    def bcodes(self):
-        return self._bcodes.values()
+    def bords(self):
+        return self._bords.values()
 
     def write(self):
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._path, 'w', newline='') as f:
             w = csv.writer(f, lineterminator='\n')
-            w.writerow(['name', 'bcode'])
-            for name, bcode in sorted(self._bcodes.items(), key=lambda x: x[1]):
-                w.writerow([name, bcode])
+            w.writerow(['name', 'bord'])
+            for name, bord in sorted(self._bords.items(), key=lambda x: x[1]):
+                w.writerow([name, bord])
 
 class Tables(object):
     '''
@@ -282,14 +283,14 @@ class Tables(object):
 
     def __init__(self, root):
         self._meta = root / METADATA
-        self.copts = CodeTable(self._meta / 'copts.csv')
+        self.copts = OrdinalTable(self._meta / 'copts.csv')
         self._iface = {}
 
     def __call__(self, iface, name):
         assert name in self.PER_IFACE, name
         key = (iface, name)
         if key not in self._iface:
-            cls = OpBackendTable if name == 'op_backend' else CodeTable
+            cls = OpBackendTable if name == 'op_backend' else OrdinalTable
             self._iface[key] = cls(self._meta / iface / f'{name}.csv')
         return self._iface[key]
 
@@ -337,7 +338,7 @@ class Exporter(object):
         functional.order_columns([SQLITE_INPUT_COLUMNS.get(c.removeprefix(INPUTS), c.removeprefix(INPUTS))
                                   for c in func_cols],
                                  FUNCTIONAL_COLUMNS.get(iface, []))
-        # Sort so functional codes are assigned deterministically
+        # Sort so functional ordinals are assigned deterministically
         func_order = sorted({tuple(r[icol[c]] for c in func_cols) for r in rows})
         for ftuple in func_order:
             functional.lookup(functional_from_sqlite({c.removeprefix(INPUTS): v for c, v in zip(func_cols, ftuple)}))
@@ -368,8 +369,8 @@ class Exporter(object):
                 fn = patch_name(fn, 1, fn.parent.name)
             with open(fn, 'w', newline='') as f:
                 if op_cols:
-                    assert all(b < (1 << PRECEDENCE_BITS) for b in op_backend.bcodes()), \
-                        f'{iface}: bcodes do not fit bits_per_slot {PRECEDENCE_BITS}'
+                    assert all(b < (1 << PRECEDENCE_BITS) for b in op_backend.bords()), \
+                        f'{iface}: bords do not fit bits_per_slot {PRECEDENCE_BITS}'
                     write_tensor(f, lut_names, entries, 'precedence',
                                  {PRECEDENCE_SECTION: [['bits_per_slot', PRECEDENCE_BITS],
                                                        ['chars_per_slot', PRECEDENCE_CHARS]]})
@@ -412,14 +413,14 @@ class Exporter(object):
                 link.symlink_to(rel)
                 print(f'{link} -> {rel}')
 
-def encode_precedence(bcodes, chars=PRECEDENCE_CHARS):
+def encode_precedence(bords, chars=PRECEDENCE_CHARS):
     '''
-    bcodes, most preferred first -> base62 string, most preferred last, with
+    bords, most preferred first -> base62 string, most preferred last, with
     chars characters per slot
     '''
     slots = []
-    for b in bcodes:
-        assert 0 < b < len(BASE62) ** chars, f'bcode {b} does not fit {chars} base62 characters'
+    for b in bords:
+        assert 0 < b < len(BASE62) ** chars, f'bord {b} does not fit {chars} base62 characters'
         digits = ''
         for _ in range(chars):
             b, d = divmod(b, len(BASE62))
@@ -433,15 +434,15 @@ def decode_precedence(text, chars=PRECEDENCE_CHARS):
     '''
     assert text, 'empty precedence'
     assert len(text) % chars == 0, f'precedence {text} is not a multiple of {chars} characters'
-    bcodes = []
+    bords = []
     for i in reversed(range(0, len(text), chars)):
         b = 0
         for c in text[i:i + chars]:
             assert c in BASE62, f'{c!r} in precedence {text} is not a base62 digit'
             b = b * len(BASE62) + BASE62.index(c)
-        bcodes.append(b)
-    assert 0 not in bcodes, f'"no backend" inside precedence {text}'
-    return bcodes
+        bords.append(b)
+    assert 0 not in bords, f'"no backend" inside precedence {text}'
+    return bords
 
 def rle_encode(cells):
     out = []
@@ -464,7 +465,7 @@ def rle_decode(fields):
 
 def write_tensor(f, lut_names, entries, target, metadata={}):
     '''
-    entries: [(functional code, tuning key values, value of target)]
+    entries: [(functional ordinal, tuning key values, value of target)]
     metadata: {section: [fields]}, written before the tuning tensor
     Each functional is followed by its tuning tensor in row-major order, one
     line per combination of all tuning keys but the last. Missing entries are
@@ -528,7 +529,7 @@ def patch_files(fn):
 class Tensor(object):
     '''
     A parsed tensor CSV: tuning keys, metadata sections, header, and
-    {functional code: [[cell]]} with one row per combination of all tuning keys
+    {functional ordinal: [[cell]]} with one row per combination of all tuning keys
     but the last.
     '''
     def __init__(self, fn):
@@ -596,9 +597,9 @@ def load_tensor_csv(fn, tables):
     def precedence(text):
         section = dict(tensor.metadata['precedence'])
         bits = int(section['bits_per_slot'])
-        bcodes = decode_precedence(text, int(section['chars_per_slot']))
-        assert all(b < (1 << bits) for b in bcodes), f'{fn}: precedence {text} does not fit bits_per_slot {bits}'
-        names = [tables(iface, 'op_backend').get(b) for b in bcodes]
+        bords = decode_precedence(text, int(section['chars_per_slot']))
+        assert all(b < (1 << bits) for b in bords), f'{fn}: precedence {text} does not fit bits_per_slot {bits}'
+        names = [tables(iface, 'op_backend').get(b) for b in bords]
         backends = [str(SQLITE_OP_BACKENDS[iface].index(n)) for n in names]
         return {OP + 'best1st': backends[0], OP + 'best2nd': backends[min(1, len(backends) - 1)]}
     expanders = {TENSOR_HEADER.format(e.__name__): e for e in [hsaco_options, precedence]}
