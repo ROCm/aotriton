@@ -453,6 +453,8 @@ class Exporter(object):
     def link_bases(self):
         vendor_dir = self._args.output / self._args.vendor
         for arch, base in self.patch_on.items():
+            # An arch without sqlite data only gets links, no patches
+            (vendor_dir / arch).mkdir(parents=True, exist_ok=True)
             for target in sorted((vendor_dir / base).glob('*.csv')):
                 link = vendor_dir / arch / target.name
                 rel = Path('..') / base / target.name

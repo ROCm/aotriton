@@ -527,6 +527,17 @@ The effective gfx1150 database is the gfx1100 one with gfx1150's own entries
 on top. Retuning gfx1100 updates gfx1150 automatically, except for the cells
 gfx1150 overrides.
 
+An architecture that has no tuning of its own is only symlinks, without any
+patch. These replace the former reuse map of the build:
+
+| Architecture                                | Base    |
+|---------------------------------------------|---------|
+| gfx1101, gfx1102, gfx1103, gfx1152, gfx1153 | gfx1100 |
+| gfx1200                                     | gfx1201 |
+| gfx1250                                     | gfx942  |
+
+Tuning such an architecture later means adding a `.dbpatch` next to its links.
+
 ### Mods
 
 A GPU mod with its own entries (e.g. `gfx942_mod1`) is stored under
@@ -566,7 +577,9 @@ tools/database_to_csv.py \
     --kernel_databases <dir>/<arch>/*.sqlite3 \
     --op_database <dir>/op_database.sqlite3 \
     --output modules/flash/database \
-    --patch_on gfx1150=gfx1100 gfx1151=gfx1100 \
+    --patch_on gfx1150=gfx1100 gfx1151=gfx1100 gfx1101=gfx1100 \
+               gfx1102=gfx1100 gfx1103=gfx1100 gfx1152=gfx1100 \
+               gfx1153=gfx1100 gfx1200=gfx1201 gfx1250=gfx942 \
     --sparse_patch gfx1151 \
     --verify
 ```
@@ -575,7 +588,7 @@ tools/database_to_csv.py \
   and new rows are appended.
 - `--patch_on <arch>=<base>` writes `<arch>`'s entries as
   `<iface>.0001-<arch>.dbpatch` and symlinks the base architecture's tensor
-  files.
+  files. An `<arch>` without sqlite input gets the symlinks only.
 - `--sparse_patch <arch>` writes those patches as sparse tuning tensors.
 - `--verify` reads the result back, with patches applied, and checks that it
   reproduces every row of the sqlite input.
