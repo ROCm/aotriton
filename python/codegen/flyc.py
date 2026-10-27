@@ -42,11 +42,11 @@ class FlycShimGenerator(InterfaceGenerator):
     SOURCE_TEMPLATE = get_template('flyc.cc')
     PFX = 'flyc'
 
-    def create_sub_generator(self, functional: Functional, df: 'pandas.DataFrame', sql: tuple):
+    def create_sub_generator(self, functional: Functional, view: 'TuningView | None'):
         if functional.meta_object.is_functional_disabled(functional):
             log(lambda: f'Functional {functional.godel_number=} disabled')
             return None, False
-        return FlycTuneCodeGenerator(self._args, functional, df, sql, self._this_repo), True
+        return FlycTuneCodeGenerator(self._args, functional, view, self._this_repo), True
 
     def write_shim_header(self, functionals, fout):
         kdesc = self._iface

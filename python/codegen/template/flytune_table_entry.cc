@@ -75,6 +75,6 @@ int CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
 
 // [[human_readable_signature]]
 
-// [[sql]]
+// [[tuning]]
 
 // vim: set fileencoding=utf-8

@@ -22,7 +22,7 @@ from ..utils import (
     RegistryRepository,
 )
 # from ..utils.is_tuning_enabled import is_tuning_on_for_kernel
-from ..database import Factories as DatabaseFactories
+from ..database.csvdb import Database
 from ..gpu_targets import cluster_gpus
 
 class InterfaceGenerator(ABC):
@@ -68,13 +68,10 @@ class InterfaceGenerator(ABC):
         self.trivial_stats: dict[tuple, dict[str, int]] = {}
 
         # autotune phase
-        fac = DatabaseFactories.create_factory(args.build_dir / iface.FAMILY)
-        # print(f'{iface.__class__=}')
+        db = Database.for_family(args.tuning_database_root, iface.FAMILY)
         for functional in iface.gen_functionals(self._target_arch):
-            # print(f'{functional=}')
-            df, sql = fac.create_view(functional)
-            # print(f'KernelShimGenerator.generate {df=} {sql=}')
-            subg, use_this_functional = self.create_sub_generator(functional, df, sql)
+            view = db.lookup(functional)
+            subg, use_this_functional = self.create_sub_generator(functional, view)
             if subg is not None:
                 subg.generate()
                 if subg.cc_file:
@@ -111,7 +108,7 @@ class InterfaceGenerator(ABC):
         self._shim_files.append(fullfn.with_suffix('.cc'))
 
     @abstractmethod
-    def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame', sql : tuple):
+    def create_sub_generator(self, functional : Functional, view : 'TuningView | None'):
         pass
 
     @abstractmethod

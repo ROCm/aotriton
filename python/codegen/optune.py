@@ -22,15 +22,15 @@ class OptuneCodeGenerator(BaseTuneCodeGenerator):
     def __init__(self,
                  args,
                  f : Functional,
-                 dataframe_for_tuning : 'pandas.DataFrame | None',
+                 view : 'TuningView | None',
                  parent_repo):
-        super().__init__(args, f, dataframe_for_tuning, parent_repo)
+        super().__init__(args, f, view, parent_repo)
         iface = self._f.meta_object
-        if self._df is None or self._df.empty:
-            self._lut_tensor, self._backend_names, self._binning_dict = iface.translate_empty_dataframe(f)
+        if self._view is None or self._view.empty:
+            self._lut_tensor, self._backend_names, self._binning_dict = iface.translate_empty(f)
             self.lut_stats: dict[int, int] = {}
         else:
-            self._lut_tensor, self._backend_names, self._binning_dict = iface.translate_dataframe(f, self._df)
+            self._lut_tensor, self._backend_names, self._binning_dict = iface.translate_tensor(f, self._view)
             import numpy as np
             values, counts = np.unique(self._lut_tensor, return_counts=True)
             self.lut_stats: dict[int, int] = {int(v): int(c) for v, c in zip(values, counts)}
