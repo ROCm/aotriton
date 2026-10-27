@@ -36,7 +36,7 @@ Each of the following mechanisms keeps updates local:
   `functional.csv`, `psels.csv`, `hsaco_options.csv` and `op_backend.csv`,
   so retuning one kernel never shifts the IDs of another.
 - **Patches and symlinks.** A partially tuned architecture symlinks its base
-  architecture and stores only its own entries in `.patch<N>` files. The base
+  architecture and stores only its own entries in `.dbpatch` files. The base
   is not copied, and retuning the base does not touch the patches.
 - **Line-oriented tensors.** Each tensor row is one line, and run-length
   encoding never crosses lines, so changing one cell changes one line.
@@ -68,7 +68,7 @@ modules/<family>/database/
   amd/
     <arch>/
       <iface>.csv                     tuning tensors for <arch>, mod0
-      <iface>.csv.patch<N>            incremental changes to <iface>.csv
+      <iface>.<NNNN>-<name>.dbpatch   incremental changes to <iface>.csv
       mod<N>/
         <iface>.csv                   tuning tensors for <arch>, mod<N>
 ```
@@ -306,8 +306,15 @@ single slot means there was no runner-up.
 
 ### Patches
 
-`<iface>.csv.patch<N>`, next to `<iface>.csv`, changes it without touching
-the base file:
+`<iface>.<NNNN>-<name>.dbpatch`, next to `<iface>.csv`, changes it without
+touching the base file. The name follows `git format-patch`:
+
+- `<NNNN>` is the patch number, zero-padded to 4 digits (`0001`, `0002`, ...).
+  Numbers are counted per interface and must be unique within it.
+- `<name>` is a short, non-empty description of the change, e.g.
+  `attn_fwd.0002-hdim96-bf16.dbpatch`.
+
+The content:
 
 - A patch uses the same tensor format as its base. Its `#! tuning keys` and
   other metadata sections must equal the base's.
@@ -315,8 +322,8 @@ the base file:
   functional. A blank cell in the patch keeps the base value, so a patch can
   change a single cell.
 - A functional not present in the base is added.
-- Patches are applied in increasing order of `N`, so later patches stack on
-  earlier ones.
+- Patches are applied in increasing order of `<NNNN>`, so later patches stack
+  on earlier ones.
 
 A patch is an overlay rather than a textual diff, so it keeps applying when
 its base changes, e.g. when the base architecture is retuned.
@@ -329,9 +336,9 @@ patches. gfx1150 and gfx1151 only have their own tuning for hdim=64 with
 dropout=0.0, and use gfx1100 for everything else:
 
 ```
-amd/gfx1150/attn_fwd.csv          -> ../gfx1100/attn_fwd.csv
-amd/gfx1150/attn_fwd.csv.patch0      9 functionals tuned on gfx1150
-amd/gfx1150/op_attn_bwd.csv       -> ../gfx1100/op_attn_bwd.csv
+amd/gfx1150/attn_fwd.csv                  -> ../gfx1100/attn_fwd.csv
+amd/gfx1150/attn_fwd.0001-gfx1150.dbpatch    9 functionals tuned on gfx1150
+amd/gfx1150/op_attn_bwd.csv               -> ../gfx1100/op_attn_bwd.csv
 ...
 ```
 
@@ -344,7 +351,7 @@ gfx1150 overrides.
 A GPU mod with its own entries (e.g. `gfx942_mod1`) is stored under
 `amd/<arch>/mod<N>/`. It can use the same mechanism: symlink
 `amd/<arch>/mod<N>/<iface>.csv` to `../<iface>.csv` and put the differences in
-`amd/<arch>/mod<N>/<iface>.csv.patch0`.
+a patch such as `amd/<arch>/mod<N>/<iface>.0001-<arch>_mod<N>.dbpatch`.
 
 ## Worked Example
 
@@ -363,8 +370,8 @@ Which variant of `attn_fwd` does gfx1100 use for functional 13 at
    `num_stages=2`.
 
 For gfx1150, `amd/gfx1150/attn_fwd.csv` resolves to the same gfx1100 file, but
-`attn_fwd.csv.patch0` lists functional 13 too, and its first cell (`104`)
-overrides the gfx1100 value.
+`attn_fwd.0001-gfx1150.dbpatch` lists functional 13 too, and its first cell
+(`104`) overrides the gfx1100 value.
 
 ## Tooling
 
@@ -383,7 +390,8 @@ python -m python.database_to_csv \
 
 - Existing `.metadata/` tables are loaded first, so existing IDs are kept and
   new rows are appended.
-- `--patch_on <arch>=<base>` writes `<arch>`'s entries as `.patch0` and
-  symlinks the base architecture's tensor files.
+- `--patch_on <arch>=<base>` writes `<arch>`'s entries as
+  `<iface>.0001-<arch>.dbpatch` and symlinks the base architecture's tensor
+  files.
 - `--verify` reads the result back, with patches applied, and checks that it
   reproduces every row of the sqlite input.
