@@ -70,10 +70,13 @@ modules/<family>/database/
       op_backend.csv                  backend name -> bord          (operators)
   amd/
     <arch>/
-      <iface>.csv                     tuning tensors for <arch>, mod0
+      <iface>.csv                     tuning tensors for <arch>, mod0 (*)
       <iface>.<NNNN>-<name>.dbpatch   incremental changes to <iface>.csv
       mod<N>/
-        <iface>.csv                   tuning tensors for <arch>, mod<N>
+        <iface>.csv                   tuning tensors for <arch>, mod<N> (*)
+
+(*) may be a relative symlink to another <iface>.csv, to reuse its tensors
+    as the base, e.g. amd/gfx1150/attn_fwd.csv -> ../gfx1100/attn_fwd.csv
 ```
 
 `<iface>` is the interface name of a kernel (`attn_fwd`, `bwd_kernel_dq`, ...)
@@ -84,6 +87,11 @@ those of `<arch>_mod<N>`.
 
 `.metadata/` holds the tables shared by all architectures. Everything under
 `amd/` is per architecture.
+
+An `<iface>.csv` marked (*) may be a relative symlink to the same interface's
+file of another architecture or mod. The architecture then reuses those
+tensors as its base, and stores only its own entries in `.dbpatch` files, see
+[Sharing a Base Through Symlinks](#sharing-a-base-through-symlinks).
 
 ## Common Conventions
 
