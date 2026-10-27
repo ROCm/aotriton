@@ -26,12 +26,12 @@ Each of the following mechanisms keeps updates local:
   (e.g. adding hdim=384) renumbers it. The database assigns its own IDs and
   appends the new functionals after the existing ones instead.
 - **Backends are stored by name, not by index.** `op_backend.csv` maps each
-  backend name, as declared by `@ati.backend`, to the small integer stored in
-  the tensors. The index of a backend in the ATI DSL, and the C++ enum value
-  derived from it, never appear in the database. Reordering or inserting
-  backends in the operator declaration therefore leaves every operator tensor
-  unchanged; only the mapping from name to backend in the code generator
-  follows the new declaration.
+  backend name, as declared by `@ati.backend`, to the backend code (bcode)
+  stored in the tensors. The index of a backend in the ATI DSL, and the C++
+  enum value derived from it, never appear in the database. Reordering or
+  inserting backends in the operator declaration therefore leaves every
+  operator tensor unchanged; only the mapping from name to backend in the code
+  generator follows the new declaration.
 - **Per-interface tables.** Each kernel and operator has its own
   `functional.csv`, `psels.csv`, `hsaco_options.csv` and `op_backend.csv`,
   so retuning one kernel never shifts the IDs of another.
@@ -51,8 +51,8 @@ only ever shows real changes.
 ### Explicit where it is cheap
 
 Large tables use implicit row IDs to stay compact. `op_backend.csv` has only
-a handful of rows, so it lists its integers explicitly: a reader can decode
-an operator tensor without counting lines.
+a handful of rows, so it lists its backend codes explicitly: a reader can
+decode an operator tensor without counting lines.
 
 ## Directory Layout
 
@@ -64,7 +64,7 @@ modules/<family>/database/
       functional.csv                  functionals of this kernel/operator
       psels.csv                       performance selections        (kernels)
       hsaco_options.csv               (psels, copts) pairs          (kernels)
-      op_backend.csv                  backend name -> ID            (operators)
+      op_backend.csv                  backend name -> bcode         (operators)
   amd/
     <arch>/
       <iface>.csv                     tuning tensors for <arch>, mod0
@@ -190,22 +190,24 @@ psels,copts
 ### Operator Backends
 
 `op_backend.csv` maps each backend of an operator, by the name its
-`@ati.backend` declaration gives it, to the ID used in this database. Unlike
-other tables, it is small and lists its IDs explicitly:
+`@ati.backend` declaration gives it, to its **backend code** (`bcode`): the
+integer that represents the backend in operator tensors. Unlike other tables,
+`op_backend.csv` is small, and its rows carry their bcodes explicitly instead
+of using implicit row IDs:
 
 ```
 # .metadata/op_attn_bwd/op_backend.csv
-name,id
+name,bcode
 triton_split,1
 triton_fuse,2
 aiter,3
 flyc,4
 ```
 
-These IDs belong to the tuning database only. They do not have to equal the
+bcodes belong to the tuning database only. They do not have to equal the
 values of the C++ backend enum, and may diverge from them, e.g. when backends
 are reordered or added in the operator declaration. Code reading the database
-maps backends by name. ID 0 is reserved for "no backend" (see
+maps bcodes to backends by name. bcode 0 is reserved for "no backend" (see
 [Precedence](#precedence)).
 
 ## Tensor Files
@@ -283,16 +285,16 @@ functional,tuning keys->precedence
 ...
 ```
 
-- Each slot holds an ID from `.metadata/<iface>/op_backend.csv`, in
+- Each slot holds a bcode from `.metadata/<iface>/op_backend.csv`, in
   `bits_per_slot` bits.
 - Slots are little endian: the most preferred backend is in the lowest bits.
-- ID 0 means "no backend" and ends the list.
+- bcode 0 means "no backend" and ends the list.
 - Values are written in lowercase hexadecimal, without a `0x` prefix.
 
 With 4 bits per slot, each hex digit is one slot, read right to left. Example
 for `op_attn_bwd`:
 
-| Cell | Slots, most preferred first | Backends |
+| Cell | bcodes, most preferred first | Backends |
 |---|---|---|
 | `12` | 2, 1 | `triton_fuse`, then `triton_split` |
 | `42` | 2, 4 | `triton_fuse`, then `flyc` |
