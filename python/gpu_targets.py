@@ -22,19 +22,10 @@ AOTRITON_SUPPORTED_GPUS = (
     'gfx1250_mod0',
 )
 
-# TODO: AOTRITON_TUNING_DATABASE_REUSE -> AOTRITON_TUNING_DATABASE_FALLBACK
-# Load fallback entries first, and override with "patching" entries from real GPU
-AOTRITON_TUNING_DATABASE_REUSE = {
-    'gfx1101_mod0' : 'gfx1100_mod0',
-    'gfx1102_mod0' : 'gfx1100_mod0',
-    'gfx1103_mod0' : 'gfx1100_mod0',
-    'gfx1200_mod0' : 'gfx1201_mod0',
-    'gfx1150_mod0' : 'gfx1100_mod0',
-    'gfx1151_mod0' : 'gfx1100_mod0',
-    'gfx1152_mod0' : 'gfx1100_mod0',
-    'gfx1153_mod0' : 'gfx1100_mod0',
-    'gfx1250_mod0' : 'gfx942_mod0',
-}
+# An arch without tuning of its own shares another arch's tuning through
+# symlinks in the tuning database, e.g. amd/gfx1101/attn_fwd.csv ->
+# ../gfx1100/attn_fwd.csv, plus .dbpatch files for what it tuned itself. See
+# docs/Human Readable Tuning Database Format.md.
 
 AOTRITON_ARCH_TO_PACK = {
     'gfx90a'    : 'gfx90a',

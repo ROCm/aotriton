@@ -5,7 +5,6 @@ import sqlite3
 import pandas as pd
 from ..template_instantiation.ir import typed_choice as TC
 from ..utils import log
-from ..gpu_targets import AOTRITON_TUNING_DATABASE_REUSE
 
 '''
 We don't really need a LazyTableView, if Lazy evaluation is needed, a
@@ -61,7 +60,7 @@ class Factory(object):
         # 2. then override entries with optimized_for gpus
         def build_sql(choice_dict):
             wheres = {
-                'gpu' : functional.database_gpus,
+                'gpu' : functional.optimized_for,
             }
             for key, value in choice_dict.items():
                 if isinstance(value, TC.TypedChoice) and value.is_tensor:
