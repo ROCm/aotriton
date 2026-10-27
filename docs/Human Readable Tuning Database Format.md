@@ -377,12 +377,13 @@ For gfx1150, `amd/gfx1150/attn_fwd.csv` resolves to the same gfx1100 file, but
 
 ## Tooling
 
-`python/database_to_csv.py` converts sqlite tuning databases (as produced by
-the tuning infrastructure, see [How To Generate Tuning Database.md](How%20To%20Generate%20Tuning%20Database.md))
-into this format:
+`tools/database_to_csv.py` converted the sqlite tuning databases (as produced
+by the tuning infrastructure, see [How To Generate Tuning Database.md](How%20To%20Generate%20Tuning%20Database.md))
+into this format. It is a one-time migration tool, kept for reference and not
+shipped with the `aotriton` package. Run it from the repository root:
 
 ```bash
-python -m python.database_to_csv \
+tools/database_to_csv.py \
     --kernel_databases <dir>/<arch>/*.sqlite3 \
     --op_database <dir>/op_database.sqlite3 \
     --output modules/flash/database \
