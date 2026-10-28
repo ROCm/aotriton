@@ -126,10 +126,13 @@ function common_build_parse() {
         CB_CMAKE_ARGS+=(-DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=mold"
                         -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=mold")
     fi
-    if [ -n "$external_tuning_database" ]; then
-        CB_CMAKE_ARGS+=("-DAOTRITON_EXTERNAL_TUNING_DATABASE=${external_tuning_database}")
-    fi
     # realpath is what satisfies cmake's absolute-path requirement on these.
+    # cmake runs from the build directory, so a relative path would resolve
+    # there; for the tuning database a wrong path silently falls back to the
+    # modules' own database.
+    if [ -n "$external_tuning_database" ]; then
+        CB_CMAKE_ARGS+=("-DAOTRITON_EXTERNAL_TUNING_DATABASE=$(realpath "$external_tuning_database")")
+    fi
     if [ -n "$flydsl_kernel_root" ]; then
         CB_CMAKE_ARGS+=("-DAOTRITON_FLYDSL_KERNEL_ROOT=$(realpath "$flydsl_kernel_root")")
     fi
