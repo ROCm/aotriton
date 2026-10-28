@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from aotriton.autotune import BinningLessOrEqual, BinningExact
+from aotriton.database.lut import TunedCells
 from ..axis import assign_godel, TemplateParam
 from ..cfield import cfield
 from ..choices import ChoiceVarAbsent
@@ -164,31 +165,21 @@ class KernelDescription(Interface):
         its tuning tensors (database.csvdb.TuningView): one slab per gpu f is
         optimized for, each cell an hsaco_options ordinal."""
         key_names = [key for key, _ in self.autotune_keys]
-        nkeys = len(key_names)
         perf_names = self._perf_struct.param_names()
-        # One row per tuned cell: (gpu index, tuning key values, perf + copt
-        # values). Perf params absent from the kernel's psels are not tuned; they
-        # take the @dataclass default plus any perf-channel @ati.derives
-        # (perf_value), the role the legacy PROGRAMMATIC_PERFS used to fill.
-        rows = []
-        for i, slab in enumerate(view.slabs):
-            if slab is None:
-                continue
-            assert slab.tuning_keys == key_names, \
-                f'{slab.path}: tuning keys {slab.tuning_keys}, expected {key_names}'
-            for index in zip(*np.nonzero(slab.cells)):
-                psels, copts = view.hsaco_option(slab.cells[index])
-                values = [psels[n] if n in psels else self.perf_value(n, f) for n in perf_names]
-                values += [copts[key] for key in COMPILER_OPTIONS]
-                keys = [slab.ladders[d][index[d]] for d in range(nkeys)]
-                rows.append((i, keys, [int(v) for v in values]))
-        sparse_key_possible_values = [sorted({keys[d] for _, keys, _ in rows}) for d in range(nkeys)]
-        binning_dict = {key: algo(sparse_key_possible_values[d])
+        # Each tuned cell decodes to its perf + copt values. Perf params absent
+        # from the kernel's psels are not tuned; they take the @dataclass default
+        # plus any perf-channel @ati.derives (perf_value), the role the legacy
+        # PROGRAMMATIC_PERFS used to fill.
+        def decode(cell):
+            psels, copts = view.hsaco_option(cell)
+            values = [psels[n] if n in psels else self.perf_value(n, f) for n in perf_names]
+            values += [copts[key] for key in COMPILER_OPTIONS]
+            return [int(v) for v in values]
+        tuned = TunedCells(view, key_names, decode)
+        binning_dict = {key: algo(tuned.key_values[d])
                         for d, (key, algo) in enumerate(self.autotune_keys)}
-        lut_shape = [f.noptimized_for] + [len(v) for v in sparse_key_possible_values]
-        lut_tensor = np.full(lut_shape, -1, dtype=np.int32)
         # Deduplicate (perf + copt) rows -> signatures.
-        np_sigs, revind = np.unique(np.array([values for _, _, values in rows], dtype=np.int64),
+        np_sigs, revind = np.unique(np.array(tuned.values, dtype=np.int64),
                                     axis=0,
                                     return_inverse=True)
         revind = revind.reshape(-1)
@@ -200,14 +191,7 @@ class KernelDescription(Interface):
         def create_sig(nprow):
             return KernelSignature(f, perf_bind(nprow), nprow[nperfs:].tolist())
         sigs = [create_sig(nprow) for nprow in np_sigs]
-        # Fill the LUT, one slab per gpu f is optimized for.
-        buckets = [{v: j for j, v in enumerate(values)} for values in sparse_key_possible_values]
-        for i in range(f.noptimized_for):
-            if i > 0:
-                lut_tensor[i] = lut_tensor[0]
-            for (gpu, keys, _), sig_num in zip(rows, revind):
-                if gpu == i:
-                    lut_tensor[(i, *[buckets[d][k] for d, k in enumerate(keys)])] = sig_num
+        lut_tensor = tuned.fill(revind)
         # Downcast the LUT dtype (int8 usually suffices).
         nsigs = len(sigs)
         for dtype in [np.int8, np.int16, np.int32]:

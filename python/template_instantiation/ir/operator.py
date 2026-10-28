@@ -158,61 +158,47 @@ class Operator(Interface):
         (database.csvdb.TuningView): one slab per gpu f is optimized for, each
         cell a backend precedence. The LUT stores backend indices."""
         import numpy as np
+        from aotriton.database.lut import TunedCells
         key_names = list(self.OPTUNE_KEYS.keys())
-        nkeys = len(key_names)
-        # One row per tuned cell: (gpu index, tuning key values, best backend,
-        # runner-up). The precedence names backends by their @ati.backend name;
-        # the runner-up repeats the best when there is none.
-        rows = []
-        for i, slab in enumerate(view.slabs):
-            if slab is None:
-                continue
-            assert slab.tuning_keys == key_names, \
-                f'{slab.path}: tuning keys {slab.tuning_keys}, expected {key_names}'
-            for index in zip(*np.nonzero(slab.cells)):
-                ranked = [self.backend_names.index(name) for name in view.backends(slab.cells[index])]
-                keys = [slab.ladders[d][index[d]] for d in range(nkeys)]
-                rows.append((i, keys, ranked[0], ranked[min(1, len(ranked) - 1)]))
-        sparse_key_possible_values = [sorted({keys[d] for _, keys, _, _ in rows}) for d in range(nkeys)]
-        binning_dict = {key: algo(sparse_key_possible_values[d])
+        # Each tuned cell decodes to (best backend, runner-up). The precedence
+        # names backends by their @ati.backend name; the runner-up repeats the
+        # best when there is none.
+        def decode(cell):
+            ranked = [self.backend_names.index(name) for name in view.backends(cell)]
+            return ranked[0], ranked[min(1, len(ranked) - 1)]
+        tuned = TunedCells(view, key_names, decode)
+        binning_dict = {key: algo(tuned.key_values[d])
                         for d, (key, algo) in enumerate(self.OPTUNE_KEYS.items())}
-        lut_shape = [f.noptimized_for] + [len(v) for v in sparse_key_possible_values]
-        lut_tensor = np.full(lut_shape, -1, dtype=np.int32)
         if True:  # FIXME: Flyc duct tape
             FLYC_ARCHS = ('gfx950', 'gfx1201')
-        buckets = [{v: j for j, v in enumerate(values)} for values in sparse_key_possible_values]
-        for i in range(f.noptimized_for):
-            if i > 0:
-                lut_tensor[i] = lut_tensor[0]
-            for gpu, keys, best, runner_up in rows:
-                if gpu != i:
-                    continue
-                chosen = best
-                if True:  # FIXME: Flyc duct tape
-                    # An arch can share another arch's tensors through a base
-                    # reference (gfx1200's files name gfx1201's), so gfx1200
-                    # inherits gfx1201's picks -- flyc among them, which it has
-                    # no images for. That lands as a valid-looking index the
-                    # runtime will not rescue: op.cc only substitutes
-                    # fallback_backend for a NEGATIVE entry, and only retries on
-                    # hipErrorPeerAccessUnsupported, while flyc answers
-                    # hipErrorNotSupported. Swap flyc for the runner-up here.
-                    names = self.backend_names
-                    if f.arch not in FLYC_ARCHS and 'flyc' in names:
-                        flyc_ind = names.index('flyc')
-                        if chosen == flyc_ind:
-                            chosen = runner_up
-                        # The runner-up REPEATS the best when flyc was the only
-                        # backend to clear the accuracy gate -- see
-                        # compute_best_results.py's `alt[0] if alt else won`
-                        # -- so the substitution above can leave flyc standing
-                        # and hand gfx1200 the very index this exists to
-                        # remove. Backend 0 is triton / triton_split, which
-                        # every arch has images for, so it is the one answer
-                        # that is always launchable.
-                        if chosen == flyc_ind:
-                            chosen = 0
-                lut_tensor[(i, *[buckets[d][k] for d, k in enumerate(keys)])] = chosen
+        def choose(best, runner_up):
+            chosen = best
+            if True:  # FIXME: Flyc duct tape
+                # An arch can share another arch's tensors through a base
+                # reference (gfx1200's files name gfx1201's), so gfx1200
+                # inherits gfx1201's picks -- flyc among them, which it has
+                # no images for. That lands as a valid-looking index the
+                # runtime will not rescue: op.cc only substitutes
+                # fallback_backend for a NEGATIVE entry, and only retries on
+                # hipErrorPeerAccessUnsupported, while flyc answers
+                # hipErrorNotSupported. Swap flyc for the runner-up here.
+                names = self.backend_names
+                if f.arch not in FLYC_ARCHS and 'flyc' in names:
+                    flyc_ind = names.index('flyc')
+                    if chosen == flyc_ind:
+                        chosen = runner_up
+                    # The runner-up REPEATS the best when flyc was the only
+                    # backend to clear the accuracy gate -- see
+                    # compute_best_results.py's `alt[0] if alt else won`
+                    # -- so the substitution above can leave flyc standing
+                    # and hand gfx1200 the very index this exists to
+                    # remove. Backend 0 is triton / triton_split, which
+                    # every arch has images for, so it is the one answer
+                    # that is always launchable.
+                    if chosen == flyc_ind:
+                        chosen = 0
+            return chosen
+        lut_tensor = tuned.fill([choose(best, runner_up) for best, runner_up in tuned.values])
         backend_inds = np.unique(lut_tensor).tolist()
         return lut_tensor, [self._backends[ind].enum_name for ind in backend_inds], binning_dict
 
