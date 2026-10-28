@@ -187,6 +187,7 @@ class Database(object):
         self._functional_index = {}
         self._hsaco_options = {}
         self._patch_ordinals = {}
+        self._applied_patches = {}
 
     def _table(self, *parts):
         if parts not in self._tables:
@@ -230,8 +231,12 @@ class Database(object):
         return self._tensors[rel]
 
     def _patches_with(self, rel, ordinal):
+        # Resolving the patches reads every file of the base chain, the whole
+        # base tensor included; do it once per tensor file, not per functional.
+        if rel not in self._applied_patches:
+            self._applied_patches[rel] = interpreter.applied_patches(self._path / rel)
         patches = []
-        for p in interpreter.applied_patches(self._path / rel):
+        for p in self._applied_patches[rel]:
             if p not in self._patch_ordinals:
                 self._patch_ordinals[p] = set(interpreter.load(p).sparse[:, 0].tolist())
             if ordinal in self._patch_ordinals[p]:

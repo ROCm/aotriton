@@ -496,12 +496,19 @@ def base_chain(path):
         chain.append(base)
 
 
+def _chain_patches(chain):
+    '''
+    The patches of a base chain, in the order load() applies them
+    '''
+    return [p for fn in reversed(chain) for p in patch_files(fn)]
+
+
 def applied_patches(path):
     '''
     The patches load(path) applies, in order: those of the base, recursively,
     then those next to path.
     '''
-    return [p for fn in reversed(base_chain(path)) for p in patch_files(fn)]
+    return _chain_patches(base_chain(path))
 
 
 def source_files(path):
@@ -509,7 +516,8 @@ def source_files(path):
     Every file the effective tensor of path depends on, in a fixed order: the
     base chain from path to the tensor, then the applied patches.
     '''
-    return base_chain(path) + applied_patches(path)
+    chain = base_chain(path)
+    return chain + _chain_patches(chain)
 
 
 def _load_one(path):
@@ -553,7 +561,7 @@ def load(path, base=None):
         raise ValueError(f'{path}: base is for patches; only a {PATCH_SUFFIX} applies into one')
     chain = base_chain(path)
     loaded = _load_one(chain[-1])
-    for p in applied_patches(path):
+    for p in _chain_patches(chain):
         load(p, base=loaded)
     loaded.tensor = _narrow(loaded.tensor)
     return loaded
