@@ -303,6 +303,9 @@ class Database(object):
                 slabs.append(None)
                 continue
             assert target in (None, t.target), f'{rel}: target {t.target} differs from {target}'
+            # TuningView.backends() decodes every slab with one bits_per_slot
+            assert target is None or bits == t.bits_per_slot, \
+                f'{rel}: bits_per_slot {t.bits_per_slot} differs from {bits}'
             target, bits = t.target, t.bits_per_slot
             index = np.flatnonzero(t.functional == ordinal) if ordinal is not None else []
             if len(index) == 0:
