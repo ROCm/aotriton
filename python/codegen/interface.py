@@ -68,7 +68,7 @@ class InterfaceGenerator(ABC):
         self.trivial_stats: dict[tuple, dict[str, int]] = {}
 
         # autotune phase
-        db = Database.for_module(iface.MODULE_DIR)
+        db = Database.for_module(iface.MODULE_DIR, args.external_tuning_database)
         for functional in iface.gen_functionals(self._target_arch):
             view = db.lookup(functional)
             subg, use_this_functional = self.create_sub_generator(functional, view)

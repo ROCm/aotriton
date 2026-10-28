@@ -14,6 +14,8 @@ def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('--build_dir', type=Path, required=True)
     p.add_argument('--root_dir', type=Path, default='.', help="Root of repository directory")
+    p.add_argument('--external_tuning_database', type=Path, default=None,
+                   help='Hash this tuning database instead of the modules\' own; same as aotriton.generate')
     p.add_argument('--git_sha1', required=True)
     p.add_argument('--git_treesha1', required=True)
     p.add_argument('--target_arch', nargs='+')
@@ -74,12 +76,15 @@ def main():
     sig = {}
     sig['AOTRITON_GIT_SHA1'] = args.git_sha1
     sig['AOTRITON_GIT_TREESHA1'] = args.git_treesha1
-    # Each module holds its tuning database at <module>/database; enumerate the
-    # modules as aotriton.generate does.
+    # Each module holds its tuning database at <module>/database, unless an
+    # external tuning database replaces it; enumerate the modules and resolve
+    # each database as aotriton.generate does.
     from aotriton.codegen.parser import Parser
+    from aotriton.database.csvdb import tuning_database_dir
     parser = Parser(args.root_dir / 'modules')
-    databases = {family: parser.module_dir / family / 'database' for family in parser.discover_families()
-                 if (parser.module_dir / family / 'database').is_dir()}
+    databases = {family: tuning_database_dir(parser.module_dir / family, args.external_tuning_database)
+                 for family in parser.discover_families()}
+    databases = {family: d for family, d in databases.items() if d.is_dir()}
     db = {}
     def gen_primary_db_hash():
         for vendor, arch in itertools.product(args.vendors, args.target_arch):

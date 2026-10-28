@@ -127,6 +127,27 @@ The `v3python` package has a strict layering between **description** and **gener
 
 Knowledge must not flow upward: description-layer classes must not import from `codegen/` or embed generation logic. When adding a property or method to `Interface`, `KernelDescription`, `Operator`, or the affine classes, ask whether the concept belongs to the *description* of the kernel/operator (fine) or to the *generation process* (put it in `codegen/` instead).
 
+## Keep the External Tuning Database Option
+
+A tuning database is part of its module, at `<module>/database` (e.g.
+`modules/flash/database`). The **external tuning database** option lets a build
+use a database from outside the modules instead:
+
+- `.ci/build-*.sh --external_tuning_database <dir>`
+- CMake: `-DAOTRITON_EXTERNAL_TUNING_DATABASE=<dir>`
+- `aotriton.generate` / `aotriton.write_image_signature`:
+  `--external_tuning_database <dir>`
+
+`<dir>/<family>/database` replaces `<module>/database` for each family present
+in `<dir>`; other modules keep their own database. It originated in Tuner v3.5
+(build with a database freshly exported from tuning to evaluate it before
+committing it), but it is not limited to the tuning framework: anyone who wants
+to build with a different tuning database uses it.
+
+**Do not remove this option, and do not fold it into the per-module
+database lookup**, even though nothing in the default build uses it. It has
+been removed by mistake before (it was then called `--database_root`).
+
 ## config.rc Usage
 
 **IMPORTANT: `<workdir>/config.rc` is for AOTriton tuning project configuration ONLY.**

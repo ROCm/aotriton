@@ -545,6 +545,16 @@ A GPU mod with its own entries (e.g. `gfx942_mod1`) is stored under
 `amd/<arch>/mod<N>/<iface>.csv` to `../<iface>.csv` and put the differences in
 a patch such as `amd/<arch>/mod<N>/<iface>.0001-<arch>_mod<N>.dbpatch`.
 
+### External Tuning Database
+
+A build can use a tuning database from outside the modules with
+`--external_tuning_database <dir>` (`.ci/build-*.sh`), i.e. CMake's
+`AOTRITON_EXTERNAL_TUNING_DATABASE`. `<dir>/<family>/database`, in the format
+described here, then replaces `modules/<family>/database` for each family
+present in `<dir>`; other families keep their own database. It originated in
+Tuner v3.5, to build with a database freshly exported from tuning and evaluate
+it before committing it, but works for any other tuning database too.
+
 ## Worked Example
 
 Which variant of `attn_fwd` does gfx1100 use for functional 13 at

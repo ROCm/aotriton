@@ -28,6 +28,10 @@ def parse():
     p.add_argument("--build_dir", type=Path, default='build/', help="build directory")
     p.add_argument("--alt_venv_config", type=Path, default=None, help="alternative venv YAML config file")
     p.add_argument("--root_dir", type=Path, default='.', help="Root of repository directory")
+    p.add_argument("--external_tuning_database", type=Path, default=None,
+                   help="Build with a tuning database from outside the modules: <dir>/<family>/database "
+                        "replaces <module>/database for each family present in <dir>. E.g. a database "
+                        "exported from Tuner v3.5 to evaluate before committing it.")
     p.add_argument("--archive_only", action='store_true', help='Only generate archive library instead of shared library. No linking with dependencies.')
     p.add_argument("--library_suffix", type=str, default='', help="Add suffix to the library name 'aotriton' to avoid symbol conflicts")
     # Always True
@@ -52,6 +56,8 @@ def parse():
     # Handled by CMake
     # p.add_argument("--timeout", type=float, default=8.0, help='Maximal time the compiler can run. Passing < 0 for indefinite. No effect in bare mode (handled separately)')
     args = p.parse_args()
+    if args.external_tuning_database is not None:
+        args.external_tuning_database = args.external_tuning_database.resolve()
     if args.sanity_check_only:
         args.lut_sanity_check = True
         LazyFile.suppress_writes = True

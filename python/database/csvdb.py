@@ -5,8 +5,10 @@
 The code generator's reader of the CSV tuning database.
 
 A tuning database is part of its module, at <module>/database, where the
-module directory's name is the family name (e.g. modules/flash/database). Its
-format is specified in docs/Human Readable Tuning Database Format.md. Tensor
+module directory's name is the family name (e.g. modules/flash/database). A
+build may use an external tuning database instead, see
+tuning_database_dir(). The format is specified in
+docs/Human Readable Tuning Database Format.md. Tensor
 files are parsed by the interpreter (interpreter.py), so the format is parsed
 in one place; this module adds the .metadata/ tables and the lookup of one
 functional.
@@ -140,6 +142,24 @@ def tuning_source(view, functional):
     return '\n// '.join(lines)
 
 
+def tuning_database_dir(module_dir, external=None):
+    '''
+    Where the tuning database of a module is: <external>/<family>/database when
+    an external tuning database is given and has that family, else
+    <module>/database. The family is the module directory's name.
+
+    The external tuning database (--external_tuning_database) lets a build use a
+    database from outside the modules, e.g. one exported from Tuner v3.5 to
+    evaluate before committing it. Do not remove it; see CLAUDE.md.
+    '''
+    module_dir = Path(module_dir)
+    if external is not None:
+        candidate = Path(external) / module_dir.name / 'database'
+        if candidate.is_dir():
+            return candidate
+    return module_dir / 'database'
+
+
 class Database(object):
     '''
     One module's CSV tuning database, at <module>/database. Tables and tensor
@@ -148,8 +168,8 @@ class Database(object):
     _cache = {}
 
     @classmethod
-    def for_module(cls, module_dir):
-        path = Path(module_dir).resolve() / 'database'
+    def for_module(cls, module_dir, external=None):
+        path = tuning_database_dir(module_dir, external).resolve()
         key = path.as_posix()
         if key not in cls._cache:
             cls._cache[key] = cls(path)

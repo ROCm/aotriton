@@ -32,7 +32,10 @@ function common_build_usage_options() {
   cat <<'EOF' >&2
 
 Options (shared by every .ci/build-*.sh):
-  --database_root <dir>       -DAOTRITON_TUNING_DATABASE_ROOT
+  --external_tuning_database <dir>
+                              -DAOTRITON_EXTERNAL_TUNING_DATABASE: build with
+                              <dir>/<family>/database instead of the modules'
+                              own, e.g. one exported from Tuner v3.5
   --flydsl_kernel_root <dir>  -DAOTRITON_FLYDSL_KERNEL_ROOT
   --flydsl_wheel <whl>        -DAOTRITON_USE_LOCAL_FLYDSL_WHEEL
   --altwheel_config <yaml>    -DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE
