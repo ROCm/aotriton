@@ -8,6 +8,37 @@ A LUT has one slab per gpu the functional is optimized for and one dimension
 per tuning key; along a key it has one bucket per value tuned on any gpu.
 Kernels and operators decode the cells differently (hsaco options vs backend
 precedences) and store different entries, but lay out the LUT the same way.
+
+Example: amd/gfx942/attn_fwd.txtdb has the tuning keys
+
+    Max_seqlen_q,16,32,64,128,256,512,1024,2048,4096,8192
+    Max_seqlen_k,16,32,64,128,256,512,1024,2048,4096,8192
+
+and its block of functional 1 starts with the row
+
+    166,173,191,199,190,150,209[4]
+
+i.e. (Max_seqlen_q=16, Max_seqlen_k=16) holds hsaco_options ordinal 166,
+(16, 32) holds 173, and so on. Functional 1 is optimized for one gpu,
+gfx942_mod0, so its view has one slab of 10x10 cells. With decode() of the
+kernel, cell 166 becomes the perf + compiler option values of that hsaco
+option (its psels row: PERSISTENT_TYPE, GRID_CU_MULTIP, BLOCK_M, ...; its
+copts row: waves_per_eu, num_warps, num_stages), and TunedCells holds 100
+entries such as
+
+    (0, [16, 16], [<psels values of 166>, <copts values of 166>])
+
+All 10 values of both keys are tuned, so key_values are the two ladders and
+the LUT has shape [1, 10, 10]. Had no cell with Max_seqlen_q=8192 been
+tuned, that bucket would be left out: shape [1, 9, 10]. The kernel
+deduplicates the decoded values into signatures and fills the LUT with
+signature indices.
+
+amd/gfx942/op_attn_fwd.txtdb has the same keys, with backend precedences in
+its cells: "1" is backend ordinal 1 in .metadata/op_attn_fwd/op_backend.csv,
+triton alone. The operator's decode() turns it into (best, runner-up) =
+(index of triton, index of triton), and the operator fills the LUT with the
+backend index it chooses.
 '''
 
 import numpy as np
