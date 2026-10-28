@@ -15,7 +15,8 @@ Usage: build-for-torch.sh [options] <target arch> [optional pre-compiled triton 
 The AOTriton PyTorch links against, for torch-build.sh to consume: NO name
 suffix (this build IS torch's libaotriton_v2.so, it does not coexist with one)
 and AOTRITON_NO_PYTHON=ON. No mold. <target arch> may be a semicolon-separated
-list; it used to be implicit, so an existing no-argument call needs one adding.
+list, or ALL for every architecture; it used to be implicit, so an existing
+no-argument call needs one adding.
 EOF
   common_build_usage_options
 }

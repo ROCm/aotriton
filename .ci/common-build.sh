@@ -224,12 +224,19 @@ function _common_build() {
   else
     install_prefix="./install_dir"
   fi
+  # ALL: every architecture the root CMakeLists.txt targets by default
+  # (default_target_arch from common-vars.sh), as build-release.sh does. The
+  # build directory above keeps the short name, e.g. build-0.15-shim-ALL.
+  cmake_target_arch="${target_arch}"
+  if [ "${target_arch}" = "ALL" ]; then
+    cmake_target_arch="${default_target_arch}"
+  fi
   mkdir -p ${bdir}
   (
     cd ${bdir};
     cmake "${source_dir}" -DCMAKE_INSTALL_PREFIX=${install_prefix} \
       -DCMAKE_BUILD_TYPE=${build_type} \
-      -DAOTRITON_TARGET_ARCH=${target_arch} \
+      -DAOTRITON_TARGET_ARCH=${cmake_target_arch} \
       -DAOTRITON_NAME_SUFFIX=${suffix} \
       "$@" \
       -G Ninja;

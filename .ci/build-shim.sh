@@ -14,7 +14,7 @@ Usage: build-shim.sh [options] <target arch> [optional pre-compiled triton wheel
 
 The C++ shim only (AOTRITON_NOIMAGE_MODE=ON): codegen and a C++ compile, no
 kernel images -- the fastest check that the tree still builds. Mold linker on.
-<target arch> may be a semicolon-separated list.
+<target arch> may be a semicolon-separated list, or ALL for every architecture.
 EOF
   common_build_usage_options
 }
