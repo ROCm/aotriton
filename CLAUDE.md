@@ -45,6 +45,31 @@ accessed as args.sanity-check-only; Python silently converts them to
 underscores anyway, so be explicit and consistent from the start.
 ```
 
+## Python call layout
+
+When a call does not fit on one line, put **one argument per line**: the first
+argument stays on the call's line, the others are aligned under it, and the
+closing parenthesis follows the last argument.
+
+```python
+# GOOD
+return TuningView(functional=functional,
+                  iface=iface,
+                  ordinal=ordinal,
+                  fallback=fallback)
+
+# BAD - several arguments per line
+return TuningView(functional=functional, iface=iface, ordinal=ordinal,
+                  fallback=fallback)
+
+# BAD - hanging indent
+return TuningView(
+    functional=functional,
+    iface=iface,
+    ordinal=ordinal,
+    fallback=fallback)
+```
+
 ## PostgreSQL Connection Configuration
 
 **CRITICAL: NEVER ADD ANY DATABASE NAME TO THE CONFIGURATION OF CONNECTION TO PGSQL. WE NEVER USE IT AND YOU MUST USE THE DEFAULT.**
