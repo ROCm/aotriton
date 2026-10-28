@@ -54,12 +54,13 @@ if(AOTRITON_EXTERNAL_TUNING_DATABASE)
   message(STATUS "Using external tuning database: ${AOTRITON_EXTERNAL_TUNING_DATABASE}")
 endif()
 
-if(NOT AOTRITON_COMMON_LIBRARY)
 # A tuning database is part of its module, at <module>/database (e.g.
 # modules/flash/database), and is read in place by the generator: the CSV tree
 # (amd/<arch>/<iface>.txtdb, .dbpatch files and .metadata/*.csv), nothing is extracted
 # or composed. GLOB_RECURSE descends into the hidden .metadata/ directory; an
 # arch sharing another's base is a base-reference .txtdb, listed like the rest.
+# Listed outside the codegen block below: write_image_signature depends on these
+# files in every mode, AOTRITON_COMMON_LIBRARY included.
 file(GLOB AOTRITON_TUNING_DATABASE_DIRS "${PROJECT_SOURCE_DIR}/modules/*/database")
 if(AOTRITON_EXTERNAL_TUNING_DATABASE)
   file(GLOB AOTRITON_EXTERNAL_TUNING_DATABASE_DIRS "${AOTRITON_EXTERNAL_TUNING_DATABASE}/*/database")
@@ -73,6 +74,8 @@ endforeach(DB_DIR)
 # CONFIGURE_DEPENDS above only notices added or removed files. Listing every file
 # here makes an edited one re-run configure, hence the generator, as well.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${AOTRITON_TUNING_DATABASE_FILES})
+
+if(NOT AOTRITON_COMMON_LIBRARY)
 
 get_filename_component(AOTRITON_COMPILER "${CMAKE_CURRENT_LIST_DIR}/../python/compile.py" ABSOLUTE)
 message("AOTRITON_COMPILER ${AOTRITON_COMPILER}")
