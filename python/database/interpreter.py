@@ -294,8 +294,12 @@ def _parse_layout(fn, sections):
             _fail(fn, f'"#! {PRECEDENCE_SECTION}" entries must be positive')
     elif PRECEDENCE_SECTION in sections:
         _fail(fn, f'"#! {PRECEDENCE_SECTION}" in a {target} tensor')
-    layout = dict(tuning_keys=names, ladders=ladders, target=target,
-                  bits_per_slot=bits, chars_per_slot=chars, metadata=sections)
+    layout = dict(tuning_keys=names,
+                  ladders=ladders,
+                  target=target,
+                  bits_per_slot=bits,
+                  chars_per_slot=chars,
+                  metadata=sections)
     return layout, sparse, lines
 
 
@@ -593,10 +597,12 @@ def save_npz(obj, path):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description='Export a tuning tensor file, with its patches applied, or a patch alone, to .npz')
-    parser.add_argument('path', help='<iface>.txtdb or <iface>.<NNNN>-<name>.dbpatch')
-    parser.add_argument('--output', default=None, help='.npz file to write, prompted when omitted')
+    parser = argparse.ArgumentParser(description='Export a tuning tensor file, with its patches applied, or a patch alone, to .npz')
+    parser.add_argument('path',
+                        help='<iface>.txtdb or <iface>.<NNNN>-<name>.dbpatch')
+    parser.add_argument('--output',
+                        default=None,
+                        help='.npz file to write, prompted when omitted')
     args = parser.parse_args(argv)
     obj = load(args.path)
     output = args.output

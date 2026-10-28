@@ -14,7 +14,9 @@ def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('--build_dir', type=Path, required=True)
     p.add_argument('--root_dir', type=Path, default='.', help="Root of repository directory")
-    p.add_argument('--external_tuning_database', type=Path, default=None,
+    p.add_argument('--external_tuning_database',
+                   type=Path,
+                   default=None,
                    help='Hash this tuning database instead of the modules\' own; same as aotriton.generate')
     p.add_argument('--git_sha1', required=True)
     p.add_argument('--git_treesha1', required=True)

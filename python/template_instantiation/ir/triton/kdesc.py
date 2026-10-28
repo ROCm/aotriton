@@ -189,7 +189,8 @@ class KernelDescription(Interface):
         lut_tensor = np.full(lut_shape, -1, dtype=np.int32)
         # Deduplicate (perf + copt) rows -> signatures.
         np_sigs, revind = np.unique(np.array([values for _, _, values in rows], dtype=np.int64),
-                                    axis=0, return_inverse=True)
+                                    axis=0,
+                                    return_inverse=True)
         revind = revind.reshape(-1)
         def perf_bind(nprow):
             # one perf bind row: a struct instance with each field a settled choice.

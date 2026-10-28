@@ -28,7 +28,9 @@ def parse():
     p.add_argument("--build_dir", type=Path, default='build/', help="build directory")
     p.add_argument("--alt_venv_config", type=Path, default=None, help="alternative venv YAML config file")
     p.add_argument("--root_dir", type=Path, default='.', help="Root of repository directory")
-    p.add_argument("--external_tuning_database", type=Path, default=None,
+    p.add_argument("--external_tuning_database",
+                   type=Path,
+                   default=None,
                    help="Build with a tuning database from outside the modules: <dir>/<family>/database "
                         "replaces <module>/database for each family present in <dir>. E.g. a database "
                         "exported from Tuner v3.5 to evaluate before committing it.")
