@@ -81,8 +81,8 @@ included, are written as v[n] when that is shorter, e.g. 104[10]. Runs never
 cross lines.
 
 The first line of a tensor file is a shebang, #!/usr/bin/env -S python -m
-aotriton.database.interpreter, and the file is executable: running it exports
-its tensors. Readers skip a first line starting with "#!/".
+aotriton.database.interpreter. It documents the parser of the file, which is
+not executable. Readers skip a first line starting with "#!/".
 
 Incremental changes: <iface>.<N>-<name>.dbpatch next to <iface>.csv overlays
 it, named like git format-patch output: N is zero-padded to 4 digits, <name>
@@ -145,7 +145,7 @@ PRECEDENCE_BITS = 4
 PRECEDENCE_CHARS = 1
 BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 PATCH_SUFFIX = '.dbpatch'
-# Makes a tensor file executable: running it exports its tensors
+# First line of a tensor file: documents the program that parses it
 SHEBANG = '#!/usr/bin/env -S python -m aotriton.database.interpreter'
 BASE_SECTION = 'base'
 RLE_RUN = re.compile(r'(.*)\[(\d+)\]')
@@ -426,7 +426,6 @@ class Exporter(object):
                                  ladders=ladders, sparse=sparse)
                 else:
                     write_tensor(f, lut_names, entries, 'hsaco_options', ladders=ladders, sparse=sparse)
-            os.chmod(fn, 0o755)
             print(f'{fn}: {len(entries)} entries')
 
     @staticmethod

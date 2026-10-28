@@ -146,20 +146,22 @@ The first line of a tensor file or patch is a shebang:
 #!/usr/bin/env -S python -m aotriton.database.interpreter
 ```
 
-and the file is executable (mode 755). Readers ignore a first line that
-starts with `#!/`; section names never start with `/`, so it cannot be
-mistaken for a section.
+It documents which program parses the file; it is not a request to run the
+file, and tensor files are not executable (mode 644). Readers ignore a first
+line that starts with `#!/`; section names never start with `/`, so it cannot
+be mistaken for a section.
 
-Running the file exports its tensors, e.g.
-`./amd/gfx942/attn_fwd.csv --output x.npz`; the exporter is
-`aotriton.database.interpreter`.
+The named parser, `aotriton.database.interpreter`, exports a file's tensors,
+e.g. `python -m aotriton.database.interpreter amd/gfx942/attn_fwd.csv
+--output x.npz`.
 
 - A base reference exports its base's tensor with its own patches applied,
   e.g. `amd/gfx1150/attn_fwd.csv` exports gfx1100's tensor with the
   `.dbpatch` files of gfx1150.
-- Running a `.dbpatch` exports the patch alone, not the patched base.
-- `python` is the one of the venv `aotriton` is installed in, which always
-  provides it.
+- A `.dbpatch` exports the patch alone, not the patched base.
+- Making a file executable locally (`chmod +x`) lets it run as
+  `./amd/gfx942/attn_fwd.csv --output x.npz`, through the `python` of the
+  venv `aotriton` is installed in. The repository does not ship it so.
 
 ## Metadata Tables
 

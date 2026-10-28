@@ -6,9 +6,10 @@ Interpreter of the tuning tensor files of the human readable tuning database,
 see docs/Human Readable Tuning Database Format.md.
 
 Tensor files (`<iface>.csv`) and patches (`<iface>.<NNNN>-<name>.dbpatch`) start
-with a shebang that runs this module, so executing one exports its tensors:
+with a shebang naming this module as their parser (the files are not
+executable). It exports a file's tensors:
 
-    ./amd/gfx942/attn_fwd.csv --output attn_fwd.npz
+    python -m aotriton.database.interpreter amd/gfx942/attn_fwd.csv --output x.npz
 
 A base reference such as amd/gfx1150/attn_fwd.csv ("#! base" naming
 ../gfx1100/attn_fwd.csv) exports gfx1100's tensor with gfx1150's patches. A
