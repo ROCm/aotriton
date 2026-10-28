@@ -17,6 +17,7 @@ functional.
 import csv
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 import numpy as np
 from . import interpreter
 from ..gpu_targets import gpu2archmod
@@ -27,11 +28,14 @@ METADATA = '.metadata'
 
 def _read_table(path):
     '''
-    A .metadata/ table as a list of {column: value}; row i has ordinal i + 1.
+    A .metadata/ table as {ordinal: {column: value}}. The header is line 0, so
+    the first row has ordinal 1; look rows up by ordinal, never by position.
     Blank cells are left out.
     '''
     with open(path, newline='') as f:
-        return [{k: v for k, v in row.items() if v != ''} for row in csv.DictReader(f)]
+        rows = csv.DictReader(f)
+        return {ordinal: {k: v for k, v in row.items() if v != ''}
+                for ordinal, row in enumerate(rows, start=1)}
 
 
 def _db_value(choice):
@@ -181,6 +185,7 @@ class Database(object):
         self._tables = {}
         self._tensors = {}
         self._functional_index = {}
+        self._hsaco_options = {}
         self._patch_ordinals = {}
 
     def _table(self, *parts):
@@ -194,14 +199,29 @@ class Database(object):
         '''
         key = ('op_backend', iface)
         if key not in self._tables:
-            self._tables[key] = {int(r['bord']): r['name'] for r in self._table(iface, 'op_backend.csv')}
+            rows = self._table(iface, 'op_backend.csv').values()
+            self._tables[key] = {int(r['bord']): r['name'] for r in rows}
         return self._tables[key]
 
     def hsaco_option(self, iface, ordinal):
-        hsaco = self._table(iface, 'hsaco_options.csv')[ordinal - 1]
-        psels = self._table(iface, 'psels.csv')[int(hsaco['psels']) - 1]
-        copts = self._table('copts.csv')[int(hsaco['copts']) - 1]
-        return ({k: int(v) for k, v in psels.items()}, {k: int(v) for k, v in copts.items()})
+        '''
+        ({psel: int}, {copt: int}) of an hsaco_options ordinal, as read-only
+        mappings. Each interface's table is decoded once, on first use: the
+        code generator looks up the same few hundred ordinals for every
+        tuned cell.
+        '''
+        if iface not in self._hsaco_options:
+            psels = self._table(iface, 'psels.csv')
+            copts = self._table('copts.csv')
+            def decode(row):
+                return MappingProxyType({k: int(v) for k, v in row.items()})
+            def gen():
+                for ordinal, hsaco in self._table(iface, 'hsaco_options.csv').items():
+                    psel = psels[int(hsaco['psels'])]
+                    copt = copts[int(hsaco['copts'])]
+                    yield ordinal, (decode(psel), decode(copt))
+            self._hsaco_options[iface] = dict(gen())
+        return self._hsaco_options[iface][ordinal]
 
     def _tensor(self, rel):
         if rel not in self._tensors:
@@ -228,7 +248,7 @@ class Database(object):
         if key not in self._functional_index:
             index = {}
             path = self._path / METADATA / iface / 'functional.csv'
-            for ordinal, row in enumerate(_read_table(path) if path.exists() else [], start=1):
+            for ordinal, row in (_read_table(path) if path.exists() else {}).items():
                 missing = [c for c in columns if c not in row]
                 assert not missing, f'{path}: no column {missing} for the functional axes'
                 k = tuple(row[c] for c in columns)
@@ -283,7 +303,17 @@ class Database(object):
             if len(index) == 0:
                 slabs.append(None)
                 continue
-            slabs.append(Slab(gpu=gpu, path=rel, tuning_keys=t.tuning_keys, ladders=t.ladders,
-                              cells=t.tensor[index[0]], patches=self._patches_with(rel, ordinal)))
-        return TuningView(functional=functional, iface=iface, ordinal=ordinal, fallback=fallback,
-                          target=target, bits_per_slot=bits, slabs=slabs, database=self)
+            slabs.append(Slab(gpu=gpu,
+                              path=rel,
+                              tuning_keys=t.tuning_keys,
+                              ladders=t.ladders,
+                              cells=t.tensor[index[0]],
+                              patches=self._patches_with(rel, ordinal)))
+        return TuningView(functional=functional,
+                          iface=iface,
+                          ordinal=ordinal,
+                          fallback=fallback,
+                          target=target,
+                          bits_per_slot=bits,
+                          slabs=slabs,
+                          database=self)
