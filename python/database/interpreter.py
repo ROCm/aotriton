@@ -5,19 +5,20 @@
 Interpreter of the tuning tensor files of the human readable tuning database,
 see docs/Human Readable Tuning Database Format.md.
 
-Tensor files (`<iface>.csv`) and patches (`<iface>.<NNNN>-<name>.dbpatch`) start
-with a shebang naming this module as their parser (the files are not
+Tensor files (`<iface>.txtdb`) and patches (`<iface>.<NNNN>-<name>.dbpatch`)
+start with a shebang naming this module as their parser (the files are not
 executable). It exports a file's tensors:
 
-    python -m aotriton.database.interpreter amd/gfx942/attn_fwd.csv --output x.npz
+    python -m aotriton.database.interpreter amd/gfx942/attn_fwd.txtdb \
+        --output x.npz
 
-A base reference such as amd/gfx1150/attn_fwd.csv ("#! base" naming
-../gfx1100/attn_fwd.csv) exports gfx1100's tensor with gfx1150's patches. A
+A base reference such as amd/gfx1150/attn_fwd.txtdb ("#! base" naming
+../gfx1100/attn_fwd.txtdb) exports gfx1100's tensor with gfx1150's patches. A
 patch exports alone, as a sparse tensor.
 
 Library:
 
-    load(path)              <iface>.csv, with its patches applied -> TuningTensor
+    load(path)              <iface>.txtdb, patches applied -> TuningTensor
     load(patch)             .dbpatch alone -> SparsePatch
     load(patch, base=base)  .dbpatch applied into base
     apply(base, patch)      SparsePatch applied into base, in place
@@ -226,7 +227,7 @@ def read_sections(fn):
 
 def patch_files(fn):
     '''
-    The patches of <iface>.csv, in order of <NNNN>, looked up next to fn.
+    The patches of <iface>.txtdb, in order of <NNNN>, looked up next to fn.
     '''
     fn = Path(fn)
     pattern = re.compile(re.escape(fn.stem) + r'\.(\d{4,})-(.+)' + re.escape(PATCH_SUFFIX))
@@ -459,10 +460,10 @@ def _narrow(tensor):
 
 def _base_reference(fn, sections):
     '''
-    The file named by the "#! base" section of <iface>.csv fn, or None. A base
+    The file named by the "#! base" section of <iface>.txtdb fn, or None. A base
     reference holds nothing else: it shares the base's effective tensor, and
     its own changes are patches next to it. The path is relative to fn's
-    directory and names a file with the same <iface>.csv name.
+    directory and names a file with the same <iface>.txtdb name.
     '''
     if BASE_SECTION not in sections:
         return None
@@ -531,9 +532,9 @@ def _load_one(path):
 
 def load(path, base=None):
     '''
-    path is an <iface>.csv, or a patch of it.
+    path is an <iface>.txtdb, or a patch of it.
 
-    - <iface>.csv: a TuningTensor with its patches applied. A base reference
+    - <iface>.txtdb: a TuningTensor with its patches applied. A base reference
       ("#! base") loads its base's effective tensor, including the base's own
       patches, then applies the patches next to path.
     - patch, base=None: the patch alone, as a SparsePatch
@@ -586,7 +587,7 @@ def save_npz(obj, path):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description='Export a tuning tensor file, with its patches applied, or a patch alone, to .npz')
-    parser.add_argument('path', help='<iface>.csv or <iface>.<NNNN>-<name>.dbpatch')
+    parser.add_argument('path', help='<iface>.txtdb or <iface>.<NNNN>-<name>.dbpatch')
     parser.add_argument('--output', default=None, help='.npz file to write, prompted when omitted')
     args = parser.parse_args(argv)
     obj = load(args.path)

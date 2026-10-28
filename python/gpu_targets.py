@@ -23,8 +23,8 @@ AOTRITON_SUPPORTED_GPUS = (
 )
 
 # An arch without tuning of its own shares another arch's tuning through base
-# references in the tuning database, e.g. amd/gfx1101/attn_fwd.csv holds
-# "#! base" naming ../gfx1100/attn_fwd.csv, plus .dbpatch files for what it
+# references in the tuning database, e.g. amd/gfx1101/attn_fwd.txtdb holds
+# "#! base" naming ../gfx1100/attn_fwd.txtdb, plus .dbpatch files for what it
 # tuned itself. See docs/Human Readable Tuning Database Format.md.
 
 AOTRITON_ARCH_TO_PACK = {

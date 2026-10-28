@@ -33,7 +33,7 @@ def dense2(header='hsaco_options'):
 
 
 def test_dense_rank2_shebang_rle(tmp_path):
-    p = write(tmp_path, 'attn_fwd.csv', SHEBANG + '# comment\n\n' + dense2())
+    p = write(tmp_path, 'attn_fwd.txtdb', SHEBANG + '# comment\n\n' + dense2())
     t = it.load(p)
     assert t.tuning_keys == ['q', 'k']
     assert t.ladders == [(16, 32), (16, 32, 64)]
@@ -46,13 +46,13 @@ def test_dense_rank2_shebang_rle(tmp_path):
 
 
 def test_no_shebang_is_fine(tmp_path):
-    assert it.load(write(tmp_path, 'attn_fwd.csv', dense2())).tensor.shape == (2, 2, 3)
+    assert it.load(write(tmp_path, 'attn_fwd.txtdb', dense2())).tensor.shape == (2, 2, 3)
 
 
 def test_dense_rank3_blank_lines(tmp_path):
     text = (KEYS3 + '#! tuning tensor\nfunctional,tuning keys->hsaco_options\n'
             '1,\n10,10,11\n10,10,11\n10,10,11\n\n11,11,12\n11,11,12\n11,11,12\n')
-    t = it.load(write(tmp_path, 'k.csv', text))
+    t = it.load(write(tmp_path, 'k.txtdb', text))
     assert t.tensor.shape == (1, 2, 3, 3)
     assert t.tensor[0, 0, 0].tolist() == [10, 10, 11]
     assert t.tensor[0, 1, 2].tolist() == [11, 11, 12]
@@ -61,13 +61,13 @@ def test_dense_rank3_blank_lines(tmp_path):
 def test_dtype_selection(tmp_path):
     for value, dtype in ((255, np.uint8), (256, np.uint16), (65536, np.uint32)):
         text = KEYS2 + f'#! tuning tensor\nfunctional,tuning keys->hsaco_options\n1,\n{value}[3]\n1[3]\n'
-        assert it.load(write(tmp_path, 'k.csv', text)).tensor.dtype == dtype
+        assert it.load(write(tmp_path, 'k.txtdb', text)).tensor.dtype == dtype
 
 
 def test_precedence_packing(tmp_path):
     text = (KEYS2 + PREC + '#! tuning tensor\nfunctional,tuning keys->precedence\n'
             '1,\n1AF,12,2\n,,F\n')
-    t = it.load(write(tmp_path, 'op.csv', text))
+    t = it.load(write(tmp_path, 'op.txtdb', text))
     # bords (15, 10, 1), most preferred first
     assert t.tensor[0, 0, 0] == 0x1AF
     assert t.tensor[0, 0, 1] == 0x12      # bords (2, 1)
@@ -89,7 +89,7 @@ def test_precedence_chars_per_slot_2_and_roundtrip():
 def test_precedence_chars2_file(tmp_path):
     text = (KEYS2.replace('k,16,32,64', 'k,16') + 'x'[:0] + '#! precedence\nbits_per_slot,6\n'
             'chars_per_slot,2\n#! tuning tensor\nfunctional,tuning keys->precedence\n1,\n0501\n01\n')
-    t = it.load(write(tmp_path, 'op.csv', text))
+    t = it.load(write(tmp_path, 'op.txtdb', text))
     assert t.tensor[0, :, 0].tolist() == [1 | (5 << 6), 1]
 
 
@@ -98,7 +98,7 @@ def patch_text(body, keys=KEYS2, target='hsaco_options'):
 
 
 def test_discovery_order_and_dense_patches(tmp_path):
-    base = write(tmp_path, 'attn_fwd.csv', dense2())
+    base = write(tmp_path, 'attn_fwd.txtdb', dense2())
     write(tmp_path, 'attn_fwd.0002-b.dbpatch', patch_text('1,\n[3]\n,,50\n'))
     write(tmp_path, 'attn_fwd.0001-a.dbpatch', patch_text('1,\n,20,\n,,40\n3,\n8,8,8\n,,\n'))
     write(tmp_path, 'other.0001-a.dbpatch', 'garbage')
@@ -112,7 +112,7 @@ def test_discovery_order_and_dense_patches(tmp_path):
 
 
 def test_patch_alone_and_into_base(tmp_path):
-    base = it.load(write(tmp_path, 'attn_fwd.csv', dense2()))
+    base = it.load(write(tmp_path, 'attn_fwd.txtdb', dense2()))
     p = write(tmp_path, 'attn_fwd.0001-a.dbpatch', patch_text('2,\n,,\n300,,\n'))
     s = it.load(p)
     assert isinstance(s, it.SparsePatch)
@@ -124,11 +124,11 @@ def test_patch_alone_and_into_base(tmp_path):
 
 
 def test_sparse_patch_partial_and_new_functional(tmp_path):
-    write(tmp_path, 'attn_fwd.csv', dense2())
+    write(tmp_path, 'attn_fwd.txtdb', dense2())
     text = (KEYS2 + '#! sparse tuning tensor\nfunctional,hsaco_options<-coordinates\n'
             '1,\n95<-0{0}1{1,2}\n33<-0{2}\n9,\n5<-1{0-1}\n')
     write(tmp_path, 'attn_fwd.0001-s.dbpatch', text)
-    t = it.load(tmp_path / 'attn_fwd.csv')
+    t = it.load(tmp_path / 'attn_fwd.txtdb')
     assert t.functional.tolist() == [1, 2, 9]
     assert t.tensor[0].tolist() == [[95, 2, 33], [4, 95, 95]]
     assert t.tensor[2].tolist() == [[0, 0, 0], [5, 5, 0]]
@@ -136,7 +136,7 @@ def test_sparse_patch_partial_and_new_functional(tmp_path):
 
 
 def test_sparse_rank3_and_whitespace(tmp_path):
-    base = write(tmp_path, 'k.csv', KEYS3 + '#! tuning tensor\nfunctional,tuning keys->hsaco_options\n1,\n'
+    base = write(tmp_path, 'k.txtdb', KEYS3 + '#! tuning tensor\nfunctional,tuning keys->hsaco_options\n1,\n'
                  + '1[3]\n' * 6)
     p = write(tmp_path, 'k.0001-s.dbpatch', KEYS3 + '#! sparse tuning tensor\n'
               'functional,hsaco_options<-coordinates\n1,\n7 <- 0,2{0-1, 2}1,0{1}\n')
@@ -155,14 +155,14 @@ def test_sparse_matches_dense(tmp_path):
 
 
 def test_apply_api(tmp_path):
-    t = it.load(write(tmp_path, 'k.csv', dense2()))
+    t = it.load(write(tmp_path, 'k.txtdb', dense2()))
     other = it.load(write(tmp_path, 'k.0001-a.dbpatch', patch_text('2,\n,,\n,,200\n')))
     assert it.apply(t, other) is t
     assert t.tensor[1, 1, 2] == 200 and t.tensor.dtype == np.uint8
 
 
 def test_apply_checks(tmp_path):
-    t = it.load(write(tmp_path, 'k.csv', dense2()))
+    t = it.load(write(tmp_path, 'k.txtdb', dense2()))
     fields = dict(tuning_keys=t.tuning_keys, ladders=t.ladders, target=t.target,
                   bits_per_slot=None, chars_per_slot=None, metadata=t.metadata)
     for sparse in ([[1, 2, 0, 5]], [[1, -1, 0, 5]], [[1, 0, 0, 0]], [[1, 0, 5]]):
@@ -208,7 +208,7 @@ REJECTED = {
 @pytest.mark.parametrize('name', sorted(REJECTED))
 def test_rejected_csv(tmp_path, name):
     with pytest.raises(it.TensorFileError):
-        it.load(write(tmp_path, 'k.csv', REJECTED[name]))
+        it.load(write(tmp_path, 'k.txtdb', REJECTED[name]))
 
 
 def sparse_text(lines):
@@ -239,7 +239,7 @@ def test_rejected_sparse_patch(tmp_path, name):
 
 
 def test_patch_mismatches(tmp_path):
-    base = write(tmp_path, 'k.csv', dense2())
+    base = write(tmp_path, 'k.txtdb', dense2())
     other_keys = KEYS2.replace('64', '65')
     cases = {
         'ladder': patch_text('1,\n1[3]\n1[3]\n', keys=other_keys),
@@ -261,14 +261,14 @@ def test_patch_mismatches(tmp_path):
 
 def test_patch_precedence_bits_mismatch(tmp_path):
     body = '#! tuning tensor\nfunctional,tuning keys->precedence\n1,\n1[3]\n1[3]\n'
-    write(tmp_path, 'o.csv', KEYS2 + PREC + body)
+    write(tmp_path, 'o.txtdb', KEYS2 + PREC + body)
     write(tmp_path, 'o.0001-p.dbpatch', KEYS2 + PREC.replace(',4', ',5') + body)
     with pytest.raises(it.TensorFileError):
-        it.load(tmp_path / 'o.csv')
+        it.load(tmp_path / 'o.txtdb')
 
 
 def test_bad_patch_names(tmp_path):
-    base = write(tmp_path, 'k.csv', dense2())
+    base = write(tmp_path, 'k.txtdb', dense2())
     write(tmp_path, 'k.1-a.dbpatch', patch_text('1,\n1[3]\n1[3]\n'))
     with pytest.raises(it.TensorFileError):
         it.load(base)
@@ -280,9 +280,9 @@ def test_bad_patch_names(tmp_path):
 
 
 def test_base_rejected_for_csv(tmp_path):
-    t = it.load(write(tmp_path, 'k.csv', dense2()))
+    t = it.load(write(tmp_path, 'k.txtdb', dense2()))
     with pytest.raises(ValueError):
-        it.load(tmp_path / 'k.csv', base=t)
+        it.load(tmp_path / 'k.txtdb', base=t)
 
 
 def base_ref(rel):
@@ -293,57 +293,57 @@ def test_base_reference(tmp_path):
     # b references a; a's own patch is inherited, b's patch applies on top
     (tmp_path / 'a').mkdir()
     (tmp_path / 'b').mkdir()
-    write(tmp_path / 'a', 'k.csv', dense2())
+    write(tmp_path / 'a', 'k.txtdb', dense2())
     write(tmp_path / 'a', 'k.0001-a.dbpatch', patch_text('1,\n,7,\n,,\n'))
-    write(tmp_path / 'b', 'k.csv', base_ref('../a/k.csv'))
+    write(tmp_path / 'b', 'k.txtdb', base_ref('../a/k.txtdb'))
     write(tmp_path / 'b', 'k.0001-b.dbpatch', patch_text('1,\n99,,\n,,\n'))
-    a = it.load(tmp_path / 'a' / 'k.csv').tensor
-    b = it.load(tmp_path / 'b' / 'k.csv').tensor
+    a = it.load(tmp_path / 'a' / 'k.txtdb').tensor
+    b = it.load(tmp_path / 'b' / 'k.txtdb').tensor
     assert a[0, 0, 0] == 1 and a[0, 0, 1] == 7
     assert b[0, 0, 0] == 99 and b[0, 0, 1] == 7
-    assert [p.name for p in it.applied_patches(tmp_path / 'b' / 'k.csv')] == ['k.0001-a.dbpatch', 'k.0001-b.dbpatch']
-    assert [p.relative_to(tmp_path).as_posix() for p in it.source_files(tmp_path / 'b' / 'k.csv')] == \
-        ['b/k.csv', 'a/k.csv', 'a/k.0001-a.dbpatch', 'b/k.0001-b.dbpatch']
+    assert [p.name for p in it.applied_patches(tmp_path / 'b' / 'k.txtdb')] == ['k.0001-a.dbpatch', 'k.0001-b.dbpatch']
+    assert [p.relative_to(tmp_path).as_posix() for p in it.source_files(tmp_path / 'b' / 'k.txtdb')] == \
+        ['b/k.txtdb', 'a/k.txtdb', 'a/k.0001-a.dbpatch', 'b/k.0001-b.dbpatch']
 
 
 def test_base_reference_chain_and_mod(tmp_path):
     (tmp_path / 'a' / 'mod1').mkdir(parents=True)
     (tmp_path / 'c').mkdir()
-    write(tmp_path / 'a', 'k.csv', dense2())
-    write(tmp_path / 'a' / 'mod1', 'k.csv', base_ref('../k.csv'))
-    write(tmp_path / 'c', 'k.csv', base_ref('../a/mod1/k.csv'))
-    assert it.load(tmp_path / 'c' / 'k.csv').tensor.tolist() == it.load(tmp_path / 'a' / 'k.csv').tensor.tolist()
+    write(tmp_path / 'a', 'k.txtdb', dense2())
+    write(tmp_path / 'a' / 'mod1', 'k.txtdb', base_ref('../k.txtdb'))
+    write(tmp_path / 'c', 'k.txtdb', base_ref('../a/mod1/k.txtdb'))
+    assert it.load(tmp_path / 'c' / 'k.txtdb').tensor.tolist() == it.load(tmp_path / 'a' / 'k.txtdb').tensor.tolist()
 
 
 @pytest.mark.parametrize('name,text,message', [
     ('cycle', None, 'cycle'),
-    ('missing', base_ref('../x/k.csv'), 'does not exist'),
-    ('other iface', base_ref('../a/other.csv'), 'same interface'),
-    ('two paths', SHEBANG + '#! base\n../a/k.csv\n../a/k.csv\n', 'exactly one path'),
-    ('with a tensor', SHEBANG + '#! base\n../a/k.csv\n' + dense2(), 'nothing but'),
+    ('missing', base_ref('../x/k.txtdb'), 'does not exist'),
+    ('other iface', base_ref('../a/other.txtdb'), 'same interface'),
+    ('two paths', SHEBANG + '#! base\n../a/k.txtdb\n../a/k.txtdb\n', 'exactly one path'),
+    ('with a tensor', SHEBANG + '#! base\n../a/k.txtdb\n' + dense2(), 'nothing but'),
 ])
 def test_base_reference_rejected(tmp_path, name, text, message):
     (tmp_path / 'a').mkdir()
     (tmp_path / 'b').mkdir()
-    write(tmp_path / 'a', 'k.csv', dense2())
-    write(tmp_path / 'a', 'other.csv', dense2())
+    write(tmp_path / 'a', 'k.txtdb', dense2())
+    write(tmp_path / 'a', 'other.txtdb', dense2())
     if text is None:    # a -> b -> a
-        write(tmp_path / 'a', 'k.csv', base_ref('../b/k.csv'))
-        text = base_ref('../a/k.csv')
-    write(tmp_path / 'b', 'k.csv', text)
+        write(tmp_path / 'a', 'k.txtdb', base_ref('../b/k.txtdb'))
+        text = base_ref('../a/k.txtdb')
+    write(tmp_path / 'b', 'k.txtdb', text)
     with pytest.raises(it.TensorFileError, match=message):
-        it.load(tmp_path / 'b' / 'k.csv')
+        it.load(tmp_path / 'b' / 'k.txtdb')
 
 
 def test_patch_cannot_be_base_reference(tmp_path):
-    write(tmp_path, 'k.csv', dense2())
-    write(tmp_path, 'k.0001-x.dbpatch', base_ref('k.csv'))
+    write(tmp_path, 'k.txtdb', dense2())
+    write(tmp_path, 'k.0001-x.dbpatch', base_ref('k.txtdb'))
     with pytest.raises(it.TensorFileError):
-        it.load(tmp_path / 'k.csv')
+        it.load(tmp_path / 'k.txtdb')
 
 
 def test_npz_and_cli(tmp_path, monkeypatch, capsys):
-    base = write(tmp_path, 'attn_fwd.csv', SHEBANG + dense2())
+    base = write(tmp_path, 'attn_fwd.txtdb', SHEBANG + dense2())
     patch = write(tmp_path, 'attn_fwd.0001-a.dbpatch', SHEBANG + patch_text('2,\n,,\n,,200\n'))
     out = tmp_path / 'x.npz'
     it.main([str(base), '--output', str(out)])
@@ -364,7 +364,7 @@ def test_npz_and_cli(tmp_path, monkeypatch, capsys):
     it.main([str(base)])
     assert (tmp_path / 'prompted.npz').exists()
     # precedence scalars
-    op = write(tmp_path, 'op.csv', KEYS2 + PREC + '#! tuning tensor\nfunctional,tuning keys->precedence\n'
+    op = write(tmp_path, 'op.txtdb', KEYS2 + PREC + '#! tuning tensor\nfunctional,tuning keys->precedence\n'
                '1,\n12[3]\n21[3]\n')
     it.main([str(op), '--output', str(out)])
     with np.load(out) as z:
@@ -374,7 +374,7 @@ def test_npz_and_cli(tmp_path, monkeypatch, capsys):
 
 
 def test_python_dash_m_and_lazy_import(tmp_path):
-    p = write(tmp_path, 'attn_fwd.csv', SHEBANG + dense2())
+    p = write(tmp_path, 'attn_fwd.txtdb', SHEBANG + dense2())
     out = tmp_path / 'x.npz'
     code = ('import sys, runpy; sys.argv = ["x", %r, "--output", %r]; '
             'runpy.run_module("aotriton.database.interpreter", run_name="__main__"); '
@@ -391,7 +391,7 @@ DATABASE = ROOT / 'modules' / 'flash' / 'database' / 'amd'
 
 
 def real_files():
-    return sorted([*DATABASE.glob('gfx*/*.csv'), *DATABASE.glob('gfx*/mod*/*.csv')])
+    return sorted([*DATABASE.glob('gfx*/*.txtdb'), *DATABASE.glob('gfx*/mod*/*.txtdb')])
 
 
 @pytest.mark.skipif(not TOOL.exists() or not real_files(), reason='needs the tool and the real database')

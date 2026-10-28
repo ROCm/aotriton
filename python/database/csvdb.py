@@ -48,13 +48,13 @@ def _db_value(choice):
 
 def tensor_path(gpu, iface):
     '''
-    gfx942_mod0 -> amd/gfx942/<iface>.csv, gfx942_mod1 -> amd/gfx942/mod1/<iface>.csv
+    gfx942_mod0 -> amd/gfx942/<iface>.txtdb, gfx942_mod1 -> amd/gfx942/mod1/<iface>.txtdb
     '''
     arch, mod = gpu.split('_')
     d = Path(VENDOR) / arch
     if mod != 'mod0':
         d = d / mod
-    return d / f'{iface}.csv'
+    return d / f'{iface}.txtdb'
 
 
 @dataclass

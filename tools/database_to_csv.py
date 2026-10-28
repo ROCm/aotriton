@@ -22,7 +22,7 @@ Layout:
     <output>/.metadata/<iface>/psels.csv               (kernels)
     <output>/.metadata/<iface>/hsaco_options.csv       (kernels, psels,copts ordinal pairs)
     <output>/.metadata/<iface>/op_backend.csv          (operators, name,bord)
-    <output>/<vendor>/<arch>/[mod<N>/]<iface>.csv      (tuning tensors)
+    <output>/<vendor>/<arch>/[mod<N>/]<iface>.txtdb      (tuning tensors)
     <output>/<vendor>/<arch>/[mod<N>/]<iface>.<NNNN>-<name>.dbpatch
 
 Ordinals: rows of the .metadata/ tables are referred to by integer ordinals.
@@ -36,7 +36,7 @@ dtypes are spelled as ATI declares them without pointer and alignment (fp16,
 bf16, fp32; sqlite: torch.float16, torch.bfloat16, torch.float32). See
 SQLITE_INPUT_COLUMNS and SQLITE_DTYPES.
 
-Every <iface>.csv stores one tensor per functional, with one dimension per
+Every <iface>.txtdb stores one tensor per functional, with one dimension per
 tuning key; any number of tuning keys is allowed. "#!" starts a metadata
 section, other "#" lines are comments. For kernels the tensor holds
 hsaco_options ordinals:
@@ -84,14 +84,14 @@ The first line of a tensor file is a shebang, #!/usr/bin/env -S python -m
 aotriton.database.interpreter. It documents the parser of the file, which is
 not executable. Readers skip a first line starting with "#!/".
 
-Incremental changes: <iface>.<N>-<name>.dbpatch next to <iface>.csv overlays
+Incremental changes: <iface>.<N>-<name>.dbpatch next to <iface>.txtdb overlays
 it, named like git format-patch output: N is zero-padded to 4 digits, <name>
 describes the change. A patch uses the same tensor format, and its tuning keys
 and metadata sections must equal the base's. Patches apply in order of N.
 Each functional listed in a patch overrides the base's cells, where a blank
 patch cell keeps the base value; functionals absent from the base are added.
 The base is often another arch's tensor, named by a base reference, e.g.
-amd/gfx1150/attn_fwd.csv holding only "#! base" and ../gfx1100/attn_fwd.csv,
+amd/gfx1150/attn_fwd.txtdb holding only "#! base" and ../gfx1100/attn_fwd.txtdb,
 plus amd/gfx1150/attn_fwd.0001-gfx1150.dbpatch with what gfx1150 tuned on its
 own.
 
@@ -354,7 +354,7 @@ class Exporter(object):
         if mod != 'mod0':
             d = d / mod
         d.mkdir(parents=True, exist_ok=True)
-        return d / f'{iface}.csv'
+        return d / f'{iface}.txtdb'
 
     @staticmethod
     def read_table(dbc, table):
@@ -453,13 +453,13 @@ class Exporter(object):
 
     def link_bases(self):
         '''
-        For each --patch_on arch, a base reference to every <iface>.csv of
+        For each --patch_on arch, a base reference to every <iface>.txtdb of
         its base arch. An arch without sqlite data only gets the references.
         '''
         vendor_dir = self._args.output / self._args.vendor
         for arch, base in self.patch_on.items():
             (vendor_dir / arch).mkdir(parents=True, exist_ok=True)
-            for target in sorted((vendor_dir / base).glob('*.csv')):
+            for target in sorted((vendor_dir / base).glob('*.txtdb')):
                 ref = vendor_dir / arch / target.name
                 rel = (Path('..') / base / target.name).as_posix()
                 content = f'{SHEBANG}\n#! {BASE_SECTION}\n{rel}\n'
@@ -642,7 +642,7 @@ def patch_name(fn, n, name):
 
 def patch_files(fn):
     '''
-    The patches of <iface>.csv, in order of N
+    The patches of <iface>.txtdb, in order of N
     '''
     pattern = re.compile(re.escape(fn.stem) + r'\.(\d{4,})-(.+)' + re.escape(PATCH_SUFFIX))
     found = {}
@@ -729,7 +729,7 @@ class Tensor(object):
 
 def base_reference(fn):
     '''
-    The file named by the "#! base" section of <iface>.csv fn, or None
+    The file named by the "#! base" section of <iface>.txtdb fn, or None
     '''
     sections = read_sections(fn)
     if BASE_SECTION not in sections:
@@ -739,7 +739,7 @@ def base_reference(fn):
 
 def load_tensor(fn):
     '''
-    Load <iface>.csv and apply its patches. A base reference loads its base,
+    Load <iface>.txtdb and apply its patches. A base reference loads its base,
     with the base's patches, then applies its own.
     '''
     base = base_reference(fn)
@@ -842,7 +842,7 @@ def verify(args):
         d = root / args.vendor / arch
         if mod != 'mod0':
             d = d / mod
-        fn = d / f'{iface}.csv'
+        fn = d / f'{iface}.txtdb'
         cols = columns[iface]
         actual = set()
         if fn.exists():

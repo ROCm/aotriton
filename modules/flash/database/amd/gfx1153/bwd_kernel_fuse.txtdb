@@ -1,0 +1,3 @@
+#!/usr/bin/env -S python -m aotriton.database.interpreter
+#! base
+../gfx1100/bwd_kernel_fuse.txtdb

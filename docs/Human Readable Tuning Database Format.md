@@ -71,13 +71,13 @@ modules/<family>/database/
       op_backend.csv                  backend name -> bord          (operators)
   amd/
     <arch>/
-      <iface>.csv                     tuning tensors for <arch>, mod0 (*)
-      <iface>.<NNNN>-<name>.dbpatch   incremental changes to <iface>.csv
+      <iface>.txtdb                   tuning tensors for <arch>, mod0 (*)
+      <iface>.<NNNN>-<name>.dbpatch   incremental changes to <iface>.txtdb
       mod<N>/
-        <iface>.csv                   tuning tensors for <arch>, mod<N> (*)
+        <iface>.txtdb                 tuning tensors for <arch>, mod<N> (*)
 
-(*) may be a base reference to another <iface>.csv, to reuse its tensors,
-    e.g. amd/gfx1150/attn_fwd.csv naming ../gfx1100/attn_fwd.csv
+(*) may be a base reference to another <iface>.txtdb, to reuse its tensors,
+    e.g. amd/gfx1150/attn_fwd.txtdb naming ../gfx1100/attn_fwd.txtdb
 ```
 
 `<iface>` is the interface name of a kernel (`attn_fwd`, `bwd_kernel_dq`, ...)
@@ -89,10 +89,31 @@ those of `<arch>_mod<N>`.
 `.metadata/` holds the tables shared by all architectures. Everything under
 `amd/` is per architecture.
 
-An `<iface>.csv` marked (*) may be a base reference to the same interface's
+An `<iface>.txtdb` marked (*) may be a base reference to the same interface's
 file of another architecture or mod. The architecture then reuses those
 tensors as its base, and stores only its own entries in `.dbpatch` files, see
 [Sharing a Base](#sharing-a-base).
+
+## File Types
+
+| Extension | Content |
+|---|---|
+| `.txtdb` | a tuning tensor file: the tensors of one interface on one architecture, or a base reference |
+| `.dbpatch` | a patch to the `.txtdb` file next to it |
+| `.csv` | a table under `.metadata/` |
+
+The `.metadata/` tables are plain CSV. Tensor files and patches are not: they
+are written in the small language this document defines, with sections,
+run-length encoding, sparse tensors and base references, so they do not use
+the `.csv` extension that tools would open as a spreadsheet.
+
+- `.txtdb` says what matters about a tensor file: it is part of the tuning
+  database, and it is plain text, so it can be diffed, reviewed and edited
+  like source code, which is the reason the database has this format.
+- `.dbpatch` shares the `db` root: a patch reads as a patch to the database
+  file next to it, which is what it is.
+- The shebang on their first line names the program that parses them, see
+  [Shebang](#shebang).
 
 ## Common Conventions
 
@@ -131,7 +152,7 @@ see [Operator Backends](#operator-backends).
 
 ### Comments and Sections
 
-In tensor files (`amd/<arch>/<iface>.csv` and their patches):
+In tensor files (`amd/<arch>/<iface>.txtdb` and their patches):
 
 - A line starting with `#!` starts a named metadata section. The section name
   is the rest of the line, e.g. `#! tuning keys`.
@@ -152,15 +173,15 @@ line that starts with `#!/`; section names never start with `/`, so it cannot
 be mistaken for a section.
 
 The named parser, `aotriton.database.interpreter`, exports a file's tensors,
-e.g. `python -m aotriton.database.interpreter amd/gfx942/attn_fwd.csv
+e.g. `python -m aotriton.database.interpreter amd/gfx942/attn_fwd.txtdb
 --output x.npz`.
 
 - A base reference exports its base's tensor with its own patches applied,
-  e.g. `amd/gfx1150/attn_fwd.csv` exports gfx1100's tensor with the
+  e.g. `amd/gfx1150/attn_fwd.txtdb` exports gfx1100's tensor with the
   `.dbpatch` files of gfx1150.
 - A `.dbpatch` exports the patch alone, not the patched base.
 - Making a file executable locally (`chmod +x`) lets it run as
-  `./amd/gfx942/attn_fwd.csv --output x.npz`, through the `python` of the
+  `./amd/gfx942/attn_fwd.txtdb --output x.npz`, through the `python` of the
   venv `aotriton` is installed in. The repository does not ship it so.
 
 ## Metadata Tables
@@ -267,7 +288,7 @@ map bords to backends by name. bord 0 is reserved for "no backend" (see
 
 ## Tensor Files
 
-`amd/<arch>/<iface>.csv` stores, for every functional tuned on `<arch>`, a
+`amd/<arch>/<iface>.txtdb` stores, for every functional tuned on `<arch>`, a
 tensor indexed by the tuning keys.
 
 ```
@@ -441,7 +462,7 @@ single slot means there was no runner-up.
 
 ### Patches
 
-`<iface>.<NNNN>-<name>.dbpatch`, next to `<iface>.csv`, changes it without
+`<iface>.<NNNN>-<name>.dbpatch`, next to `<iface>.txtdb`, changes it without
 touching the base file. The name follows `git format-patch`:
 
 - `<NNNN>` is the patch number, zero-padded to 4 digits (`0001`, `0002`, ...).
@@ -502,7 +523,7 @@ functional,hsaco_options<-coordinates
   load instead of shifting cells.
 - Writers emit one canonical form: one group per dense line, ranges for runs
   of 3 or more indices, no spaces. Readers also accept spaces.
-- Only patches may be sparse: an `<iface>.csv` is always dense.
+- Only patches may be sparse: an `<iface>.txtdb` is always dense.
 
 Braces, not brackets, mark the lists: `v[n]` already means run-length
 encoding in dense tensors, and `1[6]` must not mean both "six 1s" and
@@ -515,21 +536,21 @@ the gfx1150 patches dense, to show both forms on the same data.
 ### Sharing a Base
 
 An architecture that is tuned only partially uses another architecture's
-tensors as its base, and stores its own entries as patches. Its `<iface>.csv`
+tensors as its base, and stores its own entries as patches. Its `<iface>.txtdb`
 is then a **base reference**, holding nothing but a `#! base` section with
 one path, relative to the file's own directory, to the same interface's file:
 
 ```
-# amd/gfx1150/attn_fwd.csv
+# amd/gfx1150/attn_fwd.txtdb
 #!/usr/bin/env -S python -m aotriton.database.interpreter
 #! base
-../gfx1100/attn_fwd.csv
+../gfx1100/attn_fwd.txtdb
 ```
 
 - Loading a base reference loads the base's effective tensor, including the
   base's own patches and, if the base is a reference itself, its base. Then
   the patches next to the reference apply on top.
-- The base must be an `<iface>.csv` of the same interface. A cycle of
+- The base must be an `<iface>.txtdb` of the same interface. A cycle of
   references is an error, and so is a reference that holds anything else,
   e.g. a tensor.
 
@@ -537,9 +558,9 @@ gfx1150 and gfx1151 only have their own tuning for hdim=64 with
 dropout=0.0, and use gfx1100 for everything else:
 
 ```
-amd/gfx1150/attn_fwd.csv                     base ../gfx1100/attn_fwd.csv
+amd/gfx1150/attn_fwd.txtdb                   base ../gfx1100/attn_fwd.txtdb
 amd/gfx1150/attn_fwd.0001-gfx1150.dbpatch    9 functionals tuned on gfx1150
-amd/gfx1150/op_attn_bwd.csv                  base ../gfx1100/op_attn_bwd.csv
+amd/gfx1150/op_attn_bwd.txtdb                base ../gfx1100/op_attn_bwd.txtdb
 ...
 ```
 
@@ -568,8 +589,9 @@ enabled, and archives or artifact stores may drop them.
 
 A GPU mod with its own entries (e.g. `gfx942_mod1`) is stored under
 `amd/<arch>/mod<N>/`. It can use the same mechanism: a base reference
-`amd/<arch>/mod<N>/<iface>.csv` naming `../<iface>.csv`, and the differences in
-a patch such as `amd/<arch>/mod<N>/<iface>.0001-<arch>_mod<N>.dbpatch`.
+`amd/<arch>/mod<N>/<iface>.txtdb` naming `../<iface>.txtdb`, and the
+differences in a patch such as
+`amd/<arch>/mod<N>/<iface>.0001-<arch>_mod<N>.dbpatch`.
 
 ### External Tuning Database
 
@@ -586,7 +608,7 @@ it before committing it, but works for any other tuning database too.
 Which variant of `attn_fwd` does gfx1100 use for functional 13 at
 `Max_seqlen_q=16`, `Max_seqlen_k=16`?
 
-1. `amd/gfx1100/attn_fwd.csv`, block `13,`, first line, first cell: `67`.
+1. `amd/gfx1100/attn_fwd.txtdb`, block `13,`, first line, first cell: `67`.
 2. `.metadata/attn_fwd/functional.csv`, ordinal 13:
    `bf16,64,0,0,0,0,0,0,0,0`, i.e. bf16, hdim 64, no padded head,
    no dropout, no causal, no bias.
@@ -597,7 +619,7 @@ Which variant of `attn_fwd` does gfx1100 use for functional 13 at
 5. `.metadata/copts.csv`, ordinal 11: `waves_per_eu=1`, `num_warps=4`,
    `num_stages=2`.
 
-For gfx1150, `amd/gfx1150/attn_fwd.csv` is a base reference to the same
+For gfx1150, `amd/gfx1150/attn_fwd.txtdb` is a base reference to the same
 gfx1100 file, but `attn_fwd.0001-gfx1150.dbpatch` lists functional 13 too,
 and its first cell (`104`) overrides the gfx1100 value.
 

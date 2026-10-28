@@ -57,9 +57,9 @@ endif()
 if(NOT AOTRITON_COMMON_LIBRARY)
 # A tuning database is part of its module, at <module>/database (e.g.
 # modules/flash/database), and is read in place by the generator: the CSV tree
-# (amd/<arch>/<iface>.csv, .dbpatch files and .metadata/), nothing is extracted
+# (amd/<arch>/<iface>.txtdb, .dbpatch files and .metadata/*.csv), nothing is extracted
 # or composed. GLOB_RECURSE descends into the hidden .metadata/ directory; an
-# arch sharing another's base is a base-reference .csv, listed like the rest.
+# arch sharing another's base is a base-reference .txtdb, listed like the rest.
 file(GLOB AOTRITON_TUNING_DATABASE_DIRS "${PROJECT_SOURCE_DIR}/modules/*/database")
 if(AOTRITON_EXTERNAL_TUNING_DATABASE)
   file(GLOB AOTRITON_EXTERNAL_TUNING_DATABASE_DIRS "${AOTRITON_EXTERNAL_TUNING_DATABASE}/*/database")
@@ -67,7 +67,7 @@ if(AOTRITON_EXTERNAL_TUNING_DATABASE)
 endif()
 set(AOTRITON_TUNING_DATABASE_FILES "")
 foreach(DB_DIR IN LISTS AOTRITON_TUNING_DATABASE_DIRS)
-  file(GLOB_RECURSE DB_FILES CONFIGURE_DEPENDS "${DB_DIR}/*.csv" "${DB_DIR}/*.dbpatch")
+  file(GLOB_RECURSE DB_FILES CONFIGURE_DEPENDS "${DB_DIR}/*.txtdb" "${DB_DIR}/*.dbpatch" "${DB_DIR}/*.csv")
   list(APPEND AOTRITON_TUNING_DATABASE_FILES ${DB_FILES})
 endforeach(DB_DIR)
 # CONFIGURE_DEPENDS above only notices added or removed files. Listing every file

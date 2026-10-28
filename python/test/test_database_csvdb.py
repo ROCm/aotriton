@@ -36,11 +36,11 @@ def make_db(root):
     gfx = db / 'amd' / 'gfx942'
     (gfx / 'mod1').mkdir(parents=True)
     dense = '#! tuning tensor\nfunctional,tuning keys->hsaco_options\n'
-    (gfx / 'k.csv').write_text(SHEBANG + KEYS + dense + '1,\n1,2\n2,\n2,\n1[2]\n,1\n')
-    (gfx / 'mod1' / 'k.csv').write_text(SHEBANG + KEYS + dense + '1,\n2,2\n2,2\n')
+    (gfx / 'k.txtdb').write_text(SHEBANG + KEYS + dense + '1,\n1,2\n2,\n2,\n1[2]\n,1\n')
+    (gfx / 'mod1' / 'k.txtdb').write_text(SHEBANG + KEYS + dense + '1,\n2,2\n2,2\n')
     (gfx / 'k.0001-p.dbpatch').write_text(SHEBANG + KEYS + '#! sparse tuning tensor\n'
                                           'functional,hsaco_options<-coordinates\n1,\n2<-1{1}\n')
-    (gfx / 'op.csv').write_text(SHEBANG + KEYS + '#! precedence\nbits_per_slot,4\nchars_per_slot,1\n'
+    (gfx / 'op.txtdb').write_text(SHEBANG + KEYS + '#! precedence\nbits_per_slot,4\nchars_per_slot,1\n'
                                 '#! tuning tensor\nfunctional,tuning keys->precedence\n1,\n12,1\n3,31\n')
     return root
 
@@ -65,8 +65,8 @@ def db(tmp_path):
 
 
 def test_tensor_path():
-    assert tensor_path('gfx942_mod0', 'k') == Path('amd/gfx942/k.csv')
-    assert tensor_path('gfx942_mod1', 'k') == Path('amd/gfx942/mod1/k.csv')
+    assert tensor_path('gfx942_mod0', 'k') == Path('amd/gfx942/k.txtdb')
+    assert tensor_path('gfx942_mod1', 'k') == Path('amd/gfx942/mod1/k.txtdb')
 
 
 def test_match_on_axis_columns_only(db):
@@ -104,7 +104,7 @@ def test_no_tensor_file_is_none(db):
 def test_mod_gpus(db):
     f = make_functional('k', ('fp16', 64, False), gpus=('gfx942_mod0', 'gfx942_mod1', 'gfx942_mod2'))
     view = db.lookup(f)
-    assert view.slabs[1].path == Path('amd/gfx942/mod1/k.csv')
+    assert view.slabs[1].path == Path('amd/gfx942/mod1/k.txtdb')
     assert view.slabs[1].cells.tolist() == [[2, 2], [2, 2]]
     assert view.slabs[2] is None
 
@@ -121,5 +121,5 @@ def test_precedence(db):
 def test_source(db):
     f = make_functional('k', ('fp16', 64, True), fallback={'PAD': False})
     lines = tuning_source(db.lookup(f), f).split('\n// ')
-    assert lines == [f'tuning: amd/gfx942/k.csv functional 1, fallback ({f.unified_signature})',
+    assert lines == [f'tuning: amd/gfx942/k.txtdb functional 1, fallback ({f.unified_signature})',
                      'tuning: possible patch amd/gfx942/k.0001-p.dbpatch']

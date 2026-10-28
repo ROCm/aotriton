@@ -43,7 +43,7 @@ def hash_iface(files):
     return m.hexdigest()
 
 '''
-Note: an <iface>.csv is hashed together with everything its effective tensor
+Note: an <iface>.txtdb is hashed together with everything its effective tensor
 depends on: a base reference ("#! base") with its base, recursively, and every
 patch applied. Retuning a base changes the signature of every arch that
 references it, and a patch changes the effective tensors without touching the
@@ -52,7 +52,7 @@ base.
 def hash_primary(database, vendor, arch):
     '''
     {<iface>: hash} for amd/<arch>/ and its mod<N>/ subdirectories, over
-    interpreter.source_files() of each <iface>.csv.
+    interpreter.source_files() of each <iface>.txtdb.
     '''
     from aotriton.database.interpreter import source_files
     result = {}
@@ -60,9 +60,9 @@ def hash_primary(database, vendor, arch):
     for d in [arch_dir] + sorted(arch_dir.glob('mod[0-9]*')):
         if not d.is_dir():
             continue
-        for csv in sorted(d.glob('*.csv')):
-            name = csv.stem if d == arch_dir else f'{d.name}/{csv.stem}'
-            result[name] = hash_iface(source_files(csv))
+        for tensor_file in sorted(d.glob('*.txtdb')):
+            name = tensor_file.stem if d == arch_dir else f'{d.name}/{tensor_file.stem}'
+            result[name] = hash_iface(source_files(tensor_file))
     return result
 
 def hash_metadata(database):
