@@ -10,8 +10,8 @@ with a shebang that runs this module, so executing one exports its tensors:
 
     ./amd/gfx942/attn_fwd.csv --output attn_fwd.npz
 
-The path is the one invoked, not the symlink target: a symlinked
-amd/gfx1150/attn_fwd.csv is interpreted as gfx1150, with gfx1150's patches. A
+A base reference such as amd/gfx1150/attn_fwd.csv ("#! base" naming
+../gfx1100/attn_fwd.csv) exports gfx1100's tensor with gfx1150's patches. A
 patch exports alone, as a sparse tensor.
 
 Library:
@@ -33,6 +33,7 @@ Only numpy is needed, and importing this module has no side effects.
 '''
 
 import argparse
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,6 +44,7 @@ TENSOR_KEYS = 'tuning keys'
 TENSOR_SECTION = 'tuning tensor'
 SPARSE_TENSOR_SECTION = 'sparse tuning tensor'
 PRECEDENCE_SECTION = 'precedence'
+BASE_SECTION = 'base'
 TENSOR_HEADER = 'functional,tuning keys->{}'
 SPARSE_TENSOR_HEADER = 'functional,{}<-coordinates'
 TENSOR_TARGETS = ('hsaco_options', 'precedence')
@@ -223,9 +225,7 @@ def read_sections(fn):
 
 def patch_files(fn):
     '''
-    The patches of <iface>.csv, in order of <NNNN>. They are looked up next to
-    fn as given: a symlink is not resolved, so a symlinked <iface>.csv is
-    patched by the patches next to the link.
+    The patches of <iface>.csv, in order of <NNNN>, looked up next to fn.
     '''
     fn = Path(fn)
     pattern = re.compile(re.escape(fn.stem) + r'\.(\d{4,})-(.+)' + re.escape(PATCH_SUFFIX))
@@ -456,9 +456,66 @@ def _narrow(tensor):
     return tensor.astype(dtype, copy=False)
 
 
+def _base_reference(fn, sections):
+    '''
+    The file named by the "#! base" section of <iface>.csv fn, or None. A base
+    reference holds nothing else: it shares the base's effective tensor, and
+    its own changes are patches next to it. The path is relative to fn's
+    directory and names a file with the same <iface>.csv name.
+    '''
+    if BASE_SECTION not in sections:
+        return None
+    lines = sections.pop(BASE_SECTION)
+    if len(lines) != 1:
+        _fail(fn, f'"#! {BASE_SECTION}" needs exactly one path')
+    if sections:
+        _fail(fn, f'a base reference holds nothing but "#! {BASE_SECTION}", found {sorted(sections, key=str)}')
+    if fn.suffix == PATCH_SUFFIX:
+        _fail(fn, f'a patch cannot be a base reference')
+    target = Path(os.path.normpath(fn.parent / ','.join(lines[0])))
+    if target.name != fn.name:
+        _fail(fn, f'base {target} must be the same interface, {fn.name}')
+    if not target.is_file():
+        _fail(fn, f'base {target} does not exist')
+    return target
+
+
+def base_chain(path):
+    '''
+    [path, its base, the base's base, ...], the last one holding the tensor
+    '''
+    chain = [Path(path)]
+    while True:
+        base = _base_reference(chain[-1], read_sections(chain[-1]))
+        if base is None:
+            return chain
+        if base in chain:
+            _fail(chain[0], f'base references form a cycle: {" -> ".join(map(str, chain + [base]))}')
+        chain.append(base)
+
+
+def applied_patches(path):
+    '''
+    The patches load(path) applies, in order: those of the base, recursively,
+    then those next to path.
+    '''
+    return [p for fn in reversed(base_chain(path)) for p in patch_files(fn)]
+
+
+def source_files(path):
+    '''
+    Every file the effective tensor of path depends on, in a fixed order: the
+    base chain from path to the tensor, then the applied patches.
+    '''
+    return base_chain(path) + applied_patches(path)
+
+
 def _load_one(path):
     fn = Path(path)
     sections = read_sections(fn)
+    if BASE_SECTION in sections:
+        _base_reference(fn, sections)
+        _fail(fn, 'is a base reference; load() follows it')
     layout, sparse, lines = _parse_layout(fn, sections)
     patch = fn.suffix == PATCH_SUFFIX
     if sparse and not patch:
@@ -473,16 +530,17 @@ def _load_one(path):
 
 def load(path, base=None):
     '''
-    path is an <iface>.csv, or a patch of it. Follows symlinks to read the
-    file, but takes the patches next to path itself.
+    path is an <iface>.csv, or a patch of it.
 
-    - <iface>.csv: a TuningTensor with its patches applied
+    - <iface>.csv: a TuningTensor with its patches applied. A base reference
+      ("#! base") loads its base's effective tensor, including the base's own
+      patches, then applies the patches next to path.
     - patch, base=None: the patch alone, as a SparsePatch
     - patch, with base: applied into base, which is returned
     '''
     path = Path(path)
-    loaded = _load_one(path)
     if path.suffix == PATCH_SUFFIX:
+        loaded = _load_one(path)
         if base is None:
             return loaded
         try:
@@ -491,7 +549,9 @@ def load(path, base=None):
             raise TensorFileError(f'{path}: {e}') from e
     if base is not None:
         raise ValueError(f'{path}: base is for patches; only a {PATCH_SUFFIX} applies into one')
-    for p in patch_files(path):
+    chain = base_chain(path)
+    loaded = _load_one(chain[-1])
+    for p in applied_patches(path):
         load(p, base=loaded)
     loaded.tensor = _narrow(loaded.tensor)
     return loaded

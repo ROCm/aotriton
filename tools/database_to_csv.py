@@ -90,9 +90,10 @@ describes the change. A patch uses the same tensor format, and its tuning keys
 and metadata sections must equal the base's. Patches apply in order of N.
 Each functional listed in a patch overrides the base's cells, where a blank
 patch cell keeps the base value; functionals absent from the base are added.
-The base is often a symlink to another arch, e.g.
-amd/gfx1150/attn_fwd.csv -> ../gfx1100/attn_fwd.csv, plus
-amd/gfx1150/attn_fwd.0001-gfx1150.dbpatch with what gfx1150 tuned on its own.
+The base is often another arch's tensor, named by a base reference, e.g.
+amd/gfx1150/attn_fwd.csv holding only "#! base" and ../gfx1100/attn_fwd.csv,
+plus amd/gfx1150/attn_fwd.0001-gfx1150.dbpatch with what gfx1150 tuned on its
+own.
 
 A patch may store its tensor sparse instead, listing each value once with the
 cells it goes to, as 0-based indices into the tuning key ladders:
@@ -146,6 +147,7 @@ BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 PATCH_SUFFIX = '.dbpatch'
 # Makes a tensor file executable: running it exports its tensors
 SHEBANG = '#!/usr/bin/env -S python -m aotriton.database.interpreter'
+BASE_SECTION = 'base'
 RLE_RUN = re.compile(r'(.*)\[(\d+)\]')
 # Not consumed by codegen, and 0.0 in every row
 UNSTORED_COLUMNS = ['op$tflops']
@@ -190,7 +192,7 @@ def parse():
     p.add_argument('--drop_columns', nargs='*', default=[],
                    help='Columns not to export')
     p.add_argument('--patch_on', nargs='*', default=[],
-                   help='<arch>=<base arch>: link the base arch\'s files and '
+                   help='<arch>=<base arch>: base references to the base arch\'s files, and '
                         'store <arch> as <iface>.0001-<arch>.dbpatch, '
                         'e.g. gfx1150=gfx1100')
     p.add_argument('--sparse_patch', nargs='*', default=[],
@@ -411,7 +413,7 @@ class Exporter(object):
             if fn.parent.name in self.patch_on:
                 # A patch shares the base's ladders, whichever cells it sets
                 base = self._args.output / self._args.vendor / self.patch_on[fn.parent.name] / fn.name
-                ladders = [[int(v) for v in ladder] for _, ladder in Tensor(base).keys]
+                ladders = [[int(v) for v in ladder] for _, ladder in load_tensor(base).keys]
                 sparse = fn.parent.name in self.sparse_patch
                 fn = patch_name(fn, 1, fn.parent.name)
             with open(fn, 'w', newline='') as f:
@@ -451,18 +453,22 @@ class Exporter(object):
         self.link_bases()
 
     def link_bases(self):
+        '''
+        For each --patch_on arch, a base reference to every <iface>.csv of
+        its base arch. An arch without sqlite data only gets the references.
+        '''
         vendor_dir = self._args.output / self._args.vendor
         for arch, base in self.patch_on.items():
-            # An arch without sqlite data only gets links, no patches
             (vendor_dir / arch).mkdir(parents=True, exist_ok=True)
             for target in sorted((vendor_dir / base).glob('*.csv')):
-                link = vendor_dir / arch / target.name
-                rel = Path('..') / base / target.name
-                if link.is_symlink() and Path(link.readlink()) == rel:
+                ref = vendor_dir / arch / target.name
+                rel = (Path('..') / base / target.name).as_posix()
+                content = f'{SHEBANG}\n#! {BASE_SECTION}\n{rel}\n'
+                if ref.is_file() and not ref.is_symlink() and ref.read_text() == content:
                     continue
-                link.unlink(missing_ok=True)
-                link.symlink_to(rel)
-                print(f'{link} -> {rel}')
+                ref.unlink(missing_ok=True)
+                ref.write_text(content)
+                print(f'{ref}: base {rel}')
 
 def encode_precedence(bords, chars=PRECEDENCE_CHARS):
     '''
@@ -722,10 +728,27 @@ class Tensor(object):
             self.cells[fid] = [[p if p != '' else b for p, b in zip(prow, brow)]
                                for prow, brow in zip(rows, self.cells[fid])]
 
+def base_reference(fn):
+    '''
+    The file named by the "#! base" section of <iface>.csv fn, or None
+    '''
+    sections = read_sections(fn)
+    if BASE_SECTION not in sections:
+        return None
+    (line,) = sections[BASE_SECTION]
+    return Path(os.path.normpath(Path(fn).parent / ','.join(line)))
+
 def load_tensor(fn):
     '''
-    Load <iface>.csv (following symlinks) and apply its patches.
+    Load <iface>.csv and apply its patches. A base reference loads its base,
+    with the base's patches, then applies its own.
     '''
+    base = base_reference(fn)
+    if base is not None:
+        tensor = load_tensor(base)
+        for patch in patch_files(fn):
+            tensor.apply(Tensor(patch))
+        return tensor
     tensor = Tensor(fn)
     assert not tensor.sparse, f'{fn}: only patches may be sparse'
     for patch in patch_files(fn):

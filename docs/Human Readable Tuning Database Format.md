@@ -51,9 +51,10 @@ contribution in flight. Each of the following mechanisms keeps updates local:
 - **Per-interface tables.** Each kernel and operator has its own
   `functional.csv`, `psels.csv`, `hsaco_options.csv` and `op_backend.csv`,
   so retuning one kernel never shifts the ordinals of another.
-- **Patches and symlinks.** A partially tuned architecture symlinks its base
-  architecture and stores only its own entries in `.dbpatch` files. The base
-  is not copied, and retuning the base does not touch the patches.
+- **Patches and base references.** A partially tuned architecture references
+  its base architecture's tensors and stores only its own entries in
+  `.dbpatch` files. The base is not copied, and retuning the base does not
+  touch the patches.
 - **Line-oriented tensors.** Each tensor row is one line, and run-length
   encoding never crosses lines, so changing one cell changes one line.
 
@@ -75,8 +76,8 @@ modules/<family>/database/
       mod<N>/
         <iface>.csv                   tuning tensors for <arch>, mod<N> (*)
 
-(*) may be a relative symlink to another <iface>.csv, to reuse its tensors
-    as the base, e.g. amd/gfx1150/attn_fwd.csv -> ../gfx1100/attn_fwd.csv
+(*) may be a base reference to another <iface>.csv, to reuse its tensors,
+    e.g. amd/gfx1150/attn_fwd.csv naming ../gfx1100/attn_fwd.csv
 ```
 
 `<iface>` is the interface name of a kernel (`attn_fwd`, `bwd_kernel_dq`, ...)
@@ -88,10 +89,10 @@ those of `<arch>_mod<N>`.
 `.metadata/` holds the tables shared by all architectures. Everything under
 `amd/` is per architecture.
 
-An `<iface>.csv` marked (*) may be a relative symlink to the same interface's
+An `<iface>.csv` marked (*) may be a base reference to the same interface's
 file of another architecture or mod. The architecture then reuses those
 tensors as its base, and stores only its own entries in `.dbpatch` files, see
-[Sharing a Base Through Symlinks](#sharing-a-base-through-symlinks).
+[Sharing a Base](#sharing-a-base).
 
 ## Common Conventions
 
@@ -153,9 +154,9 @@ Running the file exports its tensors, e.g.
 `./amd/gfx942/attn_fwd.csv --output x.npz`; the exporter is
 `aotriton.database.interpreter`.
 
-- The kernel appends the path the file was invoked as, so a symlinked
-  `amd/gfx1150/attn_fwd.csv` is interpreted as gfx1150, with the
-  `.dbpatch` files of gfx1150 applied, not as the gfx1100 file it links to.
+- A base reference exports its base's tensor with its own patches applied,
+  e.g. `amd/gfx1150/attn_fwd.csv` exports gfx1100's tensor with the
+  `.dbpatch` files of gfx1150.
 - Running a `.dbpatch` exports the patch alone, not the patched base.
 - `python` is the one of the venv `aotriton` is installed in, which always
   provides it.
@@ -509,17 +510,34 @@ A dense patch is shorter when a patch sets most cells of its functionals,
 and a sparse one when it sets a few. The gfx1151 patches are sparse, and
 the gfx1150 patches dense, to show both forms on the same data.
 
-### Sharing a Base Through Symlinks
+### Sharing a Base
 
 An architecture that is tuned only partially uses another architecture's
-tensors as its base, through relative symlinks, and stores its own entries as
-patches. gfx1150 and gfx1151 only have their own tuning for hdim=64 with
+tensors as its base, and stores its own entries as patches. Its `<iface>.csv`
+is then a **base reference**, holding nothing but a `#! base` section with
+one path, relative to the file's own directory, to the same interface's file:
+
+```
+# amd/gfx1150/attn_fwd.csv
+#!/usr/bin/env -S python -m aotriton.database.interpreter
+#! base
+../gfx1100/attn_fwd.csv
+```
+
+- Loading a base reference loads the base's effective tensor, including the
+  base's own patches and, if the base is a reference itself, its base. Then
+  the patches next to the reference apply on top.
+- The base must be an `<iface>.csv` of the same interface. A cycle of
+  references is an error, and so is a reference that holds anything else,
+  e.g. a tensor.
+
+gfx1150 and gfx1151 only have their own tuning for hdim=64 with
 dropout=0.0, and use gfx1100 for everything else:
 
 ```
-amd/gfx1150/attn_fwd.csv                  -> ../gfx1100/attn_fwd.csv
+amd/gfx1150/attn_fwd.csv                     base ../gfx1100/attn_fwd.csv
 amd/gfx1150/attn_fwd.0001-gfx1150.dbpatch    9 functionals tuned on gfx1150
-amd/gfx1150/op_attn_bwd.csv               -> ../gfx1100/op_attn_bwd.csv
+amd/gfx1150/op_attn_bwd.csv                  base ../gfx1100/op_attn_bwd.csv
 ...
 ```
 
@@ -527,8 +545,8 @@ The effective gfx1150 database is the gfx1100 one with gfx1150's own entries
 on top. Retuning gfx1100 updates gfx1150 automatically, except for the cells
 gfx1150 overrides.
 
-An architecture that has no tuning of its own is only symlinks, without any
-patch. These replace the former reuse map of the build:
+An architecture that has no tuning of its own is only base references,
+without any patch. These replace the former reuse map of the build:
 
 | Architecture                                | Base    |
 |---------------------------------------------|---------|
@@ -536,13 +554,19 @@ patch. These replace the former reuse map of the build:
 | gfx1200                                     | gfx1201 |
 | gfx1250                                     | gfx942  |
 
-Tuning such an architecture later means adding a `.dbpatch` next to its links.
+Tuning such an architecture later means adding a `.dbpatch` next to its
+references.
+
+Base references are part of the format rather than filesystem symlinks, so
+the database works the same on every platform and in every tool: Git on
+Windows checks symlinks out as plain text files unless they are explicitly
+enabled, and archives or artifact stores may drop them.
 
 ### Mods
 
 A GPU mod with its own entries (e.g. `gfx942_mod1`) is stored under
-`amd/<arch>/mod<N>/`. It can use the same mechanism: symlink
-`amd/<arch>/mod<N>/<iface>.csv` to `../<iface>.csv` and put the differences in
+`amd/<arch>/mod<N>/`. It can use the same mechanism: a base reference
+`amd/<arch>/mod<N>/<iface>.csv` naming `../<iface>.csv`, and the differences in
 a patch such as `amd/<arch>/mod<N>/<iface>.0001-<arch>_mod<N>.dbpatch`.
 
 ### External Tuning Database
@@ -571,9 +595,9 @@ Which variant of `attn_fwd` does gfx1100 use for functional 13 at
 5. `.metadata/copts.csv`, ordinal 11: `waves_per_eu=1`, `num_warps=4`,
    `num_stages=2`.
 
-For gfx1150, `amd/gfx1150/attn_fwd.csv` resolves to the same gfx1100 file, but
-`attn_fwd.0001-gfx1150.dbpatch` lists functional 13 too, and its first cell
-(`104`) overrides the gfx1100 value.
+For gfx1150, `amd/gfx1150/attn_fwd.csv` is a base reference to the same
+gfx1100 file, but `attn_fwd.0001-gfx1150.dbpatch` lists functional 13 too,
+and its first cell (`104`) overrides the gfx1100 value.
 
 ## Tooling
 
@@ -597,8 +621,9 @@ tools/database_to_csv.py \
 - Existing `.metadata/` tables are loaded first, so existing ordinals are kept
   and new rows are appended.
 - `--patch_on <arch>=<base>` writes `<arch>`'s entries as
-  `<iface>.0001-<arch>.dbpatch` and symlinks the base architecture's tensor
-  files. An `<arch>` without sqlite input gets the symlinks only.
+  `<iface>.0001-<arch>.dbpatch`, and writes base references to the base
+  architecture's tensor files. An `<arch>` without sqlite input gets the base
+  references only.
 - `--sparse_patch <arch>` writes those patches as sparse tuning tensors.
 - `--verify` reads the result back, with patches applied, and checks that it
   reproduces every row of the sqlite input.

@@ -285,14 +285,61 @@ def test_base_rejected_for_csv(tmp_path):
         it.load(tmp_path / 'k.csv', base=t)
 
 
-def test_symlink_uses_invoked_patches(tmp_path):
+def base_ref(rel):
+    return SHEBANG + f'#! base\n{rel}\n'
+
+
+def test_base_reference(tmp_path):
+    # b references a; a's own patch is inherited, b's patch applies on top
     (tmp_path / 'a').mkdir()
     (tmp_path / 'b').mkdir()
     write(tmp_path / 'a', 'k.csv', dense2())
+    write(tmp_path / 'a', 'k.0001-a.dbpatch', patch_text('1,\n,7,\n,,\n'))
+    write(tmp_path / 'b', 'k.csv', base_ref('../a/k.csv'))
     write(tmp_path / 'b', 'k.0001-b.dbpatch', patch_text('1,\n99,,\n,,\n'))
-    (tmp_path / 'b' / 'k.csv').symlink_to('../a/k.csv')
-    assert it.load(tmp_path / 'a' / 'k.csv').tensor[0, 0, 0] == 1
-    assert it.load(tmp_path / 'b' / 'k.csv').tensor[0, 0, 0] == 99
+    a = it.load(tmp_path / 'a' / 'k.csv').tensor
+    b = it.load(tmp_path / 'b' / 'k.csv').tensor
+    assert a[0, 0, 0] == 1 and a[0, 0, 1] == 7
+    assert b[0, 0, 0] == 99 and b[0, 0, 1] == 7
+    assert [p.name for p in it.applied_patches(tmp_path / 'b' / 'k.csv')] == ['k.0001-a.dbpatch', 'k.0001-b.dbpatch']
+    assert [p.relative_to(tmp_path).as_posix() for p in it.source_files(tmp_path / 'b' / 'k.csv')] == \
+        ['b/k.csv', 'a/k.csv', 'a/k.0001-a.dbpatch', 'b/k.0001-b.dbpatch']
+
+
+def test_base_reference_chain_and_mod(tmp_path):
+    (tmp_path / 'a' / 'mod1').mkdir(parents=True)
+    (tmp_path / 'c').mkdir()
+    write(tmp_path / 'a', 'k.csv', dense2())
+    write(tmp_path / 'a' / 'mod1', 'k.csv', base_ref('../k.csv'))
+    write(tmp_path / 'c', 'k.csv', base_ref('../a/mod1/k.csv'))
+    assert it.load(tmp_path / 'c' / 'k.csv').tensor.tolist() == it.load(tmp_path / 'a' / 'k.csv').tensor.tolist()
+
+
+@pytest.mark.parametrize('name,text,message', [
+    ('cycle', None, 'cycle'),
+    ('missing', base_ref('../x/k.csv'), 'does not exist'),
+    ('other iface', base_ref('../a/other.csv'), 'same interface'),
+    ('two paths', SHEBANG + '#! base\n../a/k.csv\n../a/k.csv\n', 'exactly one path'),
+    ('with a tensor', SHEBANG + '#! base\n../a/k.csv\n' + dense2(), 'nothing but'),
+])
+def test_base_reference_rejected(tmp_path, name, text, message):
+    (tmp_path / 'a').mkdir()
+    (tmp_path / 'b').mkdir()
+    write(tmp_path / 'a', 'k.csv', dense2())
+    write(tmp_path / 'a', 'other.csv', dense2())
+    if text is None:    # a -> b -> a
+        write(tmp_path / 'a', 'k.csv', base_ref('../b/k.csv'))
+        text = base_ref('../a/k.csv')
+    write(tmp_path / 'b', 'k.csv', text)
+    with pytest.raises(it.TensorFileError, match=message):
+        it.load(tmp_path / 'b' / 'k.csv')
+
+
+def test_patch_cannot_be_base_reference(tmp_path):
+    write(tmp_path, 'k.csv', dense2())
+    write(tmp_path, 'k.0001-x.dbpatch', base_ref('k.csv'))
+    with pytest.raises(it.TensorFileError):
+        it.load(tmp_path / 'k.csv')
 
 
 def test_npz_and_cli(tmp_path, monkeypatch, capsys):

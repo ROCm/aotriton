@@ -22,10 +22,10 @@ AOTRITON_SUPPORTED_GPUS = (
     'gfx1250_mod0',
 )
 
-# An arch without tuning of its own shares another arch's tuning through
-# symlinks in the tuning database, e.g. amd/gfx1101/attn_fwd.csv ->
-# ../gfx1100/attn_fwd.csv, plus .dbpatch files for what it tuned itself. See
-# docs/Human Readable Tuning Database Format.md.
+# An arch without tuning of its own shares another arch's tuning through base
+# references in the tuning database, e.g. amd/gfx1101/attn_fwd.csv holds
+# "#! base" naming ../gfx1100/attn_fwd.csv, plus .dbpatch files for what it
+# tuned itself. See docs/Human Readable Tuning Database Format.md.
 
 AOTRITON_ARCH_TO_PACK = {
     'gfx90a'    : 'gfx90a',

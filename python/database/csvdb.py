@@ -210,7 +210,7 @@ class Database(object):
 
     def _patches_with(self, rel, ordinal):
         patches = []
-        for p in interpreter.patch_files(self._path / rel):
+        for p in interpreter.applied_patches(self._path / rel):
             if p not in self._patch_ordinals:
                 self._patch_ordinals[p] = set(interpreter.load(p).sparse[:, 0].tolist())
             if ordinal in self._patch_ordinals[p]:

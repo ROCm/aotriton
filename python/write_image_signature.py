@@ -42,29 +42,27 @@ def hash_iface(files):
         m.update(f'{fn.name}\0{hashfile(fn)}\n'.encode())
     return m.hexdigest()
 
-def patch_order(fn):
-    # <iface>.<NNNN>-<name>.dbpatch, applied in numeric order
-    return int(fn.name.split('.')[1].split('-')[0]), fn.name
-
 '''
-Note: the database is hashed by content, so a symlink (an arch sharing a base)
-is read through. Retuning the base changes the signature of every arch that
-links it, and a patch changes the effective tensors without touching the base.
+Note: an <iface>.csv is hashed together with everything its effective tensor
+depends on: a base reference ("#! base") with its base, recursively, and every
+patch applied. Retuning a base changes the signature of every arch that
+references it, and a patch changes the effective tensors without touching the
+base.
 '''
 def hash_primary(database, vendor, arch):
     '''
-    {<iface>: hash} for amd/<arch>/ and its mod<N>/ subdirectories: the
-    <iface>.csv tensor file followed by its patches in application order.
+    {<iface>: hash} for amd/<arch>/ and its mod<N>/ subdirectories, over
+    interpreter.source_files() of each <iface>.csv.
     '''
+    from aotriton.database.interpreter import source_files
     result = {}
     arch_dir = database / vendor / arch
     for d in [arch_dir] + sorted(arch_dir.glob('mod[0-9]*')):
         if not d.is_dir():
             continue
         for csv in sorted(d.glob('*.csv')):
-            patches = sorted(d.glob(f'{csv.stem}.*.dbpatch'), key=patch_order)
             name = csv.stem if d == arch_dir else f'{d.name}/{csv.stem}'
-            result[name] = hash_iface([csv] + patches)
+            result[name] = hash_iface(source_files(csv))
     return result
 
 def hash_metadata(database):

@@ -189,14 +189,14 @@ class Operator(Interface):
                     continue
                 chosen = best
                 if True:  # FIXME: Flyc duct tape
-                    # An arch can share another arch's tensors through a symlink
-                    # (e.g. gfx1200 -> gfx1201), so gfx1200 inherits gfx1201's
-                    # picks -- flyc among them, which it has no images for. That
-                    # lands as a valid-looking index the runtime will not rescue:
-                    # op.cc only substitutes fallback_backend for a NEGATIVE
-                    # entry, and only retries on hipErrorPeerAccessUnsupported,
-                    # while flyc answers hipErrorNotSupported. Swap flyc for the
-                    # runner-up here.
+                    # An arch can share another arch's tensors through a base
+                    # reference (gfx1200's files name gfx1201's), so gfx1200
+                    # inherits gfx1201's picks -- flyc among them, which it has
+                    # no images for. That lands as a valid-looking index the
+                    # runtime will not rescue: op.cc only substitutes
+                    # fallback_backend for a NEGATIVE entry, and only retries on
+                    # hipErrorPeerAccessUnsupported, while flyc answers
+                    # hipErrorNotSupported. Swap flyc for the runner-up here.
                     names = self.backend_names
                     if f.arch not in FLYC_ARCHS and 'flyc' in names:
                         flyc_ind = names.index('flyc')

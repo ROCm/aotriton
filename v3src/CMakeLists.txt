@@ -58,8 +58,8 @@ if(NOT AOTRITON_COMMON_LIBRARY)
 # A tuning database is part of its module, at <module>/database (e.g.
 # modules/flash/database), and is read in place by the generator: the CSV tree
 # (amd/<arch>/<iface>.csv, .dbpatch files and .metadata/), nothing is extracted
-# or composed. GLOB_RECURSE descends into the hidden .metadata/ directory and
-# lists symlinked files (the arches sharing a base) like regular ones.
+# or composed. GLOB_RECURSE descends into the hidden .metadata/ directory; an
+# arch sharing another's base is a base-reference .csv, listed like the rest.
 file(GLOB AOTRITON_TUNING_DATABASE_DIRS "${PROJECT_SOURCE_DIR}/modules/*/database")
 if(AOTRITON_EXTERNAL_TUNING_DATABASE)
   file(GLOB AOTRITON_EXTERNAL_TUNING_DATABASE_DIRS "${AOTRITON_EXTERNAL_TUNING_DATABASE}/*/database")
