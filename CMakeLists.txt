@@ -177,7 +177,7 @@ set(AOTRITON_USE_LOCAL_TRITON_WHEEL "" CACHE STRING "Substitute install from thi
 set(AOTRITON_USE_LOCAL_FLYDSL_WHEEL "" CACHE STRING "Substitute the install from third_party/flydsl-compiler.txt with an install from a local flydsl wheel file. Must be an absolute path to an existing .whl.")
 set(AOTRITON_GPU_BUILD_TIMEOUT "8.0" CACHE STRING "GPU kernel compiler times out after X minutes. 0 for indefinite. Highly recommended if AOTRITON_BUILD_FOR_TUNING=On.")
 option(AOTRITON_TERMINATE_WHEN_GPU_BUILD_TIMEOUT "compile.py will return error when GPU built timeout. Defensive option for CI" OFF)
-set(AOTRITON_TARGET_ARCH "gfx90a;gfx942;gfx950;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1201;gfx1200;gfx1250" CACHE STRING "Target GPU Architecture. Select all GPUs within the given list")
+set(AOTRITON_TARGET_ARCH "gfx90a;gfx942;gfx950;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1170;gfx1171;gfx1201;gfx1200;gfx1250" CACHE STRING "Target GPU Architecture. Select all GPUs within the given list")
 set(TARGET_GPUS "OBSOLETE" CACHE STRING "OBSOLETE. To select only one GPU, use AOTRITON_TARGET_ARCH or AOTRITON_OVERRIDE_TARGET_GPUS.")
 set(AOTRITON_OVERRIDE_TARGET_GPUS "" CACHE STRING "Override AOTRITON_TARGET_ARCH, and only build for GPUs within this list.")
 set(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE "" CACHE STRING "Specify how to use alternative Triton wheels for different architectures in a YAML config file (resolved format -- see docs/AltWheelExample.yaml).")
@@ -413,6 +413,23 @@ else()
   if(AOTRITON_USE_LOCAL_TRITON_WHEEL)
     add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
       COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install ${AOTRITON_USE_LOCAL_TRITON_WHEEL}
+    )
+  elseif(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+    # The main venv's wheel comes from the altwheel config's own
+    # .venvs.default entry (mutually exclusive with AOTRITON_USE_LOCAL_TRITON_WHEEL,
+    # enforced above) -- install it here instead of falling back to
+    # third_party/triton/, which callers using altwheel are not required to
+    # have checked out at all.
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c
+      "import yaml,sys; f = open(sys.argv[1]); d = yaml.load(f, Loader=yaml.Loader); print(d['venvs']['default'])"
+      "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}"
+      OUTPUT_VARIABLE AOTRITON_ALT_DEFAULT_WHEEL
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      COMMAND_ERROR_IS_FATAL ANY
+    )
+    add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install ${AOTRITON_ALT_DEFAULT_WHEEL}
     )
   else()
     # Check if pip is available at configure time

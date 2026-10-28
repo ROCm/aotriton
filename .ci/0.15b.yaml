@@ -1,0 +1,8 @@
+venvs:
+  gfx117x:
+    hash: f1d8a285813c1de43aeb122adc6ae89df246e768
+    origin: https://github.com/triton-lang/triton
+rules:
+  - rmatches:
+      arch: '^gfx117[01]$'
+    venv: gfx117x
