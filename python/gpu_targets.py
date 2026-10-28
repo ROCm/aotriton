@@ -69,6 +69,16 @@ AOTRITON_ARCH_WARPSIZE = {
 def gpu2arch(gpu : str) -> str:
     return gpu.split('_mod')[0]
 
+def gpu2archmod(gpu : str) -> tuple[str, int]:
+    '''
+    gfx942_mod1 -> ('gfx942', 1). The separator is "_mod", not a bare
+    underscore, so an arch name may contain other separators.
+    '''
+    arch, sep, mod = gpu.partition('_mod')
+    if not sep or not mod.isdigit():
+        raise ValueError(f'GPU {gpu!r} is not <arch>_mod<N>')
+    return arch, int(mod)
+
 def cluster_gpus(gpus : list[str]) -> dict[str : list[str]]:
     ret = defaultdict(list)
     for gpu in gpus:

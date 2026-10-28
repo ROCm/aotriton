@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
 from . import interpreter
+from ..gpu_targets import gpu2archmod
 
 VENDOR = 'amd'
 METADATA = '.metadata'
@@ -50,10 +51,10 @@ def tensor_path(gpu, iface):
     '''
     gfx942_mod0 -> amd/gfx942/<iface>.txtdb, gfx942_mod1 -> amd/gfx942/mod1/<iface>.txtdb
     '''
-    arch, mod = gpu.split('_')
+    arch, mod = gpu2archmod(gpu)
     d = Path(VENDOR) / arch
-    if mod != 'mod0':
-        d = d / mod
+    if mod != 0:
+        d = d / f'mod{mod}'
     return d / f'{iface}.txtdb'
 
 

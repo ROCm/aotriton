@@ -64,6 +64,15 @@ def db(tmp_path):
     return Database.for_module(make_db(tmp_path) / 'fam')
 
 
+def test_gpu2archmod():
+    from aotriton.gpu_targets import gpu2archmod
+    assert gpu2archmod('gfx942_mod0') == ('gfx942', 0)
+    assert gpu2archmod('gfx942_mod12') == ('gfx942', 12)
+    for bad in ('gfx942', 'gfx942_modx', 'gfx942_1'):
+        with pytest.raises(ValueError):
+            gpu2archmod(bad)
+
+
 def test_tensor_path():
     assert tensor_path('gfx942_mod0', 'k') == Path('amd/gfx942/k.txtdb')
     assert tensor_path('gfx942_mod1', 'k') == Path('amd/gfx942/mod1/k.txtdb')

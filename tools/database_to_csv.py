@@ -202,6 +202,15 @@ def parse():
                    help='Load the CSVs back and compare with the sqlite input')
     return p.parse_args()
 
+def gpu2archmod(gpu):
+    '''
+    gfx942_mod1 -> ('gfx942', 1); same as aotriton.gpu_targets.gpu2archmod,
+    which this standalone tool does not import
+    '''
+    arch, sep, mod = gpu.partition('_mod')
+    assert sep and mod.isdigit(), f'GPU {gpu!r} is not <arch>_mod<N>'
+    return arch, int(mod)
+
 def is_lut_key(col):
     return col.removeprefix(INPUTS).lower() in LUT_KEYS
 
@@ -349,10 +358,10 @@ class Exporter(object):
         assert self.sparse_patch <= set(self.patch_on), '--sparse_patch arches must be in --patch_on'
 
     def kernel_csv(self, gpu, iface):
-        arch, mod = gpu.split('_')
+        arch, mod = gpu2archmod(gpu)
         d = self._args.output / self._args.vendor / arch
-        if mod != 'mod0':
-            d = d / mod
+        if mod != 0:
+            d = d / f'mod{mod}'
         d.mkdir(parents=True, exist_ok=True)
         return d / f'{iface}.txtdb'
 
@@ -838,10 +847,10 @@ def verify(args):
                 expected[(iface, gpu)] = dict.fromkeys(merged.values())
     ok = True
     for (iface, gpu), rows in sorted(expected.items()):
-        arch, mod = gpu.split('_')
+        arch, mod = gpu2archmod(gpu)
         d = root / args.vendor / arch
-        if mod != 'mod0':
-            d = d / mod
+        if mod != 0:
+            d = d / f'mod{mod}'
         fn = d / f'{iface}.txtdb'
         cols = columns[iface]
         actual = set()
