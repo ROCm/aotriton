@@ -50,7 +50,6 @@ between the legacy and ATI IRs; see the `_normalize` docstring in `golden.py`).
 |---|---|---|
 | `--arch ARCH` | `gfx942_mod0` | target GPU passed to `--target_gpus` |
 | `--keep_dir DIR` | *(temp dir)* | generate into `DIR` and keep the full tree on disk for file-level diffing instead of a throwaway temp dir |
-| `AOTRITON_GOLDEN_DB` | `<repo>/modules` | root of the tuning databases, `<root>/<family>/database` (the CSV tree). Passed to the generator as `--tuning_database_root`. |
 
 ## Notes for automation / AI agents
 

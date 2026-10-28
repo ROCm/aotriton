@@ -61,7 +61,7 @@ def make_functional(name, choices, fallback=None, gpus=('gfx942_mod0',)):
 @pytest.fixture
 def db(tmp_path):
     Database._cache.clear()
-    return Database.for_family(make_db(tmp_path), 'fam')
+    return Database.for_module(make_db(tmp_path) / 'fam')
 
 
 def test_tensor_path():

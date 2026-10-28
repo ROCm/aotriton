@@ -383,6 +383,12 @@ class Linker:
         infer_shared_iface(op_list)
         _check_flycs_bound(compiled, flycs)
 
+        # Each module holds its own resources, e.g. its tuning database at
+        # <module>/database; record where the family's module is.
+        module_dir = self.parser.module_dir / family
+        for iface in [*built_kernels.values(), *op_list, *affines.values(), *flycs.values()]:
+            iface.MODULE_DIR = module_dir
+
         return FamilyArtifacts(
             family,
             kernels=list(built_kernels.values()),

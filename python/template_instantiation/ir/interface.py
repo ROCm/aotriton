@@ -28,6 +28,8 @@ from .functional import Functional, _resolve
 class Interface(ABC):
     # --- identity / codegen wiring (subclasses set these) -------------------
     FAMILY = None              # e.g. 'flash'
+    MODULE_DIR = None          # the family's module, e.g. <root_dir>/modules/flash;
+                               # set by the linker as it enumerates modules
     NAME = None                # e.g. 'attn_fwd' (often per-instance, set in __init__)
     CODEGEN_MODULE = None      # 'triton' | 'op' | 'affine'  (selective-path segment)
     TUNE_NAME = None           # 'autotune' | 'optune' | None

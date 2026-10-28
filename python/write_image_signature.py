@@ -14,16 +14,12 @@ def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('--build_dir', type=Path, required=True)
     p.add_argument('--root_dir', type=Path, default='.', help="Root of repository directory")
-    p.add_argument('--tuning_database_root', type=Path, default=None,
-                   help='Root of the tuning databases, <root>/<family>/database. Default: <root_dir>/modules')
     p.add_argument('--git_sha1', required=True)
     p.add_argument('--git_treesha1', required=True)
     p.add_argument('--target_arch', nargs='+')
     p.add_argument('--vendors', nargs='*', default=['amd'])
     p.add_argument('--output_file', required=True)
     args = p.parse_args()
-    if args.tuning_database_root is None:
-        args.tuning_database_root = args.root_dir / 'modules'
     return args
 
 def hashfile(fn):
@@ -78,8 +74,12 @@ def main():
     sig = {}
     sig['AOTRITON_GIT_SHA1'] = args.git_sha1
     sig['AOTRITON_GIT_TREESHA1'] = args.git_treesha1
-    # <root>/<family>/database, same as aotriton.generate
-    databases = {d.parent.name: d for d in sorted(args.tuning_database_root.glob('*/database'))}
+    # Each module holds its tuning database at <module>/database; enumerate the
+    # modules as aotriton.generate does.
+    from aotriton.codegen.parser import Parser
+    parser = Parser(args.root_dir / 'modules')
+    databases = {family: parser.module_dir / family / 'database' for family in parser.discover_families()
+                 if (parser.module_dir / family / 'database').is_dir()}
     db = {}
     def gen_primary_db_hash():
         for vendor, arch in itertools.product(args.vendors, args.target_arch):

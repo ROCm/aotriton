@@ -24,7 +24,6 @@ neutral, not a frozen reference. See README.md for the full workflow.
 import argparse
 import hashlib
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -33,11 +32,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GOLDEN_DIR = Path(__file__).resolve().parent / 'snapshot'
-# Root of the tuning databases, <root>/<family>/database: the checked-in CSV tree
-# by default. Override with AOTRITON_GOLDEN_DB to snapshot another tree of the
-# same shape.
-DB_ROOT = Path(os.getenv('AOTRITON_GOLDEN_DB', REPO_ROOT / 'modules'))
-
 # Default arch + the selective targets snapshotted. Kept small but covering both
 # The golden covers the FULL flash family (every triton/op/affine target), not a
 # subset: the byte-for-byte gate must include the metro launcher and the bare
@@ -75,7 +69,6 @@ def _run_generator(build_dir: Path, arch: str):
         [_venv_python(), '-m', 'aotriton.generate',
          '--build_dir', str(build_dir),
          '--noimage_mode',
-         '--tuning_database_root', str(DB_ROOT),
          '--target_gpus', arch],
         cwd=REPO_ROOT, check=True,
     )

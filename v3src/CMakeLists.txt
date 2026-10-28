@@ -45,20 +45,13 @@ if(AOTRITON_COMMON_LIBRARY)
   message(STATUS "Reusing ${AOTRITON_COMMON_LIBRARY}; skipping codegen")
 endif()
 
-# The tuning database is read in place: <root>/<family>/database holds the CSV
-# tree (amd/<arch>/<iface>.csv, .dbpatch files and .metadata/), nothing is
-# extracted or composed. AOTRITON_TUNING_DATABASE_ROOT overrides the in-tree
-# modules/, with the same per-family shape.
-if(AOTRITON_TUNING_DATABASE_ROOT)
-  set(AOTRITON_TUNING_DATABASE_DIR "${AOTRITON_TUNING_DATABASE_ROOT}")
-  message(STATUS "Using external tuning database root: ${AOTRITON_TUNING_DATABASE_ROOT}")
-else()
-  set(AOTRITON_TUNING_DATABASE_DIR "${PROJECT_SOURCE_DIR}/modules")
-endif()
 if(NOT AOTRITON_COMMON_LIBRARY)
-# GLOB_RECURSE descends into the hidden .metadata/ directory and lists symlinked
-# files (the arches sharing a base) like regular ones.
-file(GLOB AOTRITON_TUNING_DATABASE_DIRS "${AOTRITON_TUNING_DATABASE_DIR}/*/database")
+# A tuning database is part of its module, at <module>/database (e.g.
+# modules/flash/database), and is read in place by the generator: the CSV tree
+# (amd/<arch>/<iface>.csv, .dbpatch files and .metadata/), nothing is extracted
+# or composed. GLOB_RECURSE descends into the hidden .metadata/ directory and
+# lists symlinked files (the arches sharing a base) like regular ones.
+file(GLOB AOTRITON_TUNING_DATABASE_DIRS "${PROJECT_SOURCE_DIR}/modules/*/database")
 set(AOTRITON_TUNING_DATABASE_FILES "")
 foreach(DB_DIR IN LISTS AOTRITON_TUNING_DATABASE_DIRS)
   file(GLOB_RECURSE DB_FILES CONFIGURE_DEPENDS "${DB_DIR}/*.csv" "${DB_DIR}/*.dbpatch")
@@ -179,7 +172,6 @@ AOTRITON_DEBUG_SKIP_TRITON_KERNELS=${AOTRITON_DEBUG_SKIP_TRITON_KERNELS_ENV}
 --target_gpus ${EFFECTIVE_TARGET_GPUS}
 --build_dir "${AOTRITON_V2_BUILD_DIR}"
 --root_dir "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
---tuning_database_root "${AOTRITON_TUNING_DATABASE_DIR}"
 ${GENERATE_OPTION}
 COMMAND_ECHO STDOUT
 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
@@ -196,7 +188,6 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     -m aotriton.write_image_signature
     --build_dir "${AOTRITON_V2_BUILD_DIR}"
     --root_dir "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
-    --tuning_database_root "${AOTRITON_TUNING_DATABASE_DIR}"
     --git_sha1 ${AOTRITON_GIT_SHA1}
     --git_treesha1 ${AOTRITON_GIT_TREESHA1}
     --target_arch ${AOTRITON_TARGET_ARCH}
@@ -447,7 +438,6 @@ if(AOTRITON_BUILD_FOR_TUNING)
     --target_gpus ${EFFECTIVE_TARGET_GPUS}
     --build_dir "${AOTRITON_V2_BUILD_DIR}"
     --root_dir "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
-    --tuning_database_root "${AOTRITON_TUNING_DATABASE_DIR}"
     ${GENERATE_OPTION}
     --build_for_tuning_second_pass
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}")

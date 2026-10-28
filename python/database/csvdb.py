@@ -4,7 +4,8 @@
 '''
 The code generator's reader of the CSV tuning database.
 
-A family's database lives at <tuning_database_root>/<family>/database; its
+A tuning database is part of its module, at <module>/database, where the
+module directory's name is the family name (e.g. modules/flash/database). Its
 format is specified in docs/Human Readable Tuning Database Format.md. Tensor
 files are parsed by the interpreter (interpreter.py), so the format is parsed
 in one place; this module adds the .metadata/ tables and the lookup of one
@@ -141,14 +142,14 @@ def tuning_source(view, functional):
 
 class Database(object):
     '''
-    One family's CSV tuning database, at <root>/<family>/database. Tables and
-    tensor files are loaded on first use and cached for the process.
+    One module's CSV tuning database, at <module>/database. Tables and tensor
+    files are loaded on first use and cached for the process.
     '''
     _cache = {}
 
     @classmethod
-    def for_family(cls, root, family):
-        path = Path(root).resolve() / family / 'database'
+    def for_module(cls, module_dir):
+        path = Path(module_dir).resolve() / 'database'
         key = path.as_posix()
         if key not in cls._cache:
             cls._cache[key] = cls(path)
