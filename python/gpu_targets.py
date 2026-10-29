@@ -22,6 +22,7 @@ AOTRITON_SUPPORTED_GPUS = (
     'gfx1201_mod0',
     'gfx1200_mod0',
     'gfx1250_mod0',
+    'gfx1250-strict_mod0',
 )
 
 # An arch without tuning of its own shares another arch's tuning through base
@@ -46,6 +47,7 @@ AOTRITON_ARCH_TO_PACK = {
     'gfx1201'   : 'gfx120x',
     'gfx1200'   : 'gfx120x',
     'gfx1250'   : 'gfx1250',
+    'gfx1250-strict' : 'gfx1250',
 }
 
 AOTRITON_ARCH_TO_DIRECTORY = {
@@ -69,6 +71,7 @@ AOTRITON_ARCH_WARPSIZE = {
     'gfx1201'    : 32,
     'gfx1200'    : 32,
     'gfx1250'    : 32,
+    'gfx1250-strict' : 32,
     'gfx1251'    : 32,
 }
 

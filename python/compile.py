@@ -23,6 +23,8 @@ KNOWN_TARGETS = {
 KNOWN_TARGETS.update({
   arch : GPUTarget('hip', arch, 32) for arch in KNOWN_TARGETS_32
 })
+# gfx1250-strict is not an LLVM target; its kernels are gfx1250 code.
+KNOWN_TARGETS['gfx1250-strict'] = GPUTarget('hip', 'gfx1250', 32)
 
 desc = """
 Triton ahead-of-time compiler:

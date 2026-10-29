@@ -7,7 +7,7 @@ import os
 MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
 
 # The arches that use gfx1250's tech-preview tuning database.
-GFX1250_ARCHES = ('gfx1250',)
+GFX1250_ARCHES = ('gfx1250', 'gfx1250-strict')
 
 
 def block_dmodel_values():
@@ -24,7 +24,7 @@ def flash_disabled(f, *, gfx950_bad_hdims=()):
     descriptions. `gfx950_bad_hdims` is the per-kernel set of BLOCK_DMODEL values
     the gfx950 compiler has a known numerical error on (fwd: {16}; bwd: {48, 80});
     everything else (causal+matrix-bias unsupported, gfx11 hdim>256, gfx1250
-    NPOT hdim, gfx1250 hdim>256) is common."""
+    NPOT hdim, gfx1250 hdim>256; gfx1250 includes gfx1250-strict) is common."""
     causal = f.choices.CAUSAL_TYPE
     hdim = f.choices.BLOCK_DMODEL
     bias_type = f.choices.BIAS_TYPE
