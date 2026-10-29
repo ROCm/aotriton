@@ -3,9 +3,9 @@
 
 #include <aotriton/config.h>
 #include <aotriton/runtime.h>
-#include <pybind11/pybind11.h>
+#include <nanobind/nanobind.h>
 
-namespace py = pybind11;
+namespace nb = nanobind;
 #if AOTRITON_ENABLE_SUFFIX
 namespace aotriton = AOTRITON_NS;
 #endif
@@ -55,9 +55,9 @@ namespace pyaotriton {
     size_t memory_size_ = 0;
     hipError_t last_state_;
   };
-  void def_hipmemory(py::module_& m) {
-    py::class_<HipMemory>(m, "HipMemory")
-      .def(py::init<>())
+  void def_hipmemory(nb::module_& m) {
+    nb::class_<HipMemory>(m, "HipMemory")
+      .def(nb::init<>())
       .def("alloc", &HipMemory::alloc)
       .def("free", &HipMemory::free)
       .def("get_pointer", &HipMemory::get_pointer)

@@ -54,8 +54,8 @@ ROCM_GPU_ARCH="gfx950"
 #                         python3 alone gets past `not found` only to fail
 #                         inside `-m venv`.
 #   python3-dev           AOTriton's cmake does
-#                         `find_package(Python3 COMPONENTS Development REQUIRED)`
-#                         for the pybind11 extension, which needs the headers,
+#                         `find_package(Python COMPONENTS Development.Module REQUIRED)`
+#                         for the nanobind extension, which needs the headers,
 #                         not just the interpreter.
 #   git                   build_triton_wheel.sh reads the third_party/triton
 #                         gitlink and, on a cache miss, clones Triton --

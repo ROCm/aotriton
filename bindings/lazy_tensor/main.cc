@@ -5,22 +5,22 @@
 #include <aotriton/dtypes.h>
 #include <aotriton/runtime.h>
 #include <aotriton/util.h>
-#include <pybind11/pybind11.h>
+#include <nanobind/nanobind.h>
 #include "lazy_tensor_template.h"
 
-namespace py = pybind11;
+namespace nb = nanobind;
 #if AOTRITON_ENABLE_SUFFIX
 namespace aotriton = AOTRITON_NS;
 #endif
 
 namespace pyaotriton::lazy_tensor {
-  void setup_dq_acc(py::module_& m);
+  void setup_dq_acc(nb::module_& m);
 
   template<int Rank>
-  void def_lazytensor(py::module_& m, const std::string& name) {
+  void def_lazytensor(nb::module_& m, const std::string& name) {
     // All fields are hidden. acquire/free exist for tests: acquire()
     // materializes the tensor as the library would on first use.
-    py::class_<aotriton::LazyTensor<Rank>>(m, name.c_str())
+    nb::class_<aotriton::LazyTensor<Rank>>(m, name.c_str())
       .def("acquire", [](aotriton::LazyTensor<Rank>& self) -> aotriton::TensorView<Rank> {
         if (self.eager) {
           return self.eager;
@@ -30,7 +30,7 @@ namespace pyaotriton::lazy_tensor {
       .def("free", &aotriton::LazyTensor<Rank>::free);
   }
 
-  void setup_module(py::module_& m) {
+  void setup_module(nb::module_& m) {
     def_lazytensor<4>(m, "LT4");
     def_lazytensor<2>(m, "LT2");
     m.def("dq_acc", &lazy_tensor_creator<4, true>);
