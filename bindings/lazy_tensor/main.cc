@@ -18,8 +18,16 @@ namespace pyaotriton::lazy_tensor {
 
   template<int Rank>
   void def_lazytensor(py::module_& m, const std::string& name) {
-    // All fields are hidden
-    py::class_<aotriton::LazyTensor<Rank>>(m, name.c_str());
+    // All fields are hidden. acquire/free exist for tests: acquire()
+    // materializes the tensor as the library would on first use.
+    py::class_<aotriton::LazyTensor<Rank>>(m, name.c_str())
+      .def("acquire", [](aotriton::LazyTensor<Rank>& self) -> aotriton::TensorView<Rank> {
+        if (self.eager) {
+          return self.eager;
+        }
+        return (*self.acquire)(&self);
+      })
+      .def("free", &aotriton::LazyTensor<Rank>::free);
   }
 
   void setup_module(py::module_& m) {
