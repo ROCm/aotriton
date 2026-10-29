@@ -177,7 +177,8 @@ class RootGenerator(object):
             if (AOTRITON_DEBUG_SKIP_TRITON_KERNELS
                     and k.NAME not in AOTRITON_SKIP_TRITON_KEEP_KERNELS):
                 continue
-            hsacos = ksg.this_repo.get_data('hsaco')
+            # A kernel disabled on every target arch registers no hsaco (see flyc below).
+            hsacos = ksg.this_repo.get_data('hsaco', return_none=True) or {}
             hsaco_for_kernels.append((k, hsacos))
 
         # TODO: Fix this for Windows
