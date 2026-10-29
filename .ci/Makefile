@@ -64,9 +64,9 @@ check-self-test:
 check-runtime:
 	$(SUITE) --runtime -r $(STABLE_ROCM) -r $(THEROCK_ROCM) --origin $(ORIGIN) $(OUTDIR)
 
-# Smoke check: only the gfx1250 GPU image.
+# Smoke check: only the gfx1250 GPU image (gfx1250 and gfx1250-strict share it).
 check-gpu:
-	$(SUITE) --image --arch gfx1250 -r $(THEROCK_ROCM) --origin $(ORIGIN) $(OUTDIR)
+	$(SUITE) --image --arch "gfx1250;gfx1250-strict" -r $(THEROCK_ROCM) --origin $(ORIGIN) $(OUTDIR)
 
 # Release: all GPU images (every arch in the default AOTRITON_TARGET_ARCH).
 release-gpu:
