@@ -23,11 +23,9 @@ namespace pyaotriton {
   // self-register via SubmoduleRegistrar; setup_registered_submodules() below
   // instantiates them. No per-family names are hardcoded here.
 
-#if AOTRITON_USE_TORCH
   namespace lazy_tensor {
     void setup_module(py::module_& m); // Impl. goes into lazy_tensor.cc (core: common to all families)
   } // namespace lazy_tensor
-#endif
 
   void def_stream(py::module_& m) {
     py::class_<aotriton::Stream>(m, "Stream").def(py::init<>());
@@ -100,10 +98,8 @@ namespace pyaotriton {
     // Family API submodules (v2, v3, …) register themselves from
     // modules/*/bindings/ and are instantiated here.
     setup_registered_submodules(m);
-#if AOTRITON_USE_TORCH
     py::module_ mod_lazy_tensor = m.def_submodule("lazy_tensor", "lazy_tensor API namespace");
     lazy_tensor::setup_module(mod_lazy_tensor);
-#endif
   }
 
 } // namespace pyaotriton
