@@ -602,7 +602,6 @@ gfx1151 too, ignoring their own:
 | gfx1170                                     | gfx1150 |
 | gfx1152, gfx1153, gfx1171                   | gfx1151 |
 | gfx1200                                     | gfx1201 |
-| gfx1250                                     | gfx942  |
 
 gfx1152, gfx1153, gfx1170 and gfx1171 thus get gfx1100's tensors with
 gfx1150's or gfx1151's patches on top.
