@@ -163,7 +163,7 @@ def list_impls(entry, arch: str | None = None) -> list[str]:
     no prefix to these (kernel is the DSL's unmarked default level)."""
     if entry.hdim > 224:
         return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq']
-    if arch == 'gfx1250':  # No bwd_kernel_fuse for gfx1250
+    if arch in ('gfx1250', 'gfx1250-strict'):  # No bwd_kernel_fuse for gfx1250
         return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq']
     return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse']
 

@@ -159,7 +159,7 @@ PRIME_SEQLEN_K_1K = [13, 31, 41, 71, 223, 337, 571]
 # need correctness coverage, one prime per gap. 1024 is an interior non-entry,
 # checking that binning picks the 256 bucket instead of failing.
 AOTRITON_UT_ARCH = os.getenv('AOTRITON_UT_ARCH', default='generic')
-if AOTRITON_UT_ARCH == 'gfx1250':
+if AOTRITON_UT_ARCH in ('gfx1250', 'gfx1250-strict'):
     REGULAR_SEQLEN = [64, 256, 1024, 2048]
     REGULAR_SEQLEN_2K = [64, 256, 1024, 2048]
     PRIME_SEQLEN_Q = [11, 67, 257, 1033]      # gaps (0,64) (64,256) (256,1024) (1024,2048)
@@ -200,7 +200,7 @@ if LARGE_HEADDIM_ONLY:
 
 # gfx1250 is in preview, and its kernels are not built for hdim > 256 to avoid
 # hitting compiler bugs; there is nothing to test above 256.
-if AOTRITON_UT_ARCH == 'gfx1250':
+if AOTRITON_UT_ARCH in ('gfx1250', 'gfx1250-strict'):
     POT_HEADDIMS = remove_larger_than(POT_HEADDIMS, 256)
     NPOT_HEADDIMS = remove_larger_than(NPOT_HEADDIMS, 256)
     PRIME_HEADDIMS = remove_larger_than(PRIME_HEADDIMS, 256)
