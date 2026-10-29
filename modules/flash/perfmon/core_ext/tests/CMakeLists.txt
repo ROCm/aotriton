@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 #
 # CPU-only unit tests of the flash entry codec. Plain host compiler, no HIP, no
-# AOTriton; the PON reader is the central core's header-only pon.h.
+# AOTriton; the PON reader is the central core's pon.h / pon.cc.
 #
 #   cmake -S modules/flash/perfmon/core_ext/tests -B /tmp/perfmon-flash-tests -G Ninja
 #   cmake --build /tmp/perfmon-flash-tests && ctest --test-dir /tmp/perfmon-flash-tests
@@ -18,7 +18,10 @@ get_filename_component(_repo "${CMAKE_CURRENT_SOURCE_DIR}/../../../../.." ABSOLU
 set(_core "${_repo}/perfmon/core")
 
 enable_testing()
-add_executable(test_entry_codec test_entry_codec.cc "${_core_ext}/entry_codec.cc")
+add_executable(test_entry_codec
+  test_entry_codec.cc
+  "${_core_ext}/entry_codec.cc"
+  "${_core}/pon.cc")  # in an adapter build this comes from the core library
 # entry_codec.cc includes <perfmon/pon.h>, as it does in an adapter build; here
 # that is perfmon/core/ through a one-file directory, so the layout matches.
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/include/perfmon")

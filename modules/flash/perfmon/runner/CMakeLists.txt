@@ -38,7 +38,9 @@ get_filename_component(_perfmon_repo_root "${CMAKE_CURRENT_SOURCE_DIR}/../../../
 set(_perfmon_core_src "${_perfmon_repo_root}/perfmon/core")
 # The flash entry codec: part of the family, compiled into libperfmon_flash
 # (the core has no family knowledge). It reads the PON with the core's
-# installed header-only include/perfmon/pon.h.
+# installed include/perfmon/pon.h; perfmon::Pon itself
+# is implemented in (and exported by) the core library this adapter links, so
+# the adapter must not compile pon.cc.
 set(_perfmon_core_ext "${_perfmon_repo_root}/modules/flash/perfmon/core_ext")
 if(NOT EXISTS "${_perfmon_core_src}/main.cc")
   message(FATAL_ERROR "[perfmon_flash] ${_perfmon_core_src}/main.cc not found: configure from the "

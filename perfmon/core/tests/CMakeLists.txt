@@ -19,7 +19,8 @@ get_filename_component(_core "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 add_library(perfmon_core_cpu STATIC
   "${_core}/protocol.cc"
   "${_core}/stats.cc"
-  "${_core}/config.cc")
+  "${_core}/config.cc"
+  "${_core}/pon.cc")
 target_include_directories(perfmon_core_cpu PUBLIC "${_core}")
 target_compile_options(perfmon_core_cpu PRIVATE -Wall -Wextra -Werror)
 
