@@ -70,6 +70,8 @@ enum AOTRITON_API Gpu : uint64_t {
   GPU_AMD_ARCH_GFX1201_MOD0 = TRICAT(GpuVendor::kAMD, 0x1201, 0),
   GPU_AMD_ARCH_GFX1200_MOD0 = TRICAT(GpuVendor::kAMD, 0x1200, 0),
   GPU_AMD_ARCH_GFX1250_MOD0 = TRICAT(GpuVendor::kAMD, 0x1250, 0),
+  // "gfx1250-strict" cannot be encoded; 0x1249 stands in for it.
+  GPU_AMD_ARCH_GFX1250_STRICT_MOD0 = TRICAT(GpuVendor::kAMD, 0x1249, 0),
 };
 
 inline uint32_t Gpu2VendorArch(uint64_t gpu) {
