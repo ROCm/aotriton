@@ -14,6 +14,12 @@ list(APPEND PYAOTRITON_SRC ${MODULE_BINDING_SRC})
 # (hipError_t, ...), and in a shared registry the second one aborts the
 # interpreter on import. This replaces pybind11's py::module_local().
 set(PYAOTRITON_NB_OPTIONS NB_DOMAIN "pyaotriton${AOTRITON_NAME_SUFFIX}")
+if(PYAOTRITON_ABI3)
+  # Split mode: the extension only uses the stable ABI and finds nanobind's
+  # runtime in the nanobind_backend Python package.
+  list(APPEND PYAOTRITON_NB_OPTIONS
+       BACKEND_MODULE nanobind_backend STABLE_ABI_VERSION 3.12)
+endif()
 nanobind_add_module(pyaotriton ${PYAOTRITON_NB_OPTIONS} ${PYAOTRITON_SRC})
 # Family binding TUs #include "submodule_registry.h" from the core bindings dir.
 target_include_directories(pyaotriton PRIVATE ${CMAKE_CURRENT_LIST_DIR})
