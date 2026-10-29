@@ -6,6 +6,9 @@ import os
 # Shared across the flash kernel descriptions (attn_fwd / bwd_kernel_* / bwd_preprocess*).
 MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
 
+# The arches that use gfx1250's tech-preview tuning database.
+GFX1250_ARCHES = ('gfx1250',)
+
 
 def block_dmodel_values():
     """The BLOCK_DMODEL axis values, overridable via AOTRITON_FLASH_BLOCK_DMODEL."""
