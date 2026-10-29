@@ -1,0 +1,55 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+#
+# Builds the core for one ROCm, then subjects for one arch, on this host, which
+# must have that ROCm toolchain (the perfmon image, or a fleet session with the
+# ROCm venv active). Thin on purpose: perfmon/build_core.sh and
+# perfmon/build_subject.sh do the work.
+#
+# Usage: build_subjects [--rocm <ver>] [--prefix <dir>] [--without_amdsmi]
+#                       <arch> <tag>... [-- <build_subject.sh options>]
+#   --rocm <ver>      default 10.1.0
+#   --prefix <dir>    default $AOTRITON_WORKDIR/installed/perfmon (.tune/lib/paths.sh)
+#   <tag>...          release tags, or head
+# Options after `--` go to build_subject.sh, e.g. --cache_dir <dir>.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+ROCM="10.1.0"
+source "$ROOT/.tune/lib/paths.sh"
+PREFIX="$AOTRITON_WORKDIR/installed/perfmon"
+CORE_OPTS=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --rocm)           ROCM="$2"; shift 2 ;;
+    --prefix)         PREFIX="$2"; shift 2 ;;
+    --without_amdsmi) CORE_OPTS+=(--without_amdsmi); shift ;;
+    -*) echo "Error: unknown option: $1" >&2; exit 1 ;;
+    *) break ;;
+  esac
+done
+
+POSITIONAL=()
+SUBJECT_OPTS=()
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--" ]; then
+    shift
+    SUBJECT_OPTS=("$@")
+    break
+  fi
+  POSITIONAL+=("$1")
+  shift
+done
+if [ "${#POSITIONAL[@]}" -lt 2 ]; then
+  echo "Usage: build_subjects [--rocm <ver>] [--prefix <dir>] [--without_amdsmi]" \
+       "<arch> <tag>... [-- <build_subject.sh options>]" >&2
+  exit 1
+fi
+ARCH="${POSITIONAL[0]}"
+TAGS=("${POSITIONAL[@]:1}")
+
+"${ROOT}/perfmon/build_core.sh" "${CORE_OPTS[@]}" --rocm "${ROCM}" "${PREFIX}"
+"${ROOT}/perfmon/build_subject.sh" "${SUBJECT_OPTS[@]}" --rocm "${ROCM}" "${ARCH}" "${PREFIX}" "${TAGS[@]}"
