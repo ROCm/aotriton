@@ -36,6 +36,7 @@ import sys
 
 from psycopg.rows import dict_row
 
+from aotriton.pgdef import paths
 from aotriton.pgdef.pq.category import argparse_type, format_category
 from aotriton.pgdef.pq.conn import ReconnectableConn, params_from_env
 from aotriton.pgdef.utils import configure_logging_with_flush
@@ -51,8 +52,7 @@ ROLES = ('broker', 'gpu_worker', 'cpu_worker', 'reader')
 
 
 def default_broker_socket() -> str:
-    return (os.environ.get('AOTRITON_BROKER_SOCKET')
-            or '/tmp/aotriton-broker.sock')
+    return str(paths.broker_socket())
 
 
 def build_parser(app: str) -> argparse.ArgumentParser:
