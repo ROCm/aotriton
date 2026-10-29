@@ -20,11 +20,16 @@ pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason='needs a G
 _get_pointer = ctypes.pythonapi.PyCapsule_GetPointer
 _get_pointer.restype = ctypes.c_void_p
 _get_pointer.argtypes = [ctypes.py_object, ctypes.c_char_p]
+_get_name = ctypes.pythonapi.PyCapsule_GetName
+_get_name.restype = ctypes.c_char_p
+_get_name.argtypes = [ctypes.py_object]
 
 
 def _address(view):
     # TensorView.data_ptr is a void* in C++, which Python sees as a capsule.
-    return _get_pointer(view.data_ptr, None) or 0
+    # The capsule's name depends on the binding library, so read it first.
+    capsule = view.data_ptr
+    return _get_pointer(capsule, _get_name(capsule)) or 0
 
 
 class _DeviceView:
