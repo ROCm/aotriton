@@ -19,13 +19,20 @@ import numpy as np
 
 import aotriton.template_instantiation as ati
 from aotriton.gpu_targets import AOTRITON_ARCH_WARPSIZE
-from ._common import block_dmodel_values, check_value
+from ._common import flash_disabled, block_dmodel_values, check_value, GFX1250_ARCHES
 
 
 def _block_dmodel_values_capped():
     # The fused bwd kernel caps BLOCK_DMODEL at 256 (from the retired legacy
     # rule file bwd_kernel_fuse.py: `BLOCK_DMODEL: lambda x: x <= 256`).
     return [d for d in block_dmodel_values() if d <= 256]
+
+
+def _fuse_disabled(f):
+    """The cited bwd predicate, plus gfx1250: its tuning excluded this kernel."""
+    if f.arch in GFX1250_ARCHES:
+        return True
+    return flash_disabled(f, gfx950_bad_hdims={48, 80})
 
 
 @dataclass
@@ -77,7 +84,9 @@ def gen_autotune_configs(f):
 @ati.tune.binning(max_seqlen_q=ati.tune.binning.le,
                   max_seqlen_k=ati.tune.binning.le)
 @ati.tune.fallback(PADDED_HEAD=False)
-# No local @ati.disable: fuse inherits the cited bwd kernels' disable predicate.
+# Overrides the cited bwd kernels' predicate, which _fuse_disabled still calls.
+@ati.disable(when=_fuse_disabled,
+             I_understand_this_overrides_cited_disable=True)
 @ati.source('../kernel/bwd_kernel_fuse.py')
 def bwd_kernel_fuse():
     pass
