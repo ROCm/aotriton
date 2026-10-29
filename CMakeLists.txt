@@ -92,7 +92,7 @@ endif()
 
 set(AOTRITON_MIN_PYTHON 3.12 CACHE STRING "Minimal Python version for find_package.")
 if(AOTRITON_MIN_PYTHON VERSION_LESS "3.12")
-  message(FATAL_ERROR "Do not set AOTRITON_MIN_PYTHON lower than 3.12. The code itself does not support it.")
+  message(FATAL_ERROR "AOTRITON_MIN_PYTHON is ${AOTRITON_MIN_PYTHON}, but Python 3.12 is the minimum the code supports. If this is a stale value cached by an older configure, pass -DAOTRITON_MIN_PYTHON=3.12 or use a fresh build directory.")
 endif()
 
 find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter REQUIRED)
