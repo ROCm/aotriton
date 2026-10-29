@@ -7,7 +7,7 @@
 #include <aotriton/util.h>
 #include "torch_stable_min.h"
 
-namespace py = pybind11;
+namespace nb = nanobind;
 #if AOTRITON_ENABLE_SUFFIX
 namespace aotriton = AOTRITON_NS;
 #endif

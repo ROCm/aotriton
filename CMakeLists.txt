@@ -269,7 +269,11 @@ endforeach()
 # Early failure for python binding
 if(NOT AOTRITON_NO_PYTHON)
   cmake_policy(SET CMP0148 NEW)  # Disable outdated FindPythonInterp/FindPythonLibs
-  find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Development REQUIRED)
+  # nanobind reads FindPython's variables, not FindPython3's. Pin FindPython to
+  # the interpreter FindPython3 already chose. Development.Module is enough to
+  # build an extension: it needs neither libpython nor an embeddable runtime.
+  set(Python_EXECUTABLE "${Python3_EXECUTABLE}")
+  find_package(Python ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter Development.Module REQUIRED)
 
   # Must use Python3_EXECUTABLE (the cmake-invoking python), NOT VENV_BIN_PYTHON.
   # Workflow: (user's python env) -> cmake & ninja -> test aotriton.
@@ -278,11 +282,12 @@ if(NOT AOTRITON_NO_PYTHON)
   # libtorch stable ABI (bindings/lazy_tensor/torch_stable_min.h), and torch is
   # only needed when pyaotriton is imported.
 
-  # heuristics to find pybind11 from python site
-  execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import pybind11; from pathlib import Path; print(str(Path(pybind11.__file__).parent / 'share' / 'cmake' / 'pybind11'))"
+  # nanobind and nanobind-backend are build dependencies of the extension
+  # (requirements.txt); ask the interpreter where nanobind's CMake files are.
+  execute_process(COMMAND "${Python3_EXECUTABLE}" -m nanobind --cmake_dir
                   OUTPUT_STRIP_TRAILING_WHITESPACE
-                  OUTPUT_VARIABLE pybind11_DIR)
-  find_package(pybind11 CONFIG REQUIRED)
+                  OUTPUT_VARIABLE nanobind_DIR)
+  find_package(nanobind CONFIG REQUIRED)
 endif()
 
 # Resolve name conflicts with suffix
