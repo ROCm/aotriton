@@ -1,0 +1,25 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Export measurements from PostgreSQL into modules/<family>/perfdb (aotriton.perfmon.export)
+#
+# Thin wrapper: runs from the repository root (the family blocks are found
+# under ./modules) with the workdir from AOTRITON_WORKDIR, or from --workdir,
+# which the module itself accepts. All options go to the module unchanged:
+#
+#   python -m aotriton.perfmon.export --module flash --arch gfx942 [-l] ...
+
+if [ -z "$BASH_VERSION" ]; then
+  echo "This script requires Bash." >&2
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AOTRITON_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Keeps AOTRITON_WORKDIR if the caller set it.
+. "$AOTRITON_ROOT/.tune/lib/paths.sh"
+
+cd "$AOTRITON_ROOT" || exit 1
+exec python3 -m aotriton.perfmon.export "$@"
