@@ -90,9 +90,9 @@ else()
   message(STATUS "[AOTriton] UTF-8 input character is set for all C/C++ source files.")
 endif()
 
-set(AOTRITON_MIN_PYTHON 3.10 CACHE STRING "Minimal Python version for find_package.")
-if(AOTRITON_MIN_PYTHON VERSION_LESS "3.10")
-  message(FATAL_ERROR "Do not set AOTRITON_MIN_PYTHON lower than 3.10. The code itself does not support it.")
+set(AOTRITON_MIN_PYTHON 3.12 CACHE STRING "Minimal Python version for find_package.")
+if(AOTRITON_MIN_PYTHON VERSION_LESS "3.12")
+  message(FATAL_ERROR "Do not set AOTRITON_MIN_PYTHON lower than 3.12. The code itself does not support it.")
 endif()
 
 find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter REQUIRED)
