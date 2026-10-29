@@ -6,9 +6,8 @@ KernelSignature — the per-compiled-instance signature of a flyc kernel.
 
 A thin, STANDALONE class calling `ir/lib/naming.py` directly — it does NOT reuse or
 subclass `ir/triton/ksignature.py`'s `KernelSignature`. That class carries Triton
-vocabulary (`num_warps` / `num_stages` / `waves_per_eu`, `COMPILER_OPTIONS`, the
-gfx1250 double-warps workaround) that is specific to Triton's autotune model and
-does not apply here.
+vocabulary (`num_warps` / `num_stages` / `waves_per_eu`, `COMPILER_OPTIONS`) that
+is specific to Triton's autotune model and does not apply here.
 
 flyc's perf vocabulary has no C struct and no grid choice among candidate
 images -- every functional resolves to exactly one hsaco, whose distinguishing
