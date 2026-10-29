@@ -102,7 +102,6 @@ include(cmake/LoadHIP.cmake)
 
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
 option(AOTRITON_NO_PYTHON "Disable python binding build" OFF)
-option(AOTRITON_USE_TORCH "Enable functions in python binding that requires libtorch" ON)
 option(AOTRITON_ENABLE_ASAN "Enable Address Sanitizer (g++). Implies -g" OFF)
 option(AOTRITON_ENABLE_ASAN_CLANG "Enable Address Sanitizer using Clang (e.g. theRock clang++). Implies -g" OFF)
 option(AOTRITON_BUILD_FOR_TUNING "Build all GPU kernels and set -DAOTRITON_BUILD_FOR_TUNING=1 (=0 otherwise)" OFF)
@@ -262,19 +261,10 @@ if(NOT AOTRITON_NO_PYTHON)
 
   # Must use Python3_EXECUTABLE (the cmake-invoking python), NOT VENV_BIN_PYTHON.
   # Workflow: (user's python env) -> cmake & ninja -> test aotriton.
-  # pyaotriton must be ABI-compatible with the test environment, which also supplies
-  # torch (required for GPU memory and reference). VENV_DIR must never have torch.
-  # Check torch BEFORE pybind11: when a fresh env has neither installed, torch
-  # is the heavier/more consequential one to set up, so surface that error
-  # first instead of making the user fix pybind11 only to immediately hit torch.
-  if(AOTRITON_USE_TORCH)
-    message(STATUS "Python3_EXECUTABLE: ${Python3_EXECUTABLE}")
-    execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import torch; from pathlib import Path; print(str(Path(torch.__file__).parent))"
-                    OUTPUT_STRIP_TRAILING_WHITESPACE
-                    OUTPUT_VARIABLE TORCH_SITE)
-    message(STATUS "TORCH SITE: ${TORCH_SITE}")
-    find_package(Torch REQUIRED HINTS ${TORCH_SITE})
-  endif(AOTRITON_USE_TORCH)
+  # pyaotriton must be ABI-compatible with the test environment, and VENV_DIR
+  # must never have torch. Building needs no torch at all: lazy_tensor uses the
+  # libtorch stable ABI (bindings/lazy_tensor/torch_stable_min.h), and torch is
+  # only needed when pyaotriton is imported.
 
   # heuristics to find pybind11 from python site
   execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import pybind11; from pathlib import Path; print(str(Path(pybind11.__file__).parent / 'share' / 'cmake' / 'pybind11'))"
