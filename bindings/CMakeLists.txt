@@ -9,7 +9,12 @@ aux_source_directory(lazy_tensor PYAOTRITON_SRC)
 file(GLOB MODULE_BINDING_SRC CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/modules/*/bindings/*.cc")
 list(APPEND PYAOTRITON_SRC ${MODULE_BINDING_SRC})
 # find_package(hip REQUIRED)
-pybind11_add_module(pyaotriton ${PYAOTRITON_SRC})
+# NB_DOMAIN gives this module its own nanobind type registry. Two pyaotriton
+# builds with different AOTRITON_NAME_SUFFIX bind the same HIP types
+# (hipError_t, ...), and in a shared registry the second one aborts the
+# interpreter on import. This replaces pybind11's py::module_local().
+set(PYAOTRITON_NB_OPTIONS NB_DOMAIN "pyaotriton${AOTRITON_NAME_SUFFIX}")
+nanobind_add_module(pyaotriton ${PYAOTRITON_NB_OPTIONS} ${PYAOTRITON_SRC})
 # Family binding TUs #include "submodule_registry.h" from the core bindings dir.
 target_include_directories(pyaotriton PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 # target_link_libraries(pyaotriton PRIVATE hip::device)

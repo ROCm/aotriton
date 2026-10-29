@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: MIT
 
 #include <aotriton/runtime.h>
-#include <pybind11/pybind11.h>
+#include <nanobind/nanobind.h>
 
-namespace py = pybind11;
+namespace nb = nanobind;
 
 namespace pyaotriton {
 #define EV(name) value(#name, name)
-  void def_hipruntime(py::module_& m) {
-    py::enum_<hipError_t>(m, "hipError_t", py::module_local())
+  void def_hipruntime(nb::module_& m) {
+    nb::enum_<hipError_t>(m, "hipError_t", nb::is_arithmetic())
       .EV(hipSuccess)
       .EV(hipErrorInvalidValue)
       .EV(hipErrorOutOfMemory)

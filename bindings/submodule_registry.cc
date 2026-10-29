@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-namespace py = pybind11;
+namespace nb = nanobind;
 
 namespace pyaotriton {
 
@@ -29,11 +29,11 @@ SubmoduleRegistrar::SubmoduleRegistrar(const char* name, const char* doc, Submod
   registry().emplace_back(name, doc ? doc : "", std::move(fn));
 }
 
-void setup_registered_submodules(py::module_& m) {
+void setup_registered_submodules(nb::module_& m) {
   for (auto& e : registry()) {
     // def_submodule is get-or-create: if two TUs register the same name, they
     // contribute to the same submodule instead of clobbering it.
-    py::module_ sub = m.def_submodule(e.name.c_str(), e.doc.c_str());
+    nb::module_ sub = m.def_submodule(e.name.c_str(), e.doc.c_str());
     e.fn(sub);
   }
 }
