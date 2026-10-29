@@ -11,7 +11,7 @@
 # This script must be run inside the CELERY_WORKER_IMAGE container.
 # Use .tune/bin/remotebld --test to launch the container automatically.
 #
-# Usage (inside container, workdir is typically /wkdir):
+# Usage (inside container, workdir is typically $AOTRITON_WORKDIR):
 #   testbld <workdir>
 
 set -euo pipefail
@@ -36,7 +36,7 @@ Build AOTriton testing libraries (per-arch builds).
 Must be run inside the CELERY_WORKER_IMAGE container.
 
 Arguments:
-  <workdir>             Project working directory (typically /wkdir inside container)
+  <workdir>             Project working directory (the mounted workdir inside the container)
   --single_arch <arch>  Build only the specified architecture
 
 Output (per arch):

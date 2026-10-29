@@ -71,6 +71,7 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 . "$TUNE_ROOT/lib/config_load.sh"
 . "$TUNE_ROOT/lib/db_query.sh"
+. "$TUNE_ROOT/lib/paths.sh"
 
 load_config "$WORKDIR"
 
@@ -119,24 +120,31 @@ EOF
   if [ "$MODE" = "test" ]; then
     echo "Running testbld on $BUILD_NODE_HOST via tsp (image: $CELERY_WORKER_IMAGE)"
     # shellcheck disable=SC2029
-    ssh "$BUILD_NODE_HOST" bash -s "$REMOTE_WORKDIR" "$CELERY_WORKER_IMAGE" "$ARCH_SELECTION" "$SOURCE_DB" <<'EOF'
+    ssh "$BUILD_NODE_HOST" bash -s "$REMOTE_WORKDIR" "$CELERY_WORKER_IMAGE" "$ARCH_SELECTION" "$SOURCE_DB" "$AOTRITON_IMAGE_WORKDIR" "$AOTRITON_IMAGE_SRC" "$AOTRITON_IMAGE_RUNDIR" <<'EOF'
 REMOTE_WORKDIR="$1"
 CELERY_WORKER_IMAGE="$2"
 ARCH_SELECTION="$3"
 SOURCE_DB="$4"
+# The image's layout (.tune/lib/paths.sh), passed in: this runs remotely.
+IMG_WORKDIR="$5"
+IMG_SRC="$6"
+IMG_RUNDIR="$7"
 
-TESTBLD_ARGS=(/wkdir)
+TESTBLD_ARGS=("$IMG_WORKDIR")
 [ "$ARCH_SELECTION" != "ALL" ] && TESTBLD_ARGS+=(--single_arch "$ARCH_SELECTION")
 [ "$SOURCE_DB" = "1" ] && TESTBLD_ARGS+=(--source_db)
 
 set -x
 jobid=$(tsp docker run --rm \
   --user "$(id -u):$(id -g)" \
-  -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
-  -e CCACHE_DIR=/wkdir/run/ccache \
-  --mount "type=bind,source=$REMOTE_WORKDIR,target=/wkdir" \
+  -e AOTRITON_WORKDIR="$IMG_WORKDIR" \
+  -e AOTRITON_SRC="$IMG_SRC" \
+  -e AOTRITON_RUNDIR="$IMG_RUNDIR" \
+  -e PYTHONPYCACHEPREFIX="$IMG_RUNDIR/pycache" \
+  -e CCACHE_DIR="$IMG_RUNDIR/ccache" \
+  --mount "type=bind,source=$REMOTE_WORKDIR,target=$IMG_WORKDIR" \
   "$CELERY_WORKER_IMAGE" \
-  bash -l /wkdir/aotriton.src/.tune/bin/testbld "${TESTBLD_ARGS[@]}")
+  bash -l "$IMG_SRC/.tune/bin/testbld" "${TESTBLD_ARGS[@]}")
 echo "tsp job ID: $jobid"
 if [ "$(tsp -s "$jobid")" = "queued" ]; then
   echo "Waiting for tsp job $jobid to start..."
@@ -147,22 +155,29 @@ EOF
   else
     echo "Running libbld on $BUILD_NODE_HOST via tsp (image: $CELERY_WORKER_IMAGE)"
     # shellcheck disable=SC2029
-    ssh "$BUILD_NODE_HOST" bash -s "$REMOTE_WORKDIR" "$CELERY_WORKER_IMAGE" "$ARCH_SELECTION" <<'EOF'
+    ssh "$BUILD_NODE_HOST" bash -s "$REMOTE_WORKDIR" "$CELERY_WORKER_IMAGE" "$ARCH_SELECTION" "$AOTRITON_IMAGE_WORKDIR" "$AOTRITON_IMAGE_SRC" "$AOTRITON_IMAGE_RUNDIR" <<'EOF'
 REMOTE_WORKDIR="$1"
 CELERY_WORKER_IMAGE="$2"
 ARCH_SELECTION="$3"
+# The image's layout (.tune/lib/paths.sh), passed in: this runs remotely.
+IMG_WORKDIR="$4"
+IMG_SRC="$5"
+IMG_RUNDIR="$6"
 
-LIBBLD_ARGS=(/wkdir)
+LIBBLD_ARGS=("$IMG_WORKDIR")
 [ "$ARCH_SELECTION" != "ALL" ] && LIBBLD_ARGS+=(--single_arch "$ARCH_SELECTION")
 
 set -x
 jobid=$(tsp docker run --rm \
   --user "$(id -u):$(id -g)" \
-  -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
-  -e CCACHE_DIR=/wkdir/run/ccache \
-  --mount "type=bind,source=$REMOTE_WORKDIR,target=/wkdir" \
+  -e AOTRITON_WORKDIR="$IMG_WORKDIR" \
+  -e AOTRITON_SRC="$IMG_SRC" \
+  -e AOTRITON_RUNDIR="$IMG_RUNDIR" \
+  -e PYTHONPYCACHEPREFIX="$IMG_RUNDIR/pycache" \
+  -e CCACHE_DIR="$IMG_RUNDIR/ccache" \
+  --mount "type=bind,source=$REMOTE_WORKDIR,target=$IMG_WORKDIR" \
   "$CELERY_WORKER_IMAGE" \
-  bash -lc 'source /wkdir/config.rc && source "$(dirname "$CELERY_WORKER_PYTHON")/activate" && exec bash /wkdir/aotriton.src/.tune/bin/libbld "$@"' \
+  bash -lc 'source "$AOTRITON_WORKDIR/config.rc" && source "$(dirname "$CELERY_WORKER_PYTHON")/activate" && exec bash "$AOTRITON_SRC/.tune/bin/libbld" "$@"' \
   _ "${LIBBLD_ARGS[@]}")
 echo "tsp job ID: $jobid"
 if [ "$(tsp -s "$jobid")" = "queued" ]; then
@@ -186,7 +201,9 @@ else
   "$TUNE_ROOT/single/prebuild_wheel.sh" "$ABSWORKDIR"
 
   if [ "$MODE" = "test" ]; then
-    TESTBLD_ARGS=(/wkdir)
+    IMG_SRC="$AOTRITON_IMAGE_SRC"
+    IMG_RUNDIR="$AOTRITON_IMAGE_RUNDIR"
+    TESTBLD_ARGS=("$AOTRITON_IMAGE_WORKDIR")
     [ "$ARCH_SELECTION" != "ALL" ] && TESTBLD_ARGS+=(--single_arch "$ARCH_SELECTION")
     [ "$SOURCE_DB" -eq 1 ] && TESTBLD_ARGS+=(--source_db)
     echo "Running testbld locally inside container: $CELERY_WORKER_IMAGE"
@@ -200,22 +217,30 @@ else
     # .ci/releasesuite-git-head.sh's `bash -l /tmp/runc-manylinux-build-tar.sh`.
     docker run --rm \
       --user "$(id -u):$(id -g)" \
-      -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
-      -e CCACHE_DIR=/wkdir/run/ccache \
-      --mount "type=bind,source=$ABSWORKDIR,target=/wkdir" \
+      -e AOTRITON_WORKDIR="$AOTRITON_IMAGE_WORKDIR" \
+      -e AOTRITON_SRC="$IMG_SRC" \
+      -e AOTRITON_RUNDIR="$IMG_RUNDIR" \
+      -e PYTHONPYCACHEPREFIX="$IMG_RUNDIR/pycache" \
+      -e CCACHE_DIR="$IMG_RUNDIR/ccache" \
+      --mount "type=bind,source=$ABSWORKDIR,target=$AOTRITON_IMAGE_WORKDIR" \
       "$CELERY_WORKER_IMAGE" \
-      bash -l /wkdir/aotriton.src/.tune/bin/testbld "${TESTBLD_ARGS[@]}"
+      bash -l "$IMG_SRC/.tune/bin/testbld" "${TESTBLD_ARGS[@]}"
   else
-    LIBBLD_ARGS=(/wkdir)
+    IMG_SRC="$AOTRITON_IMAGE_SRC"
+    IMG_RUNDIR="$AOTRITON_IMAGE_RUNDIR"
+    LIBBLD_ARGS=("$AOTRITON_IMAGE_WORKDIR")
     [ "$ARCH_SELECTION" != "ALL" ] && LIBBLD_ARGS+=(--single_arch "$ARCH_SELECTION")
     echo "Running libbld locally inside container: $CELERY_WORKER_IMAGE"
     docker run --rm \
       --user "$(id -u):$(id -g)" \
-      -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
-      -e CCACHE_DIR=/wkdir/run/ccache \
-      --mount "type=bind,source=$ABSWORKDIR,target=/wkdir" \
+      -e AOTRITON_WORKDIR="$AOTRITON_IMAGE_WORKDIR" \
+      -e AOTRITON_SRC="$IMG_SRC" \
+      -e AOTRITON_RUNDIR="$IMG_RUNDIR" \
+      -e PYTHONPYCACHEPREFIX="$IMG_RUNDIR/pycache" \
+      -e CCACHE_DIR="$IMG_RUNDIR/ccache" \
+      --mount "type=bind,source=$ABSWORKDIR,target=$AOTRITON_IMAGE_WORKDIR" \
       "$CELERY_WORKER_IMAGE" \
-      bash -lc 'source /wkdir/config.rc && source "$(dirname "$CELERY_WORKER_PYTHON")/activate" && exec bash /wkdir/aotriton.src/.tune/bin/libbld "$@"' \
+      bash -lc 'source "$AOTRITON_WORKDIR/config.rc" && source "$(dirname "$CELERY_WORKER_PYTHON")/activate" && exec bash "$AOTRITON_SRC/.tune/bin/libbld" "$@"' \
       _ "${LIBBLD_ARGS[@]}"
   fi
 fi

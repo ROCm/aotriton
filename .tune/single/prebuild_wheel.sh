@@ -61,6 +61,7 @@ fi
 
 # shellcheck disable=SC1091
 . "$TUNE_ROOT/lib/aotriton_version.sh"
+. "$TUNE_ROOT/lib/paths.sh"
 # pin_line first: find_flydsl.sh's helpers are written against it, the same way
 # .ci/releasesuite-git-head.sh sources common-pin.sh before reading any pin.
 # shellcheck disable=SC1091
@@ -114,10 +115,11 @@ stage_triton() {
   # testbld/libbld container launches) -- $WORKDIR is the host path, used to
   # actually find the built wheels here. But the resolved yaml is read later
   # INSIDE the worker container, where remotebld always mounts the same
-  # workdir at the fixed path /wkdir (see remotebld's --mount target=/wkdir,
-  # identical across all 4 of its branches) -- so the wheel paths written
-  # into the yaml must use /wkdir, not $WORKDIR, or pip inside the container
-  # looks for a file that only exists at that path on the host.
+  # workdir at the image's fixed path $AOTRITON_IMAGE_WORKDIR (.tune/lib/paths.sh;
+  # see remotebld's --mount, identical across all 4 of its branches) -- so the
+  # wheel paths written into the yaml must use that path, not $WORKDIR, or pip
+  # inside the container looks for a file that only exists at that path on the
+  # host.
   if [ -n "$ALTWHEEL_YAML" ]; then
     if ! command -v yq &> /dev/null; then
       echo "Error: 'yq' is required to resolve altwheel YAML $ALTWHEEL_YAML (dnf install yq / snap install yq)" >&2
@@ -129,7 +131,7 @@ stage_triton() {
 
     local RESOLVED_YAML="$WORKDIR/scratch/triton/resolved_altwheel.yaml"
     cp "$ALTWHEEL_YAML" "$RESOLVED_YAML"
-    altwheel_resolve_config "$RESOLVED_YAML" "$WORKDIR/scratch/triton" "/wkdir/scratch/triton" "${HASHES[0]}" "$PYVER"
+    altwheel_resolve_config "$RESOLVED_YAML" "$WORKDIR/scratch/triton" "$AOTRITON_IMAGE_WORKDIR/scratch/triton" "${HASHES[0]}" "$PYVER"
 
     echo "Resolved altwheel config: $RESOLVED_YAML"
   fi

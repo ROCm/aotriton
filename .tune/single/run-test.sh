@@ -23,6 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 . "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/paths.sh"
 
 WORKDIR=""
 HOSTNAME=""
@@ -84,14 +85,18 @@ load_config "$WORKDIR"
 
 REMOTE_WORKDIR="${WORKDIR_OVERRIDE:-$DEFAULT_WORKDIR}"
 
+# Paths below are inside the container, in the image's layout (.tune/lib/paths.sh).
+IMG_WORKDIR="$AOTRITON_IMAGE_WORKDIR"
+IMG_SRC="$AOTRITON_IMAGE_SRC"
+IMG_RUNDIR="$AOTRITON_IMAGE_RUNDIR"
 # Per-arch test install: installed/test/<arch>/lib
-LIBDIR="/wkdir/installed/test/$ARCH/lib"
+LIBDIR="$IMG_WORKDIR/installed/test/$ARCH/lib"
 if [ "$ADIFF" -eq 1 ]; then
-  REMOTE_SCRIPT="/wkdir/aotriton.src/.ci/run-ci-test.sh"
+  REMOTE_SCRIPT="$IMG_SRC/.ci/run-ci-test.sh"
 else
-  REMOTE_SCRIPT="/wkdir/aotriton.src/.ci/run-test.sh"
+  REMOTE_SCRIPT="$IMG_SRC/.ci/run-test.sh"
 fi
-BASE_OUTPUT_DIR="/wkdir/run/tests"
+BASE_OUTPUT_DIR="$IMG_RUNDIR/tests"
 case "${VARIANT:-}" in
   partial|partial_adiffs) OUTPUT_DIR="$BASE_OUTPUT_DIR/partial" ;;
   *)                      OUTPUT_DIR="$BASE_OUTPUT_DIR" ;;
@@ -117,7 +122,7 @@ case "${REF_DEVICE_POLICY:-}" in
 esac
 
 echo "[$HOSTNAME] Queuing run-test pass=$PASS_NUM level=$TEST_LEVEL backend=$BACKEND arch=$ARCH variant=${VARIANT:-normal} ref_device_policy=${REF_DEVICE_POLICY:-default}"
-echo "[$HOSTNAME] output -> $REMOTE_WORKDIR/${OUTPUT_DIR#/wkdir/}/"
+echo "[$HOSTNAME] output -> $REMOTE_WORKDIR/${OUTPUT_DIR#"$IMG_WORKDIR"/}/"
 
 # Passed by NAME, not by position. ssh does not preserve argument boundaries: it
 # joins the remote argv into one string that the remote shell re-splits, so a
@@ -133,6 +138,9 @@ echo "[$HOSTNAME] output -> $REMOTE_WORKDIR/${OUTPUT_DIR#/wkdir/}/"
 # shellcheck disable=SC2029
 JOBID=$(ssh "$HOSTNAME" bash -s \
         "remote_workdir=$REMOTE_WORKDIR" \
+        "image_workdir=$IMG_WORKDIR" \
+        "image_src=$IMG_SRC" \
+        "image_rundir=$IMG_RUNDIR" \
         "worker_image=$CELERY_WORKER_IMAGE" \
         "libdir=$LIBDIR" \
         "remote_script=$REMOTE_SCRIPT" \
@@ -144,6 +152,9 @@ JOBID=$(ssh "$HOSTNAME" bash -s \
         "record_adiffs_to=$RECORD_ADIFFS_TO" \
         "ref_device_option=$REF_DEVICE_OPTION" <<'ENDSSH'
 REMOTE_WORKDIR=""
+IMG_WORKDIR=""
+IMG_SRC=""
+IMG_RUNDIR=""
 CELERY_WORKER_IMAGE=""
 LIBDIR=""
 REMOTE_SCRIPT=""
@@ -157,6 +168,9 @@ REF_DEVICE_OPTION=""
 for _kv in "$@"; do
   case "$_kv" in
     remote_workdir=*)    REMOTE_WORKDIR="${_kv#*=}" ;;
+    image_workdir=*)     IMG_WORKDIR="${_kv#*=}" ;;
+    image_src=*)         IMG_SRC="${_kv#*=}" ;;
+    image_rundir=*)      IMG_RUNDIR="${_kv#*=}" ;;
     worker_image=*)      CELERY_WORKER_IMAGE="${_kv#*=}" ;;
     libdir=*)            LIBDIR="${_kv#*=}" ;;
     remote_script=*)     REMOTE_SCRIPT="${_kv#*=}" ;;
@@ -172,7 +186,7 @@ for _kv in "$@"; do
 done
 
 mkdir -p "$REMOTE_WORKDIR/run/tests"
-[ -n "$PARTIAL_INFO_DIR" ] && mkdir -p "$REMOTE_WORKDIR/${OUTPUT_DIR#/wkdir/}"
+[ -n "$PARTIAL_INFO_DIR" ] && mkdir -p "$REMOTE_WORKDIR/${OUTPUT_DIR#"$IMG_WORKDIR"/}"
 
 set -x
 jobid=$(tsp docker run --rm \
@@ -184,18 +198,21 @@ jobid=$(tsp docker run --rm \
   --security-opt seccomp=unconfined \
   --ipc=host \
   --network=host \
-  -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
+  -e AOTRITON_WORKDIR="$IMG_WORKDIR" \
+  -e AOTRITON_SRC="$IMG_SRC" \
+  -e AOTRITON_RUNDIR="$IMG_RUNDIR" \
+  -e PYTHONPYCACHEPREFIX="$IMG_RUNDIR/pycache" \
   -e AOTRITON_TEST_LIBDIR="$LIBDIR" \
   -e OUTPUT_DIR="$OUTPUT_DIR" \
   ${PARTIAL_INFO_DIR:+-e PARTIAL_INFO_DIR="$PARTIAL_INFO_DIR"} \
   ${RECORD_ADIFFS_TO:+-e RECORD_ADIFFS_TO="$RECORD_ADIFFS_TO"} \
   ${REF_DEVICE_OPTION:+-e AOTRITON_REF_DEVICE_OPTION="$REF_DEVICE_OPTION"} \
-  --mount type=bind,source="$(realpath "$REMOTE_WORKDIR")",target=/wkdir \
+  --mount type=bind,source="$(realpath "$REMOTE_WORKDIR")",target="$IMG_WORKDIR" \
   "$CELERY_WORKER_IMAGE" \
   bash -l -c '
-    source /wkdir/config.rc
+    source "$AOTRITON_WORKDIR/config.rc"
     source "$(dirname "$CELERY_WORKER_PYTHON")/activate"
-    cd /wkdir/aotriton.src
+    cd "$AOTRITON_SRC"
     exec bash "$0" "$@"
   ' "$REMOTE_SCRIPT" "$PASS_NUM" "$TEST_LEVEL" "$BACKEND")
 echo "$jobid"

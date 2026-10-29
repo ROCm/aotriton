@@ -12,6 +12,7 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 . "$TUNE_ROOT/lib/config_load.sh"
 . "$TUNE_ROOT/lib/db_query.sh"
+. "$TUNE_ROOT/lib/paths.sh"
 
 WORKDIR="$1"
 HOSTNAME="$2"
@@ -50,10 +51,15 @@ IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
 
 WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
-ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$GRACEFUL" <<'EOF'
+ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$GRACEFUL" "$AOTRITON_IMAGE_WORKDIR" "$AOTRITON_IMAGE_TMPFS" "$AOTRITON_IMAGE_SRC" <<'EOF'
 WORKER_WORKDIR="$1"
 ARCH="$2"
 GRACEFUL="$3"
+# The image's layout (.tune/lib/paths.sh), passed in: this runs remotely, and
+# expanded here rather than inside the container, which may predate it.
+IMG_WORKDIR="$4"
+IMG_TMPFS="$5"
+IMG_SRC="$6"
 RUNFILE="$WORKER_WORKDIR/run/worker.containerid"
 
 if [ ! -f "$RUNFILE" ]; then
@@ -65,16 +71,16 @@ WORKER_CONTAINER_ID=$(cat "$RUNFILE")
 
 if [ "$GRACEFUL" = "true" ]; then
   echo "Gracefully stopping worker service in container: $WORKER_CONTAINER_ID"
-  docker exec "$WORKER_CONTAINER_ID" bash -lc "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh stop /wkdir $ARCH --graceful"
+  docker exec "$WORKER_CONTAINER_ID" bash -lc "source $IMG_WORKDIR/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd $IMG_SRC && bash .tune/remote/worker_service.sh stop $IMG_WORKDIR $ARCH --graceful"
 else
   echo "Stopping worker service in container: $WORKER_CONTAINER_ID"
-  docker exec "$WORKER_CONTAINER_ID" bash -lc "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh stop /wkdir $ARCH"
+  docker exec "$WORKER_CONTAINER_ID" bash -lc "source $IMG_WORKDIR/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd $IMG_SRC && bash .tune/remote/worker_service.sh stop $IMG_WORKDIR $ARCH"
 fi
 
 echo "Stopping and removing container: $WORKER_CONTAINER_ID"
 docker rm -f "$WORKER_CONTAINER_ID"
 
-sudo rm -rf /dev/shm/aotriton-tuner
+sudo rm -rf "$IMG_TMPFS/aotriton-tuner"
 rm "$RUNFILE"
 echo "Worker stopped and container removed"
 EOF

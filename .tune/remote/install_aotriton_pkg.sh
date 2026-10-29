@@ -7,14 +7,14 @@
 # activated, immediately before worker_service.sh starts anything.
 #
 # Why it has to happen at every worker start, and not once at image build time:
-# the checkout is bind-mounted at /wkdir/aotriton.src and changes under the
+# the checkout is bind-mounted at $AOTRITON_SRC and changes under the
 # image. An `aotriton` baked into the image is a snapshot of whatever the tree
 # looked like when the image was built, so a deploy that syncs new code to the
 # host would leave the workers still importing the old one -- silently, since
 # both versions import fine. Installing here means the package always matches
 # the checkout the worker is about to run out of.
 #
-# Why it copies instead of installing from /wkdir/aotriton.src directly:
+# Why it copies instead of installing from $AOTRITON_SRC directly:
 # pip builds in-tree (the default since 21.3; the out-of-tree option was
 # removed in 22.1), so `pip install .` drops build/ and aotriton.egg-info/ into
 # the source directory. Two problems with that here. They show up in
@@ -33,7 +33,9 @@
 
 set -euo pipefail
 
-SRC="${1:-/wkdir/aotriton.src}"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/paths.sh"
+
+SRC="${1:-$AOTRITON_SRC}"
 STAGE="$(mktemp -d /tmp/aotriton-pkg.XXXXXX)"
 STAGE2="$(mktemp -d /tmp/aotriton-tune-pkg.XXXXXX)"
 trap 'rm -rf "$STAGE" "$STAGE2"' EXIT

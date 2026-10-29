@@ -12,6 +12,7 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 . "$TUNE_ROOT/lib/config_load.sh"
 . "$TUNE_ROOT/lib/db_query.sh"
+. "$TUNE_ROOT/lib/paths.sh"
 
 WORKDIR="$1"
 HOSTNAME="$2"
@@ -49,10 +50,14 @@ WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 SUBPOOL="$(get_worker_subpool "$WORKDIR" "$HOSTNAME")"
 EXTRA_ARGS+=(${SUBPOOL:+--subpool "$SUBPOOL"})
 
-ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "${EXTRA_ARGS[@]}" <<'EOF'
+ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$AOTRITON_IMAGE_WORKDIR" "$AOTRITON_IMAGE_SRC" "${EXTRA_ARGS[@]}" <<'EOF'
 WORKER_WORKDIR="$1"
 ARCH="$2"
-shift 2
+# The image's layout (.tune/lib/paths.sh), passed in: this runs remotely, and
+# expanded here rather than inside the container, which may predate it.
+IMG_WORKDIR="$3"
+IMG_SRC="$4"
+shift 4
 EXTRA_ARGS=("$@")
 
 RUNFILE="$WORKER_WORKDIR/run/worker.containerid"
@@ -65,6 +70,6 @@ fi
 WORKER_CONTAINER_ID=$(cat "$RUNFILE")
 
 echo "Restarting worker service in container: $WORKER_CONTAINER_ID"
-docker exec "$WORKER_CONTAINER_ID" bash -lc "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh restart /wkdir $ARCH ${EXTRA_ARGS[*]}"
+docker exec "$WORKER_CONTAINER_ID" bash -lc "source $IMG_WORKDIR/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd $IMG_SRC && bash .tune/remote/worker_service.sh restart $IMG_WORKDIR $ARCH ${EXTRA_ARGS[*]}"
 echo "Worker restarted"
 EOF

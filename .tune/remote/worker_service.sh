@@ -84,7 +84,7 @@ Arguments:
 Options:
     --multi_gpu <id> [<id>...]    GPU IDs to use (space-separated)
                                   Use -1 for all GPUs (default: all auto-detected)
-    --session_name <name>         Subdirectory under <workdir>/run/pids/ and <workdir>/run/logs/
+    --session_name <name>         Subdirectory under <rundir>/pids/ and <rundir>/logs/
                                   for pid and log files; required when multiple sessions
                                   run concurrently to avoid file collisions
     --nreader <n>                 Number of PG reader workers to start (default: 4)
@@ -133,8 +133,12 @@ Examples:
     $0 start /path/to/workdir gfx942 --session_name slurm-job-42
     $0 stop  /path/to/workdir gfx942 --session_name slurm-job-42
 
-PID files location: <workdir>/run/pids/[<session_name>/]
-Log files location: <workdir>/run/logs/[<session_name>/]
+PID files location: <rundir>/pids/[<session_name>/]
+Log files location: <rundir>/logs/[<session_name>/]
+Broker socket:      <rundir>/broker.sock
+
+<rundir> is \$AOTRITON_RUNDIR when set, else <workdir>/run. It must be on a
+local filesystem (a Unix socket cannot live on a network share).
 EOF
     exit 1
 }
@@ -270,16 +274,24 @@ QUEUES=()
 [ "$NUM_CPU" -gt 0 ] && QUEUES+=(cpu)
 QUEUES_ARG=$(IFS=,; echo "${QUEUES[*]}")
 
-# Directories
-PID_DIR="$WORKDIR/run/pids${SESSION_NAME:+/$SESSION_NAME}"
-LOG_DIR="$WORKDIR/run/logs${SESSION_NAME:+/$SESSION_NAME}"
+# Directories. The rundir holds node-local runtime files and defaults to
+# <workdir>/run (AOTRITON_RUNDIR in .tune/lib/paths.sh); a node whose
+# workdir is on a network filesystem (perfmon in a fleet container) points
+# AOTRITON_RUNDIR at a local path instead.
+# The default comes from paths.sh, read in a subshell so that the rest of this
+# script keeps its own environment, with the workdir this invocation was given.
+RUNDIR="$(AOTRITON_WORKDIR="$WORKDIR"; . "$TUNE_ROOT/lib/paths.sh"; echo "$AOTRITON_RUNDIR")"
+PID_DIR="$RUNDIR/pids${SESSION_NAME:+/$SESSION_NAME}"
+LOG_DIR="$RUNDIR/logs${SESSION_NAME:+/$SESSION_NAME}"
 
 mkdir -p "$PID_DIR" "$LOG_DIR"
 
 # Set broker socket path (used by all localq components)
 # All entry points (broker_main, gpu_worker_socket, pg_reader_worker, cpu_worker)
-# default --broker_socket to this env var, so we don't need to pass it explicitly
-export AOTRITON_BROKER_SOCKET="$WORKDIR/run/broker.sock"
+# default --broker_socket to this env var, so we don't need to pass it explicitly.
+# Always under the rundir, even when the caller's environment already has one:
+# .tune/lib/paths.sh exports a default that is not node-specific.
+export AOTRITON_BROKER_SOCKET="$RUNDIR/broker.sock"
 
 # Helper functions
 

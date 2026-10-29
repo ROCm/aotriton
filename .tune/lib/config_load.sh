@@ -24,7 +24,7 @@ load_config() {
 }
 
 # Simple config loader for scripts running inside containers
-# Does not query database - workdir is always /wkdir in container
+# Does not query database - the workdir is the container's (AOTRITON_WORKDIR)
 load_config_container() {
     local workdir="$1"
     if [ ! -f "$workdir/config.rc" ]; then

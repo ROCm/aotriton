@@ -12,6 +12,7 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 . "$TUNE_ROOT/lib/config_load.sh"
 . "$TUNE_ROOT/lib/db_query.sh"
+. "$TUNE_ROOT/lib/paths.sh"
 
 WORKDIR="$1"
 HOSTNAME="$2"
@@ -62,11 +63,17 @@ WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 SUBPOOL="$(get_worker_subpool "$WORKDIR" "$HOSTNAME")"
 EXTRA_ARGS=(--hostname "$HOSTNAME" "${EXTRA_ARGS[@]}" ${SUBPOOL:+--subpool "$SUBPOOL"})
 
-ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$CELERY_WORKER_IMAGE" "${EXTRA_ARGS[@]}" <<'EOF'
+ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$CELERY_WORKER_IMAGE" "$AOTRITON_IMAGE_WORKDIR" "$AOTRITON_IMAGE_TMPFS" "$AOTRITON_IMAGE_SRC" "$AOTRITON_IMAGE_RUNDIR" "${EXTRA_ARGS[@]}" <<'EOF'
 WORKER_WORKDIR="$1"
 ARCH="$2"
 CELERY_WORKER_IMAGE="$3"
-shift 3
+# The image's layout (.tune/lib/paths.sh), passed in: this runs remotely. The
+# container gets it as AOTRITON_* variables, so nothing inside depends on it.
+IMG_WORKDIR="$4"
+IMG_TMPFS="$5"
+IMG_SRC="$6"
+IMG_RUNDIR="$7"
+shift 7
 EXTRA_ARGS=("$@")
 
 # Read --category from EXTRA_ARGS. It is forwarded to worker_service.sh as it
@@ -81,9 +88,9 @@ for _arg in "${EXTRA_ARGS[@]}"; do
 done
 
 if [ "$CATEGORY" = "tune,op" ]; then
-  WORKER_PYTHONPATH="/wkdir/installed/test/$ARCH/lib"
+  WORKER_PYTHONPATH="$IMG_WORKDIR/installed/test/$ARCH/lib"
 else
-  WORKER_PYTHONPATH="/wkdir/installed/$ARCH/lib"
+  WORKER_PYTHONPATH="$IMG_WORKDIR/installed/$ARCH/lib"
 fi
 
 RUNFILE="$WORKER_WORKDIR/run/worker.containerid"
@@ -120,10 +127,14 @@ WORKER_CONTAINER_ID=$(docker run -d \
   --ipc=host \
   --network=host \
   -e PYTHONPATH=$WORKER_PYTHONPATH \
-  -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
-  --mount type=bind,source=$(realpath $WORKER_WORKDIR),target=/wkdir \
+  -e AOTRITON_WORKDIR=$IMG_WORKDIR \
+  -e AOTRITON_SRC=$IMG_SRC \
+  -e AOTRITON_RUNDIR=$IMG_RUNDIR \
+  -e AOTRITON_TMPFS=$IMG_TMPFS \
+  -e PYTHONPYCACHEPREFIX=$IMG_RUNDIR/pycache \
+  --mount type=bind,source=$(realpath $WORKER_WORKDIR),target=$IMG_WORKDIR \
   "$CELERY_WORKER_IMAGE" \
-  bash -lc "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/install_aotriton_pkg.sh && bash .tune/remote/worker_service.sh start /wkdir $ARCH ${EXTRA_ARGS[*]} && exec sleep infinity")
+  bash -lc "source \$AOTRITON_WORKDIR/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd \$AOTRITON_SRC && bash .tune/remote/install_aotriton_pkg.sh && bash .tune/remote/worker_service.sh start \$AOTRITON_WORKDIR $ARCH ${EXTRA_ARGS[*]} && exec sleep infinity")
 
 if [ -z "$WORKER_CONTAINER_ID" ]; then
   echo "Failed to start container" >&2
