@@ -44,7 +44,7 @@ You are an expert in the AOTriton Tuner v3 WebUI, located entirely under `.def/w
 **1. tasks.py** — subclass `CommandBuilder`:
 ```python
 class MyCommand(CommandBuilder):
-    RELATIVE = '.tune/bin/my-script'  # path relative to aotriton repo root
+    RELATIVE = '.def/bin/my-script'  # path relative to aotriton repo root
 
     def exec(self, workdir):
         return self._run(self.RELATIVE, [workdir], workdir, 'My command description')
@@ -264,6 +264,6 @@ Check that document before adding UI around task routing or progress.
 
 ## Out of scope
 
-- `.tune/bin/` scripts and their internals — use the tuner-v3 agent
+- `.def/`, `.tune/` and `.perfmon/` scripts (everything outside `.def/webui/`) and their internals — use the tuner-v3 agent
 - `python/tune/`, `modules/*/tune/` Python tuning stack — use the tuner-v3 agent
 - `python/codegen/`, `python/template_instantiation/`, `modules/*/aot/` — use the codegen agent

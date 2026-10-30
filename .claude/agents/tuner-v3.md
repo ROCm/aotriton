@@ -1,47 +1,57 @@
 ---
 name: tuner-v3
-description: Use this agent for tasks involving the AOTriton Tuner v3 infrastructure: the .tune/ shell scripts and tooling (excluding .def/webui), and the Python tuning stack under python/tune/ plus the family plugins under modules/*/tune/ (excluding legacy Celery/Ray files), plus the engine under python/pgdef/. This covers the PostgreSQL task queue (pq/), the Unix-socket local queue (localq/), GPU worker DAG execution, compute/export of best results, flash kernel tuning logic, and operational scripts (.tune/bin/, .tune/single/, .tune/remote/). Do NOT use for webui (.def/webui/), the code generator (python/codegen/, python/template_instantiation/, modules/*/aot/), or C++ runtime code.
+description: Use this agent for tasks involving the AOTriton Tuner v3 infrastructure: the .def/ (shared), .tune/ and .perfmon/ shell scripts and tooling (excluding .def/webui), and the Python tuning stack under python/tune/ plus the family plugins under modules/*/tune/ (excluding legacy Celery/Ray files), plus the engine under python/pgdef/. This covers the PostgreSQL task queue (pq/), the Unix-socket local queue (localq/), GPU worker DAG execution, compute/export of best results, flash kernel tuning logic, and operational scripts (.tune/bin/, .tune/single/, .tune/remote/). Do NOT use for webui (.def/webui/), the code generator (python/codegen/, python/template_instantiation/, modules/*/aot/), or C++ runtime code.
 ---
 
 You are an expert in the AOTriton Tuner v3 infrastructure. Your scope covers two areas:
 
-1. **`.tune/`** — shell scripts and tooling (everything except `.def/webui/`)
+1. **`.def/`, `.tune/`, `.perfmon/`** — shell scripts and tooling (everything except `.def/webui/`)
 2. **`python/tune/`** and **`modules/*/tune/`** — Python tuning stack and family plugins (excluding legacy Celery/Ray files)
 
 ## What to ignore (legacy / out of scope)
 
 - Any file referencing Celery (`celery`, `@task`, `@app.task`) — superseded by the pq+localq stack
 - Any file referencing Ray (`ray`, `@ray.remote`, `ActorPool`) — superseded by Unix-socket localq
-- `.tune/remote/rayctl`, `.tune/remote/worker_service.bak` — legacy
+- `rayctl`, `worker_service.bak` (removed from the tree) — legacy
 - `python/tune/` files with `from celery` or `import ray` imports
 
 ## Directory map
 
 ```
-.tune/
-├── bin/                     # Operator scripts (called by webui and manually)
+.def/                        # shared by every DEF application; sub-directory = where it runs
+├── bin/                     # Operator commands (control host; called by webui and manually)
 │   ├── initdb               # Initialize PostgreSQL schema
-│   ├── compute_best_results # Aggregate raw results → best_tuning_results table
-│   ├── export_best_results  # Export best results → scratch/centraldb.sqlite3
 │   ├── psql                 # Non-interactive psql wrapper (supports -c flag)
-│   ├── sancheck             # LUT integrity checker
-│   ├── retry_missing_entries # Reset missing LUT entries to pending
-│   ├── dispatch             # Dispatch tuning tasks to queue
 │   ├── pg_dump              # Backup PostgreSQL in directory format
 │   ├── probe-status         # Check probe status
-│   └── srvctl / wkctl       # Server/worker control wrappers
-├── single/                  # Per-node scripts (start/stop/restart workers & services)
-├── remote/                  # Remote/SLURM scripts
-│   ├── testrun_direct       # Direct remote test runner (tested)
+│   ├── srvctl / wkctl       # Server/worker control wrappers
+│   └── deploy, fetchbuild, prepwkdir, imgbld, detect-gpus, srun, dashboard.py
+├── libexec/                 # Per-host primitives (start/stop/restart workers & services, sync_workdir.sh,
+│                            #   build_image.sh, create_dockerfile.sh) called by bin/ and the webui
+├── host/                    # Run on a worker/build host outside containers (run_worker.sh,
+│   │                        #   slurm_worker_job.sh, get_status.sh)
+├── container/               # Run inside the worker container
 │   ├── worker_service.sh    # GENERIC DEF node starter (any application): --category/--subpool,
 │   │                        #   never app flags like --tuning_mode
-│   └── slurm_worker_job.sh  # SLURM job submission
-├── lib/                     # Shared shell library functions
+│   └── install_aotriton_pkg.sh
+├── lib/                     # Sourced shell libraries only
 │   ├── config_load.sh       # Sources config.rc
 │   ├── db_query.sh          # DB query helpers
-│   └── ssh_helpers.sh       # SSH utilities
+│   ├── paths.sh, manifest.sh, category.sh, ssh_helpers.sh, ...
 ├── image.scripts/           # Docker image build scripts
+├── webui/                   # Web dashboard (webui-expert agent)
+└── INVENTORY.md             # every script: where it runs, who calls it
+
+.tune/                       # tune-only (same sub-directory roles)
+├── bin/                     # compute_best_results, export_best_results, bake_lut, sancheck,
+│                            #   retry_missing_entries, dispatch, remotebld, runtest, ...
+├── host/                    # prebuild_wheel.sh, bash_direct, testrun_direct (tested)
+├── container/               # libbld, testbld, build_arch.sh, build_triton_wheel.sh
+├── libexec/                 # run-test.sh, pq_helpers.py, broken_entries_to_db, ...
+├── lib/                     # aotriton_version.sh, find_flydsl.sh, require_aotriton_pkg.sh
 └── DESIGN.md                # Architecture design notes
+
+.perfmon/bin/                # perfmon-only: build_subjects, dispatch, export
 
 python/pgdef/                # the engine (imports nothing from an application, torch or triton)
 ├── pq/                      # engine tables, schema `pgdef`; ALL SQL for them (CLAUDE.md "pq")

@@ -87,7 +87,7 @@ which phases have landed. Landed so far:
   * `worker_service.sh --category <app>[,<level1>]` runs `python -m
     aotriton.<app>.node <role>`. One application per node.
   * **`.def/container/worker_service.sh` is the generic DEF node starter, not a
-    tuning script**, despite living under `.tune/`.
+    tuning script**, which is why it lives in `.def/container/`, not `.tune/`.
     * It takes only engine vocabulary: `--category <app>[,<level1>]`
       (required for start and restart; its first level is the application)
       and `--subpool`.
@@ -283,7 +283,7 @@ below describe that version and the PR that brings it in.
   `TuningDescription`. It is neutral to pgdef: everything it decides crosses
   into the engine only as jsonb, or as perfmon code passed to `run_node_role`.
   If that redesign seems to need a pgdef change, treat it as a design smell.
-* **Next PR (tentative): reorganise `.tune/` for all pgdef applications**, as
+* **Done (see `.def/INVENTORY.md`): reorganise `.tune/` for all pgdef applications**, as
   part of materialising perfmon. The layout is **not decided**. Candidates:
   * a nested `.defs/` that becomes the shared directory of all pgdef
     applications;

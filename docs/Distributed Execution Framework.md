@@ -190,7 +190,7 @@ provides three entry points, as modules of `aotriton.<app>`:
 |---|---|
 | `aotriton.<app>.node` | Starts one node process (broker, GPU/CPU worker, or reader), passing the app's handlers and runners to `pgdef.localq.node.run_node_role` |
 | `aotriton.<app>.dispatch` | Turns the app's CLI options into tasks, through `pgdef.pq.dispatch.drive` |
-| `aotriton.<app>.manifest` | Prints settings for the `.tune` scripts: image, container environment, install directories |
+| `aotriton.<app>.manifest` | Prints settings for the `.def` scripts: image, container environment, install directories |
 
 ```python
 # python/tune/node.py
@@ -199,12 +199,12 @@ run_node_role(app='tune', handlers=HANDLERS, start=TuneStartHandler,
 ```
 
 `.def/container/worker_service.sh --category tune,kernel` starts `python -m aotriton.tune.node <role>`.
-Despite its location under `.tune/`, `worker_service.sh` is the generic node
+`worker_service.sh` lives in `.def/container/`: it is the generic node
 starter for every application. It takes only engine options (`--category`,
 whose first level is the application, and `--subpool`), never an
 application's own flags such as tune's `--tuning_mode`.
 
-The `.tune` shell scripts learn everything application-specific from the
+The `.def` shell scripts learn everything application-specific from the
 application's `MANIFEST` dict (`python/<app>/manifest.py`), one key at a time:
 
 ```bash
