@@ -380,7 +380,7 @@ class DeployWorkerCommand(SingleWorkerCommand):
 
 class BulkWorkerCommand(CommandBuilder):
     """Base class for bulk worker operations"""
-    RELATIVE = '.tune/bin/wkctl'
+    RELATIVE = '.def/bin/wkctl'
     ACTION = None  # Subclass must define
 
     def exec(self, workdir, dry_run: bool = False):
@@ -402,7 +402,7 @@ class RestartAllWorkersCommand(BulkWorkerCommand):
 
 class ServerCommand(CommandBuilder):
     """Base class for server operations"""
-    RELATIVE = '.tune/bin/srvctl'
+    RELATIVE = '.def/bin/srvctl'
     ACTION = None  # Subclass must define
 
     def exec(self, workdir, dry_run: bool = False):
@@ -424,7 +424,7 @@ class RestartServersCommand(ServerCommand):
 
 class InitDatabaseCommand(CommandBuilder):
     """Initialize database schema"""
-    RELATIVE = '.tune/bin/initdb'
+    RELATIVE = '.def/bin/initdb'
 
     def exec(self, workdir, dry_run: bool = False):
         """Execute initdb script"""
@@ -433,7 +433,7 @@ class InitDatabaseCommand(CommandBuilder):
 
 class RecreateSchemaCommand(CommandBuilder):
     """Recreate database schema (drop all tables first)"""
-    RELATIVE = '.tune/bin/initdb'
+    RELATIVE = '.def/bin/initdb'
 
     def exec(self, workdir, dry_run: bool = False):
         """Execute initdb script with --recreate flag"""
@@ -576,7 +576,7 @@ class BuildTestLibrariesCommand(CommandBuilder):
 
 
 class BuildImagesCommand(BuildCommand):
-    RELATIVE = '.tune/bin/imgbld'
+    RELATIVE = '.def/bin/imgbld'
     DESCRIPTION = 'Build Docker images'
 
 
@@ -600,7 +600,7 @@ class DeployCommand(CommandBuilder):
 
 
 class DeployAllCommand(DeployCommand):
-    RELATIVE = '.tune/bin/deploy'
+    RELATIVE = '.def/bin/deploy'
     DESCRIPTION = 'Deploy to all workers'
 
     def exec(self, workdir, category: str = 'tune,kernel', dry_run: bool = False):
@@ -609,7 +609,7 @@ class DeployAllCommand(DeployCommand):
 
 
 class PrepareWorkdirCommand(DeployCommand):
-    RELATIVE = '.tune/bin/prepwkdir'
+    RELATIVE = '.def/bin/prepwkdir'
     DESCRIPTION = 'Prepare workdir'
 
     def exec(self, workdir, dry_run: bool = False):
@@ -930,7 +930,7 @@ def fetch_tuning_build(workdir, dry_run: bool = False):
     hostname = cfg.get('hostname', '')
     if not hostname:
         return {'status': 'error', 'message': 'Remote build node hostname is not configured'}
-    cmd = ['.tune/bin/fetchbuild', workdir, '--category', 'tune,kernel']
+    cmd = ['.def/bin/fetchbuild', workdir, '--category', 'tune,kernel']
     return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
                        description=f'Fetch tuning build from {hostname}', dry_run=dry_run)
 
@@ -941,7 +941,7 @@ def fetch_test_build(workdir, dry_run: bool = False):
     hostname = cfg.get('hostname', '')
     if not hostname:
         return {'status': 'error', 'message': 'Remote build node hostname is not configured'}
-    cmd = ['.tune/bin/fetchbuild', workdir, '--category', 'tune,op']
+    cmd = ['.def/bin/fetchbuild', workdir, '--category', 'tune,op']
     return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
                        description=f'Fetch test build from {hostname}', dry_run=dry_run)
 

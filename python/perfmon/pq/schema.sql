@@ -3,7 +3,7 @@
 --
 -- Application "perfmon": views over pgdef.
 --
--- Applied by .tune/bin/initdb AFTER python/pgdef/pq/schema.sql (it references
+-- Applied by .def/bin/initdb AFTER python/pgdef/pq/schema.sql (it references
 -- the engine's tables). Plain, idempotent SQL; everything lives in schema
 -- `perfmon`, nothing in `public`. perfmon has no table of its own: every
 -- measurement is a row of pgdef.report.

@@ -39,7 +39,7 @@ _package_dir = {'aotriton.perfmon': '.'}
 _package_dir.update({f'aotriton.perfmon.{p}': p.replace('.', '/')
                      for p in _subs})
 
-# schema.sql is applied by .tune/bin/initdb straight from a checkout, and also
+# schema.sql is applied by .def/bin/initdb straight from a checkout, and also
 # read from the installed package.
 _package_data = {
     'aotriton.perfmon.pq': ['*.sql'],

@@ -27,7 +27,7 @@ Tools that are handed `--workdir` get parameters from
               payload fields.
 
 
-## Schema (schema.sql, applied by `.tune/bin/initdb` after pgdef's)
+## Schema (schema.sql, applied by `.def/bin/initdb` after pgdef's)
 
 ```
   tune.tuning_results                view over pgdef.report WHERE cat_level0='tune':

@@ -18,7 +18,7 @@ parse_host_filter() {
     # put BOTH `worker-01` and `~/wkdir` into FILTER_HOSTS, leaving no workdir,
     # so the command died on its own usage message. The slurp could not tell a
     # second hostname from a trailing positional, and nothing in the tree ever
-    # relied on it: .tune/bin/detect-gpus (:17-26, :55-56) and .tune/bin/runtest
+    # relied on it: .def/bin/detect-gpus (:17-26, :55-56) and .tune/bin/runtest
     # (:28) both already take one value per flag and document repetition, so
     # this makes the shared helper agree with them rather than inventing a rule.
     while [[ $# -gt 0 ]]; do

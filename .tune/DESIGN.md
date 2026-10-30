@@ -170,7 +170,7 @@ run_command(cmd, cwd, workdir, description)
 
 **Bulk (All Workers)**:
 ```bash
-.tune/bin/imgbld <workdir>
+.def/bin/imgbld <workdir>
   → Iterates workers.db
   → Calls build_image.sh for each worker (without --follow), passing --arch
 ```
@@ -299,7 +299,7 @@ docker run "$IMAGE" ...
 
 ```bash
 # 1. Prepare workdir (on server/dev machine)
-.tune/bin/prepwkdir <workdir>
+.def/bin/prepwkdir <workdir>
   → Creates directory structure
   → Copies config.rc template
   → Initializes workers.db
@@ -310,16 +310,16 @@ docker run "$IMAGE" ...
   → Stores in <workdir>/installed/<arch>/
 
 # 3. Deploy to workers
-.tune/bin/deploy <workdir>
+.def/bin/deploy <workdir>
   → Syncs to all workers (excludes /build, /run, /scratch, /secrets, /installed)
   → Syncs architecture-specific /installed/<arch> per worker
 
 # 4. Build Docker images on workers
-.tune/bin/imgbld <workdir>
+.def/bin/imgbld <workdir>
   → Builds worker Docker image on each worker (via tsp)
 
 # 5. Start workers
-.tune/bin/wkctl <workdir> start
+.def/bin/wkctl <workdir> start
   → Starts worker_service.sh on each worker via SSH
 ```
 

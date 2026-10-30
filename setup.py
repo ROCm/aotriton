@@ -75,7 +75,7 @@ _package_data = {
         'template/*.cc', 'template/*.h',
         'template/snippet/*.cc', 'template/snippet/*.h',
     ],
-    # Applied by .tune/bin/initdb straight from a checkout, and also read from
+    # Applied by .def/bin/initdb straight from a checkout, and also read from
     # the installed package by aotriton.pgdef.pq.
     'aotriton.pgdef.pq': ['*.sql'],
 }

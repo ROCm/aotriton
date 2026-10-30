@@ -4,7 +4,7 @@
 """
 Schema administration for the engine's tables.
 
-Operators run `.tune/bin/initdb`, which feeds every layer's schema.sql to psql.
+Operators run `.def/bin/initdb`, which feeds every layer's schema.sql to psql.
 This module is the same thing for Python callers (tests, tools): it applies the
 engine's schema.sql through a connection.
 """
@@ -38,7 +38,7 @@ def drop_schema(conn) -> None:
 def all_schema_files(python_dir: Path | None = None) -> list[Path]:
     """Every layer's schema.sql, in the order they must be applied: the
     engine's first, then each application's (`python/<app>/pq/schema.sql`, by
-    name). `.tune/bin/initdb` does the same with a shell glob; an application
+    name). `.def/bin/initdb` does the same with a shell glob; an application
     needs no edit anywhere to be picked up.
     """
     python_dir = python_dir or Path(__file__).resolve().parent.parent.parent

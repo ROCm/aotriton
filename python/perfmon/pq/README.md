@@ -30,7 +30,7 @@ Tools that are handed `--workdir` load config.rc with
 perfmon has no second category level: `cat_level1` is NULL for every task.
 
 
-## Schema (schema.sql, applied by `.tune/bin/initdb` after pgdef's)
+## Schema (schema.sql, applied by `.def/bin/initdb` after pgdef's)
 
 ```
   perfmon.measurement         view over pgdef.report JOIN pgdef.task WHERE cat_level0='perfmon':

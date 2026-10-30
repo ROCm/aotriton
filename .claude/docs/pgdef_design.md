@@ -110,7 +110,7 @@ which phases have landed. Landed so far:
     typed views and derived tables in their own schema. Tables derived from
     reports use `ON DELETE CASCADE`, so a generic reset needs no application
     code.
-* **initdb** (`.tune/bin/initdb`, which is also behind the webui buttons) applies
+* **initdb** (`.def/bin/initdb`, which is also behind the webui buttons) applies
   every layer's idempotent `schema.sql` with `psql`. pgdef's runs first, then a
   glob of `python/*/pq/schema.sql`. It creates all applications' schemas,
   imports no Python, and `--recreate` drops those schemas with `CASCADE`.

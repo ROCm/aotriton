@@ -132,7 +132,7 @@ class WorkerScheduler:
         """Run wkctl for a single host"""
         from .tasks import get_category
         aotriton_root = Path(__file__).resolve().parent.parent.parent
-        wkctl_path = aotriton_root / '.tune/bin/wkctl'
+        wkctl_path = aotriton_root / '.def/bin/wkctl'
         category = get_category(self.workdir)
 
         result = subprocess.run(

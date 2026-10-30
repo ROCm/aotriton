@@ -626,9 +626,9 @@ def test_no_raw_tuning_db_sql_outside_pq():
     # Regression guard for the CLAUDE.md rule: .tune/ must reach the tuning
     # database through aotriton.tune.pq, never with its own SQL.
     import re
-    # .tune/bin/psql is an interactive psql wrapper; SQL in its help text is
+    # .def/bin/psql is an interactive psql wrapper; SQL in its help text is
     # the point of the tool, not a bypass of the pq layer.
-    EXEMPT = {'.tune/bin/psql'}
+    EXEMPT = {'.def/bin/psql'}
     offenders = []
     pat = re.compile(r"\b(FROM|JOIN|UPDATE|INSERT INTO|DELETE FROM)\s+(pgdef|tune)\.\w+"
                      r"|payload->'entry'")

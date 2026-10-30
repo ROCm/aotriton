@@ -240,7 +240,7 @@ own terms instead. Tune says `tuning_level` and `--tuning_mode kernel|op`, not
 between the two and documents its mapping, e.g. "tune stores its tuning level
 as `cat_level1`".
 
-`.tune/bin/initdb`, which is also behind the webui's Init DB button, creates
+`.def/bin/initdb`, which is also behind the webui's Init DB button, creates
 every schema for every application. Each `pq` ships an idempotent
 `schema.sql`, and pgdef's runs first. `--recreate` drops and recreates them all.
 
