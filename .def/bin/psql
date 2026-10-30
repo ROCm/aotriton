@@ -15,7 +15,8 @@ Usage: $0 <workdir> [-c <sql>]
 
 Connect to PostgreSQL database specified by workdir's config.rc using psql.
 
-This script uses the alpine/psql Docker image to connect to the database.
+This script uses the alpine/psql Docker image when docker is available,
+otherwise a native psql. Set AOTRITON_PSQL=docker|native to force either.
 
 Arguments:
   <workdir>  Project working directory
@@ -82,6 +83,29 @@ POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 POSTGRES_DB="${POSTGRES_DB:-workers}"
 
 echo "Connecting to postgresql://$POSTGRES_USER@$POSTGRES_HOST:$POSTGRES_PORT/$POSTGRES_DB (psql $POSTGRES_VERSION)"
+
+# Choose the client: containerized when docker is on PATH, else a native psql.
+# AOTRITON_PSQL=docker|native forces either one.
+PSQL_MODE="${AOTRITON_PSQL:-}"
+if [ -z "$PSQL_MODE" ]; then
+  if command -v docker >/dev/null 2>&1; then
+    PSQL_MODE=docker
+  elif command -v psql >/dev/null 2>&1; then
+    PSQL_MODE=native
+  else
+    echo "Error: no psql client: install docker (runs $PSQL_IMAGE) or a native psql on PATH" >&2
+    exit 1
+  fi
+fi
+
+if [ "$PSQL_MODE" = "native" ]; then
+  export PGPASSWORD="$POSTGRES_PASSWORD"
+  exec psql postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
+    "${PSQL_EXTRA_ARGS[@]}"
+elif [ "$PSQL_MODE" != "docker" ]; then
+  echo "Error: AOTRITON_PSQL must be 'docker' or 'native', got '$PSQL_MODE'" >&2
+  exit 1
+fi
 
 # Run psql via alpine/psql docker image
 # Use --network=host to connect to localhost
