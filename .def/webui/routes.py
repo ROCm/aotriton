@@ -313,6 +313,16 @@ def api_save_gpu_selection(hostname):
     return jsonify(result)
 
 
+@bp.route('/api/workers/<hostname>/thermal-gate', methods=['POST'])
+def api_save_thermal_gate(hostname):
+    """Turn the thermal gate of a host on or off (body: enabled=true|false)"""
+    workdir = current_app.config['WORKDIR']
+    enabled_raw = request.form.get('enabled', 'false').strip().lower()
+    enabled = enabled_raw in ('1', 'true', 'yes', 'on')
+    result = tasks.set_worker_thermal_gate(workdir, hostname, enabled)
+    return jsonify(result)
+
+
 @bp.route('/api/workers/probe-all-status', methods=['POST'])
 def api_probe_all_workers_status():
     """Probe status for all workers"""

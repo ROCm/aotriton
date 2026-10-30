@@ -260,6 +260,17 @@
                             </label>
                             {% endfor %}
                         </div>
+                        <div style="margin-top: 0.3rem;">
+                            <label style="font-size: 0.85em; margin: 0; display: flex; align-items: center; gap: 0.3rem;"
+                                   title="Wait for the GPUs to cool below 85 C before each timed measurement. Host property shared by every application; takes effect when the node is (re)started.">
+                                <input type="checkbox"
+                                       id="thermal-gate-{{ worker.hostname }}"
+                                       {% if worker.thermal_gate %}checked{% endif %}
+                                       onchange="saveThermalGate('{{ worker.hostname }}', this)"
+                                       style="margin: 0;">
+                                <strong>Thermal gate</strong>
+                            </label>
+                        </div>
                     </div>
                 </td>
                 <td>
@@ -430,6 +441,23 @@ function saveGPUSelection(hostname) {
             console.error('Error saving GPU selection:', error);
         });
     }, 500);
+}
+
+// Save the host's thermal gate (on change, like the GPU selection)
+function saveThermalGate(hostname, checkbox) {
+    const body = new URLSearchParams({ enabled: checkbox.checked ? 'true' : 'false' });
+    fetch(`/api/workers/${hostname}/thermal-gate`, { method: 'POST', body })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                throw new Error(data.error || 'save failed');
+            }
+        })
+        .catch(error => {
+            console.error('Error saving thermal gate:', error);
+            checkbox.checked = !checkbox.checked;
+            alert('Failed to save thermal gate for ' + hostname + ': ' + error.message);
+        });
 }
 
 // Office hours scheduling functions
