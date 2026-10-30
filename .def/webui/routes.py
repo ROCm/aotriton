@@ -140,7 +140,9 @@ def servers():
     workdir = current_app.config['WORKDIR']
     config_vars = tasks.get_config_vars(workdir)
     hostnames = tasks.get_hostnames(workdir)
-    category = tasks.get_category(workdir)
+    # The tools on this page are tune-only: a saved perfmon category shows as
+    # the default tune one.
+    category = tasks.get_tune_category(workdir)
     # Architectures this workdir actually has workers for, same source and same
     # helper the Builds page uses. Not config.TUNING_ARCHITECTURES, which is an
     # aspirational list and would offer arches this workdir has no data for.
@@ -647,7 +649,7 @@ def api_default_workdir():
 
 @bp.route('/api/config/category', methods=['POST'])
 def api_category():
-    """Set the WebUI category (tune,kernel or tune,op)"""
+    """Set the WebUI category (tune,kernel, tune,op or perfmon)"""
     workdir = current_app.config['WORKDIR']
     category = request.form.get('category', '').strip()
     result = tasks.set_category(workdir, category)

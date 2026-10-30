@@ -33,7 +33,7 @@
 </section>
 
 <section>
-    <h3>Tuning Mode</h3>
+    <h3>Category</h3>
     {{ category_radios(category, with_own_save_form=true,
            description_extra='This sets the default selection in the Bulk Actions section below.') }}
 </section>
@@ -143,10 +143,19 @@
                                id="tuner-role-{{ worker.hostname }}"
                                title="Assign Tuner role"
                                {% if worker.is_tuner %}checked{% endif %}
-                               onchange="setTunerRole('{{ worker.hostname }}', this.checked)">
-                        <code {% if not worker.is_tuner %}style="text-decoration: line-through;"{% endif %}>{{ worker.hostname }}</code>
+                               onchange="setWorkerRole('{{ worker.hostname }}', 'Tuner', this.checked)">
+                        <code {% if not (worker.is_tuner or worker.is_perfmon) %}style="text-decoration: line-through;"{% endif %}>{{ worker.hostname }}</code>
+                        <label style="font-size: 0.85em; margin: 0 0 0 0.5rem; display: flex; align-items: center; gap: 0.2rem;">
+                            <input type="checkbox"
+                                   id="perfmon-role-{{ worker.hostname }}"
+                                   title="Assign Perfmon role"
+                                   {% if worker.is_perfmon %}checked{% endif %}
+                                   onchange="setWorkerRole('{{ worker.hostname }}', 'Perfmon', this.checked)"
+                                   style="margin: 0;">
+                            Perfmon
+                        </label>
                     </span>
-                    {% if worker.is_tuner %}
+                    {% if worker.is_tuner or worker.is_perfmon %}
                     <span id="gpu-info-{{ worker.hostname }}" style="font-size: 0.85em; display: flex; align-items: center; gap: 0.3rem;">
                         <button hx-post="/api/workers/{{ worker.hostname }}/detect-gpu"
                                 hx-swap="none"
@@ -196,7 +205,7 @@
                     </span>
                     {% endif %}
                 </td>
-                {% if worker.is_tuner %}
+                {% if worker.is_tuner or worker.is_perfmon %}
                 <td>
                     <form hx-post="/api/workers/{{ worker.hostname }}/workdir"
                           hx-swap="none"
@@ -320,9 +329,9 @@
 {% endfor %}
 
 <script>
-function setTunerRole(hostname, enabled) {
+function setWorkerRole(hostname, role, enabled) {
     const body = new URLSearchParams({ enabled: enabled ? 'true' : 'false' });
-    fetch(`/api/workers/${hostname}/role/Tuner`, { method: 'POST', body })
+    fetch(`/api/workers/${hostname}/role/${role}`, { method: 'POST', body })
         .then(() => location.reload());
 }
 

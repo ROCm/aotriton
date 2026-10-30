@@ -50,7 +50,7 @@
     <p>Convert raw PostgreSQL tuning results into the SQLite database used by the aotriton build process, then sanity-check the LUT.</p>
 
     <h4>Tuning Mode</h4>
-    {{ category_radios(category, with_own_save_form=true,
+    {{ category_radios(category, with_own_save_form=true, with_perfmon=false,
            description_extra='All Bake LUT actions below use the currently selected mode (not the saved value).') }}
 
     <button hx-post="/api/servers/bake-lut"

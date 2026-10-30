@@ -286,7 +286,7 @@ def resolve_tune_entry(workdir, line: str) -> dict:
     # the WHERE matches two rows and LIMIT 1 picks arbitrarily. Use the mode
     # the UI is actually showing rather than assuming 'kernel', so resolving a
     # line from an op-mode dbreport finds the op task.
-    tuning_level = _tune_level(get_category(workdir))
+    tuning_level = _tune_level(get_tune_category(workdir))
 
     try:
         conn_params = get_db_connection_params(Path(workdir))
@@ -1038,7 +1038,7 @@ def init_workers_db(workdir):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
-            INSERT OR IGNORE INTO roles (name) VALUES ('Tuner'), ('Builder'), ('Tester');
+            INSERT OR IGNORE INTO roles (name) VALUES ('Tuner'), ('Builder'), ('Tester'), ('Perfmon');
 
             CREATE TABLE IF NOT EXISTS worker_roles (
                 hostname TEXT NOT NULL,
@@ -1095,6 +1095,9 @@ def get_workers_by_architecture(workdir):
         # Fetch all tuner-role hostnames
         cursor.execute("SELECT hostname FROM worker_roles WHERE role_name = 'Tuner'")
         tuner_set = {row[0] for row in cursor.fetchall()}
+        cursor.execute("SELECT hostname FROM worker_roles WHERE role_name = ?",
+                       (ROLE_OF_APP['perfmon'],))
+        perfmon_set = {row[0] for row in cursor.fetchall()}
         # Fetch all GPU metadata, selections, and status
         cursor.execute("SELECT key, value FROM config WHERE key LIKE '%::gpu::%' OR key LIKE '%::gpu_selection' OR key LIKE '%::status'")
         for key, value in cursor.fetchall():
@@ -1145,6 +1148,7 @@ def get_workers_by_architecture(workdir):
                 'gpu_selection': gpu_info.get('selection'),  # None if not set, [-1] for all, or [0,1,2,...]
                 'status_display': status.get('display', 'Unknown'),
                 'is_tuner': hostname in tuner_set,
+                'is_perfmon': hostname in perfmon_set,
             })
 
     return workers_by_arch
@@ -1574,10 +1578,10 @@ def set_test_build_use_installed_db(workdir, enabled: bool):
 # The categories the WebUI offers, and the application each runs. The first
 # component of a category is its application (cat_level0): the shared scripts
 # take only --category and read the application's manifest by its first level.
-CATEGORIES = ('tune,kernel', 'tune,op')
+CATEGORIES = ('tune,kernel', 'tune,op', 'perfmon')
 
 # The workers.db role of the hosts that run each application (the manifest's deploy.role)
-ROLE_OF_APP = {'tune': 'Tuner'}
+ROLE_OF_APP = {'tune': 'Tuner', 'perfmon': 'Perfmon'}
 
 
 def app_of(category: str) -> str:
@@ -1586,12 +1590,17 @@ def app_of(category: str) -> str:
 
 
 def _tune_level(category: str) -> str:
-    """The tune level ('kernel' | 'op') of a category."""
+    """The tune level ('kernel' | 'op') of a category.
+
+    Only tune categories have a level; perfmon has none (its manifest has no
+    level1_values). Tune-only callers go through get_tune_category() or
+    normalize_tune_category(), which never hand them a perfmon category.
+    """
     return tune_tasks.level_of(category)
 
 
 def normalize_category(value: str | None) -> str:
-    """The WebUI's category as 'tune,kernel' | 'tune,op' (the
+    """The WebUI's category as 'tune,kernel' | 'tune,op' | 'perfmon' (the
     `--category` value every script takes).
 
     The one compatibility read of the old vocabulary: a bare 'kernel' or 'op'
@@ -1610,8 +1619,12 @@ def normalize_category(value: str | None) -> str:
 
 def normalize_tune_category(value: str | None) -> str:
     """normalize_category() for the tuning-only tools (best results, LUT export,
-    sancheck, ...)."""
-    return normalize_category(value)
+    sancheck, ...). A perfmon category is an error there: those tools have no
+    perfmon meaning and perfmon has no level to pass them."""
+    category = normalize_category(value)
+    if app_of(category) != 'tune':
+        raise ValueError(f"{category!r} is not a tune category; this tool is tune-only")
+    return category
 
 
 def get_category(workdir) -> str:
@@ -1635,8 +1648,18 @@ def get_category(workdir) -> str:
         return 'tune,kernel'
 
 
+def get_tune_category(workdir) -> str:
+    """The saved category when it is a tune one, else 'tune,kernel'.
+
+    For the tune-only pages and lookups (Servers, the Debug entry resolver):
+    they must keep working while the Workers page has perfmon selected.
+    """
+    category = get_category(workdir)
+    return category if app_of(category) == 'tune' else 'tune,kernel'
+
+
 def set_category(workdir, category: str):
-    """Set the WebUI category in workers.db: 'tune,kernel' or 'tune,op'."""
+    """Set the WebUI category in workers.db: 'tune,kernel', 'tune,op' or 'perfmon'."""
     try:
         category = normalize_category(category) if category else None
         if category is None:
