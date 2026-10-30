@@ -587,14 +587,14 @@ without any patch. These replace the former reuse map of the build:
 
 | Architecture                                | Base    |
 |---------------------------------------------|---------|
-| gfx1101, gfx1102, gfx1103, gfx1152, gfx1153 | gfx1100 |
+| gfx1101, gfx1102, gfx1103                   | gfx1100 |
 | gfx1170                                     | gfx1150 |
-| gfx1171                                     | gfx1151 |
+| gfx1152, gfx1153, gfx1171                   | gfx1151 |
 | gfx1200                                     | gfx1201 |
 | gfx1250                                     | gfx942  |
 
-gfx1170 and gfx1171 thus get gfx1100's tensors with gfx1150's or gfx1151's
-patches on top.
+gfx1152, gfx1153, gfx1170 and gfx1171 thus get gfx1100's tensors with
+gfx1150's or gfx1151's patches on top.
 
 Tuning such an architecture later means adding a `.dbpatch` next to its
 references.
@@ -655,8 +655,8 @@ tools/database_to_csv.py \
     --op_database <dir>/op_database.sqlite3 \
     --output modules/flash/database \
     --patch_on gfx1150=gfx1100 gfx1151=gfx1100 gfx1101=gfx1100 \
-               gfx1102=gfx1100 gfx1103=gfx1100 gfx1152=gfx1100 \
-               gfx1153=gfx1100 gfx1200=gfx1201 gfx1250=gfx942 \
+               gfx1102=gfx1100 gfx1103=gfx1100 gfx1152=gfx1151 \
+               gfx1153=gfx1151 gfx1200=gfx1201 gfx1250=gfx942 \
     --sparse_patch gfx1151 \
     --verify
 ```
