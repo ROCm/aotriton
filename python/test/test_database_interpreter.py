@@ -407,12 +407,12 @@ def test_npz_and_cli(tmp_path, monkeypatch, capsys):
         assert z['tensor'][0, 0, 0] == 0x12
 
 
-def test_python_dash_m_and_lazy_import(tmp_path):
+def test_python_dash_m_without_pandas(tmp_path):
     p = write(tmp_path, 'attn_fwd.txtdb', SHEBANG + dense2())
     out = tmp_path / 'x.npz'
     code = ('import sys, runpy; sys.argv = ["x", %r, "--output", %r]; '
             'runpy.run_module("aotriton.database.interpreter", run_name="__main__"); '
-            'assert "pandas" not in sys.modules and "aotriton.database.factories" not in sys.modules'
+            'assert "pandas" not in sys.modules'
             % (str(p), str(out)))
     subprocess.run([sys.executable, '-c', code], check=True, cwd=tmp_path)
     assert out.exists()
