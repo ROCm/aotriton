@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import pytest
 
-from aotriton.database.csvdb import Database, tensor_path, tuning_source
+from aotriton.database.csvdb import Database, tensor_path, tuning_database_dir, tuning_source
 
 SHEBANG = '#!/usr/bin/env -S python -m aotriton.database.interpreter\n'
 KEYS = '#! tuning keys\nq,16,32\nk,16,32\n'
@@ -132,3 +132,22 @@ def test_source(db):
     lines = tuning_source(db.lookup(f), f).split('\n// ')
     assert lines == [f'tuning: amd/gfx942/k.txtdb functional 1, fallback ({f.unified_signature})',
                      'tuning: possible patch amd/gfx942/k.0001-p.dbpatch']
+
+
+def test_external_database(tmp_path):
+    module = make_db(tmp_path / 'modules') / 'fam'
+    external = make_db(tmp_path / 'external')
+    assert tuning_database_dir(module) == module / 'database'
+    assert tuning_database_dir(module, external) == external / 'fam' / 'database'
+    # a family the external database does not have keeps the module's own
+    assert tuning_database_dir(module, tmp_path / 'other') == module / 'database'
+
+
+def test_external_database_not_text_is_an_error(tmp_path):
+    # e.g. sqlite shards from .tune/bin/decomposedb
+    module = make_db(tmp_path / 'modules') / 'fam'
+    shards = tmp_path / 'shards' / 'fam' / 'database' / 'amd' / 'gfx942'
+    shards.mkdir(parents=True)
+    (shards / 'k.sqlite3').write_bytes(b'')
+    with pytest.raises(ValueError, match='external tuning database'):
+        tuning_database_dir(module, tmp_path / 'shards')

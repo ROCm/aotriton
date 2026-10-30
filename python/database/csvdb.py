@@ -156,11 +156,19 @@ def tuning_database_dir(module_dir, external=None):
     The external tuning database (--external_tuning_database) lets a build use a
     database from outside the modules, e.g. one exported from Tuner v3.5 to
     evaluate before committing it. Do not remove it; see CLAUDE.md.
+
+    An external <family>/database that is not in this format, e.g. sqlite
+    shards from .tune/bin/decomposedb, is an error: reading it would find no
+    tuning and build untuned defaults without a word.
     '''
     module_dir = Path(module_dir)
     if external is not None:
         candidate = Path(external) / module_dir.name / 'database'
         if candidate.is_dir():
+            if not (candidate / METADATA).is_dir() or not any(candidate.glob(f'{VENDOR}/**/*.txtdb')):
+                raise ValueError(f'{candidate}: external tuning database has no {METADATA}/ or no '
+                                 f'{VENDOR}/**/*.txtdb; it must be in the format of '
+                                 'docs/Human Readable Tuning Database Format.md')
             return candidate
     return module_dir / 'database'
 
