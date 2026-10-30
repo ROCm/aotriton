@@ -63,7 +63,12 @@ WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 SUBPOOL="$(get_worker_subpool "$WORKDIR" "$HOSTNAME")"
 EXTRA_ARGS=(--hostname "$HOSTNAME" "${EXTRA_ARGS[@]}" ${SUBPOOL:+--subpool "$SUBPOOL"})
 
-ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$CELERY_WORKER_IMAGE" "$AOTRITON_IMAGE_WORKDIR" "$AOTRITON_IMAGE_TMPFS" "$AOTRITON_IMAGE_SRC" "$AOTRITON_IMAGE_RUNDIR" "${EXTRA_ARGS[@]}" <<'EOF'
+# The host's thermal gate (workers.db, shared by every DEF application) goes
+# into the container's environment as AOTRITON_THERMAL_GATE=on|off;
+# worker_service.sh takes no flag for it.
+THERMAL_GATE="$(get_worker_thermal_gate "$WORKDIR" "$HOSTNAME")"
+
+ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$CELERY_WORKER_IMAGE" "$AOTRITON_IMAGE_WORKDIR" "$AOTRITON_IMAGE_TMPFS" "$AOTRITON_IMAGE_SRC" "$AOTRITON_IMAGE_RUNDIR" "$THERMAL_GATE" "${EXTRA_ARGS[@]}" <<'EOF'
 WORKER_WORKDIR="$1"
 ARCH="$2"
 CELERY_WORKER_IMAGE="$3"
@@ -73,7 +78,8 @@ IMG_WORKDIR="$4"
 IMG_TMPFS="$5"
 IMG_SRC="$6"
 IMG_RUNDIR="$7"
-shift 7
+THERMAL_GATE="$8"
+shift 8
 EXTRA_ARGS=("$@")
 
 # Read --category from EXTRA_ARGS. It is forwarded to worker_service.sh as it
@@ -131,6 +137,7 @@ WORKER_CONTAINER_ID=$(docker run -d \
   -e AOTRITON_SRC=$IMG_SRC \
   -e AOTRITON_RUNDIR=$IMG_RUNDIR \
   -e AOTRITON_TMPFS=$IMG_TMPFS \
+  -e AOTRITON_THERMAL_GATE=$THERMAL_GATE \
   -e PYTHONPYCACHEPREFIX=$IMG_RUNDIR/pycache \
   --mount type=bind,source=$(realpath $WORKER_WORKDIR),target=$IMG_WORKDIR \
   "$CELERY_WORKER_IMAGE" \
