@@ -137,9 +137,21 @@ notes:
 These source `.def/lib/paths.sh` after the move. `perfmon/launch_runner.sh`
 (not an operator tool; runs inside the perfmon image) does too.
 
-## Compatibility
+## Compatibility (removed next release)
 
-For one release, `.tune/bin/<name>` is a symlink to the moved operator command
-in `.def/bin/` (and `.tune/dashboard.py` to `.def/bin/dashboard.py`). They go
-away next release. The per-host scripts of `single/` and the `remote/` scripts
-get no symlink: only the `bin/` commands were operator muscle memory.
+For one release, these are symlinks, so muscle memory and old docs keep
+working. **They go away next release**; use the new paths.
+
+* `.tune/bin/<name>` -> `.def/bin/<name>` for `deploy`, `wkctl`, `fetchbuild`,
+  `initdb`, `initproj`, `srvctl`, `psql`, `pg_dump`, `detect-gpus`,
+  `probe-status`, `srun`, `imgbld`, `prepwkdir`.
+* `.tune/bin/libbld`, `.tune/bin/testbld` -> `.tune/container/<name>`
+  (the tuning docs told operators to run them from `bin/`).
+* `.tune/dashboard.py` -> `.def/bin/dashboard.py`.
+
+The `.def/bin` scripts resolve their own path with `readlink -f`, so a link
+finds `.def/` and not `.tune/`.
+
+The per-host scripts of `single/` and the `remote/` scripts get no link: only
+the `bin/` commands were operator muscle memory, and webui and scripts are
+updated.
