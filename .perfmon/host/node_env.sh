@@ -28,9 +28,11 @@ perfmon_env_setup() {
     # Node-local: the broker socket and pid files cannot live on the scratch.
     export AOTRITON_RUNDIR="${XDG_RUNTIME_DIR:-/tmp}/aotriton-perfmon"
     mkdir -p "$AOTRITON_RUNDIR"
-    # Memory-backed, node-local; /dev/shm may not be writable in a container.
-    if [ -d /dev/shm ] && [ -w /dev/shm ]; then
-        export AOTRITON_TMPFS=/dev/shm
+    # Memory-backed, node-local; the default may not be writable in a container.
+    local default_tmpfs
+    default_tmpfs="$(. "$PM_CHECKOUT/.def/lib/paths.sh"; echo "$AOTRITON_TMPFS")"
+    if [ -d "$default_tmpfs" ] && [ -w "$default_tmpfs" ]; then
+        export AOTRITON_TMPFS="$default_tmpfs"
     else
         export AOTRITON_TMPFS="$AOTRITON_RUNDIR/tmpfs"
         mkdir -p "$AOTRITON_TMPFS"
