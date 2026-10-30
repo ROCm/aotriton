@@ -19,7 +19,8 @@ Dump the AOTriton tuning PostgreSQL database in directory format (-F d),
 producing a directory archive suitable for input into pg_restore.
 
 Uses the official postgres:<version>-alpine Docker image, which includes
-pg_dump with the matching version to the running server.
+pg_dump with the matching version to the running server. Without docker, a
+native pg_dump is used; AOTRITON_PSQL=docker|native forces either one.
 
 Arguments:
   <workdir>    Project working directory containing config.rc
@@ -74,12 +75,41 @@ PGDUMP_IMAGE="postgres:${POSTGRES_VERSION}-alpine"
 POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 
+# Choose the client: containerized when docker is on PATH, else a native
+# pg_dump. AOTRITON_PSQL=docker|native forces either one.
+PSQL_MODE="${AOTRITON_PSQL:-}"
+if [ -z "$PSQL_MODE" ]; then
+  if command -v docker >/dev/null 2>&1; then
+    PSQL_MODE=docker
+  elif command -v pg_dump >/dev/null 2>&1; then
+    PSQL_MODE=native
+  else
+    echo "Error: no pg_dump client: install docker (runs $PGDUMP_IMAGE) or a native pg_dump on PATH" >&2
+    exit 1
+  fi
+fi
+if [ "$PSQL_MODE" != "docker" ] && [ "$PSQL_MODE" != "native" ]; then
+  echo "Error: AOTRITON_PSQL must be 'docker' or 'native', got '$PSQL_MODE'" >&2
+  exit 1
+fi
+
 # pg_dump -F d writes into the output directory; create it first so Docker
 # can bind-mount it directly as /backup.
 mkdir -p "$OUTPUT_DIR"
 
 echo "Dumping postgresql://$POSTGRES_USER@$POSTGRES_HOST:$POSTGRES_PORT (pg_dump $POSTGRES_VERSION)"
 echo "Output: $OUTPUT_DIR"
+
+if [ "$PSQL_MODE" = "native" ]; then
+  export PGPASSWORD="$POSTGRES_PASSWORD"
+  exec pg_dump \
+    -F d \
+    --compress=zstd \
+    -h "$POSTGRES_HOST" \
+    -p "$POSTGRES_PORT" \
+    -U "$POSTGRES_USER" \
+    -f "$OUTPUT_DIR"
+fi
 
 exec docker run --rm \
   --network=host \
