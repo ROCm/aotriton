@@ -59,10 +59,11 @@ _CB_LONGOPTS='external_tuning_database:,flydsl_kernel_root:,flydsl_wheel:,altwhe
 #
 # Reads CB_PROG (required), CB_EXTRA_LONGOPTS and CB_MOLD_DEFAULT from the
 # profile. Sets:
-#   CB_CMAKE_ARGS[]  cmake -D flags derived from the shared options
-#   CB_POSITIONAL[]  what was left after the options
-#   CB_OPT[<name>]   values of the profile's own long options
-#   CB_ALTWHEEL      non-empty when --altwheel_config was given
+#   CB_CMAKE_ARGS[]       cmake -D flags derived from the shared options
+#   CB_USER_CMAKE_ARGS[]  -D flags given on the command line, passed verbatim
+#   CB_POSITIONAL[]       what was left after the options
+#   CB_OPT[<name>]        values of the profile's own long options
+#   CB_ALTWHEEL           non-empty when --altwheel_config was given
 function common_build_parse() {
     local prog="${CB_PROG:-$(basename "${BASH_SOURCE[1]}")}"
     local extra="${CB_EXTRA_LONGOPTS:-}"
@@ -84,7 +85,7 @@ function common_build_parse() {
     done
 
     local TEMP
-    if ! TEMP=$(getopt -o '' --long "${_CB_LONGOPTS}${extra:+,$extra}" -n "${prog}" -- "$@"); then
+    if ! TEMP=$(getopt -o 'D:' --long "${_CB_LONGOPTS}${extra:+,$extra}" -n "${prog}" -- "$@"); then
         usage
         exit 1
     fi
@@ -92,6 +93,7 @@ function common_build_parse() {
 
     local external_tuning_database='' flydsl_kernel_root='' flydsl_wheel='' altwheel_config=''
     CB_ALTWHEEL=''
+    CB_USER_CMAKE_ARGS=()
     # Set-ness, not non-emptiness: `--name_suffix ''` is a meaningful request
     # (no suffix at all) and has to survive to _common_build.
     local name_suffix_given=false name_suffix=''
@@ -105,6 +107,7 @@ function common_build_parse() {
             --mold)                mold=true; shift ;;
             --no_mold)             mold=false; shift ;;
             --help)                usage; exit 0 ;;
+            -D)                    CB_USER_CMAKE_ARGS+=("-D$2"); shift 2 ;;
             --) shift; break ;;
             *)
                 if [ "${_cb_extra_has_arg[$1]:-}" = '1' ]; then
@@ -187,8 +190,8 @@ function common_build_take_triton_wheel() {
 
 # common_build_run <build type> <default suffix> <build for> [cmake args...]
 #
-# The profile's own flags come last so they land after the shared ones, which
-# is the order these scripts have always emitted.
+# The profile's own flags come after the shared ones, which is the order these
+# scripts have always emitted. The caller's -D flags come last, so they win.
 function common_build_run() {
     if [ "$#" -lt 3 ]; then
         echo 'common_build_run expects <build type> <default suffix> <build for> [cmake options...]' >&2
@@ -198,7 +201,7 @@ function common_build_run() {
     shift 3
     set -x  # tracing was held off for the option phase; see the top
     _common_build "${build_type}" "${default_suffix}" "${CB_ARCH}" "${build_for}" \
-        "${CB_CMAKE_ARGS[@]}" "$@"
+        "${CB_CMAKE_ARGS[@]}" "$@" "${CB_USER_CMAKE_ARGS[@]}"
 }
 
 function _common_build() {
