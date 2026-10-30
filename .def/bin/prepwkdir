@@ -31,8 +31,7 @@ set -x
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEF_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TUNE_ROOT="$(cd "$SCRIPT_DIR/../../.tune" && pwd)"
-AOTRITON_ROOT="$(realpath "${TUNE_ROOT}/..")"
+AOTRITON_ROOT="$(realpath "${DEF_ROOT}/..")"
 WORKDIR=$(realpath "$1")
 
 # Validate

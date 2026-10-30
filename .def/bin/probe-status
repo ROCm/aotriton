@@ -9,7 +9,6 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEF_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TUNE_ROOT="$(cd "$SCRIPT_DIR/../../.tune" && pwd)"
 
 WORKDIR="$1"
 
