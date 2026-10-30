@@ -90,6 +90,7 @@ describes the change. A patch uses the same tensor format, and its tuning keys
 and metadata sections must equal the base's. Patches apply in order of N.
 Each functional listed in a patch overrides the base's cells, where a blank
 patch cell keeps the base value; functionals absent from the base are added.
+A patch written by --patch_on holds only the cells that differ from the base.
 The base is often another arch's tensor, named by a base reference, e.g.
 amd/gfx1150/attn_fwd.txtdb holding only "#! base" and ../gfx1100/attn_fwd.*
 (gfx1100's tensor with all its patches), plus amd/gfx1150/attn_fwd.0001-gfx1150.dbpatch with what gfx1150 tuned on its
@@ -423,7 +424,10 @@ class Exporter(object):
             if fn.parent.name in self.patch_on:
                 # A patch shares the base's ladders, whichever cells it sets
                 base = self._args.output / self._args.vendor / self.patch_on[fn.parent.name] / fn.name
-                ladders = [[int(v) for v in ladder] for _, ladder in load_tensor(base).keys]
+                base_tensor = load_tensor(base)
+                ladders = [[int(v) for v in ladder] for _, ladder in base_tensor.keys]
+                # and holds only the cells that differ from the base
+                entries = [e for e in entries if base_cell(base_tensor, ladders, e[0], e[1]) != str(e[2])]
                 sparse = fn.parent.name in self.sparse_patch
                 fn = patch_name(fn, 1, fn.parent.name)
             with open(fn, 'w', newline='') as f:
@@ -737,6 +741,20 @@ class Tensor(object):
                 continue
             self.cells[fid] = [[p if p != '' else b for p, b in zip(prow, brow)]
                                for prow, brow in zip(rows, self.cells[fid])]
+
+def base_cell(tensor, ladders, fid, lut):
+    '''
+    The cell of tensor (a Tensor with these ladders) for functional fid at
+    tuning key values lut, '' when it has none
+    '''
+    rows = tensor.cells.get(fid)
+    if rows is None:
+        return ''
+    index = [ladder.index(int(v)) for ladder, v in zip(ladders, lut)]
+    row = 0
+    for i, ladder in zip(index[:-1], ladders[:-1]):
+        row = row * len(ladder) + i
+    return rows[row][index[-1]]
 
 def base_reference(fn):
     '''

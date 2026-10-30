@@ -497,9 +497,9 @@ Max_seqlen_k,16,32,64,128,256,512,1024,2048
 #! sparse tuning tensor
 functional,hsaco_options<-coordinates
 13,
-95<-0{0}1{1}2{1}3{0}
-33<-0{1}
-15<-0{2,3}1{6}2{4,5}3{2-4,6,7}
+15<-0{2}1{6}2{4,5}3{2-4,6,7}
+27<-1{3}
+20<-1{4,5}
 ...
 ```
 
@@ -529,9 +529,18 @@ Braces, not brackets, mark the lists: `v[n]` already means run-length
 encoding in dense tensors, and `1[6]` must not mean both "six 1s" and
 "row 1, column 6".
 
-A dense patch is shorter when a patch sets most cells of its functionals,
-and a sparse one when it sets a few. The gfx1151 patches are sparse, and
-the gfx1150 patches dense, to show both forms on the same data.
+A patch holds only the cells that differ from its base; cells where the
+architecture's tuning picks the same option as the base are left out
+(blank, or not listed). A dense patch is shorter when a patch sets most
+cells of its functionals, and a sparse one when it sets a few. The gfx1151
+patches are sparse, and the gfx1150 patches dense, to show both forms on
+the same data.
+
+For `attn_fwd`, gfx1150 differs from gfx1100 in 5200 of its 12672 tuned
+cells and gfx1151 in 3759. Their patches are 22161 bytes (dense) and 21110
+bytes (sparse), against 36265 and 34962 bytes for the same tuning written
+as a complete `.txtdb`. Written dense, the gfx1151 patch would be 18189
+bytes, and written sparse, the gfx1150 one 28505.
 
 ### Sharing a Base
 
