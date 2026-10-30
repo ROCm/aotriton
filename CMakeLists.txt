@@ -163,8 +163,20 @@ if(DEFINED ENV{AOTRITON_DEBUG_SKIP_TRITON_KERNELS})
     "earlier configure of this build directory takes precedence).")
 endif()
 option(AOTRITON_INHERIT_SYSTEM_SITE_TRITON "Use system site packages and verify triton availability instead of building from source" OFF)
-# No plan to support network based pip install
-set(AOTRITON_USE_LOCAL_TRITON_WHEEL "" CACHE STRING "Substitute install from third_party/triton with install from local pip wheel package.")
+set(_triton_pep508_doc "Install Triton with pip from this PEP 508 requirement (e.g. triton==3.9.0) or local wheel path, instead of building third_party/triton.")
+set(AOTRITON_TRITON_WHEEL_PEP508 "" CACHE STRING "${_triton_pep508_doc}")
+set(AOTRITON_USE_LOCAL_TRITON_WHEEL "" CACHE STRING "Deprecated alias of AOTRITON_TRITON_WHEEL_PEP508.")
+# Move the alias into the new name and clear it, so a reused build directory
+# that cached the alias keeps working. The new name wins if both are set.
+if(AOTRITON_USE_LOCAL_TRITON_WHEEL)
+  if(NOT AOTRITON_TRITON_WHEEL_PEP508)
+    message(DEPRECATION "AOTRITON_USE_LOCAL_TRITON_WHEEL is deprecated, use AOTRITON_TRITON_WHEEL_PEP508.")
+    set(AOTRITON_TRITON_WHEEL_PEP508 "${AOTRITON_USE_LOCAL_TRITON_WHEEL}" CACHE STRING "${_triton_pep508_doc}" FORCE)
+  elseif(NOT AOTRITON_TRITON_WHEEL_PEP508 STREQUAL AOTRITON_USE_LOCAL_TRITON_WHEEL)
+    message(WARNING "Ignoring deprecated AOTRITON_USE_LOCAL_TRITON_WHEEL=${AOTRITON_USE_LOCAL_TRITON_WHEEL}; AOTRITON_TRITON_WHEEL_PEP508=${AOTRITON_TRITON_WHEEL_PEP508} takes precedence.")
+  endif()
+  set(AOTRITON_USE_LOCAL_TRITON_WHEEL "" CACHE STRING "Deprecated alias of AOTRITON_TRITON_WHEEL_PEP508." FORCE)
+endif()
 set(AOTRITON_USE_LOCAL_FLYDSL_WHEEL "" CACHE STRING "Substitute the install from third_party/flydsl-compiler.txt with an install from a local flydsl wheel file. Must be an absolute path to an existing .whl.")
 set(AOTRITON_GPU_BUILD_TIMEOUT "8.0" CACHE STRING "GPU kernel compiler times out after X minutes. 0 for indefinite. Highly recommended if AOTRITON_BUILD_FOR_TUNING=On.")
 option(AOTRITON_TERMINATE_WHEN_GPU_BUILD_TIMEOUT "compile.py will return error when GPU built timeout. Defensive option for CI" OFF)
@@ -182,8 +194,8 @@ if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
   if(NOT ${altwheel_yaml_is_absolute})
     message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE must be absolute path, but configured as ${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}")
   endif()
-  if(AOTRITON_USE_LOCAL_TRITON_WHEEL)
-    message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE and AOTRITON_USE_LOCAL_TRITON_WHEEL are mutually exclusive -- the altwheel config's own .venvs.default entry supplies the default Triton wheel.")
+  if(AOTRITON_TRITON_WHEEL_PEP508)
+    message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE and AOTRITON_TRITON_WHEEL_PEP508 are mutually exclusive -- the altwheel config's own .venvs.default entry supplies the default Triton wheel.")
   endif()
 endif()
 
@@ -403,13 +415,21 @@ else()
 
   set(AOTRITON_TRITON_SO "${VENV_SITE}/${VENV_REL_TRITON}")
 
-  if(AOTRITON_USE_LOCAL_TRITON_WHEEL)
+  if(AOTRITON_TRITON_WHEEL_PEP508)
+    # Rewritten only when the requirement changes, so changing it reinstalls.
+    set(_triton_req_stamp "${CMAKE_CURRENT_BINARY_DIR}/triton_wheel_pep508.txt")
+    file(CONFIGURE OUTPUT "${_triton_req_stamp}" CONTENT "${AOTRITON_TRITON_WHEEL_PEP508}\n")
+    # Quoted and VERBATIM: a requirement may contain '>', ';' or spaces.
+    # The touch keeps the output newer than the stamp when pip has nothing to do.
     add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
-      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install ${AOTRITON_USE_LOCAL_TRITON_WHEEL}
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install "${AOTRITON_TRITON_WHEEL_PEP508}"
+      COMMAND ${CMAKE_COMMAND} -E touch "${AOTRITON_TRITON_SO}"
+      DEPENDS "${_triton_req_stamp}"
+      VERBATIM
     )
   elseif(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
     # The main venv's wheel comes from the altwheel config's own
-    # .venvs.default entry (mutually exclusive with AOTRITON_USE_LOCAL_TRITON_WHEEL,
+    # .venvs.default entry (mutually exclusive with AOTRITON_TRITON_WHEEL_PEP508,
     # enforced above) -- install it here instead of falling back to
     # third_party/triton/, which callers using altwheel are not required to
     # have checked out at all.

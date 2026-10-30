@@ -10,7 +10,7 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 
 usage() {
   cat <<'EOF' >&2
-Usage: build-debug.sh [options] <target arch> [optional pre-compiled triton wheel]
+Usage: build-debug.sh [options] <target arch> [optional triton wheel or PEP 508 requirement]
 
 The testing build with CMAKE_BUILD_TYPE=Debug. Shares build-test.sh's build
 directory, so keep one or the other. No mold. <target arch> may be a

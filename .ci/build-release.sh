@@ -11,7 +11,7 @@ Usage: build-release.sh <noimage_mode> [arch_list] [cmake_options ...]
   noimage_mode   ON|OFF — passed as -DAOTRITON_NOIMAGE_MODE
   arch_list      space-separated GPU arch list, or ALL for all architectures
   cmake_options  extra -D flags forwarded to cmake
-                 e.g. -DAOTRITON_USE_LOCAL_TRITON_WHEEL=<path>
+                 e.g. -DAOTRITON_TRITON_WHEEL_PEP508=<wheel or requirement>
                       -DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=<yaml>
 
 Builds the shippable library: no name suffix and no Python bindings, the same

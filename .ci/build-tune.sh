@@ -10,7 +10,7 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 
 usage() {
   cat <<'EOF' >&2
-Usage: build-tune.sh [--shim] [options] <target arch> [optional pre-compiled triton wheel]
+Usage: build-tune.sh [--shim] [options] <target arch> [optional triton wheel or PEP 508 requirement]
 
 The tuning build: every GPU kernel, AOTRITON_BUILD_FOR_TUNING=ON, no mold.
 <target arch> may be a semicolon-separated list, or ALL for every architecture.

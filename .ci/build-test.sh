@@ -10,7 +10,7 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 
 usage() {
   cat <<'EOF' >&2
-Usage: build-test.sh [options] <target arch> [optional pre-compiled triton wheel]
+Usage: build-test.sh [options] <target arch> [optional triton wheel or PEP 508 requirement]
 
 The testing build: name suffix "123" so it coexists with the AOTriton PyTorch
 ships, Python bindings on, mold linker on. <target arch> may be a

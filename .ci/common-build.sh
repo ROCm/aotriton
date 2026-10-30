@@ -172,7 +172,9 @@ function common_build_take_arch() {
 
 # common_build_take_triton_wheel
 #
-# Consumes the optional pre-compiled triton wheel positional.
+# Consumes the optional triton positional: a wheel file, or any PEP 508
+# requirement pip accepts (e.g. triton==3.9.0). An existing file is made
+# absolute, since pip runs in the build directory; anything else is passed as is.
 #
 # Not when an altwheel config is set. The two are mutually exclusive at the
 # cmake level (fatal error if both given): the altwheel config's own
@@ -180,7 +182,11 @@ function common_build_take_arch() {
 # needed here.
 function common_build_take_triton_wheel() {
     if [ "${#CB_POSITIONAL[@]}" -ge 1 ] && [ -z "${CB_ALTWHEEL}" ]; then
-        CB_CMAKE_ARGS+=("-DAOTRITON_USE_LOCAL_TRITON_WHEEL=$(realpath "${CB_POSITIONAL[0]}")")
+        local req="${CB_POSITIONAL[0]}"
+        if [ -e "$req" ]; then
+            req="$(realpath "$req")"
+        fi
+        CB_CMAKE_ARGS+=("-DAOTRITON_TRITON_WHEEL_PEP508=${req}")
     fi
     if [ "${#CB_POSITIONAL[@]}" -ge 1 ]; then
         CB_POSITIONAL=("${CB_POSITIONAL[@]:1}")
