@@ -26,15 +26,15 @@ load_config "$WORKDIR"
 
 case "$ACTION" in
     start)
-        "$TUNE_ROOT/single/start_services.sh" "$WORKDIR"
+        "$DEF_ROOT/libexec/start_services.sh" "$WORKDIR"
         ;;
     stop)
-        "$TUNE_ROOT/single/stop_services.sh" "$WORKDIR"
+        "$DEF_ROOT/libexec/stop_services.sh" "$WORKDIR"
         ;;
     restart)
-        "$TUNE_ROOT/single/stop_services.sh" "$WORKDIR"
+        "$DEF_ROOT/libexec/stop_services.sh" "$WORKDIR"
         sleep 2
-        "$TUNE_ROOT/single/start_services.sh" "$WORKDIR"
+        "$DEF_ROOT/libexec/start_services.sh" "$WORKDIR"
         ;;
     status)
         PIDF="$WORKDIR/run/container.pids"

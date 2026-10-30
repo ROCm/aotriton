@@ -397,7 +397,7 @@ Build progress streams live in the Command Output panel. The image is tagged as
 To follow a build from the CLI:
 
 ```bash
-.tune/single/build_image.sh <working_directory> <hostname> --follow
+.def/libexec/build_image.sh <working_directory> <hostname> --follow
 ```
 
 ## Initialize Database Schema

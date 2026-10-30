@@ -14,7 +14,7 @@ application. The application owns an entry point, `python -m aotriton.<app>.node
                       runners={'tuner': ExaidTunerWorker}, enrich=enrich,
                       argv=sys.argv[1:])
 
-`.tune/remote/worker_service.sh --category <app>[,<level1>]` runs `python -m aotriton.<app>.node
+`.def/container/worker_service.sh --category <app>[,<level1>]` runs `python -m aotriton.<app>.node
 <role>` for each process of the node:
 
     broker       [--queues gpu,cpu]

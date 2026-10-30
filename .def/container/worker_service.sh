@@ -18,8 +18,7 @@ set -euo pipefail
 # Get script directory and aotriton root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AOTRITON_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Change to aotriton root. Entry points are launched from here, and several
 # tools still resolve checkout-relative data from the cwd.
@@ -30,7 +29,7 @@ cd "$AOTRITON_ROOT"
 # registry.default_modules_dir() resolves in three steps: this variable, then
 # <cwd>/modules, then a path derived from the installed package's __file__.
 # Only the first survives a NON-editable install, which is what workers now
-# get (see .tune/remote/install_aotriton_pkg.sh). The other two both fail, in
+# get (see .def/container/install_aotriton_pkg.sh). The other two both fail, in
 # ways that are easy to miss:
 #
 #   <cwd>/modules      holds only while the cwd stays put. exaid.py spawns

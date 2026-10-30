@@ -8,8 +8,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 . "$DEF_ROOT/lib/config_load.sh"
 . "$DEF_ROOT/lib/db_query.sh"
@@ -71,6 +70,6 @@ fi
 WORKER_CONTAINER_ID=$(cat "$RUNFILE")
 
 echo "Restarting worker service in container: $WORKER_CONTAINER_ID"
-docker exec "$WORKER_CONTAINER_ID" bash -lc "source $IMG_WORKDIR/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd $IMG_SRC && bash .tune/remote/worker_service.sh restart $IMG_WORKDIR $ARCH ${EXTRA_ARGS[*]}"
+docker exec "$WORKER_CONTAINER_ID" bash -lc "source $IMG_WORKDIR/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd $IMG_SRC && bash .def/container/worker_service.sh restart $IMG_WORKDIR $ARCH ${EXTRA_ARGS[*]}"
 echo "Worker restarted"
 EOF

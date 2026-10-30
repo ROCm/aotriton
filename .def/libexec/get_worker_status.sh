@@ -8,8 +8,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 . "$DEF_ROOT/lib/config_load.sh"
 . "$DEF_ROOT/lib/db_query.sh"
@@ -33,7 +32,7 @@ IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
 WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
 # Copy remote script to worker and execute
-REMOTE_SCRIPT="$TUNE_ROOT/remote/get_status.sh"
+REMOTE_SCRIPT="$DEF_ROOT/host/get_status.sh"
 
 set +e
 ssh -T -o LogLevel=ERROR "$HOSTNAME" "bash -s" < "$REMOTE_SCRIPT" "$WORKER_WORKDIR"

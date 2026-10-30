@@ -8,8 +8,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 . "$DEF_ROOT/lib/config_load.sh"
 . "$DEF_ROOT/lib/db_query.sh"
@@ -135,7 +134,7 @@ WORKER_CONTAINER_ID=$(docker run -d \
   -e PYTHONPYCACHEPREFIX=$IMG_RUNDIR/pycache \
   --mount type=bind,source=$(realpath $WORKER_WORKDIR),target=$IMG_WORKDIR \
   "$CELERY_WORKER_IMAGE" \
-  bash -lc "source \$AOTRITON_WORKDIR/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd \$AOTRITON_SRC && bash .tune/remote/install_aotriton_pkg.sh && bash .tune/remote/worker_service.sh start \$AOTRITON_WORKDIR $ARCH ${EXTRA_ARGS[*]} && exec sleep infinity")
+  bash -lc "source \$AOTRITON_WORKDIR/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd \$AOTRITON_SRC && bash .def/container/install_aotriton_pkg.sh && bash .def/container/worker_service.sh start \$AOTRITON_WORKDIR $ARCH ${EXTRA_ARGS[*]} && exec sleep infinity")
 
 if [ -z "$WORKER_CONTAINER_ID" ]; then
   echo "Failed to start container" >&2

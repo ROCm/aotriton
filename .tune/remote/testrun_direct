@@ -18,7 +18,7 @@
 # The container is removed automatically on exit (--rm).
 #
 # --tuning_mode is REQUIRED and selects which pyaotriton build the container
-# mounts on PYTHONPATH, exactly as .tune/single/start_worker.sh does for the
+# mounts on PYTHONPATH, exactly as .def/libexec/start_worker.sh does for the
 # worker path:
 #   --tuning_mode op      -> <image workdir>/installed/test/<arch>/lib  (testing library)
 #   --tuning_mode kernel  -> <image workdir>/installed/<arch>/lib       (tuning library)
@@ -71,7 +71,7 @@ Interface is identical to: python -m aotriton.tune.testrun, except for
 else is passed through verbatim.
 
 --tuning_mode is REQUIRED; it selects the container's PYTHONPATH, the same
-mapping .tune/single/start_worker.sh uses for the worker path:
+mapping .def/libexec/start_worker.sh uses for the worker path:
   --tuning_mode op       -> $IMG_WORKDIR/installed/test/\$ARCH/lib  (testing library)
   --tuning_mode kernel   -> $IMG_WORKDIR/installed/\$ARCH/lib       (tuning library)
 There is no default: the builds are not interchangeable, so a guess would
@@ -172,7 +172,7 @@ esac
 # The install: `aotriton` is not in the image's venv. The image builds the
 # venv and fills it from requirements-tuning.txt, but the package itself lives
 # in the bind-mounted checkout, so it has to be installed at launch --
-# .tune/single/start_worker.sh does the same, immediately before
+# .def/libexec/start_worker.sh does the same, immediately before
 # worker_service.sh. See install_aotriton_pkg.sh for why at every start rather
 # than at image build time, and why it stages to /tmp. Without it this wrapper
 # dies before it prints anything:
@@ -211,7 +211,7 @@ exec docker run --rm -it \
         source "$AOTRITON_WORKDIR/config.rc"
         source "$(dirname "$CELERY_WORKER_PYTHON")/activate"
         cd "$AOTRITON_SRC"
-        bash .tune/remote/install_aotriton_pkg.sh
+        bash .def/container/install_aotriton_pkg.sh
         export AOTRITON_MODULES_DIR="$AOTRITON_SRC/modules"
         exec "$CELERY_WORKER_PYTHON" -m aotriton.tune.testrun "$@"
     ' -- "${FORWARD_ARGS[@]}"

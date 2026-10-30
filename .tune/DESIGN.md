@@ -159,7 +159,7 @@ run_command(cmd, cwd, workdir, description)
 
 **Individual Worker**:
 ```bash
-.tune/single/build_image.sh <workdir> <hostname> [--arch <arch>] [--follow]
+.def/libexec/build_image.sh <workdir> <hostname> [--arch <arch>] [--follow]
   → ssh <hostname> "jobid=$(tsp docker build ...) && tsp -c $jobid"
   → --follow flag: web UI gets real-time output via tsp -c
   → tsp -c blocks until completion and exits with job's exit code
@@ -268,13 +268,13 @@ docker run "$IMAGE" ...
 
 ```bash
 # Start workers (on each worker machine)
-.tune/remote/worker_service.sh <workdir> <arch> start [num_workers]
+.def/container/worker_service.sh <workdir> <arch> start [num_workers]
   → Starts Ray cluster (shared)
   → Spawns N worker_main.py processes
   → Each worker_main.py connects to Ray cluster and polls PostgreSQL
 
 # Stop workers
-.tune/remote/worker_service.sh <workdir> <arch> stop
+.def/container/worker_service.sh <workdir> <arch> stop
   → Graceful shutdown (SIGTERM, 30s timeout)
   → Force kill if needed (SIGKILL)
   → Stops Ray cluster
@@ -378,7 +378,7 @@ ssh <worker> "cd <workdir> && .tune/remote/rayctl <workdir> status"
 
 **Check worker status**:
 ```bash
-ssh <worker> "cd <workdir> && .tune/remote/worker_service.sh <workdir> <arch> status"
+ssh <worker> "cd <workdir> && .def/container/worker_service.sh <workdir> <arch> status"
 ```
 
 **View logs**:

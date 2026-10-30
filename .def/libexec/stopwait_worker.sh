@@ -8,8 +8,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 . "$DEF_ROOT/lib/config_load.sh"
 . "$DEF_ROOT/lib/db_query.sh"
@@ -58,7 +57,7 @@ source $IMG_WORKDIR/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activ
 cd $IMG_SRC
 
 echo 'Step 1: Stopping all workers gracefully...'
-bash $IMG_SRC/.tune/remote/worker_service.sh stopwait $IMG_WORKDIR
+bash $IMG_SRC/.def/container/worker_service.sh stopwait $IMG_WORKDIR
 "
 
 echo "Stopping and removing container: $WORKER_CONTAINER_ID"

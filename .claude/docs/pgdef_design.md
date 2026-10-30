@@ -86,7 +86,7 @@ which phases have landed. Landed so far:
     `pgdef.pq.dispatch.drive(source, argv)`) and `aotriton.<app>.manifest`.
   * `worker_service.sh --category <app>[,<level1>]` runs `python -m
     aotriton.<app>.node <role>`. One application per node.
-  * **`.tune/remote/worker_service.sh` is the generic DEF node starter, not a
+  * **`.def/container/worker_service.sh` is the generic DEF node starter, not a
     tuning script**, despite living under `.tune/`.
     * It takes only engine vocabulary: `--category <app>[,<level1>]`
       (required for start and restart; its first level is the application)
@@ -94,7 +94,7 @@ which phases have landed. Landed so far:
     * It must never grow application-specific flags such as tune's
       `--tuning_mode`. Those belong to the application's own tools.
     * It exports the neutral `AOTRITON_BROKER_SOCKET`.
-    * The SLURM wrapper `.tune/remote/run_worker.sh` forwards `--category`
+    * The SLURM wrapper `.def/host/run_worker.sh` forwards `--category`
       and `--subpool` to it.
   * The shared process layout is a known limitation; the ideal fix is a
     service script per application. Until then, zero GPU or zero CPU workers

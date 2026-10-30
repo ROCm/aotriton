@@ -120,19 +120,19 @@ for worker in "${WORKERS[@]}"; do
 
     case "$ACTION" in
         start)
-            "$TUNE_ROOT/single/start_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}" -- --category "$CATEGORY"
+            "$DEF_ROOT/libexec/start_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}" -- --category "$CATEGORY"
             ;;
         stop)
-            "$TUNE_ROOT/single/stop_worker.sh" "$WORKDIR" "$hostname"
+            "$DEF_ROOT/libexec/stop_worker.sh" "$WORKDIR" "$hostname"
             ;;
         graceful)
-            "$TUNE_ROOT/single/stop_worker.sh" "$WORKDIR" "$hostname" --graceful
+            "$DEF_ROOT/libexec/stop_worker.sh" "$WORKDIR" "$hostname" --graceful
             ;;
         restart)
-            "$TUNE_ROOT/single/restart_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}" -- --category "$CATEGORY"
+            "$DEF_ROOT/libexec/restart_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}" -- --category "$CATEGORY"
             ;;
         stopwait)
-            "$TUNE_ROOT/single/stopwait_worker.sh" "$WORKDIR" "$hostname"
+            "$DEF_ROOT/libexec/stopwait_worker.sh" "$WORKDIR" "$hostname"
             ;;
         *)
             echo "Unknown action: $ACTION" >&2

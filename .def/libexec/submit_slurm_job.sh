@@ -8,8 +8,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 . "$DEF_ROOT/lib/config_load.sh"
 . "$DEF_ROOT/lib/db_query.sh"
@@ -60,7 +59,7 @@ JOB_ID=$(sbatch \
     --time="$TIME_LIMIT" \
     $EXCLUDE_OPT \
     --parsable \
-    "$SLURM_WORKER_DIR/aotriton.src/.tune/remote/slurm_worker_job.sh" \
+    "$SLURM_WORKER_DIR/aotriton.src/.def/host/slurm_worker_job.sh" \
     "$SLURM_WORKER_DIR")
 
 echo "$JOB_ID"

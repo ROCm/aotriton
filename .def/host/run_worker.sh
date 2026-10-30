@@ -17,7 +17,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SERVICE_SH="$SCRIPT_DIR/worker_service.sh"
+SERVICE_SH="$SCRIPT_DIR/../container/worker_service.sh"
 
 usage() {
     cat >&2 <<EOF

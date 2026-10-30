@@ -198,7 +198,7 @@ run_node_role(app='tune', handlers=HANDLERS, start=TuneStartHandler,
               runners={'tuner': ExaidTunerWorker}, enrich=enrich, argv=sys.argv[1:])
 ```
 
-`.tune/remote/worker_service.sh --category tune,kernel` starts `python -m aotriton.tune.node <role>`.
+`.def/container/worker_service.sh --category tune,kernel` starts `python -m aotriton.tune.node <role>`.
 Despite its location under `.tune/`, `worker_service.sh` is the generic node
 starter for every application. It takes only engine options (`--category`,
 whose first level is the application, and `--subpool`), never an
@@ -254,7 +254,7 @@ it inserts into that pool, by calling the engine's SQL function
 # Dispatch: each application has its own dispatch command
 python -m aotriton.tune.dispatch --category tune,kernel --pool gfx950 --workdir <workdir> --module flash <tune options>
 
-# Start a node's processes (normally done by .tune/remote/worker_service.sh --category tune,kernel)
+# Start a node's processes (normally done by .def/container/worker_service.sh --category tune,kernel)
 python -m aotriton.tune.node reader --pool gfx950 --subpool MI355 --category tune,kernel
 ```
 

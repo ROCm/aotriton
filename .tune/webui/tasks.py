@@ -354,27 +354,27 @@ class SingleWorkerCommand(CommandBuilder):
 
 
 class StartWorkerCommand(SingleWorkerCommand):
-    RELATIVE = '.tune/single/start_worker.sh'
+    RELATIVE = '.def/libexec/start_worker.sh'
     ACTION_NAME = 'Start'
 
 
 class StopWorkerCommand(SingleWorkerCommand):
-    RELATIVE = '.tune/single/stop_worker.sh'
+    RELATIVE = '.def/libexec/stop_worker.sh'
     ACTION_NAME = 'Stop'
 
 
 class RestartWorkerCommand(SingleWorkerCommand):
-    RELATIVE = '.tune/single/restart_worker.sh'
+    RELATIVE = '.def/libexec/restart_worker.sh'
     ACTION_NAME = 'Restart'
 
 
 class StopStartWorkerCommand(SingleWorkerCommand):
-    RELATIVE = '.tune/single/stopstart_worker.sh'
+    RELATIVE = '.def/libexec/stopstart_worker.sh'
     ACTION_NAME = 'Stop & start'
 
 
 class DeployWorkerCommand(SingleWorkerCommand):
-    RELATIVE = '.tune/single/sync_workdir.sh'
+    RELATIVE = '.def/libexec/sync_workdir.sh'
     ACTION_NAME = 'Deploy to'
 
 
@@ -582,7 +582,7 @@ class BuildImagesCommand(BuildCommand):
 
 class BuildImageOnWorkerCommand(CommandBuilder):
     """Build Docker image on a single worker"""
-    RELATIVE = '.tune/single/build_image.sh'
+    RELATIVE = '.def/libexec/build_image.sh'
 
     def exec(self, workdir, hostname, dry_run: bool = False):
         """Execute build_image.sh for a specific worker with --follow for web UI"""
@@ -909,7 +909,7 @@ def sync_build_node(workdir, dry_run: bool = False):
     hostname = cfg.get('hostname', '')
     if not hostname:
         return {'status': 'error', 'message': 'Remote build node hostname is not configured'}
-    cmd = ['.tune/single/sync_workdir.sh', workdir, hostname, '--buildnode']
+    cmd = ['.def/libexec/sync_workdir.sh', workdir, hostname, '--buildnode']
     return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
                        description=f'Sync workdir to remote build node {hostname}', dry_run=dry_run)
 
@@ -1678,7 +1678,7 @@ def set_build_node_config(workdir, hostname, workdir_override, enabled):
 
 def detect_gpu_for_worker(workdir, hostname, dry_run: bool = False):
     """Detect GPU metadata for a specific worker"""
-    cmd = ['.tune/single/detect_gpu.sh', workdir, hostname]
+    cmd = ['.def/libexec/detect_gpu.sh', workdir, hostname]
     return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=f'Detect GPU info for {hostname}', dry_run=dry_run)
 
 
@@ -1732,7 +1732,7 @@ def get_worker_gpu_selection(workdir, hostname):
 
 def get_worker_status_single(workdir, hostname):
     """Get worker status (container ID and GPU process count)"""
-    script_path = AOTRITON_ROOT / '.tune/single/get_worker_status.sh'
+    script_path = AOTRITON_ROOT / '.def/libexec/get_worker_status.sh'
     result = subprocess.run(
         [script_path.as_posix(), workdir, hostname],
         capture_output=True,

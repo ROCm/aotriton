@@ -58,14 +58,14 @@ for worker in "${WORKER_DATA[@]}"; do
 
     echo "Deploying to $hostname ($arch) at $WORKER_WORKDIR"
 
-    "$TUNE_ROOT/single/sync_workdir.sh" "$WORKDIR" "$hostname" "${SYNC_ARGS[@]}"
+    "$DEF_ROOT/libexec/sync_workdir.sh" "$WORKDIR" "$hostname" "${SYNC_ARGS[@]}"
 done
 
 # SLURM deployment if configured
 if [ -n "$SLURM_LOGIN_NODE" ]; then
     echo "Deploying to SLURM: $SLURM_LOGIN_NODE at $SLURM_WORKER_DIR"
 
-    "$TUNE_ROOT/single/sync_workdir.sh" "$WORKDIR" "$SLURM_LOGIN_NODE" "${SYNC_ARGS[@]}"
+    "$DEF_ROOT/libexec/sync_workdir.sh" "$WORKDIR" "$SLURM_LOGIN_NODE" "${SYNC_ARGS[@]}"
 fi
 
 echo "Deployment complete"

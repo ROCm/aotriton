@@ -44,10 +44,10 @@ for module in "${SLURM_MODULES[@]}"; do
 done
 
 # Find AOTriton source directory
-# Assumes this script is in .celery/ subdirectory of AOTriton
+# Assumes this script is in .def/host/ of the AOTriton checkout
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
-AOTRITON_SRC="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+AOTRITON_SRC="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # The tuner's tmpfs (.def/lib/paths.sh). Read in a subshell: this job's
 # workdir is not the library's default, so its exports must not leak into the
 # workers started below.
@@ -88,7 +88,7 @@ export AOTRITON_CELERY_WORKDIR="$WORKDIR"
 # Graceful shutdown handler
 cleanup() {
   echo "$(date): SLURM timeout approaching, stopping workers gracefully..."
-  bash "$AOTRITON_SRC/.tune/remote/worker_service.sh" stopwait "$WORKDIR"
+  bash "$AOTRITON_SRC/.def/container/worker_service.sh" stopwait "$WORKDIR"
   echo "$(date): Workers stopped gracefully"
 
   # Clean up tmpfs
@@ -106,7 +106,7 @@ echo "AOTriton source: $AOTRITON_SRC"
 echo "VENV: $VENV_ACTIVATE"
 
 # Start workers
-bash "$AOTRITON_SRC/.tune/remote/worker_service.sh" start "$WORKDIR"
+bash "$AOTRITON_SRC/.def/container/worker_service.sh" start "$WORKDIR"
 
 if [ $? -ne 0 ]; then
   echo "Error: Failed to start workers" >&2

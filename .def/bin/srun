@@ -68,7 +68,7 @@ JOB_LOG="$WORKDIR/run/slurm/jobs-$(date +%Y%m%d_%H%M%S).txt"
 for gres in "${GRES_ARRAY[@]}"; do
     echo "Submitting job with --gres=$gres"
 
-    JOB_ID=$("$TUNE_ROOT/single/submit_slurm_job.sh" "$WORKDIR" "$gres")
+    JOB_ID=$("$DEF_ROOT/libexec/submit_slurm_job.sh" "$WORKDIR" "$gres")
 
     echo "  Job ID: $JOB_ID"
     echo "$JOB_ID" >> "$JOB_LOG"

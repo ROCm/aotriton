@@ -96,7 +96,7 @@ if [ "$USE_REMOTE" -eq 1 ]; then
   if [ "$DO_SYNC" -eq 1 ]; then
     # Sync workdir to the build node; sync_workdir resolves buildnode::workdir_override
     echo "Syncing workdir to $BUILD_NODE_HOST..."
-    "$TUNE_ROOT/single/sync_workdir.sh" "$ABSWORKDIR" "$BUILD_NODE_HOST" --buildnode
+    "$DEF_ROOT/libexec/sync_workdir.sh" "$ABSWORKDIR" "$BUILD_NODE_HOST" --buildnode
   fi
 
   # Triton wheel, and the FlyDSL LLVM tarball + wheel when this tree needs a

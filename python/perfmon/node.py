@@ -9,7 +9,7 @@ The perfmon application's node entry point.
     python -m aotriton.perfmon.node cpu_worker
     python -m aotriton.perfmon.node reader --pool gfx950 [--subpool <variant>]
 
-`.tune/remote/worker_service.sh --category perfmon` starts these. pgdef never
+`.def/container/worker_service.sh --category perfmon` starts these. pgdef never
 imports this module; this module hands it the handlers, the runner type and
 the reader's enrichment.
 """

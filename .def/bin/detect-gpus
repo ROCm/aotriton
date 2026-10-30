@@ -87,7 +87,7 @@ echo ""
 for HOSTNAME in "${HOSTS[@]}"; do
   echo "$HOSTNAME:"
 
-  if "$TUNE_ROOT/single/detect_gpu.sh" "$WORKDIR" "$HOSTNAME"; then
+  if "$DEF_ROOT/libexec/detect_gpu.sh" "$WORKDIR" "$HOSTNAME"; then
     SUCCESS=$((SUCCESS + 1))
   else
     FAILED=$((FAILED + 1))

@@ -37,7 +37,7 @@ echo ""
 for HOSTNAME in "${HOSTNAMES[@]}"; do
   echo "$HOSTNAME:"
 
-  if "$TUNE_ROOT/single/get_worker_status.sh" "$WORKDIR" "$HOSTNAME"; then
+  if "$DEF_ROOT/libexec/get_worker_status.sh" "$WORKDIR" "$HOSTNAME"; then
     SUCCESS=$((SUCCESS + 1))
   else
     FAILED=$((FAILED + 1))
