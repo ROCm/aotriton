@@ -74,7 +74,7 @@ if perfmon_venv_managed; then
     [ -n "$ARCHES" ] || fail "rocminfo lists no GPU arch on $(hostname)"
     ok "GPU arch(es): $(echo $ARCHES)"
     if [ -n "$ARCH_HINT" ]; then
-        case " $ARCHES " in
+        case " $(echo $ARCHES) " in
             *" $ARCH_HINT "*) ;;
             *) fail "workers.db says $ARCH_HINT, but rocminfo lists: $(echo $ARCHES)" ;;
         esac
@@ -155,7 +155,7 @@ ok "venv $VENV (ROCm $(rocm-sdk version 2>/dev/null | head -1))"
 ARCHES="$(peer_arches)"
 [ -n "$ARCHES" ] || fail "rocminfo lists no GPU arch on $(hostname) (in-venv ROCm, /dev/kfd present)"
 ok "GPU arch(es): $(echo $ARCHES)"
-case " $ARCHES " in
+case " $(echo $ARCHES) " in
     *" $ARCH "*) ;;
     *) fail "the device wheel was chosen for $ARCH, but rocminfo lists: $(echo $ARCHES)" ;;
 esac
