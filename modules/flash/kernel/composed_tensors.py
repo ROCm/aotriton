@@ -13,9 +13,11 @@ def composed_offs_1d(
         D1 : tl.constexpr,
         D2 : tl.constexpr
 ):
-    x = tl.arange( 0 +  0, D0 +  0 +  0) if D0 > 0 else 0
-    y = tl.arange( 0 + D0, D0 + D1 +  0) if D1 > 0 else 0
-    z = tl.arange(D0 + D1, D0 + D1 + D2) if D2 > 0 else 0
+    # An empty part is a one-element zero, not a scalar 0: callers index it with
+    # [None, :], which Triton 3.9 rejects on a scalar (3.8 broadcast it to [1]).
+    x = tl.arange( 0 +  0, D0 +  0 +  0) if D0 > 0 else tl.zeros([1], dtype=tl.int32)
+    y = tl.arange( 0 + D0, D0 + D1 +  0) if D1 > 0 else tl.zeros([1], dtype=tl.int32)
+    z = tl.arange(D0 + D1, D0 + D1 + D2) if D2 > 0 else tl.zeros([1], dtype=tl.int32)
     return (x, y, z)
 
 
