@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 #
 # Runs on a build host, over ssh, from .perfmon/bin/build_subjects --host.
-# Activates the shared venv of one ROCm (its compiler and libraries; node_env.sh)
+# Picks the venv of one ROCm (managed, else shared) (its compiler and libraries; node_env.sh)
 # and runs build_subjects there.
 #
 # Usage: build_run.sh <workdir> <scratch> <rocm> [build_subjects options...]

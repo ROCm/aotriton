@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 #
 # Runs on a fleet peer, over ssh, from .perfmon/bin/node. Sets up the node
-# environment (node_env.sh: the shared venv, the path variables, the thermal
+# environment (node_env.sh: the venv, the path variables, the thermal
 # gate) and runs the generic node starter in it, rootless and with no docker.
 #
 # Usage: node_run.sh <workdir> <scratch> <rocm> <thermal_gate on|off|""> \

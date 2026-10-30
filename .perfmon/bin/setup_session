@@ -8,9 +8,12 @@
 #                 [--scratch <dir>] [--arch <arch>]
 #
 # Over `ssh <peer>` it checks that the checkout and the scratch are visible,
-# that /dev/kfd exists and rocminfo lists an arch; creates the shared venv
-# <scratch>/perfmon/venv/rocm<ver>/ if missing (ROCm wheels, aotriton from the
-# checkout, pytest); and prints the environment a node needs. Idempotent; the
+# that /dev/kfd exists and rocminfo lists an arch; and prints the environment a
+# node needs. If the peer's ssh session already has a claudepak-managed venv
+# with ROCm <ver>, it is used as is: nothing is created, and what it lacks
+# (aotriton comes from the checkout via PYTHONPATH; psycopg, pytest, amd-smi)
+# is reported. Otherwise it creates the shared venv <scratch>/perfmon/venv/rocm<ver>/
+# if missing (ROCm wheels, aotriton from the checkout, pytest). Idempotent; the
 # work is in .perfmon/host/setup_peer.sh, which runs on the peer.
 #
 #   --workdir   the perfmon workdir (config.rc, workers.db)

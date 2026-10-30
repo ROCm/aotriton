@@ -6,6 +6,14 @@
 # doc 5.3, step A1). Idempotent; each check stops with a message at the first
 # failure.
 #
+# Two venv modes (node_env.sh). With a claudepak-managed venv active whose
+# `rocm-sdk version` is <rocm>, nothing is created or installed (it is
+# read-only): the script only checks that aotriton (from the checkout, via
+# PYTHONPATH), psycopg, pytest and amd-smi are there, and names what the user
+# must install into the managed venv. Without one, it creates the shared venv
+# <scratch>/perfmon/venv/rocm<ver> and pip-installs the ROCm wheels, aotriton,
+# pytest and amdsmi into it.
+#
 # Usage: setup_peer.sh <workdir> <scratch> <rocm> [<arch hint>]
 #   <arch hint>  used to pick the ROCm device wheel when the peer cannot list
 #                its own arch yet (the venv, which brings rocminfo, comes later)
@@ -55,10 +63,48 @@ ok "workdir visible at $PM_WORKDIR"
 [ -r /dev/kfd ] && [ -w /dev/kfd ] || fail "/dev/kfd is not accessible to $(id -un) (groups: $(id -Gn))"
 ok "/dev/kfd accessible"
 
+perfmon_env_setup   # PYTHONPATH: aotriton from the checkout
+
+if perfmon_venv_managed; then
+    # 3m. A managed venv: read-only, check only.
+    perfmon_venv_activate || exit 1
+    mkdir -p "$PM_SCRATCH/perfmon/logs" "$PM_SCRATCH/perfmon/handoff"
+    ok "managed venv $VIRTUAL_ENV (ROCm $(rocm-sdk version 2>/dev/null | head -1))"
+    ARCHES="$(peer_arches)"
+    [ -n "$ARCHES" ] || fail "rocminfo lists no GPU arch on $(hostname)"
+    ok "GPU arch(es): $(echo $ARCHES)"
+    if [ -n "$ARCH_HINT" ]; then
+        case " $ARCHES " in
+            *" $ARCH_HINT "*) ;;
+            *) fail "workers.db says $ARCH_HINT, but rocminfo lists: $(echo $ARCHES)" ;;
+        esac
+    fi
+    MISSING=0
+    for mod in aotriton.pgdef aotriton.perfmon psycopg pytest; do
+        if python -c "import $mod" 2>/dev/null; then
+            ok "import $mod"
+        else
+            echo "MISSING: import $mod fails; install it into the managed venv (claudepak)" >&2
+            MISSING=1
+        fi
+    done
+    if command -v amd-smi >/dev/null 2>&1; then
+        ok "amd-smi on PATH"
+    else
+        echo "MISSING: amd-smi not on PATH; install it into the managed venv (claudepak)" >&2
+        MISSING=1
+    fi
+    [ "$MISSING" -eq 0 ] || fail "the managed venv $VIRTUAL_ENV lacks packages (above)"
+    echo
+    echo "Node environment on $(hostname):"
+    perfmon_env_print
+    exit 0
+fi
+
 VENV="$(perfmon_venv_dir)"
 mkdir -p "$PM_SCRATCH/perfmon/venv" "$PM_SCRATCH/perfmon/logs" "$PM_SCRATCH/perfmon/handoff"
 
-# 3. The shared venv, created once per ROCm. Two peers may set up at the same
+# 3. No managed venv: the shared venv, created once per ROCm. Two peers may set up at the same
 #    time on the shared scratch, so the creation is serialised with a lock
 #    directory (mkdir is atomic).
 LOCK="$VENV.lock"

@@ -4,8 +4,8 @@
 
 # Builds the core for each ROCm, then subjects for each arch, into
 # <workdir>/installed/perfmon. The host that builds must have that ROCm
-# toolchain: the perfmon image, or a fleet peer with the shared ROCm venv
-# (setup_session). Thin on purpose: perfmon/build_core.sh and
+# toolchain: the perfmon image, or a fleet peer with a ROCm venv (the
+# managed venv of its session, else the shared one; setup_session). Thin on purpose: perfmon/build_core.sh and
 # perfmon/build_subject.sh do the work.
 #
 # Usage: build_subjects --workdir <wkdir> [--host <build host>] [--rocm <ver>]...
@@ -14,8 +14,8 @@
 #   --workdir <wkdir> the perfmon workdir; default $AOTRITON_WORKDIR
 #                     (.def/lib/paths.sh)
 #   --host <h>        run on <h> over ssh (the checkout, the workdir and the
-#                     scratch are visible there at the same paths), with the shared
-#                     venv of each ROCm activated. Without it, run here, with the
+#                     scratch are visible there at the same paths), with the venv of
+#                     each ROCm (the active managed one, else the shared one). Without it, run here, with the
 #                     toolchain already in the environment.
 #   --rocm <ver>      repeatable; default workers.db perfmon::rocm, else 10.1.0
 #   --arch <arch>...  default: the arches of the workers.db hosts of role Perfmon
