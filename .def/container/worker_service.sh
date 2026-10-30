@@ -248,6 +248,15 @@ fi
 
 load_config_container "$WORKDIR" || exit 1
 
+# config.rc names the image's Python (CELERY_WORKER_PYTHON). A node that runs
+# outside that image (a fleet container with a shared venv) names its own in
+# AOTRITON_PYTHON, which wins. Application-neutral, like the AOTRITON_* paths.
+CELERY_WORKER_PYTHON="${AOTRITON_PYTHON:-${CELERY_WORKER_PYTHON:-}}"
+if [ -z "$CELERY_WORKER_PYTHON" ] && { [ "$COMMAND" = start ] || [ "$COMMAND" = restart ]; }; then
+    echo "Error: neither AOTRITON_PYTHON nor CELERY_WORKER_PYTHON (config.rc) is set" >&2
+    exit 1
+fi
+
 # The engine reads the connection parameters from PG* variables (never a
 # database name); sourcing config.rc is this infrastructure's job, not its.
 export PGHOST="${CELERY_SERVICE_HOST:-localhost}"

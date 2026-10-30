@@ -92,3 +92,25 @@ get_worker_thermal_gate() {
         "SELECT COALESCE(thermal_gate, 0) FROM workers WHERE hostname = '$hostname' LIMIT 1" 2>/dev/null || true)
     if [ "$v" = "1" ]; then echo on; else echo off; fi
 }
+
+# A value of the workers.db config table, empty when the key is absent.
+get_config_value() {
+    local workdir="$1"
+    local key="$2"
+    sqlite3 "$workdir/workers.db" \
+        "SELECT COALESCE(value, '') FROM config WHERE key = '$key'" 2>/dev/null || true
+}
+
+# A config value that holds a JSON list of strings (e.g. perfmon::tags), one
+# item per line; <default> (a JSON list) when the key is absent or empty.
+get_config_list() {
+    local workdir="$1"
+    local key="$2"
+    local default="$3"
+    local v
+    v="$(get_config_value "$workdir" "$key")"
+    [ -n "$v" ] || v="$default"
+    python3 -c 'import json, sys
+for item in json.loads(sys.argv[1]):
+    print(item)' "$v"
+}
