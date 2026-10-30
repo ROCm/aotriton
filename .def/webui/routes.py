@@ -171,9 +171,14 @@ def builds():
 def perfmon():
     """Perfmon page: settings, subject builds, nodes and progress"""
     workdir = current_app.config['WORKDIR']
+    build_node_config = tasks.get_build_node_config(workdir)
     return render_template('perfmon.html',
                            perfmon_settings=tasks.get_perfmon_settings(workdir),
-                           perfmon_defaults=tasks.PERFMON_DEFAULTS)
+                           perfmon_defaults=tasks.PERFMON_DEFAULTS,
+                           build_node_config=build_node_config,
+                           build_hosts=tasks.get_perfmon_build_hosts(workdir),
+                           archs=tasks.get_architectures(workdir),
+                           perfmon_hosts=tasks.get_perfmon_hostnames(workdir))
 
 
 @bp.route('/api/perfmon/settings/<action>', methods=['POST'])
@@ -191,6 +196,32 @@ def api_perfmon_setting(action):
         result = tasks.reset_perfmon_setting(workdir, key)
     else:
         return jsonify({'success': False, 'error': f'Unknown action {action!r}'}), 404
+    return jsonify(result)
+
+
+@bp.route('/api/perfmon/build-subjects', methods=['POST'])
+def api_perfmon_build_subjects():
+    """Build the configured subjects on a build host (form: host, arch repeated)"""
+    workdir = current_app.config['WORKDIR']
+    host = request.form.get('host', '').strip()
+    archs = [a for a in request.form.getlist('arch') if a]
+    result = tasks.build_perfmon_subjects(workdir, host, archs, dry_run=should_dryrun())
+    return jsonify(result)
+
+
+@bp.route('/api/perfmon/fetch-subjects', methods=['POST'])
+def api_perfmon_fetch_subjects():
+    """Fetch the perfmon build from the remote build node"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.fetch_perfmon_subjects(workdir, dry_run=should_dryrun())
+    return jsonify(result)
+
+
+@bp.route('/api/perfmon/node/<hostname>/<action>', methods=['POST'])
+def api_perfmon_node(hostname, action):
+    """start | stop | status of a host's perfmon node"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.perfmon_node_action(workdir, hostname, action, dry_run=should_dryrun())
     return jsonify(result)
 
 

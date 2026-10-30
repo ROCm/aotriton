@@ -2216,3 +2216,87 @@ def reset_perfmon_setting(workdir, key: str):
     except Exception as e:
         return {'success': False, 'error': str(e)}
     return {'success': True, 'message': f'{key} reset to its default'}
+
+
+# Perfmon subjects and nodes
+
+_HOST_RE = re.compile(r'^[0-9A-Za-z][0-9A-Za-z._-]*$')
+
+
+def get_perfmon_hostnames(workdir):
+    """Hostnames with the Perfmon role."""
+    return get_role_hostnames(workdir, ROLE_OF_APP['perfmon'])
+
+
+def get_perfmon_build_hosts(workdir) -> list[str]:
+    """Hosts offered as the build host of 'Build subjects': the remote build
+    node first when one is configured, then every registered worker."""
+    hosts = []
+    node = get_build_node_config(workdir).get('hostname', '')
+    if node:
+        hosts.append(node)
+    for hostname, _arch, _override in get_workers(workdir):
+        if hostname not in hosts:
+            hosts.append(hostname)
+    return hosts
+
+
+def build_perfmon_subjects(workdir, host: str, archs: list[str] | None = None, dry_run: bool = False):
+    """Build the configured tags x ROCm versions on a build host.
+
+    One `.perfmon/bin/build_subjects` run per ROCm version, each through the
+    action tracker (its own streamed and logged action). `archs` empty means
+    the script's default arch list. Returns {'status', 'message', 'action_ids'}
+    (and 'action_id' of the first run, like the single-command functions).
+    """
+    host = (host or '').strip()
+    if not _HOST_RE.match(host):
+        return {'status': 'error', 'message': f'Invalid build host {host!r}'}
+    archs = list(archs or [])
+    bad = [a for a in archs if a not in TUNING_ARCHITECTURES]
+    if bad:
+        return {'status': 'error', 'message': f'Unsupported architecture(s): {", ".join(bad)}'}
+    settings = get_perfmon_settings(workdir)
+    rocms, tags = settings['perfmon::rocm'], settings['perfmon::tags']
+    if not rocms or not tags:
+        return {'status': 'error',
+                'message': 'Nothing to build: perfmon::rocm and perfmon::tags must not be empty'}
+    results = []
+    for rocm in rocms:
+        cmd = ['.perfmon/bin/build_subjects', '--workdir', workdir, '--host', host, '--rocm', rocm]
+        for arch in archs:
+            cmd += ['--arch', arch]
+        cmd += tags
+        results.append(run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
+                                   description=f'Build perfmon subjects on {host} (ROCm {rocm}: {" ".join(tags)})',
+                                   dry_run=dry_run))
+    out = dict(results[0])
+    out['action_ids'] = [r['action_id'] for r in results if r.get('action_id')]
+    if len(results) > 1:
+        out['message'] = '\n'.join(r['message'] for r in results)
+    return out
+
+
+def fetch_perfmon_subjects(workdir, dry_run: bool = False):
+    """Fetch the perfmon build (installed/perfmon/) from the remote build node."""
+    cfg = get_build_node_config(workdir)
+    hostname = cfg.get('hostname', '')
+    if not hostname:
+        return {'status': 'error', 'message': 'Remote build node hostname is not configured'}
+    cmd = ['.def/bin/fetchbuild', workdir, '--category', 'perfmon']
+    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
+                       description=f'Fetch perfmon subjects from {hostname}', dry_run=dry_run)
+
+
+PERFMON_NODE_ACTIONS = ('start', 'stop', 'status')
+
+
+def perfmon_node_action(workdir, hostname: str, action: str, dry_run: bool = False):
+    """start | stop | status of the perfmon node of a host."""
+    if action not in PERFMON_NODE_ACTIONS:
+        return {'status': 'error', 'message': f'Unknown node action: {action}'}
+    if not _HOST_RE.match(hostname or ''):
+        return {'status': 'error', 'message': f'Invalid host {hostname!r}'}
+    cmd = ['.perfmon/bin/node', '--workdir', workdir, '--host', hostname, action]
+    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
+                       description=f'Perfmon node {action} on {hostname}', dry_run=dry_run)

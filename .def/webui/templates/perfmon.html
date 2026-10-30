@@ -48,4 +48,66 @@
     </div>
     {% endfor %}
 </section>
+
+<section id="perfmon-builds">
+    <h3>Subjects</h3>
+    <p>Build the {{ perfmon_settings['perfmon::tags']|length }} tag(s) &times;
+       {{ perfmon_settings['perfmon::rocm']|length }} ROCm version(s) above with
+       <code>.perfmon/bin/build_subjects</code>, one run per ROCm version, then fetch
+       <code>installed/perfmon/</code> back from the remote build node.</p>
+    <form hx-post="/api/perfmon/build-subjects"
+          hx-swap="none"
+          hx-confirm="Build the configured perfmon subjects?"
+          hx-indicator="#perfmon-build-spinner">
+        <label>Build host:
+            <input type="text" name="host" list="perfmon-build-hosts" required
+                   value="{{ build_node_config.hostname }}"
+                   placeholder="build-host.example.com"
+                   style="width: 20rem; font-family: monospace;">
+        </label>
+        <datalist id="perfmon-build-hosts">
+            {% for host in build_hosts %}<option value="{{ host }}">{% endfor %}
+        </datalist>
+        <div style="display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: center; margin: 0.4rem 0;">
+            <span style="font-size: 0.9em; color: gray;">Arches (none: the script's default):</span>
+            {% for arch in archs %}
+            <label style="margin: 0; display: flex; align-items: center; gap: 0.3rem;">
+                <input type="checkbox" name="arch" value="{{ arch }}" style="margin: 0;">{{ arch }}
+            </label>
+            {% endfor %}
+        </div>
+        <button type="submit">Build subjects</button>
+        <span id="perfmon-build-spinner" class="htmx-indicator">&#9203; Starting...</span>
+    </form>
+    <button hx-post="/api/perfmon/fetch-subjects"
+            hx-swap="none"
+            hx-indicator="#perfmon-fetch-spinner"
+            {% if not build_node_config.hostname %}disabled title="Configure a remote build node hostname on the Builds page first"{% endif %}>Fetch subjects{% if build_node_config.hostname %} ({{ build_node_config.hostname }}){% endif %}</button>
+    <span id="perfmon-fetch-spinner" class="htmx-indicator">&#9203; Fetching...</span>
+</section>
+
+<section id="perfmon-nodes">
+    <h3>Nodes</h3>
+    {% if perfmon_hosts %}
+    <table>
+        <thead><tr><th>Host</th><th>Perfmon node</th></tr></thead>
+        <tbody>
+            {% for host in perfmon_hosts %}
+            <tr>
+                <td><code>{{ host }}</code></td>
+                <td>
+                    {% for action in ['start', 'stop', 'status'] %}
+                    <button hx-post="/api/perfmon/node/{{ host }}/{{ action }}"
+                            hx-swap="none"
+                            style="font-size: 0.8em; padding: 0.3rem 0.5rem;">{{ action|capitalize }}</button>
+                    {% endfor %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color: gray;">No host has the Perfmon role. Assign it on the Workers page.</p>
+    {% endif %}
+</section>
 {% endblock %}
