@@ -19,6 +19,7 @@ from pathlib import Path
 from aotriton.tune.registry import default_modules_dir
 
 from . import tasks
+from . import perfmon_compare
 
 bp = Blueprint('main', __name__)
 
@@ -183,6 +184,41 @@ def perfmon():
                            build_hosts=tasks.get_perfmon_build_hosts(workdir),
                            archs=tasks.get_architectures(workdir),
                            perfmon_hosts=tasks.get_perfmon_hostnames(workdir))
+
+
+@bp.route('/perfmon/compare')
+def perfmon_compare_page():
+    """Compare two perfmon sides (exported tags or live subjects) of one arch.
+
+    Query: family, a, b (tag:<tag> | live:<subject>), arch, variant, top,
+    format=csv for every per-line ratio.
+    """
+    workdir = current_app.config['WORKDIR']
+    families = perfmon_compare.list_families()
+    family = request.args.get('family') or families[0]
+    args = {'family': family,
+            'a': request.args.get('a', ''),
+            'b': request.args.get('b', ''),
+            'arch': request.args.get('arch', ''),
+            'variant': request.args.get('variant', ''),
+            'top': request.args.get('top', type=int, default=perfmon_compare.DEFAULT_TOP)}
+    error, result, selector = None, None, {'tags': [], 'arches': {}, 'variants': {}, 'live': []}
+    try:
+        selector = perfmon_compare.selector_data(workdir, family)
+        if args['a'] and args['b']:
+            result = perfmon_compare.compare(workdir, family, args['a'], args['b'], args['arch'],
+                                             variant=args['variant'] or None, top=args['top'])
+    except Exception as e:
+        logger.exception('perfmon compare failed')
+        error = str(e)
+    if result is not None and request.args.get('format') == 'csv':
+        return Response(perfmon_compare.lines_csv(result), mimetype='text/csv')
+    arches = sorted({arch for per_tag in selector['arches'].values() for arch in per_tag}
+                    | {row['arch'] for row in selector['live']})
+    return render_template('perfmon_compare.html',
+                           families=families, args=args, selector=selector, arches=arches,
+                           result=result, error=error, fmt4=perfmon_compare.fmt4,
+                           max_shown=perfmon_compare.MAX_SHOWN_LINES)
 
 
 @bp.route('/api/perfmon/settings/<action>', methods=['POST'])

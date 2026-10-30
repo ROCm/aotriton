@@ -4,6 +4,7 @@
 
 {% block content %}
 <h2>Perfmon</h2>
+<p><a href="/perfmon/compare">Compare two tags or live subjects</a></p>
 
 <section id="perfmon-settings">
     <h3>Settings</h3>
@@ -31,7 +32,7 @@
         </div>
         <form hx-post="/api/perfmon/settings/add"
               hx-swap="none"
-              hx-on::after-request="if (event.detail.successful && event.detail.xhr.responseText.indexOf('&quot;success&quot;:true') >= 0) { location.reload(); } else { alert(JSON.parse(event.detail.xhr.responseText).error); }"
+              hx-on::after-request="const r = JSON.parse(event.detail.xhr.responseText); if (r.success) { location.reload(); } else { alert(r.error); }"
               style="display: flex; gap: 0.3rem; align-items: center; margin: 0;">
             <input type="hidden" name="key" value="{{ key }}">
             <input type="text" name="value" placeholder="{{ placeholder }}" required
