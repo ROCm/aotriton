@@ -21,9 +21,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
 
-. "$TUNE_ROOT/lib/config_load.sh"
-. "$TUNE_ROOT/lib/paths.sh"
+. "$DEF_ROOT/lib/config_load.sh"
+. "$DEF_ROOT/lib/paths.sh"
 
 WORKDIR=""
 HOSTNAME=""
@@ -85,7 +86,7 @@ load_config "$WORKDIR"
 
 REMOTE_WORKDIR="${WORKDIR_OVERRIDE:-$DEFAULT_WORKDIR}"
 
-# Paths below are inside the container, in the image's layout (.tune/lib/paths.sh).
+# Paths below are inside the container, in the image's layout (.def/lib/paths.sh).
 IMG_WORKDIR="$AOTRITON_IMAGE_WORKDIR"
 IMG_SRC="$AOTRITON_IMAGE_SRC"
 IMG_RUNDIR="$AOTRITON_IMAGE_RUNDIR"

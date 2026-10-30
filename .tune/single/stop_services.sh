@@ -9,8 +9,9 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
 
-. "$TUNE_ROOT/lib/config_load.sh"
+. "$DEF_ROOT/lib/config_load.sh"
 
 WORKDIR="$1"
 

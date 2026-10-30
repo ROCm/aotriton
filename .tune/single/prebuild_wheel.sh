@@ -49,6 +49,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
 AOTRITON_ROOT="$(realpath "$TUNE_ROOT/..")"
 
 # shellcheck disable=SC1091
@@ -61,7 +62,7 @@ fi
 
 # shellcheck disable=SC1091
 . "$TUNE_ROOT/lib/aotriton_version.sh"
-. "$TUNE_ROOT/lib/paths.sh"
+. "$DEF_ROOT/lib/paths.sh"
 # pin_line first: find_flydsl.sh's helpers are written against it, the same way
 # .ci/releasesuite-git-head.sh sources common-pin.sh before reading any pin.
 # shellcheck disable=SC1091
@@ -115,7 +116,7 @@ stage_triton() {
   # testbld/libbld container launches) -- $WORKDIR is the host path, used to
   # actually find the built wheels here. But the resolved yaml is read later
   # INSIDE the worker container, where remotebld always mounts the same
-  # workdir at the image's fixed path $AOTRITON_IMAGE_WORKDIR (.tune/lib/paths.sh;
+  # workdir at the image's fixed path $AOTRITON_IMAGE_WORKDIR (.def/lib/paths.sh;
   # see remotebld's --mount, identical across all 4 of its branches) -- so the
   # wheel paths written into the yaml must use that path, not $WORKDIR, or pip
   # inside the container looks for a file that only exists at that path on the

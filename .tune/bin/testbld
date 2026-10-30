@@ -81,10 +81,11 @@ export HOME="$WORKDIR/scratch/fakehome"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
 AOTRITON_ROOT="$(realpath "$SCRIPT_DIR/../..")"
 
 # sqlite3 CLI may not be present inside CELERY_WORKER_IMAGE; use Python fallback
-. "$TUNE_ROOT/lib/sqlite3_compat.sh"
+. "$DEF_ROOT/lib/sqlite3_compat.sh"
 . "$TUNE_ROOT/lib/aotriton_version.sh"
 # pin_line first -- find_flydsl.sh's helpers are written against it.
 . "$AOTRITON_ROOT/.ci/common-pin.sh"

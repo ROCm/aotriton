@@ -37,7 +37,7 @@ parse_category() {
 
 # validate_category <category>
 #
-# Policy, from the application's manifest. Source .tune/lib/manifest.sh first.
+# Policy, from the application's manifest. Source .def/lib/manifest.sh first.
 # Returns 1, after printing an error, if:
 #   - the category is empty;
 #   - its application is not registered (it has no manifest);

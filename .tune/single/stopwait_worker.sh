@@ -9,10 +9,11 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
 
-. "$TUNE_ROOT/lib/config_load.sh"
-. "$TUNE_ROOT/lib/db_query.sh"
-. "$TUNE_ROOT/lib/paths.sh"
+. "$DEF_ROOT/lib/config_load.sh"
+. "$DEF_ROOT/lib/db_query.sh"
+. "$DEF_ROOT/lib/paths.sh"
 
 WORKDIR="$1"
 HOSTNAME="$2"
@@ -36,7 +37,7 @@ WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
 ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$AOTRITON_IMAGE_WORKDIR" "$AOTRITON_IMAGE_TMPFS" "$AOTRITON_IMAGE_SRC" <<'EOF'
 WORKER_WORKDIR="$1"
-# The image's layout (.tune/lib/paths.sh), passed in: this runs remotely, and
+# The image's layout (.def/lib/paths.sh), passed in: this runs remotely, and
 # expanded here rather than inside the container, which may predate it.
 IMG_WORKDIR="$3"
 IMG_TMPFS="$4"

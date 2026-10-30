@@ -11,7 +11,7 @@ below, each of which reads its environment variable at call time and falls
 back to the tuning image's value. With no variable set, every path is what it
 has always been.
 
-The shell side is `.tune/lib/paths.sh`: the same variables, the same defaults.
+The shell side is `.def/lib/paths.sh`: the same variables, the same defaults.
 Keep the two in sync.
 
 | Variable                 | Function          | Default                       |

@@ -212,7 +212,7 @@ python3 -m aotriton.tune.manifest deploy.role
 python3 -m aotriton.tune.manifest install.subtree --arch gfx950 --cat_level1 op
 ```
 
-(`.tune/lib/manifest.sh` wraps this as `app_manifest` and `require_app`, the one
+(`.def/lib/manifest.sh` wraps this as `app_manifest` and `require_app`, the one
 validation each script keeps.) The manifest holds where the build is installed, what to fetch from the build
 node, the host role that runs the application, and the category levels it accepts.
 A machine's subpool (MI355) is host inventory: a column of `workers.db`, set on

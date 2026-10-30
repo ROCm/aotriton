@@ -23,11 +23,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
 AOTRITON_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 WORKDIR="$(cd "$AOTRITON_ROOT/.." && pwd)"
 
-# The image's layout (.tune/lib/paths.sh): where the container sees the workdir.
-. "$SCRIPT_DIR/../lib/paths.sh"
+# The image's layout (.def/lib/paths.sh): where the container sees the workdir.
+. "$DEF_ROOT/lib/paths.sh"
 IMG_WORKDIR="$AOTRITON_IMAGE_WORKDIR"
 IMG_SRC="$AOTRITON_IMAGE_SRC"
 IMG_RUNDIR="$AOTRITON_IMAGE_RUNDIR"

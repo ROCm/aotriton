@@ -22,7 +22,7 @@ which phases have landed. Landed so far:
   `node`, `dispatch` and `handlers`.
 
 * P4: `MANIFEST` per application (`python/tune/manifest.py`; shared lookup in
-  `pgdef/manifest.py`, `.tune/lib/manifest.sh`); `worker_service.sh`, `wkctl`,
+  `pgdef/manifest.py`, `.def/lib/manifest.sh`); `worker_service.sh`, `wkctl`,
   `deploy`, `sync_workdir`, `fetchbuild` and `start_worker` read it; `workers.db` has a `subpool` column. NOT done: unifying
   tuning onto the perfmon image model and non-root container (the plan keeps tuning
   root, installing aotriton at container launch, in this refactor).
@@ -48,7 +48,7 @@ which phases have landed. Landed so far:
   * No shared tool takes `--apps`. The image tools (`prepwkdir`, `imgbld`,
     `build_image.sh`) are tune's own, unchanged from 0.14, and take no
     application at all.
-  * **Category helpers** in `.tune/lib/category.sh`, mechanism separate from
+  * **Category helpers** in `.def/lib/category.sh`, mechanism separate from
     policy:
     * `parse_category <category>` is pure syntax. It sets `CAT_LEVEL0` and
       `CAT_LEVEL1` (one field each, empty if absent), with no manifest lookups

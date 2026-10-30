@@ -19,6 +19,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AOTRITON_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
 
 # Change to aotriton root. Entry points are launched from here, and several
 # tools still resolve checkout-relative data from the cwd.
@@ -59,9 +60,9 @@ export AOTRITON_MODULES_DIR="$AOTRITON_ROOT/modules"
 # application. One application per node.
 
 # Load config utilities
-. "$TUNE_ROOT/lib/config_load.sh"
-. "$TUNE_ROOT/lib/manifest.sh"
-. "$TUNE_ROOT/lib/category.sh"
+. "$DEF_ROOT/lib/config_load.sh"
+. "$DEF_ROOT/lib/manifest.sh"
+. "$DEF_ROOT/lib/category.sh"
 
 usage() {
     cat <<EOF
@@ -275,12 +276,12 @@ QUEUES=()
 QUEUES_ARG=$(IFS=,; echo "${QUEUES[*]}")
 
 # Directories. The rundir holds node-local runtime files and defaults to
-# <workdir>/run (AOTRITON_RUNDIR in .tune/lib/paths.sh); a node whose
+# <workdir>/run (AOTRITON_RUNDIR in .def/lib/paths.sh); a node whose
 # workdir is on a network filesystem (perfmon in a fleet container) points
 # AOTRITON_RUNDIR at a local path instead.
 # The default comes from paths.sh, read in a subshell so that the rest of this
 # script keeps its own environment, with the workdir this invocation was given.
-RUNDIR="$(AOTRITON_WORKDIR="$WORKDIR"; . "$TUNE_ROOT/lib/paths.sh"; echo "$AOTRITON_RUNDIR")"
+RUNDIR="$(AOTRITON_WORKDIR="$WORKDIR"; . "$DEF_ROOT/lib/paths.sh"; echo "$AOTRITON_RUNDIR")"
 PID_DIR="$RUNDIR/pids${SESSION_NAME:+/$SESSION_NAME}"
 LOG_DIR="$RUNDIR/logs${SESSION_NAME:+/$SESSION_NAME}"
 
@@ -290,7 +291,7 @@ mkdir -p "$PID_DIR" "$LOG_DIR"
 # All entry points (broker_main, gpu_worker_socket, pg_reader_worker, cpu_worker)
 # default --broker_socket to this env var, so we don't need to pass it explicitly.
 # Always under the rundir, even when the caller's environment already has one:
-# .tune/lib/paths.sh exports a default that is not node-specific.
+# .def/lib/paths.sh exports a default that is not node-specific.
 export AOTRITON_BROKER_SOCKET="$RUNDIR/broker.sock"
 
 # Helper functions

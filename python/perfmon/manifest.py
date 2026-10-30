@@ -7,7 +7,7 @@ scripts with
 
     python3 -m aotriton.perfmon.manifest <key> [--arch A]
 
-(see `.tune/lib/manifest.sh`). perfmon has no second category level: every
+(see `.def/lib/manifest.sh`). perfmon has no second category level: every
 node serves every perfmon task of its arch. Image keys come with the fleet
 work.
 """

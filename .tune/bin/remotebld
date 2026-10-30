@@ -68,10 +68,11 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
 
-. "$TUNE_ROOT/lib/config_load.sh"
-. "$TUNE_ROOT/lib/db_query.sh"
-. "$TUNE_ROOT/lib/paths.sh"
+. "$DEF_ROOT/lib/config_load.sh"
+. "$DEF_ROOT/lib/db_query.sh"
+. "$DEF_ROOT/lib/paths.sh"
 
 load_config "$WORKDIR"
 
@@ -125,7 +126,7 @@ REMOTE_WORKDIR="$1"
 CELERY_WORKER_IMAGE="$2"
 ARCH_SELECTION="$3"
 SOURCE_DB="$4"
-# The image's layout (.tune/lib/paths.sh), passed in: this runs remotely.
+# The image's layout (.def/lib/paths.sh), passed in: this runs remotely.
 IMG_WORKDIR="$5"
 IMG_SRC="$6"
 IMG_RUNDIR="$7"
@@ -159,7 +160,7 @@ EOF
 REMOTE_WORKDIR="$1"
 CELERY_WORKER_IMAGE="$2"
 ARCH_SELECTION="$3"
-# The image's layout (.tune/lib/paths.sh), passed in: this runs remotely.
+# The image's layout (.def/lib/paths.sh), passed in: this runs remotely.
 IMG_WORKDIR="$4"
 IMG_SRC="$5"
 IMG_RUNDIR="$6"

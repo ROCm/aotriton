@@ -171,7 +171,7 @@ comments that recommend it should be pushed back on.
 4-byte big-endian length prefix + JSON (NOT newline JSON). Worker→broker: `get_task`, `forward`,
 `register_ack`. Broker→worker: `task`, `no_task`, `ack`. See `.claude/docs/localq_design.md`.
 
-### config.rc variables (loaded by .tune/lib/config_load.sh)
+### config.rc variables (loaded by .def/lib/config_load.sh)
 
 ```bash
 POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_PORT

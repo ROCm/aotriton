@@ -10,7 +10,7 @@
 # Usage: build_subjects [--rocm <ver>] [--prefix <dir>] [--without_amdsmi]
 #                       <arch> <tag>... [-- <build_subject.sh options>]
 #   --rocm <ver>      default 10.1.0
-#   --prefix <dir>    default $AOTRITON_WORKDIR/installed/perfmon (.tune/lib/paths.sh)
+#   --prefix <dir>    default $AOTRITON_WORKDIR/installed/perfmon (.def/lib/paths.sh)
 #   <tag>...          release tags, or head
 # Options after `--` go to build_subject.sh, e.g. --cache_dir <dir>.
 
@@ -19,7 +19,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 ROCM="10.1.0"
-source "$ROOT/.tune/lib/paths.sh"
+source "$ROOT/.def/lib/paths.sh"
 PREFIX="$AOTRITON_WORKDIR/installed/perfmon"
 CORE_OPTS=()
 while [ "$#" -gt 0 ]; do

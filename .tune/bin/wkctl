@@ -12,13 +12,14 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
 
 # Load utilities
-. "$TUNE_ROOT/lib/config_load.sh"
-. "$TUNE_ROOT/lib/db_query.sh"
-. "$TUNE_ROOT/lib/host_filter.sh"
-. "$TUNE_ROOT/lib/manifest.sh"
-. "$TUNE_ROOT/lib/category.sh"
+. "$DEF_ROOT/lib/config_load.sh"
+. "$DEF_ROOT/lib/db_query.sh"
+. "$DEF_ROOT/lib/host_filter.sh"
+. "$DEF_ROOT/lib/manifest.sh"
+. "$DEF_ROOT/lib/category.sh"
 
 # Parse arguments
 parse_host_filter "$@"

@@ -1,14 +1,14 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""aotriton.pgdef.paths and .tune/lib/paths.sh: every filesystem location a
+"""aotriton.pgdef.paths and .def/lib/paths.sh: every filesystem location a
 node assumes, defined in one place on each side.
 
 Three checks:
 
 * each function's default, and its environment override;
 * the shell library gives the same values as the Python module;
-* no other file under python/ or .tune/ spells the workdir or tmpfs literal,
+* no other file under python/, .def/, .tune/ or .perfmon/ spells the workdir or tmpfs literal,
   like test_layering does for imports.
 """
 
@@ -24,7 +24,7 @@ import pytest
 from aotriton.pgdef import paths
 
 _REPO = pathlib.Path(__file__).resolve().parents[3]
-_PATHS_SH = _REPO / '.tune' / 'lib' / 'paths.sh'
+_PATHS_SH = _REPO / '.def' / 'lib' / 'paths.sh'
 
 VARIABLES = ('AOTRITON_WORKDIR',
              'AOTRITON_SRC',
@@ -114,12 +114,12 @@ def test_shell_library_agrees_with_python(clean_env, overrides):
         assert shell[name] == str(function()), name
 
 
-# Literals that only .tune/lib/paths.sh and python/pgdef/paths.py may spell.
+# Literals that only .def/lib/paths.sh and python/pgdef/paths.py may spell.
 # `~/wkdir...` and `/path/to/wkdir` in usage examples are host paths, not the
 # image's workdir, hence the look-behind.
 LITERALS = re.compile(r'(?<![\w~])/wkdir\b|/dev/shm\b')
 
-SCANNED = ('python', '.tune')
+SCANNED = ('python', '.def', '.tune', '.perfmon')
 
 ALLOWED = {_REPO / 'python' / 'pgdef' / 'paths.py',
            _PATHS_SH,
@@ -136,7 +136,7 @@ EXCLUDED_DIRS = {
 
 
 def _scanned_files():
-    # Resolved and deduplicated: .tune/lib/pkgroot/aotriton links back to python/.
+    # Resolved and deduplicated: .def/lib/pkgroot/aotriton links back to python/.
     seen = set()
     for top in SCANNED:
         for path in sorted((_REPO / top).rglob('*')):
@@ -159,5 +159,5 @@ def test_no_hard_coded_paths_outside_the_paths_modules():
         for lineno, line in enumerate(text.splitlines(), start=1):
             if LITERALS.search(line):
                 offenders.append(f'{path.relative_to(_REPO)}:{lineno}: {line.strip()}')
-    assert not offenders, ('use aotriton.pgdef.paths / .tune/lib/paths.sh instead:\n'
+    assert not offenders, ('use aotriton.pgdef.paths / .def/lib/paths.sh instead:\n'
                            + '\n'.join(offenders))

@@ -19,9 +19,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
 REPO_ROOT="$(cd "$TUNE_ROOT/.." && pwd)"
 
-. "$TUNE_ROOT/lib/config_load.sh"
+. "$DEF_ROOT/lib/config_load.sh"
 . "$TUNE_ROOT/lib/require_aotriton_pkg.sh"
 
 if [ "$#" -lt 1 ]; then

@@ -14,7 +14,7 @@
 #               installed/perfmon/ that holds <name>, and it is an error when
 #               there is none or more than one
 #
-# installed/perfmon/ is under $AOTRITON_WORKDIR (.tune/lib/paths.sh).
+# installed/perfmon/ is under $AOTRITON_WORKDIR (.def/lib/paths.sh).
 #
 # `exec` is load-bearing: it makes the runner the direct child of the caller,
 # so crash detection, pids and EOF shutdown work as if the caller had started
@@ -54,7 +54,7 @@ case "${SUBJECT}" in
   */*|.*|"") echo "launch_runner.sh: '${SUBJECT}' is not a subject name." >&2; exit 2 ;;
 esac
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.tune/lib/paths.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.def/lib/paths.sh"
 ROOT="$AOTRITON_WORKDIR/installed/perfmon"
 
 if [ -z "${ARCH}" ]; then

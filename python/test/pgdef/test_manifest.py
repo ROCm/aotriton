@@ -1,8 +1,8 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Application manifests: the lookup, tune's manifest, and that every key the
-`.tune` scripts ask for exists."""
+"""Application manifests: the lookup, tune's manifest, and that every key
+the `.def`, `.tune` and `.perfmon` scripts ask for exists."""
 
 import pathlib
 import re
@@ -86,9 +86,9 @@ def test_tune_manifest_deploy_role(tune_manifest):
 
 
 def _script_manifest_keys():
-    """(file, key) for every `app_manifest <app> <key>` in the .tune scripts."""
+    """(file, key) for every `app_manifest <app> <key>` in the .def, .tune and .perfmon scripts."""
     pat = re.compile(r'app_manifest\s+"?\$?\{?\w+\}?"?\s+([a-z0-9_]+(?:\.[a-z0-9_]+)*)')
-    for path in sorted((_REPO / '.tune').rglob('*')):
+    for path in sorted(p for top in ('.def', '.tune', '.perfmon') for p in (_REPO / top).rglob('*')):
         if not path.is_file() or path.suffix in {'.html', '.js', '.css', '.png', '.md'} \
                 or 'pkgroot' in path.parts or path.name == 'manifest.sh':
             continue
@@ -118,14 +118,14 @@ def test_every_key_a_script_reads_exists_in_every_applications_manifest(app, cat
 
 @pytest.mark.skipif(shutil.which('bash') is None or shutil.which('python3') is None, reason='needs bash and python3')
 def test_the_shell_helper_works_from_a_bare_checkout():
-    # Uses .tune/lib/pkgroot/aotriton -> python/, so no install is needed (and it
+    # Uses .def/lib/pkgroot/aotriton -> python/, so no install is needed (and it
     # does not matter whether aotriton.tune is installed here).
-    script = (f'cd {_REPO} && . .tune/lib/manifest.sh && require_app tune && '
+    script = (f'cd {_REPO} && . .def/lib/manifest.sh && require_app tune && '
               'app_manifest tune install.subtree --arch gfx942 --cat_level1 op')
     out = subprocess.run(['bash', '-c', script], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == 'installed/test/gfx942'
-    bad = subprocess.run(['bash', '-c', f'cd {_REPO} && . .tune/lib/manifest.sh && require_app nope'],
+    bad = subprocess.run(['bash', '-c', f'cd {_REPO} && . .def/lib/manifest.sh && require_app nope'],
                          capture_output=True, text=True)
     assert bad.returncode == 1 and 'not registered' in bad.stderr
 
@@ -134,7 +134,7 @@ def test_validate_category_matches_levels_literally():
     # The level is compared as a fixed string: `tune,k.*` must not pass as a
     # regular expression matching `kernel`.
     def validate(category):
-        script = (f'cd {_REPO} && . .tune/lib/manifest.sh && . .tune/lib/category.sh && '
+        script = (f'cd {_REPO} && . .def/lib/manifest.sh && . .def/lib/category.sh && '
                   f'validate_category {shlex.quote(category)}')
         return subprocess.run(['bash', '-c', script], capture_output=True, text=True).returncode
     assert validate('tune,kernel') == 0

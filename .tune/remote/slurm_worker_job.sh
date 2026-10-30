@@ -46,11 +46,12 @@ done
 # Find AOTriton source directory
 # Assumes this script is in .celery/ subdirectory of AOTriton
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
 AOTRITON_SRC="$(cd "$SCRIPT_DIR/.." && pwd)"
-# The tuner's tmpfs (.tune/lib/paths.sh). Read in a subshell: this job's
+# The tuner's tmpfs (.def/lib/paths.sh). Read in a subshell: this job's
 # workdir is not the library's default, so its exports must not leak into the
 # workers started below.
-TUNER_TMPFS="$(. "$SCRIPT_DIR/../lib/paths.sh" && echo "$AOTRITON_TMPFS")/aotriton-tuner"
+TUNER_TMPFS="$(. "$DEF_ROOT/lib/paths.sh" && echo "$AOTRITON_TMPFS")/aotriton-tuner"
 
 # Set flag for worker-service.sh to use SLURM-specific paths
 export CELERY_FROM_SLURM=1

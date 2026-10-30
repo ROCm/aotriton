@@ -19,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AOTRITON_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Keeps AOTRITON_WORKDIR if the caller set it.
-. "$AOTRITON_ROOT/.tune/lib/paths.sh"
+. "$AOTRITON_ROOT/.def/lib/paths.sh"
 
 cd "$AOTRITON_ROOT" || exit 1
 exec python3 -m aotriton.perfmon.dispatch "$@"
