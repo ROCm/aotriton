@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Perfmon{% endblock %}
+
+{% block content %}
+<h2>Perfmon</h2>
+
+<section id="perfmon-settings">
+    <h3>Settings</h3>
+    <p>Subjects are <code>aotriton-&lt;tag&gt;+rocm&lt;version&gt;</code>: one per
+       tag and ROCm version below. An unset list uses its default.</p>
+    {% for key, title, placeholder in [('perfmon::rocm', 'ROCm versions', '10.1.0'),
+                                       ('perfmon::tags', 'Release tags', '0.14.2b')] %}
+    <div style="margin-bottom: 1rem;">
+        <strong>{{ title }}</strong> <code>{{ key }}</code>
+        {% if perfmon_settings[key] != perfmon_defaults[key] %}<em>(modified)</em>{% else %}<em>(default)</em>{% endif %}
+        <div style="display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin: 0.4rem 0;">
+            {% for value in perfmon_settings[key] %}
+            <span style="display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.1rem 0.4rem; border: 1px solid #999; border-radius: 4px;">
+                <code>{{ value }}</code>
+                <button hx-post="/api/perfmon/settings/remove"
+                        hx-vals='{"key": "{{ key }}", "value": "{{ value }}"}'
+                        hx-swap="none"
+                        hx-on::after-request="location.reload()"
+                        title="Remove {{ value }}"
+                        style="font-size: 0.75em; padding: 0 0.4rem; margin: 0; background-color: #dc3545; color: white;">&times;</button>
+            </span>
+            {% else %}
+            <span style="color: gray;">empty: nothing is built</span>
+            {% endfor %}
+        </div>
+        <form hx-post="/api/perfmon/settings/add"
+              hx-swap="none"
+              hx-on::after-request="if (event.detail.successful && event.detail.xhr.responseText.indexOf('&quot;success&quot;:true') >= 0) { location.reload(); } else { alert(JSON.parse(event.detail.xhr.responseText).error); }"
+              style="display: flex; gap: 0.3rem; align-items: center; margin: 0;">
+            <input type="hidden" name="key" value="{{ key }}">
+            <input type="text" name="value" placeholder="{{ placeholder }}" required
+                   style="width: 12rem; margin: 0; font-family: monospace;">
+            <button type="submit" style="margin: 0; width: auto;">Add</button>
+            <button type="button"
+                    hx-post="/api/perfmon/settings/reset"
+                    hx-vals='{"key": "{{ key }}"}'
+                    hx-swap="none"
+                    hx-confirm="Reset {{ key }} to its default ({{ perfmon_defaults[key]|join(', ') }})?"
+                    hx-on::after-request="location.reload()"
+                    style="margin: 0; width: auto;">Reset to default</button>
+        </form>
+    </div>
+    {% endfor %}
+</section>
+{% endblock %}

@@ -2124,3 +2124,95 @@ def build_perf_export_html(col_filters: dict, url_params: dict,
                 kdata['axes'] = build_axes(kdata['rows'], desc)
 
     return build_export_html(all_data, url_params, def_root=_DEF_ROOT)
+
+
+# Perfmon settings (workers.db config table). Each is a JSON list; an absent
+# key means the default. perfmon::rocm lists the ROCm versions subjects are
+# built against, perfmon::tags the release tags that are built.
+
+PERFMON_DEFAULTS = {
+    'perfmon::rocm': ['10.1.0'],
+    'perfmon::tags': ['0.9.2b', '0.10b', '0.11.2b', '0.12.1b', '0.13b', '0.14.2b'],
+}
+_PERFMON_VALUE_RE = {
+    # 10.1.0
+    'perfmon::rocm': re.compile(r'^\d+(\.\d+)*$'),
+    # 0.13b, 0.11.2b; '+' and '/' would break the subject name aotriton-<tag>+rocm<ver>
+    'perfmon::tags': re.compile(r'^[0-9A-Za-z][0-9A-Za-z._-]*$'),
+}
+
+
+def get_perfmon_setting(workdir, key: str) -> list[str]:
+    """A perfmon list setting ('perfmon::rocm' or 'perfmon::tags'); the
+    default when the key is absent or unreadable."""
+    if key not in PERFMON_DEFAULTS:
+        raise ValueError(f'unknown perfmon setting {key!r}')
+    init_workers_db(workdir)
+    with sqlite3.connect((Path(workdir) / 'workers.db').as_posix()) as conn:
+        row = conn.execute("SELECT value FROM config WHERE key = ?", (key,)).fetchone()
+    if row:
+        try:
+            value = json.loads(row[0])
+            if isinstance(value, list) and all(isinstance(v, str) for v in value):
+                return value
+        except ValueError:
+            pass
+    return list(PERFMON_DEFAULTS[key])
+
+
+def _put_perfmon_setting(workdir, key: str, values: list[str]):
+    with sqlite3.connect((Path(workdir) / 'workers.db').as_posix()) as conn:
+        text = json.dumps(values)
+        conn.execute("""
+            INSERT INTO config (key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
+        """, (key, text, text))
+
+
+def get_perfmon_settings(workdir) -> dict[str, list[str]]:
+    return {key: get_perfmon_setting(workdir, key) for key in PERFMON_DEFAULTS}
+
+
+def add_perfmon_setting(workdir, key: str, value: str):
+    """Append a ROCm version or a tag (no duplicates)."""
+    value = (value or '').strip()
+    if key not in PERFMON_DEFAULTS:
+        return {'success': False, 'error': f'Unknown perfmon setting {key!r}'}
+    if not _PERFMON_VALUE_RE[key].match(value):
+        return {'success': False, 'error': f'Invalid value {value!r} for {key}'}
+    values = get_perfmon_setting(workdir, key)
+    if value in values:
+        return {'success': False, 'error': f'{value} is already in {key}'}
+    try:
+        _put_perfmon_setting(workdir, key, values + [value])
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+    return {'success': True, 'message': f'Added {value} to {key}'}
+
+
+def remove_perfmon_setting(workdir, key: str, value: str):
+    """Remove a ROCm version or a tag. The list may become empty: nothing is
+    then built until a value is added or the setting is reset."""
+    if key not in PERFMON_DEFAULTS:
+        return {'success': False, 'error': f'Unknown perfmon setting {key!r}'}
+    values = get_perfmon_setting(workdir, key)
+    if value not in values:
+        return {'success': False, 'error': f'{value} is not in {key}'}
+    try:
+        _put_perfmon_setting(workdir, key, [v for v in values if v != value])
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+    return {'success': True, 'message': f'Removed {value} from {key}'}
+
+
+def reset_perfmon_setting(workdir, key: str):
+    """Back to the default: delete the key, so an absent key means the default."""
+    if key not in PERFMON_DEFAULTS:
+        return {'success': False, 'error': f'Unknown perfmon setting {key!r}'}
+    init_workers_db(workdir)
+    try:
+        with sqlite3.connect((Path(workdir) / 'workers.db').as_posix()) as conn:
+            conn.execute("DELETE FROM config WHERE key = ?", (key,))
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+    return {'success': True, 'message': f'{key} reset to its default'}

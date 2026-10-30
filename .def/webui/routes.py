@@ -167,6 +167,33 @@ def builds():
                            use_installed_db=use_installed_db)
 
 
+@bp.route('/perfmon')
+def perfmon():
+    """Perfmon page: settings, subject builds, nodes and progress"""
+    workdir = current_app.config['WORKDIR']
+    return render_template('perfmon.html',
+                           perfmon_settings=tasks.get_perfmon_settings(workdir),
+                           perfmon_defaults=tasks.PERFMON_DEFAULTS)
+
+
+@bp.route('/api/perfmon/settings/<action>', methods=['POST'])
+def api_perfmon_setting(action):
+    """Edit a perfmon list setting: action is add | remove | reset; form fields
+    key (perfmon::rocm | perfmon::tags) and, except for reset, value."""
+    workdir = current_app.config['WORKDIR']
+    key = request.form.get('key', '').strip()
+    value = request.form.get('value', '').strip()
+    if action == 'add':
+        result = tasks.add_perfmon_setting(workdir, key, value)
+    elif action == 'remove':
+        result = tasks.remove_perfmon_setting(workdir, key, value)
+    elif action == 'reset':
+        result = tasks.reset_perfmon_setting(workdir, key)
+    else:
+        return jsonify({'success': False, 'error': f'Unknown action {action!r}'}), 404
+    return jsonify(result)
+
+
 @bp.route('/deploy')
 def deploy():
     """Deployment page"""
