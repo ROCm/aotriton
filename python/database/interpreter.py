@@ -13,8 +13,12 @@ executable). It exports a file's tensors:
         --output x.npz
 
 A base reference such as amd/gfx1150/attn_fwd.txtdb ("#! base" naming
-../gfx1100/attn_fwd.txtdb) exports gfx1100's tensor with gfx1150's patches. A
-patch exports alone, as a sparse tensor.
+../gfx1100/attn_fwd.*) exports gfx1100's tensor, with gfx1100's patches, and
+then gfx1150's patches. A patch exports alone, as a sparse tensor.
+
+A "#! base" section names what the reference shares, see _base_reference():
+a <iface>.txtdb alone, a <iface>.txtdb and the patches listed after it, or
+<iface>.* for a <iface>.txtdb with all its patches.
 
 Library:
 
@@ -47,6 +51,7 @@ TENSOR_SECTION = 'tuning tensor'
 SPARSE_TENSOR_SECTION = 'sparse tuning tensor'
 PRECEDENCE_SECTION = 'precedence'
 BASE_SECTION = 'base'
+BASE_ALL_PATCHES = '.*'
 TENSOR_HEADER = 'functional,tuning keys->{}'
 SPARSE_TENSOR_HEADER = 'functional,{}<-coordinates'
 TENSOR_TARGETS = ('hsaco_options', 'precedence')
@@ -225,12 +230,16 @@ def read_sections(fn):
     return sections
 
 
+def _patch_name(iface):
+    return re.compile(re.escape(iface) + r'\.(\d{4,})-(.+)' + re.escape(PATCH_SUFFIX))
+
+
 def patch_files(fn):
     '''
     The patches of <iface>.txtdb, in order of <NNNN>, looked up next to fn.
     '''
     fn = Path(fn)
-    pattern = re.compile(re.escape(fn.stem) + r'\.(\d{4,})-(.+)' + re.escape(PATCH_SUFFIX))
+    pattern = _patch_name(fn.stem)
     found = {}
     for p in fn.parent.glob(f'{fn.stem}.*{PATCH_SUFFIX}'):
         m = pattern.fullmatch(p.name)
@@ -464,55 +473,93 @@ def _narrow(tensor):
 
 def _base_reference(fn, sections):
     '''
-    The file named by the "#! base" section of <iface>.txtdb fn, or None. A base
-    reference holds nothing else: it shares the base's effective tensor, and
-    its own changes are patches next to it. The path is relative to fn's
-    directory and names a file with the same <iface>.txtdb name.
+    What the "#! base" section of <iface>.txtdb fn shares, or None: (base,
+    patches), where base is an <iface>.txtdb and patches is the list of
+    patches to apply into it, or None for all of the base's own patches.
+
+    The section holds one of, each path relative to fn's directory:
+    - <dir>/<iface>.txtdb: the base alone, without its patches
+    - <dir>/<iface>.txtdb, then one <iface>.<NNNN>-<name>.dbpatch per line: the
+      base with the listed patches, applied in the order listed
+    - <dir>/<iface>.*: the base with all its patches, as load() applies them
+
+    A base reference holds nothing else: its own changes are patches next to
+    it. The base is the same interface, so it has the same <iface>.txtdb name.
     '''
     if BASE_SECTION not in sections:
         return None
     lines = sections.pop(BASE_SECTION)
-    if len(lines) != 1:
-        _fail(fn, f'"#! {BASE_SECTION}" needs exactly one path')
     if sections:
         _fail(fn, f'a base reference holds nothing but "#! {BASE_SECTION}", found {sorted(sections, key=str)}')
     if fn.suffix == PATCH_SUFFIX:
         _fail(fn, f'a patch cannot be a base reference')
-    target = Path(os.path.normpath(fn.parent / ','.join(lines[0])))
-    if target.name != fn.name:
-        _fail(fn, f'base {target} must be the same interface, {fn.name}')
-    if not target.is_file():
-        _fail(fn, f'base {target} does not exist')
-    return target
+    paths = [','.join(line) for line in lines]
+    first = paths[0]
+    all_patches = first.endswith(BASE_ALL_PATCHES)
+    if all_patches:
+        if len(paths) != 1:
+            _fail(fn, f'"{first}" includes all patches; it cannot be followed by more paths')
+        first = first[:-len(BASE_ALL_PATCHES)] + Path(fn.name).suffix
+    base = Path(os.path.normpath(fn.parent / first))
+    if base.name != fn.name:
+        _fail(fn, f'base {base} must be the same interface, {fn.name}')
+    if not base.is_file():
+        _fail(fn, f'base {base} does not exist')
+    if all_patches:
+        return base, None
+    pattern = _patch_name(fn.stem)
+    patches = []
+    for path in paths[1:]:
+        patch = Path(os.path.normpath(fn.parent / path))
+        if not pattern.fullmatch(patch.name):
+            _fail(fn, f'{path} after the base must be a patch of {fn.stem}, <iface>.<NNNN>-<name>{PATCH_SUFFIX}')
+        if not patch.is_file():
+            _fail(fn, f'patch {patch} does not exist')
+        if patch in patches:
+            _fail(fn, f'patch {patch} is listed twice')
+        patches.append(patch)
+    return base, patches
+
+
+def _resolve(path, own_patches=True, seen=()):
+    '''
+    (chain, patches) of <iface>.txtdb path: chain is [path, its base, the
+    base's base, ...], the last one holding the tensor; patches are applied
+    into that tensor, in order. own_patches: whether the patches next to path
+    are among them.
+    '''
+    path = Path(path)
+    if path in seen:
+        _fail(seen[0], f'base references form a cycle: {" -> ".join(map(str, seen + (path,)))}')
+    reference = _base_reference(path, read_sections(path))
+    if reference is None:
+        chain, patches = [path], []
+    else:
+        base, listed = reference
+        chain, patches = _resolve(base, own_patches=listed is None, seen=seen + (path,))
+        chain = [path] + chain
+        patches = patches + (listed or [])
+    if own_patches:
+        patches = patches + patch_files(path)
+    for i, p in enumerate(patches):
+        if p in patches[:i]:
+            _fail(path, f'patch {p} applies twice')
+    return chain, patches
 
 
 def base_chain(path):
     '''
     [path, its base, the base's base, ...], the last one holding the tensor
     '''
-    chain = [Path(path)]
-    while True:
-        base = _base_reference(chain[-1], read_sections(chain[-1]))
-        if base is None:
-            return chain
-        if base in chain:
-            _fail(chain[0], f'base references form a cycle: {" -> ".join(map(str, chain + [base]))}')
-        chain.append(base)
-
-
-def _chain_patches(chain):
-    '''
-    The patches of a base chain, in the order load() applies them
-    '''
-    return [p for fn in reversed(chain) for p in patch_files(fn)]
+    return _resolve(path)[0]
 
 
 def applied_patches(path):
     '''
-    The patches load(path) applies, in order: those of the base, recursively,
-    then those next to path.
+    The patches load(path) applies, in order: those its base reference shares,
+    recursively, then those next to path.
     '''
-    return _chain_patches(base_chain(path))
+    return _resolve(path)[1]
 
 
 def source_files(path):
@@ -520,8 +567,8 @@ def source_files(path):
     Every file the effective tensor of path depends on, in a fixed order: the
     base chain from path to the tensor, then the applied patches.
     '''
-    chain = base_chain(path)
-    return chain + _chain_patches(chain)
+    chain, patches = _resolve(path)
+    return chain + patches
 
 
 def _load_one(path):
@@ -547,8 +594,8 @@ def load(path, base=None):
     path is an <iface>.txtdb, or a patch of it.
 
     - <iface>.txtdb: a TuningTensor with its patches applied. A base reference
-      ("#! base") loads its base's effective tensor, including the base's own
-      patches, then applies the patches next to path.
+      ("#! base") loads its base with the patches the reference names, then
+      applies the patches next to path.
     - patch, base=None: the patch alone, as a SparsePatch
     - patch, with base: applied into base, which is returned
     '''
@@ -563,9 +610,9 @@ def load(path, base=None):
             raise TensorFileError(f'{path}: {e}') from e
     if base is not None:
         raise ValueError(f'{path}: base is for patches; only a {PATCH_SUFFIX} applies into one')
-    chain = base_chain(path)
+    chain, patches = _resolve(path)
     loaded = _load_one(chain[-1])
-    for p in _chain_patches(chain):
+    for p in patches:
         load(p, base=loaded)
     loaded.tensor = _narrow(loaded.tensor)
     return loaded

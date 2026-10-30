@@ -77,7 +77,7 @@ modules/<family>/database/
         <iface>.txtdb                 tuning tensors for <arch>, mod<N> (*)
 
 (*) may be a base reference to another <iface>.txtdb, to reuse its tensors,
-    e.g. amd/gfx1150/attn_fwd.txtdb naming ../gfx1100/attn_fwd.txtdb
+    e.g. amd/gfx1150/attn_fwd.txtdb naming ../gfx1100/attn_fwd.*
 ```
 
 `<iface>` is the interface name of a kernel (`attn_fwd`, `bwd_kernel_dq`, ...)
@@ -176,9 +176,9 @@ The named parser, `aotriton.database.interpreter`, exports a file's tensors,
 e.g. `python -m aotriton.database.interpreter amd/gfx942/attn_fwd.txtdb
 --output x.npz`.
 
-- A base reference exports its base's tensor with its own patches applied,
-  e.g. `amd/gfx1150/attn_fwd.txtdb` exports gfx1100's tensor with the
-  `.dbpatch` files of gfx1150.
+- A base reference exports its base's tensor with the patches the reference
+  shares and then its own, e.g. `amd/gfx1150/attn_fwd.txtdb` exports
+  gfx1100's tensor with the `.dbpatch` files of gfx1100 and then of gfx1150.
 - A `.dbpatch` exports the patch alone, not the patched base.
 - Making a file executable locally (`chmod +x`) lets it run as
   `./amd/gfx942/attn_fwd.txtdb --output x.npz`, through the `python` of the
@@ -537,30 +537,44 @@ the gfx1150 patches dense, to show both forms on the same data.
 
 An architecture that is tuned only partially uses another architecture's
 tensors as its base, and stores its own entries as patches. Its `<iface>.txtdb`
-is then a **base reference**, holding nothing but a `#! base` section with
-one path, relative to the file's own directory, to the same interface's file:
+is then a **base reference**, holding nothing but a `#! base` section that
+names what it shares. Paths are relative to the file's own directory, and
+name files of the same interface. The section takes one of three forms:
+
+| `#! base` lines | Shares |
+|---|---|
+| `../gfx1100/attn_fwd.*` | the base with all its patches |
+| `../gfx1100/attn_fwd.txtdb` | the base alone, without its patches |
+| `../gfx1100/attn_fwd.txtdb`, then one `.dbpatch` per line | the base with the listed patches, in the order listed |
+
+The database uses `<iface>.*` throughout:
 
 ```
-# amd/gfx1150/attn_fwd.txtdb
+# amd/gfx1170/attn_fwd.txtdb
 #!/usr/bin/env -S python -m aotriton.database.interpreter
 #! base
-../gfx1100/attn_fwd.txtdb
+../gfx1150/attn_fwd.*
 ```
 
-- Loading a base reference loads the base's effective tensor, including the
-  base's own patches and, if the base is a reference itself, its base. Then
-  the patches next to the reference apply on top.
-- The base must be an `<iface>.txtdb` of the same interface. A cycle of
-  references is an error, and so is a reference that holds anything else,
-  e.g. a tensor.
+- Each form says exactly which files it shares; none is a default the
+  others refine. `<iface>.*` stands for the base and its patches, as loading
+  the base itself would apply them. It is not a general wildcard: it never
+  matches other files, e.g. archives, and it cannot be followed by more
+  lines. To share some patches only, list them.
+- If the base is a reference itself, it is resolved by its own `#! base`
+  section first, whichever form names it.
+- The patches next to the reference apply last, on top of what it shares.
+- A cycle of references is an error, and so is a reference that holds
+  anything else, e.g. a tensor, or a patch that would apply twice.
 
-gfx1150 and gfx1151 only have their own tuning for hdim=64 with
-dropout=0.0, and use gfx1100 for everything else:
+gfx1150 and gfx1151 have their own tuning for part of the functionals (all
+198 for attn_fwd, with sequence lengths up to 2048), and use gfx1100 for
+everything else:
 
 ```
-amd/gfx1150/attn_fwd.txtdb                   base ../gfx1100/attn_fwd.txtdb
-amd/gfx1150/attn_fwd.0001-gfx1150.dbpatch    9 functionals tuned on gfx1150
-amd/gfx1150/op_attn_bwd.txtdb                base ../gfx1100/op_attn_bwd.txtdb
+amd/gfx1150/attn_fwd.txtdb                   base ../gfx1100/attn_fwd.*
+amd/gfx1150/attn_fwd.0001-gfx1150.dbpatch    198 functionals tuned on gfx1150
+amd/gfx1150/op_attn_bwd.txtdb                base ../gfx1100/op_attn_bwd.*
 ...
 ```
 
@@ -574,8 +588,13 @@ without any patch. These replace the former reuse map of the build:
 | Architecture                                | Base    |
 |---------------------------------------------|---------|
 | gfx1101, gfx1102, gfx1103, gfx1152, gfx1153 | gfx1100 |
+| gfx1170                                     | gfx1150 |
+| gfx1171                                     | gfx1151 |
 | gfx1200                                     | gfx1201 |
 | gfx1250                                     | gfx942  |
+
+gfx1170 and gfx1171 thus get gfx1100's tensors with gfx1150's or gfx1151's
+patches on top.
 
 Tuning such an architecture later means adding a `.dbpatch` next to its
 references.
@@ -589,7 +608,7 @@ enabled, and archives or artifact stores may drop them.
 
 A GPU mod with its own entries (e.g. `gfx942_mod1`) is stored under
 `amd/<arch>/mod<N>/`. It can use the same mechanism: a base reference
-`amd/<arch>/mod<N>/<iface>.txtdb` naming `../<iface>.txtdb`, and the
+`amd/<arch>/mod<N>/<iface>.txtdb` naming `../<iface>.*`, and the
 differences in a patch such as
 `amd/<arch>/mod<N>/<iface>.0001-<arch>_mod<N>.dbpatch`.
 

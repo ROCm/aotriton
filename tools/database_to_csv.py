@@ -91,8 +91,8 @@ and metadata sections must equal the base's. Patches apply in order of N.
 Each functional listed in a patch overrides the base's cells, where a blank
 patch cell keeps the base value; functionals absent from the base are added.
 The base is often another arch's tensor, named by a base reference, e.g.
-amd/gfx1150/attn_fwd.txtdb holding only "#! base" and ../gfx1100/attn_fwd.txtdb,
-plus amd/gfx1150/attn_fwd.0001-gfx1150.dbpatch with what gfx1150 tuned on its
+amd/gfx1150/attn_fwd.txtdb holding only "#! base" and ../gfx1100/attn_fwd.*
+(gfx1100's tensor with all its patches), plus amd/gfx1150/attn_fwd.0001-gfx1150.dbpatch with what gfx1150 tuned on its
 own.
 
 A patch may store its tensor sparse instead, listing each value once with the
@@ -148,6 +148,7 @@ PATCH_SUFFIX = '.dbpatch'
 # First line of a tensor file: documents the program that parses it
 SHEBANG = '#!/usr/bin/env -S python -m aotriton.database.interpreter'
 BASE_SECTION = 'base'
+BASE_ALL_PATCHES = '.*'
 RLE_RUN = re.compile(r'(.*)\[(\d+)\]')
 # Not consumed by codegen, and 0.0 in every row
 UNSTORED_COLUMNS = ['op$tflops']
@@ -463,14 +464,15 @@ class Exporter(object):
     def link_bases(self):
         '''
         For each --patch_on arch, a base reference to every <iface>.txtdb of
-        its base arch. An arch without sqlite data only gets the references.
+        its base arch, with the base's patches (<iface>.*). An arch without
+        sqlite data only gets the references.
         '''
         vendor_dir = self._args.output / self._args.vendor
         for arch, base in self.patch_on.items():
             (vendor_dir / arch).mkdir(parents=True, exist_ok=True)
             for target in sorted((vendor_dir / base).glob('*.txtdb')):
                 ref = vendor_dir / arch / target.name
-                rel = (Path('..') / base / target.name).as_posix()
+                rel = (Path('..') / base / target.stem).as_posix() + BASE_ALL_PATCHES
                 content = f'{SHEBANG}\n#! {BASE_SECTION}\n{rel}\n'
                 if ref.is_file() and not ref.is_symlink() and ref.read_text() == content:
                     continue
@@ -738,28 +740,37 @@ class Tensor(object):
 
 def base_reference(fn):
     '''
-    The file named by the "#! base" section of <iface>.txtdb fn, or None
+    What the "#! base" section of <iface>.txtdb fn shares, or None: (base,
+    patches), patches being None for all of the base's patches (<iface>.*),
+    else the patches listed after the base
     '''
     sections = read_sections(fn)
     if BASE_SECTION not in sections:
         return None
-    (line,) = sections[BASE_SECTION]
-    return Path(os.path.normpath(Path(fn).parent / ','.join(line)))
+    paths = [','.join(line) for line in sections[BASE_SECTION]]
+    resolve = lambda path: Path(os.path.normpath(Path(fn).parent / path))
+    if paths[0].endswith(BASE_ALL_PATCHES):
+        assert len(paths) == 1, f'{fn}: nothing may follow {paths[0]}'
+        return resolve(paths[0][:-len(BASE_ALL_PATCHES)] + '.txtdb'), None
+    return resolve(paths[0]), [resolve(path) for path in paths[1:]]
 
-def load_tensor(fn):
+def load_tensor(fn, own_patches=True):
     '''
-    Load <iface>.txtdb and apply its patches. A base reference loads its base,
-    with the base's patches, then applies its own.
+    Load <iface>.txtdb and apply its patches. A base reference loads its base
+    with the patches it names, then applies its own.
     '''
-    base = base_reference(fn)
-    if base is not None:
-        tensor = load_tensor(base)
-        for patch in patch_files(fn):
-            tensor.apply(Tensor(patch))
-        return tensor
-    tensor = Tensor(fn)
-    assert not tensor.sparse, f'{fn}: only patches may be sparse'
-    for patch in patch_files(fn):
+    reference = base_reference(fn)
+    if reference is not None:
+        base, listed = reference
+        tensor = load_tensor(base, own_patches=listed is None)
+        patches = listed or []
+    else:
+        tensor = Tensor(fn)
+        assert not tensor.sparse, f'{fn}: only patches may be sparse'
+        patches = []
+    if own_patches:
+        patches = patches + patch_files(fn)
+    for patch in patches:
         tensor.apply(Tensor(patch))
     return tensor
 

@@ -289,21 +289,48 @@ def base_ref(rel):
     return SHEBANG + f'#! base\n{rel}\n'
 
 
-def test_base_reference(tmp_path):
-    # b references a; a's own patch is inherited, b's patch applies on top
+def make_base_and_reference(tmp_path, *base_lines):
+    # a has a tensor and two patches; b references a and has a patch of its own
     (tmp_path / 'a').mkdir()
     (tmp_path / 'b').mkdir()
     write(tmp_path / 'a', 'k.txtdb', dense2())
     write(tmp_path / 'a', 'k.0001-a.dbpatch', patch_text('1,\n,7,\n,,\n'))
-    write(tmp_path / 'b', 'k.txtdb', base_ref('../a/k.txtdb'))
+    write(tmp_path / 'a', 'k.0002-a.dbpatch', patch_text('1,\n,,8\n,,\n'))
+    write(tmp_path / 'b', 'k.txtdb', SHEBANG + '#! base\n' + ''.join(f'{line}\n' for line in base_lines))
     write(tmp_path / 'b', 'k.0001-b.dbpatch', patch_text('1,\n99,,\n,,\n'))
-    a = it.load(tmp_path / 'a' / 'k.txtdb').tensor
-    b = it.load(tmp_path / 'b' / 'k.txtdb').tensor
-    assert a[0, 0, 0] == 1 and a[0, 0, 1] == 7
-    assert b[0, 0, 0] == 99 and b[0, 0, 1] == 7
-    assert [p.name for p in it.applied_patches(tmp_path / 'b' / 'k.txtdb')] == ['k.0001-a.dbpatch', 'k.0001-b.dbpatch']
-    assert [p.relative_to(tmp_path).as_posix() for p in it.source_files(tmp_path / 'b' / 'k.txtdb')] == \
-        ['b/k.txtdb', 'a/k.txtdb', 'a/k.0001-a.dbpatch', 'b/k.0001-b.dbpatch']
+    return tmp_path / 'b' / 'k.txtdb'
+
+
+@pytest.mark.parametrize('base_lines,first_row,patches', [
+    # the base alone: a's patches are not applied
+    (['../a/k.txtdb'], [99, 2, 3], ['b/k.0001-b.dbpatch']),
+    # the base with the listed patches only
+    (['../a/k.txtdb', '../a/k.0002-a.dbpatch'], [99, 2, 8],
+     ['a/k.0002-a.dbpatch', 'b/k.0001-b.dbpatch']),
+    # the base with all its patches
+    (['../a/k.*'], [99, 7, 8], ['a/k.0001-a.dbpatch', 'a/k.0002-a.dbpatch', 'b/k.0001-b.dbpatch']),
+])
+def test_base_reference(tmp_path, base_lines, first_row, patches):
+    b = make_base_and_reference(tmp_path, *base_lines)
+    assert it.load(b).tensor[0, 0].tolist() == first_row
+    assert [p.relative_to(tmp_path).as_posix() for p in it.applied_patches(b)] == patches
+    assert [p.relative_to(tmp_path).as_posix() for p in it.source_files(b)] == ['b/k.txtdb', 'a/k.txtdb'] + patches
+
+
+def test_base_reference_listed_order(tmp_path):
+    # listed patches apply in the order listed, not by number
+    b = make_base_and_reference(tmp_path, '../a/k.txtdb', '../a/k.0002-a.dbpatch', '../a/k.0001-a.dbpatch')
+    assert [p.name for p in it.applied_patches(b)] == ['k.0002-a.dbpatch', 'k.0001-a.dbpatch', 'k.0001-b.dbpatch']
+
+
+def test_base_reference_to_a_reference(tmp_path):
+    # c shares b without b's patch: b's own reference (a with all patches) still applies
+    b = make_base_and_reference(tmp_path, '../a/k.*')
+    (tmp_path / 'c').mkdir()
+    c = write(tmp_path / 'c', 'k.txtdb', base_ref('../b/k.txtdb'))
+    assert it.load(c).tensor[0, 0].tolist() == [1, 7, 8]
+    assert [p.relative_to(tmp_path).as_posix() for p in it.applied_patches(c)] == \
+        ['a/k.0001-a.dbpatch', 'a/k.0002-a.dbpatch']
 
 
 def test_base_reference_chain_and_mod(tmp_path):
@@ -319,7 +346,12 @@ def test_base_reference_chain_and_mod(tmp_path):
     ('cycle', None, 'cycle'),
     ('missing', base_ref('../x/k.txtdb'), 'does not exist'),
     ('other iface', base_ref('../a/other.txtdb'), 'same interface'),
-    ('two paths', SHEBANG + '#! base\n../a/k.txtdb\n../a/k.txtdb\n', 'exactly one path'),
+    ('two bases', SHEBANG + '#! base\n../a/k.txtdb\n../a/k.txtdb\n', 'must be a patch'),
+    ('all, then more', SHEBANG + '#! base\n../a/k.*\n../a/k.0001-a.dbpatch\n', 'cannot be followed'),
+    ('other iface patch', SHEBANG + '#! base\n../a/k.txtdb\n../a/other.0001-a.dbpatch\n', 'must be a patch'),
+    ('missing patch', SHEBANG + '#! base\n../a/k.txtdb\n../a/k.0009-a.dbpatch\n', 'does not exist'),
+    ('patch twice', SHEBANG + '#! base\n../a/k.txtdb\n../a/k.0001-a.dbpatch\n../a/k.0001-a.dbpatch\n', 'listed twice'),
+    ('other iface, all', base_ref('../a/other.*'), 'same interface'),
     ('with a tensor', SHEBANG + '#! base\n../a/k.txtdb\n' + dense2(), 'nothing but'),
 ])
 def test_base_reference_rejected(tmp_path, name, text, message):
@@ -327,6 +359,8 @@ def test_base_reference_rejected(tmp_path, name, text, message):
     (tmp_path / 'b').mkdir()
     write(tmp_path / 'a', 'k.txtdb', dense2())
     write(tmp_path / 'a', 'other.txtdb', dense2())
+    write(tmp_path / 'a', 'k.0001-a.dbpatch', patch_text('1,\n,7,\n,,\n'))
+    write(tmp_path / 'a', 'other.0001-a.dbpatch', patch_text('1,\n,7,\n,,\n'))
     if text is None:    # a -> b -> a
         write(tmp_path / 'a', 'k.txtdb', base_ref('../b/k.txtdb'))
         text = base_ref('../a/k.txtdb')
