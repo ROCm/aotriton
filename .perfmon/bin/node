@@ -1,0 +1,89 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+#
+# Start, stop or query a perfmon node on a fleet peer, rootless and with no
+# docker: the fleet container is the worker container (automation doc 1.1).
+#
+#   node --workdir <wkdir> --host <host> [--rocm <ver>] [--arch <arch>]
+#        [--scratch <dir>] [--session_name <name>] [--multi_gpu <id>...]
+#        [--nreader <n>] [--ncpu <n>] start|stop|status
+#
+# Over `ssh <host>` it runs `.def/container/worker_service.sh <command>
+# --category perfmon` in the shared venv with the path variables set
+# (AOTRITON_RUNDIR node-local: ${XDG_RUNTIME_DIR:-/tmp}/aotriton-perfmon), with
+#   AOTRITON_THERMAL_GATE   from workers.db thermal_gate of the host (off if unset)
+#   --subpool               the host's subpool in workers.db, when it has one
+# The peer must have been prepared with setup_session. The host's arch comes
+# from workers.db unless --arch is given. --rocm defaults to the first of
+# perfmon::rocm.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+. "$ROOT/.def/lib/db_query.sh"
+. "$ROOT/.perfmon/lib/session.sh"
+
+usage() {
+    sed -n '/^#   node --workdir/,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+    exit 1
+}
+
+WORKDIR=""
+HOST=""
+ROCM=""
+SCRATCH=""
+ARCH=""
+COMMAND=""
+SERVICE_ARGS=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --workdir) WORKDIR="$2"; shift 2 ;;
+        --host)    HOST="$2"; shift 2 ;;
+        --rocm)    ROCM="$2"; shift 2 ;;
+        --scratch) SCRATCH="$2"; shift 2 ;;
+        --arch)    ARCH="$2"; shift 2 ;;
+        --session_name|--nreader|--ncpu)
+            SERVICE_ARGS+=("$1" "$2"); shift 2 ;;
+        --multi_gpu)
+            SERVICE_ARGS+=("$1"); shift
+            while [ "$#" -gt 0 ] && [[ "$1" =~ ^-?[0-9]+$ ]]; do
+                SERVICE_ARGS+=("$1"); shift
+            done ;;
+        --graceful) SERVICE_ARGS+=("$1"); shift ;;
+        --help|-h) usage ;;
+        start|stop|status)
+            [ -z "$COMMAND" ] || { echo "Error: more than one command" >&2; usage; }
+            COMMAND="$1"; shift ;;
+        *) echo "Error: unknown argument: $1" >&2; usage ;;
+    esac
+done
+if [ -z "$WORKDIR" ] || [ -z "$HOST" ] || [ -z "$COMMAND" ]; then
+    echo "Error: --workdir, --host and a command (start|stop|status) are required" >&2
+    usage
+fi
+[ -f "$WORKDIR/config.rc" ] || { echo "Error: $WORKDIR/config.rc not found" >&2; exit 1; }
+[ -f "$WORKDIR/workers.db" ] || { echo "Error: $WORKDIR/workers.db not found" >&2; exit 1; }
+WORKDIR="$(cd "$WORKDIR" && pwd)"
+
+[ -n "$ROCM" ] || ROCM="$(perfmon_rocm_versions "$WORKDIR" | head -1)"
+SCRATCH="$(perfmon_scratch_root "$WORKDIR" "$SCRATCH")"
+[ -n "$ARCH" ] || ARCH="$(get_worker_by_hostname "$WORKDIR" "$HOST" | cut -d'|' -f1)"
+if [ -z "$ARCH" ]; then
+    echo "Error: $HOST has no arch in workers.db; register it or pass --arch" >&2
+    exit 1
+fi
+THERMAL_GATE="$(get_worker_thermal_gate "$WORKDIR" "$HOST")"
+SUBPOOL="$(get_worker_subpool "$WORKDIR" "$HOST")"
+
+if [ "$COMMAND" = start ]; then
+    SERVICE_ARGS+=(--category perfmon --hostname "$HOST")
+    [ -z "$SUBPOOL" ] || SERVICE_ARGS+=(--subpool "$SUBPOOL")
+fi
+
+# One word per argument, quoted for the remote shell.
+REMOTE=(bash "$ROOT/.perfmon/host/node_run.sh" "$WORKDIR" "$SCRATCH" "$ROCM" "$THERMAL_GATE" \
+             "$COMMAND" "$ARCH" ${SERVICE_ARGS[@]+"${SERVICE_ARGS[@]}"})
+echo "node $COMMAND on $HOST: arch=$ARCH rocm=$ROCM thermal_gate=$THERMAL_GATE subpool=${SUBPOOL:-(none)}" >&2
+exec ssh "$HOST" "$(printf '%q ' "${REMOTE[@]}")"
