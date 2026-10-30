@@ -26,7 +26,7 @@
 #
 # This is a defect in a specific ROCm release, so it is gated on both the
 # architecture and the ROCm version and is expected to be deleted rather than
-# maintained. When ROCM_VERSION in .tune/lib/create_dockerfile.sh moves past
+# maintained. When ROCM_VERSION in .def/libexec/create_dockerfile.sh moves past
 # 7.14, re-test gfx90a and drop this file if the archives resolve correctly.
 
 set -e

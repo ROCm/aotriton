@@ -90,10 +90,10 @@ fi
 
 # Step 2: Sync image.scripts directory
 echo "Syncing image.scripts..."
-rsync -a "$TUNE_ROOT/image.scripts/" "$WORKDIR/image.scripts/"
+rsync -a "$DEF_ROOT/image.scripts/" "$WORKDIR/image.scripts/"
 
 # Step 3: Create Dockerfile
 echo "Creating Dockerfile..."
-bash "$TUNE_ROOT/lib/create_dockerfile.sh" "$WORKDIR"
+bash "$DEF_ROOT/libexec/create_dockerfile.sh" "$WORKDIR"
 
 echo "Working directory preparation completed"
