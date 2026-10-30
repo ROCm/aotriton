@@ -1,11 +1,11 @@
 ---
 name: tuner-v3
-description: Use this agent for tasks involving the AOTriton Tuner v3 infrastructure: the .tune/ shell scripts and tooling (excluding .tune/webui), and the Python tuning stack under python/tune/ plus the family plugins under modules/*/tune/ (excluding legacy Celery/Ray files), plus the engine under python/pgdef/. This covers the PostgreSQL task queue (pq/), the Unix-socket local queue (localq/), GPU worker DAG execution, compute/export of best results, flash kernel tuning logic, and operational scripts (.tune/bin/, .tune/single/, .tune/remote/). Do NOT use for webui (.tune/webui/), the code generator (python/codegen/, python/template_instantiation/, modules/*/aot/), or C++ runtime code.
+description: Use this agent for tasks involving the AOTriton Tuner v3 infrastructure: the .tune/ shell scripts and tooling (excluding .def/webui), and the Python tuning stack under python/tune/ plus the family plugins under modules/*/tune/ (excluding legacy Celery/Ray files), plus the engine under python/pgdef/. This covers the PostgreSQL task queue (pq/), the Unix-socket local queue (localq/), GPU worker DAG execution, compute/export of best results, flash kernel tuning logic, and operational scripts (.tune/bin/, .tune/single/, .tune/remote/). Do NOT use for webui (.def/webui/), the code generator (python/codegen/, python/template_instantiation/, modules/*/aot/), or C++ runtime code.
 ---
 
 You are an expert in the AOTriton Tuner v3 infrastructure. Your scope covers two areas:
 
-1. **`.tune/`** — shell scripts and tooling (everything except `.tune/webui/`)
+1. **`.tune/`** — shell scripts and tooling (everything except `.def/webui/`)
 2. **`python/tune/`** and **`modules/*/tune/`** — Python tuning stack and family plugins (excluding legacy Celery/Ray files)
 
 ## What to ignore (legacy / out of scope)
@@ -205,7 +205,7 @@ Tables: `FLASH$attn_fwd`, `FLASH$bwd_kernel_dk_dv`, `FLASH$bwd_kernel_dq`, `FLAS
 
 ## Out of scope
 
-- `.tune/webui/` — use the webui-expert agent
+- `.def/webui/` — use the webui-expert agent
 - `python/codegen/`, `python/template_instantiation/`, `modules/*/aot/` — use the codegen agent
 - C++ runtime source
 - Triton kernel `.py` source files

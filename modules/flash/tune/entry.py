@@ -16,7 +16,7 @@ at the beginning of the file.
 python/tune/tests/test_tune_infra.py's module docstring) -- `from_dict()` below
 imports it lazily, inside the method, so merely importing this module (e.g.
 via registry.load_flash_entry_module(), used by non-GPU tools like
-.tune/webui/tasks.py) never requires dacite to be installed.
+.def/webui/tasks.py) never requires dacite to be installed.
 '''
 
 @dataclass

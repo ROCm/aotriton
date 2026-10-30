@@ -11,8 +11,12 @@ import argparse
 import sys
 import os
 
-# Add .tune to path so we can import webui
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# This file is .def/bin/dashboard.py. realpath, not abspath: the compatibility
+# link .tune/dashboard.py must find the same .def/ as the real file.
+_DEF_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+
+# Add .def to path so we can import webui
+sys.path.insert(0, _DEF_ROOT)
 
 
 def _bind_checkout_aotriton():
@@ -39,8 +43,7 @@ def _bind_checkout_aotriton():
     """
     import importlib.util
 
-    pkg_dir = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'python')
+    pkg_dir = os.path.join(os.path.dirname(_DEF_ROOT), 'python')
     init_py = os.path.join(pkg_dir, '__init__.py')
     if 'aotriton' in sys.modules or not os.path.isfile(init_py):
         return None
@@ -129,8 +132,7 @@ if __name__ == '__main__':
         if missing:
             print(f"Error: Missing certificates in {secrets_dir}: {', '.join(missing)}", file=sys.stderr)
             print(f"\nGenerate certificates with:", file=sys.stderr)
-            tune_root = os.path.dirname(os.path.abspath(__file__))
-            print(f"  {tune_root}/webui/gencerts/generate_all_certs.sh {args.workdir}", file=sys.stderr)
+            print(f"  {_DEF_ROOT}/webui/gencerts/generate_all_certs.sh {args.workdir}", file=sys.stderr)
             sys.exit(1)
 
         refresh_interval = args.refresh_interval if args.refresh_interval is not None else 10

@@ -59,8 +59,8 @@ cd aotriton
 .def/bin/initproj ~/wkdir.tuning
 
 # 3. Generate mTLS certificates and start WebUI
-.tune/webui/gencerts/generate_all_certs.sh ~/wkdir.tuning   # first time only
-~/venv/bin/python .tune/dashboard.py ~/wkdir.tuning
+.def/webui/gencerts/generate_all_certs.sh ~/wkdir.tuning   # first time only
+~/venv/bin/python .def/bin/dashboard.py ~/wkdir.tuning
 #    Open https://<CELERY_SERVICE_HOST>:8888 — import client.p12 into browser first
 
 # 4. Register GPU workers
@@ -247,7 +247,7 @@ certificates signed by the same CA. Certificates are stored in
 from `config.rc`.
 
 ```bash
-.tune/webui/gencerts/generate_all_certs.sh <working_directory>
+.def/webui/gencerts/generate_all_certs.sh <working_directory>
 ```
 
 The script is interactive:
@@ -272,7 +272,7 @@ Generated files in `<workdir>/secrets/`:
 ### Launch the WebUI
 
 ```bash
-~/venv/bin/python .tune/dashboard.py <working_directory> [--port 8888]
+~/venv/bin/python .def/bin/dashboard.py <working_directory> [--port 8888]
 ```
 
 The server starts on `https://0.0.0.0:8888` by default. Open
@@ -284,7 +284,7 @@ The server starts on `https://0.0.0.0:8888` by default. Open
 For sharing a read-only progress view without certificate distribution:
 
 ```bash
-~/venv/bin/python .tune/dashboard.py <working_directory> --guest [--port 9999]
+~/venv/bin/python .def/bin/dashboard.py <working_directory> --guest [--port 9999]
 ```
 
 Guest mode serves plain HTTP on port 9999 with no client certificate required.

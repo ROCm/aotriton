@@ -1098,8 +1098,8 @@ def family_static(family, filename):
     """Serve modules/<family>/visperf/static/* (modular-tune.md §3d.3).
 
     These files live outside Flask's own static_folder
-    (.tune/webui/static, set implicitly by the bare Flask(__name__) in
-    .tune/webui/__init__.py), so they need an explicit route. `family` is
+    (.def/webui/static, set implicitly by the bare Flask(__name__) in
+    .def/webui/__init__.py), so they need an explicit route. `family` is
     checked against the descriptor registry -- that whitelist is the
     path-traversal guard for the <family> segment (e.g. '..' is never a
     registered family, so it 404s before touching the filesystem);

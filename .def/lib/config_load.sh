@@ -18,7 +18,7 @@ load_config() {
     # Load default workdir from database
     if [ ! -f "$workdir/workers.db" ]; then
         echo "Error: $workdir/workers.db not found." >&2
-        echo "Start the webui once with '.tune/dashboard.py $workdir' (it creates workers.db)," >&2
+        echo "Start the webui once with '.def/bin/dashboard.py $workdir' (it creates workers.db)," >&2
         echo "then set the default working directory on its Workers page." >&2
         return 1
     fi
@@ -27,7 +27,7 @@ load_config() {
     DEFAULT_WORKDIR=$(sqlite3 "$workdir/workers.db" "SELECT value FROM config WHERE key = 'default_workdir';") || true
     if [ -z "$DEFAULT_WORKDIR" ]; then
         echo "Error: Default working directory not set." >&2
-        echo "Set it on the Workers page of the webui ('.tune/dashboard.py $workdir')." >&2
+        echo "Set it on the Workers page of the webui ('.def/bin/dashboard.py $workdir')." >&2
         return 1
     fi
 }
