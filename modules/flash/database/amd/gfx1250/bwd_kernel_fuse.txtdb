@@ -1,0 +1,3 @@
+#!/usr/bin/env -S python -m aotriton.database.interpreter
+#! base
+../gfx942/bwd_kernel_fuse.*

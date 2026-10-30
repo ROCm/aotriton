@@ -30,6 +30,7 @@ from ..template_instantiation.ir.flyc import KernelSignature
 from .template import get_template
 from ..utils import LazyFile, log
 from .basetune import BaseTuneCodeGenerator
+from ..database.csvdb import tuning_source
 
 
 class FlycTuneCodeGenerator(BaseTuneCodeGenerator):
@@ -38,11 +39,10 @@ class FlycTuneCodeGenerator(BaseTuneCodeGenerator):
     def __init__(self,
                  args,
                  f : Functional,
-                 dataframe_for_tuning : 'pandas.DataFrame | None',
-                 sql : tuple,
+                 view : 'TuningView | None',
                  parent_repo):
-        super().__init__(args, f, dataframe_for_tuning, parent_repo)
-        self._sql = sql
+        super().__init__(args, f, view, parent_repo)
+        self._tuning_source = tuning_source(view, f)
         self._sigs = list(self._gen_signatures())
 
     def _gen_signatures(self):
@@ -114,7 +114,7 @@ class FlycTuneCodeGenerator(BaseTuneCodeGenerator):
             'deduplicated_pp_args_function_index' : self.codegen_deduplicated_pp_args_function_index(),
             'arch_number'           : f.arch_number,
             'human_readable_signature' : f.human_readable_signature,
-            'sql'                   : self._sql,
+            'tuning'                : self._tuning_source,
         }
         print(self.FLYTUNE_TEMPLATE.format_map(d), file=fout)
 

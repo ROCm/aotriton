@@ -64,10 +64,9 @@ def write_script(args, dbc, out):
         sql = raw_sql.replace('id INTEGER PRIMARY KEY,', '')
         # <family>/database/<vendor>/<arch>/, the same shape as the checked-in
         # modules/<family>/database/amd/<arch>/. The family level is not
-        # decoration: v3src/CMakeLists.txt resolves an external database with
-        # `file(GLOB "${AOTRITON_TUNING_DATABASE_ROOT}/*/database")`, so a tree
-        # without it matches nothing, the extract-and-compose loop never runs,
-        # and the build fails much later with a missing tuning_database.sqlite3.
+        # decoration: an external tuning database
+        # (AOTRITON_EXTERNAL_TUNING_DATABASE) is looked up per family as
+        # <dir>/<family>/database, so a tree without it matches nothing.
         # `family` was already being computed here and thrown away.
         db_dir = args.decompose_output / family / 'database' / vendor / arch
         dbf = db_dir / f'{kernel}.sqlite3'

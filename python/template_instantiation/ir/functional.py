@@ -130,11 +130,6 @@ class Functional:
     def name(self):
         return self.meta_object.NAME
 
-    @property
-    def database_gpus(self):
-        from aotriton.gpu_targets import AOTRITON_TUNING_DATABASE_REUSE
-        return [AOTRITON_TUNING_DATABASE_REUSE.get(g, g) for g in self._optimized_for]
-
     # --- compact / fallback choices (multi-choice axes only) ---
 
     @property

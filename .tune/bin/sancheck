@@ -46,6 +46,14 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
+# The code generator reads the text tuning database (modules/<family>/database,
+# see docs/Human Readable Tuning Database Format.md) and no longer the sqlite
+# files staged below, so this check would test the checked-in database instead
+# of the export and pass regardless. Refuse until it stages the text format.
+echo "Error: sancheck still stages sqlite, which the code generator no longer reads;" >&2
+echo "       it would check the checked-in database, not $WORKDIR's export." >&2
+exit 1
+
 if [ ! -d "$WORKDIR" ]; then
     echo "Error: workdir does not exist: $WORKDIR" >&2
     exit 1

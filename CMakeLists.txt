@@ -172,7 +172,10 @@ set(AOTRITON_TARGET_ARCH "gfx90a;gfx942;gfx950;gfx1100;gfx1101;gfx1102;gfx1103;g
 set(TARGET_GPUS "OBSOLETE" CACHE STRING "OBSOLETE. To select only one GPU, use AOTRITON_TARGET_ARCH or AOTRITON_OVERRIDE_TARGET_GPUS.")
 set(AOTRITON_OVERRIDE_TARGET_GPUS "" CACHE STRING "Override AOTRITON_TARGET_ARCH, and only build for GPUs within this list.")
 set(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE "" CACHE STRING "Specify how to use alternative Triton wheels for different architectures in a YAML config file (resolved format -- see docs/AltWheelExample.yaml).")
-set(AOTRITON_TUNING_DATABASE_ROOT "" CACHE PATH "Root directory containing per-family tuning database trees (<family>/database/amd/<arch>/..., same shape as modules/<family>/database). When set, used instead of modules/*/database as the source of tuning data.")
+# Do not remove: lets a build use a tuning database from outside the modules
+# (e.g. one exported from Tuner v3.5 to evaluate before committing it). See
+# CLAUDE.md.
+set(AOTRITON_EXTERNAL_TUNING_DATABASE "" CACHE PATH "Build with a tuning database from outside the modules: <dir>/<family>/database replaces modules/<family>/database for each family present in <dir>. E.g. a database exported from Tuner v3.5 to evaluate before committing it.")
 
 if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
   cmake_path(IS_ABSOLUTE AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE altwheel_yaml_is_absolute)

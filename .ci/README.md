@@ -46,7 +46,7 @@ not fall into any category and consequently does not follow any naming scheme ab
 
 Every one of them is the same build with a different *profile* -- a build type,
 a name suffix, a build-directory tag and a few cmake flags. They share their
-option set (`--database_root`, `--flydsl_kernel_root`, `--flydsl_wheel`,
+option set (`--external_tuning_database`, `--flydsl_kernel_root`, `--flydsl_wheel`,
 `--altwheel_config`, `--name_suffix`, `--mold`/`--no_mold`), the optional
 trailing pre-compiled Triton wheel, and the `AOTRITON_BUILD_PATH` /
 `AOTRITON_INSTALL_PATH` environment overrides. Run any of them with no

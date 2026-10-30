@@ -10,8 +10,8 @@
 #      <workdir>/installed/database/<family>/database/amd/<arch>/<kernel>.sqlite3.tar.xz
 #
 # That shape is not arbitrary: it mirrors the checked-in
-# modules/<family>/database/amd/<arch>/, which is what
-# v3src/CMakeLists.txt globs for when handed --database_root.
+# modules/<family>/database/amd/<arch>/, the shape an external tuning
+# database (--external_tuning_database) must have.
 #
 # Usage:
 #   decomposedb <workdir> [--tuning_mode kernel|op] [--arch <arch>]

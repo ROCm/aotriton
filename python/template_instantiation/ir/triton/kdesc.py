@@ -16,7 +16,7 @@ Per ati+newbinds_rev1.md §6.2 the params-struct field type comes from the axis
 
 This step (4.1) provides the enumeration + identity surface and proves
 count/godel parity with the legacy description. The remaining codegen-facing
-surface (func_cfields, translate_dataframe, the Functional signature helpers) is
+surface (func_cfields, translate_tensor, the Functional signature helpers) is
 filled in Step 4.2 while running the real generator, where the exact requirements
 surface.
 """
@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from aotriton.autotune import BinningLessOrEqual, BinningExact
+from aotriton.database.lut import TunedCells
 from ..axis import assign_godel, TemplateParam
 from ..cfield import cfield
 from ..choices import ChoiceVarAbsent
@@ -159,55 +160,38 @@ class KernelDescription(Interface):
                     value = ov.value
         return value
 
-    def translate_dataframe(self, f, df):
+    def translate_tensor(self, f, view):
         """Build the (lut_tensor, signatures, binning) triple for functional f from
-        its tuning dataframe. Ported from the legacy KernelDescription; reads the
-        adapter's autotune_keys + perf params."""
-        # Inject perf params that are NOT tuned DB columns: their value is the
-        # @dataclass default plus any perf-channel @ati.derives (perf_value), the
-        # role the legacy PROGRAMMATIC_PERFS used to fill, before reading
-        # tuned_kernel$<name>.
-        for name in self._perf_struct.param_names():
-            col = f'tuned_kernel${name}'
-            if col not in df.columns:
-                df[col] = self.perf_value(name, f)
-        sparse_keys = [f'inputs${key}' for key, _ in self.autotune_keys]
-        nkeys = len(sparse_keys)
-        def sorted_unique_key(key):
-            return np.unique(df[key].to_numpy()).tolist()
-        sparse_key_possible_values = {key: sorted_unique_key(key) for key in sparse_keys}
-        binning_dict = {key: algo(sparse_key_possible_values[spk])
-                        for spk, (key, algo) in zip(sparse_keys, self.autotune_keys)}
-        lut_shape = [f.noptimized_for] + [len(sparse_key_possible_values[key]) for key in sparse_keys]
-        lut_tensor = np.full(lut_shape, -1, dtype=np.int32)
+        its tuning tensors (database.csvdb.TuningView): one slab per gpu f is
+        optimized for, each cell an hsaco_options ordinal."""
+        key_names = [key for key, _ in self.autotune_keys]
         perf_names = self._perf_struct.param_names()
-        perf_keys = [f'tuned_kernel${n}' for n in perf_names]
-        copt_keys = [f'compiler_options${key}' for key in COMPILER_OPTIONS]
+        # Each tuned cell decodes to its perf + copt values. Perf params absent
+        # from the kernel's psels are not tuned; they take the @dataclass default
+        # plus any perf-channel @ati.derives (perf_value), the role the legacy
+        # PROGRAMMATIC_PERFS used to fill.
+        def decode(cell):
+            psels, copts = view.hsaco_option(cell)
+            values = [psels[n] if n in psels else self.perf_value(n, f) for n in perf_names]
+            values += [copts[key] for key in COMPILER_OPTIONS]
+            return [int(v) for v in values]
+        tuned = TunedCells(view, key_names, decode)
+        binning_dict = {key: algo(tuned.key_values[d])
+                        for d, (key, algo) in enumerate(self.autotune_keys)}
         # Deduplicate (perf + copt) rows -> signatures.
-        np_sigs, revind = np.unique(df[perf_keys + copt_keys].to_numpy(), axis=0,
+        np_sigs, revind = np.unique(np.array(tuned.values, dtype=np.int64),
+                                    axis=0,
                                     return_inverse=True)
-        df['$$sig_num'] = revind
+        revind = revind.reshape(-1)
         def perf_bind(nprow):
             # one perf bind row: a struct instance with each field a settled choice.
             return self._perf_struct(**{n: self._perf_struct.choice_for(n, value)
                                         for n, value in zip(perf_names, nprow)})
-        nperfs = len(perf_keys)
+        nperfs = len(perf_names)
         def create_sig(nprow):
             return KernelSignature(f, perf_bind(nprow), nprow[nperfs:].tolist())
         sigs = [create_sig(nprow) for nprow in np_sigs]
-        # Bucket autotune indices and fill the LUT (df's gpu column comes from the DB,
-        # so iterate database_gpus).
-        for i, ind_key in enumerate(sparse_keys):
-            bucket = sparse_key_possible_values[ind_key]
-            def discretization(v, bucket=bucket):
-                return bucket.index(v)
-            df[f'$$ind_{i}'] = df[ind_key].apply(discretization)
-        for i, gpu in enumerate(f.database_gpus):
-            if i > 0:
-                lut_tensor[i] = lut_tensor[0]
-            df_i = df[df['gpu'] == gpu]
-            inds = tuple([df_i[f'$$ind_{j}'] for j in range(nkeys)])
-            lut_tensor[i][inds] = df_i['$$sig_num']
+        lut_tensor = tuned.fill(revind)
         # Downcast the LUT dtype (int8 usually suffices).
         nsigs = len(sigs)
         for dtype in [np.int8, np.int16, np.int32]:
@@ -216,7 +200,7 @@ class KernelDescription(Interface):
         lut_tensor = lut_tensor.astype(dtype)
         return lut_tensor, sigs, binning_dict
 
-    def translate_empty_dataframe(self, f):
+    def translate_empty(self, f):
         lut_tensor = np.zeros([f.noptimized_for, 1], dtype=np.int8)
         defaults = self._perf_struct(
             **{n: self._perf_struct.choice_for(n, self.perf_value(n, f))

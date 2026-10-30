@@ -24,24 +24,14 @@ neutral, not a frozen reference. See README.md for the full workflow.
 import argparse
 import hashlib
 import json
-import os
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GOLDEN_DIR = Path(__file__).resolve().parent / 'snapshot'
-# Fallback DB source (schema tarballs + decomposed per-kernel blobs). The primary
-# path is the prebuilt FUSED_DB below; this only fires when that is absent. Points at
-# the per-family database tree (modules/<family>/database) — flash for now.
-DB_SRC_DIR = REPO_ROOT / 'modules' / 'flash' / 'database'
-# Prebuilt fused tuning database (real tuning rows, exercises translate_dataframe).
-# Override with AOTRITON_GOLDEN_DB. Falls back to composing the decomposed DB.
-FUSED_DB_DIR = Path(os.getenv('AOTRITON_GOLDEN_DB', '/tmp/ati_golden_fused_db'))
-
 # Default arch + the selective targets snapshotted. Kept small but covering both
 # The golden covers the FULL flash family (every triton/op/affine target), not a
 # subset: the byte-for-byte gate must include the metro launcher and the bare
@@ -69,56 +59,6 @@ def _venv_python() -> str:
     return sys.executable
 
 
-def _safe_extractall(tf: tarfile.TarFile, dest: Path):
-    """Extract members one-by-one, refusing any that would escape dest.
-
-    Guards against both path traversal (../ names) and link-based escapes:
-    symlink/hardlink members are rejected outright, so a later member cannot be
-    written through a previously-extracted link.
-    """
-    dest = dest.resolve()
-    for member in tf.getmembers():
-        if member.islnk() or member.issym():
-            raise RuntimeError(f'Refusing link entry in tar archive: {member.name!r}')
-        target = (dest / member.name).resolve()
-        if target != dest and dest not in target.parents:
-            raise RuntimeError(f'Unsafe path in tar archive: {member.name!r}')
-        tf.extract(member, dest)
-
-
-def _compose_database(build_dir: Path):
-    """Populate build_dir/flash/database with the tuning + op databases.
-
-    Prefer the prebuilt FUSED database (real tuning rows, so translate_dataframe
-    is exercised). Fall back to composing the decomposed per-kernel sqlite files
-    (sparse) only when the fused DB is absent."""
-    db_dir = build_dir / 'flash' / 'database'
-    db_dir.mkdir(parents=True, exist_ok=True)
-    fused_tuning = FUSED_DB_DIR / 'tuning_database.sqlite3'
-    fused_op = FUSED_DB_DIR / 'op_database.sqlite3'
-    if fused_tuning.exists():
-        shutil.copyfile(fused_tuning, db_dir / 'tuning_database.sqlite3')
-        if fused_op.exists():
-            shutil.copyfile(fused_op, db_dir / 'op_database.sqlite3')
-        else:
-            # Factory ATTACHes the op database unconditionally, so a fused dir
-            # that only carries tuning_database still needs the checked-in
-            # op baseline staged beside it.
-            with tarfile.open(DB_SRC_DIR / 'op_database.sqlite3.tar.xz') as tf:
-                _safe_extractall(tf, db_dir)
-        return
-    # Fallback: extract schemas + compose from the decomposed DB.
-    for tarxz in DB_SRC_DIR.glob('*.sqlite3.tar.xz'):
-        with tarfile.open(tarxz) as tf:
-            _safe_extractall(tf, db_dir)
-    subprocess.run(
-        [_venv_python(), '-m', 'aotriton.database_compose',
-         '--database_file', str(db_dir / 'tuning_database.sqlite3'),
-         '--decomposed', str(DB_SRC_DIR)],
-        cwd=REPO_ROOT, check=True,
-    )
-
-
 def _run_generator(build_dir: Path, arch: str):
     """Generate the full family with no --selective, mirroring the production
     per-item worker path (RootGenerator.launch_workers).
@@ -135,7 +75,6 @@ def _run_generator(build_dir: Path, arch: str):
 
 
 def _generate_into(build_dir: Path, arch: str):
-    _compose_database(build_dir)
     _run_generator(build_dir, arch)
 
 

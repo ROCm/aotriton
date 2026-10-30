@@ -14,7 +14,7 @@ Usage: build-debug.sh [options] <target arch> [optional pre-compiled triton whee
 
 The testing build with CMAKE_BUILD_TYPE=Debug. Shares build-test.sh's build
 directory, so keep one or the other. No mold. <target arch> may be a
-semicolon-separated list.
+semicolon-separated list, or ALL for every architecture.
 EOF
   common_build_usage_options
 }

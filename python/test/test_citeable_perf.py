@@ -5,7 +5,7 @@
 (agent-plans/ati_aux-kernel-xref_rev0.md §4.3).
 
   * schema (@ati.tune.schema) WITHOUT configs  -> untunable: only the schema's
-    default perf is compiled (translate_empty_dataframe), no autotune/LUT/DB.
+    default perf is compiled (translate_empty), no autotune/LUT/DB.
   * a citing kernel that declares NO perf inherits the cited kernel's whole tune.
 """
 
@@ -80,7 +80,7 @@ def test_schema_only_compiles_one_default_signature():
     _register_attn_fwd(reg)
     kdesc = _describe_schema_only_debug(reg)
     f = next(kdesc.gen_functionals({'gfx942': ['gfx942']}))
-    lut, sigs, binning = kdesc.translate_empty_dataframe(f)
+    lut, sigs, binning = kdesc.translate_empty(f)
     assert len(sigs) == 1                      # exactly the default perf
     assert binning is None
 

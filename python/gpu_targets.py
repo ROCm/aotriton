@@ -24,21 +24,10 @@ AOTRITON_SUPPORTED_GPUS = (
     'gfx1250_mod0',
 )
 
-# TODO: AOTRITON_TUNING_DATABASE_REUSE -> AOTRITON_TUNING_DATABASE_FALLBACK
-# Load fallback entries first, and override with "patching" entries from real GPU
-AOTRITON_TUNING_DATABASE_REUSE = {
-    'gfx1101_mod0' : 'gfx1100_mod0',
-    'gfx1102_mod0' : 'gfx1100_mod0',
-    'gfx1103_mod0' : 'gfx1100_mod0',
-    'gfx1200_mod0' : 'gfx1201_mod0',
-    'gfx1150_mod0' : 'gfx1100_mod0',
-    'gfx1151_mod0' : 'gfx1100_mod0',
-    'gfx1152_mod0' : 'gfx1100_mod0',
-    'gfx1153_mod0' : 'gfx1100_mod0',
-    'gfx1170_mod0' : 'gfx1100_mod0',
-    'gfx1171_mod0' : 'gfx1100_mod0',
-    'gfx1250_mod0' : 'gfx942_mod0',
-}
+# An arch without tuning of its own shares another arch's tuning through base
+# references in the tuning database, e.g. amd/gfx1101/attn_fwd.txtdb holds
+# "#! base" naming ../gfx1100/attn_fwd.*, plus .dbpatch files for what it
+# tuned itself. See docs/Human Readable Tuning Database Format.md.
 
 AOTRITON_ARCH_TO_PACK = {
     'gfx90a'    : 'gfx90a',
@@ -85,6 +74,16 @@ AOTRITON_ARCH_WARPSIZE = {
 
 def gpu2arch(gpu : str) -> str:
     return gpu.split('_mod')[0]
+
+def gpu2archmod(gpu : str) -> tuple[str, int]:
+    '''
+    gfx942_mod1 -> ('gfx942', 1). The separator is "_mod", not a bare
+    underscore, so an arch name may contain other separators.
+    '''
+    arch, sep, mod = gpu.partition('_mod')
+    if not sep or not mod.isdigit():
+        raise ValueError(f'GPU {gpu!r} is not <arch>_mod<N>')
+    return arch, int(mod)
 
 def cluster_gpus(gpus : list[str]) -> dict[str : list[str]]:
     ret = defaultdict(list)

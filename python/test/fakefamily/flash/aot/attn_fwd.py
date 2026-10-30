@@ -26,7 +26,7 @@ class AttnFwdPerf:
 
 def gen_autotune_configs(f):
     """Placeholder generator (real heuristics ported later); the DB-driven path
-    (translate_dataframe) does not use this."""
+    (translate_tensor) does not use this."""
     causal = f.choices.CAUSAL_TYPE
     kw = {
         'PERSISTENT_TYPE': 2 if causal != 0 else 0,

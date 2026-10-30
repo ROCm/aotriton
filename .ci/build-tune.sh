@@ -13,7 +13,7 @@ usage() {
 Usage: build-tune.sh [--shim] [options] <target arch> [optional pre-compiled triton wheel]
 
 The tuning build: every GPU kernel, AOTRITON_BUILD_FOR_TUNING=ON, no mold.
-<target arch> may be a semicolon-separated list.
+<target arch> may be a semicolon-separated list, or ALL for every architecture.
 
   --shim  C++ shim only (AOTRITON_NOIMAGE_MODE=ON), into its own build dir
 EOF

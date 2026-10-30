@@ -22,13 +22,13 @@ class KernelShimGenerator(InterfaceGenerator):
     SOURCE_TEMPLATE = get_template('shim.cc')
     PFX = 'shim'
 
-    def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame', sql : tuple):
+    def create_sub_generator(self, functional : Functional, view : 'TuningView | None'):
         if functional.meta_object.is_functional_disabled(functional):
             log(lambda : f'Functional {functional.godel_number=} disabled')
             use_this_functional = False
             return None, use_this_functional
         use_this_functional = True
-        return AutotuneCodeGenerator(self._args, functional, df, sql, self._this_repo), use_this_functional
+        return AutotuneCodeGenerator(self._args, functional, view, self._this_repo), use_this_functional
 
     def write_shim_header(self, functionals, fout):
         kdesc = self._iface

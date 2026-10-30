@@ -14,7 +14,7 @@ Usage: build-test.sh [options] <target arch> [optional pre-compiled triton wheel
 
 The testing build: name suffix "123" so it coexists with the AOTriton PyTorch
 ships, Python bindings on, mold linker on. <target arch> may be a
-semicolon-separated list.
+semicolon-separated list, or ALL for every architecture.
 EOF
   common_build_usage_options
 }

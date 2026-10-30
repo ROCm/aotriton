@@ -16,11 +16,11 @@ class BaseTuneCodeGenerator(ABC):
     def __init__(self,
                  args,
                  f : Functional,
-                 dataframe_for_tuning : 'pandas.DataFrame | None',
+                 view : 'TuningView | None',
                  parent_repo):
         self._args = args
         self._f = f
-        self._df = dataframe_for_tuning
+        self._view = view
         self._parent_repo = parent_repo
         self._cc_file = self.get_cc_file(f)
 

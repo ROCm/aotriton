@@ -20,6 +20,7 @@ from .common import (
     # hsaco_dir,
 )
 from .basetune import BaseTuneCodeGenerator
+from ..database.csvdb import tuning_source
 # import json  # ditto: only the disabled compile_status filter needed this
 import numpy as np
 
@@ -32,16 +33,15 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
     def __init__(self,
                  args,
                  f : Functional,
-                 dataframe_for_tuning : 'pandas.DataFrame | None',
-                 sql : tuple,
+                 view : 'TuningView | None',
                  parent_repo):
-        super().__init__(args, f, dataframe_for_tuning, parent_repo)
-        self._sql = sql
+        super().__init__(args, f, view, parent_repo)
+        self._tuning_source = tuning_source(view, f)
         # TODO: support other binning algorithm
         kdesc = self._f.meta_object
-        if args.build_for_tuning or self._df is None or self._df.empty:
-            log(lambda : f'translate_empty_dataframe for kernel {kdesc.NAME}')
-            self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_empty_dataframe(f)
+        if args.build_for_tuning or self._view is None or self._view.empty:
+            log(lambda : f'translate_empty for kernel {kdesc.NAME}')
+            self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_empty(f)
             # Replace sigs with configs from KernelDescription.gen_autotune_configs
             if args.build_for_tuning and kdesc.is_tunable:
                 self._sigs = list(kdesc.gen_signatures_for_tuning(f))
@@ -77,8 +77,8 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
                 #             return j['compile_status'] == 'Complete'
                 #     self._sigs = [ ksig for ksig in self._sigs if hsaco_compile_successful(ksig) ]
         else:
-            log(lambda : f'translate_dataframe for kernel {kdesc.NAME}')
-            self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_dataframe(f, self._df)
+            log(lambda : f'translate_tensor for kernel {kdesc.NAME}')
+            self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_tensor(f, self._view)
             ok, errors, missing_entries = kdesc.sancheck_lut_tensor(f, self._lut_tensor)
             if not ok:
                 if args._should_raise_for_lut(f):
@@ -86,7 +86,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
                 else:
                     for j in missing_entries:
                         print(kdesc.NAME, "TUNE_V3BIS testrun Item: ", j)
-                        print("  SQL:", self._sql)
+                        print("  //", self._tuning_source)
                         for err in errors:
                             print("    ERROR:", err)
         assert all(isinstance(k, KernelSignature) for k in self._sigs)
@@ -132,7 +132,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
             'perf_field_assignment' : self.codegen_perf_assignment(),
             'arch_number'           : f.arch_number,
             'human_readable_signature' : f.human_readable_signature,
-            'sql'                   : self._sql,
+            'tuning'                : self._tuning_source,
         }
         print(self.AUTOTUNE_TEMPLATE.format_map(d), file=fout)
 

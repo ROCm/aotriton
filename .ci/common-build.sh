@@ -8,8 +8,9 @@
 # added for one build is available to all of them. That was not true before:
 # `--flydsl_wheel`, `--altwheel_config` and the optional triton-wheel
 # positional had been copy-pasted between build-test.sh and build-tune.sh down
-# to the comments, while `--database_root` and `--flydsl_kernel_root` existed
-# only in build-test.sh despite nothing about them being test-specific.
+# to the comments, while `--external_tuning_database` (then `--database_root`)
+# and `--flydsl_kernel_root` existed only in build-test.sh despite nothing
+# about them being test-specific.
 #
 # A profile looks like this:
 #
@@ -52,7 +53,7 @@ unset _cb_xtrace_fd
 
 # Long options every profile accepts. A profile adds its own through
 # `CB_EXTRA_LONGOPTS` (getopt syntax: a trailing `:` means "takes a value").
-_CB_LONGOPTS='database_root:,flydsl_kernel_root:,flydsl_wheel:,altwheel_config:,name_suffix:,mold,no_mold,help'
+_CB_LONGOPTS='external_tuning_database:,flydsl_kernel_root:,flydsl_wheel:,altwheel_config:,name_suffix:,mold,no_mold,help'
 
 # common_build_parse "$@"
 #
@@ -89,14 +90,14 @@ function common_build_parse() {
     fi
     eval set -- "$TEMP"
 
-    local database_root='' flydsl_kernel_root='' flydsl_wheel='' altwheel_config=''
+    local external_tuning_database='' flydsl_kernel_root='' flydsl_wheel='' altwheel_config=''
     CB_ALTWHEEL=''
     # Set-ness, not non-emptiness: `--name_suffix ''` is a meaningful request
     # (no suffix at all) and has to survive to _common_build.
     local name_suffix_given=false name_suffix=''
     while true; do
         case "$1" in
-            --database_root)       database_root="$2"; shift 2 ;;
+            --external_tuning_database) external_tuning_database="$2"; shift 2 ;;
             --flydsl_kernel_root)  flydsl_kernel_root="$2"; shift 2 ;;
             --flydsl_wheel)        flydsl_wheel="$2"; shift 2 ;;
             --altwheel_config)     altwheel_config="$2"; shift 2 ;;
@@ -125,10 +126,13 @@ function common_build_parse() {
         CB_CMAKE_ARGS+=(-DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=mold"
                         -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=mold")
     fi
-    if [ -n "$database_root" ]; then
-        CB_CMAKE_ARGS+=("-DAOTRITON_TUNING_DATABASE_ROOT=${database_root}")
-    fi
     # realpath is what satisfies cmake's absolute-path requirement on these.
+    # cmake runs from the build directory, so a relative path would resolve
+    # there; for the tuning database a wrong path silently falls back to the
+    # modules' own database.
+    if [ -n "$external_tuning_database" ]; then
+        CB_CMAKE_ARGS+=("-DAOTRITON_EXTERNAL_TUNING_DATABASE=$(realpath "$external_tuning_database")")
+    fi
     if [ -n "$flydsl_kernel_root" ]; then
         CB_CMAKE_ARGS+=("-DAOTRITON_FLYDSL_KERNEL_ROOT=$(realpath "$flydsl_kernel_root")")
     fi
@@ -224,12 +228,19 @@ function _common_build() {
   else
     install_prefix="./install_dir"
   fi
+  # ALL: every architecture the root CMakeLists.txt targets by default
+  # (default_target_arch from common-vars.sh), as build-release.sh does. The
+  # build directory above keeps the short name, e.g. build-0.15-shim-ALL.
+  cmake_target_arch="${target_arch}"
+  if [ "${target_arch}" = "ALL" ]; then
+    cmake_target_arch="${default_target_arch}"
+  fi
   mkdir -p ${bdir}
   (
     cd ${bdir};
     cmake "${source_dir}" -DCMAKE_INSTALL_PREFIX=${install_prefix} \
       -DCMAKE_BUILD_TYPE=${build_type} \
-      -DAOTRITON_TARGET_ARCH=${target_arch} \
+      -DAOTRITON_TARGET_ARCH=${cmake_target_arch} \
       -DAOTRITON_NAME_SUFFIX=${suffix} \
       "$@" \
       -G Ninja;
