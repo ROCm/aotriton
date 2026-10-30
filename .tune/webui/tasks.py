@@ -1348,7 +1348,7 @@ def get_tester_signature(workdir, hostname):
 def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=None,
                      adiff: bool = False, ref_device_policy: str | None = None,
                      dry_run: bool = False):
-    """Queue run-test on a remote tester host via .tune/single/run-test.sh (tsp-backed).
+    """Queue run-test on a remote tester host via .tune/libexec/run-test.sh (tsp-backed).
 
     When adiff is True the remote script is switched to .ci/run-ci-test.sh via
     the --adiff flag, which reads adiff.txt to select the tests to run.
@@ -1363,7 +1363,7 @@ def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=N
         return {'status': 'error', 'message': f"Worker '{hostname}' not found"}
     _, arch, workdir_override = worker
     cmd = [
-        '.tune/single/run-test.sh',
+        '.tune/libexec/run-test.sh',
         '--workdir', workdir,
         '--hostname', hostname,
         '--arch', arch,

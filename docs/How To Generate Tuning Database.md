@@ -76,7 +76,7 @@ cd aotriton
 
 # 7. Build tuning version of AOTriton libraries
 #    WebUI → Builds tab → Build Tuning Version → Build Libraries (All)
-#    (or: .tune/bin/libbld ~/wkdir.tuning)
+#    (or: .tune/container/libbld ~/wkdir.tuning)
 
 # 8. Fetch tuning libraries from remote build node (if applicable)
 #    WebUI → Builds tab → Build Tuning Version → Fetch from Remote Build Node
@@ -360,7 +360,7 @@ Build artifacts land in `<workdir>/installed/<arch>/`.
 CLI equivalent:
 
 ```bash
-.tune/bin/libbld <working_directory>
+.tune/container/libbld <working_directory>
 ```
 
 ## Fetch Tuning Libraries from Remote Build Node
@@ -558,7 +558,7 @@ the Testing tab to run pytest correctness checks.
 CLI equivalent:
 
 ```bash
-.tune/bin/testbld <working_directory>
+.tune/container/testbld <working_directory>
 ```
 
 ## Fetch Testing Libraries from Remote Build Node
@@ -862,7 +862,7 @@ Planned workflow:
 # Setup
 .def/bin/initproj <workdir>  # Enable SLURM when prompted
 # TODO: Register SLURM GRES configurations via WebUI
-.tune/bin/libbld <workdir>
+.tune/container/libbld <workdir>
 .def/bin/prepwkdir <workdir>
 # TODO: Build SLURM venv script
 .def/bin/deploy <workdir>  # Rsync to SLURM shared filesystem

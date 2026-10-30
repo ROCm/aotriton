@@ -80,7 +80,7 @@ for worker in "${WORKERS[@]}"; do
   # workdir. --workdir_override is passed only when the worker has one, rather
   # than as an empty value, so the two agree on "absent" without relying on an
   # empty argument surviving.
-  "$TUNE_ROOT/single/run-test.sh" \
+  "$TUNE_ROOT/libexec/run-test.sh" \
     --workdir "$WORKDIR" \
     --hostname "$hostname" \
     --arch "$arch" \

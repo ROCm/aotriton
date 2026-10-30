@@ -16,8 +16,8 @@
 # image-mode configure that does not pass AOTRITON_USE_LOCAL_FLYDSL_WHEEL, so
 # libbld and testbld do not build at all. This file is the smallest thing that
 # unblocks them. When .ci/ takes ownership, delete it and repoint the three
-# callers (.tune/single/prebuild_wheel.sh, .tune/bin/testbld,
-# .tune/single/build_arch.sh).
+# callers (.tune/host/prebuild_wheel.sh, .tune/container/testbld,
+# .tune/container/build_arch.sh).
 #
 # Source this; do not execute it.
 

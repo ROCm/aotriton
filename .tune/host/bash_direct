@@ -5,7 +5,7 @@
 # Open an interactive bash shell inside the tuning Docker image.
 #
 # The workdir is detected automatically from the script's location:
-#   bash_direct lives at  <workdir>/aotriton.src/.tune/remote/bash_direct
+#   bash_direct lives at  <workdir>/aotriton.src/.tune/host/bash_direct
 #   so workdir is         <workdir>/aotriton.src/../.. resolved
 #
 # Docker image and connection parameters are read from <workdir>/config.rc.
@@ -17,8 +17,8 @@
 # Pass --op to use the testing library (installed/test/<arch>/lib) instead.
 #
 # Examples:
-#   .tune/remote/bash_direct
-#   .tune/remote/bash_direct --op
+#   .tune/host/bash_direct
+#   .tune/host/bash_direct --op
 
 set -euo pipefail
 

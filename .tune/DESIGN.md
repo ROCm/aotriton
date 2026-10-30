@@ -305,7 +305,7 @@ docker run "$IMAGE" ...
   → Initializes workers.db
 
 # 2. Build libraries (on dev machine ONLY, manual SSH)
-.tune/bin/libbld <workdir>
+.tune/container/libbld <workdir>
   → Builds AOTriton libraries for all architectures
   → Stores in <workdir>/installed/<arch>/
 

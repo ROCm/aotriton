@@ -109,7 +109,7 @@ if [ "$USE_REMOTE" -eq 1 ]; then
 REMOTE_WORKDIR="$1"
 
 set -x
-jobid=$(tsp bash "$REMOTE_WORKDIR/aotriton.src/.tune/single/prebuild_wheel.sh" "$REMOTE_WORKDIR")
+jobid=$(tsp bash "$REMOTE_WORKDIR/aotriton.src/.tune/host/prebuild_wheel.sh" "$REMOTE_WORKDIR")
 echo "tsp job ID: $jobid"
 if [ "$(tsp -s "$jobid")" = "queued" ]; then
   echo "Waiting for tsp job $jobid to start..."
@@ -145,7 +145,7 @@ jobid=$(tsp docker run --rm \
   -e CCACHE_DIR="$IMG_RUNDIR/ccache" \
   --mount "type=bind,source=$REMOTE_WORKDIR,target=$IMG_WORKDIR" \
   "$CELERY_WORKER_IMAGE" \
-  bash -l "$IMG_SRC/.tune/bin/testbld" "${TESTBLD_ARGS[@]}")
+  bash -l "$IMG_SRC/.tune/container/testbld" "${TESTBLD_ARGS[@]}")
 echo "tsp job ID: $jobid"
 if [ "$(tsp -s "$jobid")" = "queued" ]; then
   echo "Waiting for tsp job $jobid to start..."
@@ -178,7 +178,7 @@ jobid=$(tsp docker run --rm \
   -e CCACHE_DIR="$IMG_RUNDIR/ccache" \
   --mount "type=bind,source=$REMOTE_WORKDIR,target=$IMG_WORKDIR" \
   "$CELERY_WORKER_IMAGE" \
-  bash -lc 'source "$AOTRITON_WORKDIR/config.rc" && source "$(dirname "$CELERY_WORKER_PYTHON")/activate" && exec bash "$AOTRITON_SRC/.tune/bin/libbld" "$@"' \
+  bash -lc 'source "$AOTRITON_WORKDIR/config.rc" && source "$(dirname "$CELERY_WORKER_PYTHON")/activate" && exec bash "$AOTRITON_SRC/.tune/container/libbld" "$@"' \
   _ "${LIBBLD_ARGS[@]}")
 echo "tsp job ID: $jobid"
 if [ "$(tsp -s "$jobid")" = "queued" ]; then
@@ -199,7 +199,7 @@ else
   fi
 
   echo "Pre-building compiler artifacts locally (Triton, and FlyDSL if pinned)"
-  "$TUNE_ROOT/single/prebuild_wheel.sh" "$ABSWORKDIR"
+  "$TUNE_ROOT/host/prebuild_wheel.sh" "$ABSWORKDIR"
 
   if [ "$MODE" = "test" ]; then
     IMG_SRC="$AOTRITON_IMAGE_SRC"
@@ -225,7 +225,7 @@ else
       -e CCACHE_DIR="$IMG_RUNDIR/ccache" \
       --mount "type=bind,source=$ABSWORKDIR,target=$AOTRITON_IMAGE_WORKDIR" \
       "$CELERY_WORKER_IMAGE" \
-      bash -l "$IMG_SRC/.tune/bin/testbld" "${TESTBLD_ARGS[@]}"
+      bash -l "$IMG_SRC/.tune/container/testbld" "${TESTBLD_ARGS[@]}"
   else
     IMG_SRC="$AOTRITON_IMAGE_SRC"
     IMG_RUNDIR="$AOTRITON_IMAGE_RUNDIR"
@@ -241,7 +241,7 @@ else
       -e CCACHE_DIR="$IMG_RUNDIR/ccache" \
       --mount "type=bind,source=$ABSWORKDIR,target=$AOTRITON_IMAGE_WORKDIR" \
       "$CELERY_WORKER_IMAGE" \
-      bash -lc 'source "$AOTRITON_WORKDIR/config.rc" && source "$(dirname "$CELERY_WORKER_PYTHON")/activate" && exec bash "$AOTRITON_SRC/.tune/bin/libbld" "$@"' \
+      bash -lc 'source "$AOTRITON_WORKDIR/config.rc" && source "$(dirname "$CELERY_WORKER_PYTHON")/activate" && exec bash "$AOTRITON_SRC/.tune/container/libbld" "$@"' \
       _ "${LIBBLD_ARGS[@]}"
   fi
 fi

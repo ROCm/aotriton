@@ -73,7 +73,7 @@ export HOME="$WORKDIR/scratch/fakehome"
 
 # Step 1: Build Triton wheel (cached)
 echo "Step 1: Building Triton wheel..."
-TRITON_WHEEL=$("$TUNE_ROOT/single/build_triton_wheel.sh" "$WORKDIR")
+TRITON_WHEEL=$("$TUNE_ROOT/container/build_triton_wheel.sh" "$WORKDIR")
 echo "Using Triton wheel: $TRITON_WHEEL"
 
 # Step 2: Build AOTriton for each architecture
@@ -89,7 +89,7 @@ fi
 
 for arch in "${ARCHS[@]}"; do
     echo "Building $arch..."
-    "$TUNE_ROOT/single/build_arch.sh" "$ABSWORKDIR" "$arch" "$TRITON_WHEEL"
+    "$TUNE_ROOT/container/build_arch.sh" "$ABSWORKDIR" "$arch" "$TRITON_WHEEL"
 done
 
 echo "Build complete"

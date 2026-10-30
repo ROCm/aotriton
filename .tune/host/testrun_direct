@@ -11,7 +11,7 @@
 #   testrun_direct [module] --tuning_mode kernel|op [--gpu GPU]
 #
 # The workdir is detected automatically from the script's location:
-#   testrun_direct lives at  <workdir>/aotriton.src/.tune/remote/testrun_direct
+#   testrun_direct lives at  <workdir>/aotriton.src/.tune/host/testrun_direct
 #   so workdir is            <workdir>/aotriton.src/../.. resolved
 #
 # Docker image and connection parameters are read from <workdir>/config.rc.
@@ -35,18 +35,18 @@
 #
 # Examples:
 #   # Show this wrapper's help
-#   .tune/remote/testrun_direct -h
-#   .tune/remote/testrun_direct --help
+#   .tune/host/testrun_direct -h
+#   .tune/host/testrun_direct --help
 #
 #   # Interactive session against the tuning library
-#   .tune/remote/testrun_direct flash --tuning_mode kernel
+#   .tune/host/testrun_direct flash --tuning_mode kernel
 #
 #   # Interactive session against the testing library (operator tuning)
-#   .tune/remote/testrun_direct flash --tuning_mode op
+#   .tune/host/testrun_direct flash --tuning_mode op
 #
 #   # Run a specific entry non-interactively (pipe commands via stdin)
 #   printf 'prepare_data dtype=float16;hdim=128;seqlen_q=4096;seqlen_k=4096;causal=False;dropout_p=0.0;bias_type=0 /tmp/myentry\n' \
-#     | .tune/remote/testrun_direct flash --tuning_mode kernel
+#     | .tune/host/testrun_direct flash --tuning_mode kernel
 
 set -euo pipefail
 

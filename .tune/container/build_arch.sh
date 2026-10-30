@@ -58,7 +58,7 @@ if flydsl_required "$AOTRITON_ROOT"; then
     echo "Without it cmake fails at configure (CMakeLists.txt's flydsl-llvm.txt" >&2
     echo "tripwire). Run remotebld, which pre-builds it via a sibling container," >&2
     echo "or build it directly with:" >&2
-    echo "  .tune/single/prebuild_wheel.sh --select all <workdir>" >&2
+    echo "  .tune/host/prebuild_wheel.sh --select all <workdir>" >&2
     exit 1
   fi
   echo "Using FlyDSL wheel: $FLYDSL_WHEEL"
