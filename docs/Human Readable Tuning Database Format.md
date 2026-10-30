@@ -52,9 +52,9 @@ contribution in flight. Each of the following mechanisms keeps updates local:
   `functional.csv`, `psels.csv`, `hsaco_options.csv` and `op_backend.csv`,
   so retuning one kernel never shifts the ordinals of another.
 - **Patches and base references.** A partially tuned architecture references
-  its base architecture's tensors and stores only its own entries in
-  `.dbpatch` files. The base is not copied, and retuning the base does not
-  touch the patches.
+  its base architecture's tensors and stores only the cells where its own
+  tuning differs in `.dbpatch` files. The base is not copied, and retuning
+  the base does not touch the patches.
 - **Line-oriented tensors.** Each tensor row is one line, and run-length
   encoding never crosses lines, so changing one cell changes one line.
 
@@ -91,8 +91,8 @@ those of `<arch>_mod<N>`.
 
 An `<iface>.txtdb` marked (*) may be a base reference to the same interface's
 file of another architecture or mod. The architecture then reuses those
-tensors as its base, and stores only its own entries in `.dbpatch` files, see
-[Sharing a Base](#sharing-a-base).
+tensors as its base, and stores only the cells where its own tuning differs
+in `.dbpatch` files, see [Sharing a Base](#sharing-a-base).
 
 ## File Types
 
@@ -577,12 +577,12 @@ The database uses `<iface>.*` throughout:
   anything else, e.g. a tensor, or a patch that would apply twice.
 
 gfx1150 and gfx1151 have their own tuning for part of the functionals (all
-198 for attn_fwd, with sequence lengths up to 2048), and use gfx1100 for
-everything else:
+198 for `attn_fwd`, with sequence lengths up to 2048, and 9 for each backward
+kernel), and use gfx1100 for everything else:
 
 ```
 amd/gfx1150/attn_fwd.txtdb                   base ../gfx1100/attn_fwd.*
-amd/gfx1150/attn_fwd.0001-gfx1150.dbpatch    198 functionals tuned on gfx1150
+amd/gfx1150/attn_fwd.0001-gfx1150.dbpatch    5200 cells where gfx1150 differs
 amd/gfx1150/op_attn_bwd.txtdb                base ../gfx1100/op_attn_bwd.*
 ...
 ```
@@ -592,7 +592,9 @@ on top. Retuning gfx1100 updates gfx1150 automatically, except for the cells
 gfx1150 overrides.
 
 An architecture that has no tuning of its own is only base references,
-without any patch. These replace the former reuse map of the build:
+without any patch. These replace the former reuse map of the build, which
+gave gfx1152, gfx1153, gfx1170 and gfx1171 gfx1100's tuning, and gfx1150 and
+gfx1151 too, ignoring their own:
 
 | Architecture                                | Base    |
 |---------------------------------------------|---------|
@@ -673,9 +675,9 @@ tools/database_to_csv.py \
 - Existing `.metadata/` tables are loaded first, so existing ordinals are kept
   and new rows are appended.
 - `--patch_on <arch>=<base>` writes `<arch>`'s entries as
-  `<iface>.0001-<arch>.dbpatch`, and writes base references to the base
-  architecture's tensor files. An `<arch>` without sqlite input gets the base
-  references only.
+  `<iface>.0001-<arch>.dbpatch`, leaving out the cells equal to the base, and
+  writes base references (`<iface>.*`) to the base architecture's files. An
+  `<arch>` without sqlite input gets the base references only.
 - `--sparse_patch <arch>` writes those patches as sparse tuning tensors.
 - `--verify` reads the result back, with patches applied, and checks that it
   reproduces every row of the sqlite input.
