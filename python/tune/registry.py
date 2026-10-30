@@ -41,27 +41,29 @@ def available_module_names() -> list[str]:
     return sorted(_FAMILIES)
 
 
-def default_tune_root() -> Path:
-    '''Resolve the repo's `.tune/` directory.
+def default_def_root() -> Path:
+    '''Resolve the repo's `.def/` directory (the shared DEF operator tooling,
+    including the webui and its `webui/static/js/perf.js`).
 
-    `.tune/` is operator tooling run straight from a checkout and never
+    `.def/` is operator tooling run straight from a checkout and never
     installed (setup.py ships `python/` only), so an installed package cannot
     derive it from its own location. Same resolution order as
     default_modules_dir(), for the same reason:
 
-      1. `AOTRITON_TUNE_ROOT`, the explicit override.
-      2. `<cwd>/.tune` -- the `.tune/bin/*` wrappers cd into $AOTRITON_ROOT
-         before invoking `python3 -m aotriton.tune.*`.
-      3. `<repo root inferred from this file>/.tune` -- only correct under an
+      1. `AOTRITON_DEF_ROOT`, the explicit override.
+      2. `<cwd>/.def` -- the `.def/bin/*`, `.tune/bin/*` and `.perfmon/bin/*`
+         wrappers cd into $AOTRITON_ROOT before invoking
+         `python3 -m aotriton.<app>.*`.
+      3. `<repo root inferred from this file>/.def` -- only correct under an
          editable install from this exact checkout.
     '''
-    env = os.environ.get('AOTRITON_TUNE_ROOT')
+    env = os.environ.get('AOTRITON_DEF_ROOT')
     if env:
         return Path(env)
-    cwd_candidate = Path.cwd() / '.tune'
+    cwd_candidate = Path.cwd() / '.def'
     if cwd_candidate.is_dir():
         return cwd_candidate
-    return Path(__file__).resolve().parent.parent.parent / '.tune'
+    return Path(__file__).resolve().parent.parent.parent / '.def'
 
 
 def load_family_tune(family: str, modules_dir: 'Path | None' = None):
@@ -127,7 +129,7 @@ def load_flash_entry_module(modules_dir: 'Path | None' = None):
 
     A handful of non-GPU tools (`.tune/bin/retry_missing_entries`,
     `.tune/libexec/broken_entries_to_db`, `.tune/libexec/pq_helpers.py`,
-    `.tune/webui/tasks.py`) need `FlashEntry`'s dataclass shape
+    `.def/webui/tasks.py`) need `FlashEntry`'s dataclass shape
     (`as_text`/`parse_text`) without pulling in `KernelControl`. `FlashEntry`
     is torch-free at import time (see `entry.py`), so importing it here is
     always safe, even outside a GPU container.

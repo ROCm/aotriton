@@ -1,0 +1,68 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Control server services (PostgreSQL)
+# Usage: srvctl <workdir> <action>
+
+set -e
+
+# readlink -f: the compatibility links in .tune/bin/ must find .def/, not .tune/.
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$DEF_ROOT/lib/config_load.sh"
+
+WORKDIR="$1"
+ACTION="$2"
+
+if [ -z "$WORKDIR" ] || [ -z "$ACTION" ]; then
+    echo "Usage: $0 <workdir> <action>" >&2
+    echo "Actions: start|stop|restart|status" >&2
+    exit 1
+fi
+
+load_config "$WORKDIR"
+
+case "$ACTION" in
+    start)
+        "$DEF_ROOT/libexec/start_services.sh" "$WORKDIR"
+        ;;
+    stop)
+        "$DEF_ROOT/libexec/stop_services.sh" "$WORKDIR"
+        ;;
+    restart)
+        "$DEF_ROOT/libexec/stop_services.sh" "$WORKDIR"
+        sleep 2
+        "$DEF_ROOT/libexec/start_services.sh" "$WORKDIR"
+        ;;
+    status)
+        PIDF="$WORKDIR/run/container.pids"
+
+        if [ ! -f "$PIDF" ]; then
+            echo "stopped"
+            exit 1
+        fi
+
+        POSTGRES_ID=$(cat "$PIDF")
+
+        if [ -z "$POSTGRES_ID" ]; then
+            echo "stopped"
+            exit 1
+        fi
+
+        # Fast check: docker ps --filter returns empty if not running
+        if docker ps --no-trunc --quiet --filter id="$POSTGRES_ID" | grep -q .; then
+            echo "running"
+            exit 0
+        else
+            echo "stopped"
+            rm -f "$PIDF"
+            exit 1
+        fi
+        ;;
+    *)
+        echo "Unknown action: $ACTION" >&2
+        exit 1
+        ;;
+esac

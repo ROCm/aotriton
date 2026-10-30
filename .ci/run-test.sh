@@ -319,12 +319,12 @@ fi
   # ${PARTIAL_INFO_DIR}/skip${pass}.txt, so a different number finds no file and
   # silently re-runs the whole suite. What changes is OUTPUT_DIR, so the resumed
   # pass does not overwrite the .out file its own skip list was derived from
-  # (this is what .tune/single/run-test.sh's `partial` variant does).
+  # (this is what .tune/libexec/run-test.sh's `partial` variant does).
   echo "run-test.sh: skip${pass}.txt has $(wc -l < "${outdir}/skip${pass}.txt") settled" \
        "test(s); PARTIAL_INFO_DIR=${outdir} OUTPUT_DIR=${outdir}/partial" \
        "bash .ci/run-test.sh ${pass} ${test_level} ${backend} resumes"
   if [ -n "${RECORD_ADIFFS_TO:-}" ]; then
     SCRIPT_DIR_ABS="$(cd "${SCRIPT_DIR}" && pwd)"
-    bash "${SCRIPT_DIR_ABS}/../.tune/bin/append_oom_to_adiffs.sh" "${outdir}/${fnprefix}${pass}.out" >> "${RECORD_ADIFFS_TO}"
+    bash "${SCRIPT_DIR_ABS}/../.tune/container/append_oom_to_adiffs.sh" "${outdir}/${fnprefix}${pass}.out" >> "${RECORD_ADIFFS_TO}"
   fi
 )

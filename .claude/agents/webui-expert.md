@@ -1,14 +1,14 @@
 ---
 name: webui-expert
-description: Use this agent for tasks involving the AOTriton Tuner v3 WebUI under .tune/webui/. This covers Flask routes, Jinja2 templates, HTMX interactions, the action tracker (background process management), scheduler, task functions, and all frontend HTML/JS. Use for adding new pages, buttons, API endpoints, polling patterns, or debugging UI behavior. Do NOT use for the tuning backend (.tune/bin/, python/tune/), the code generator, or C++ code.
+description: Use this agent for tasks involving the AOTriton Tuner v3 WebUI under .def/webui/. This covers Flask routes, Jinja2 templates, HTMX interactions, the action tracker (background process management), scheduler, task functions, and all frontend HTML/JS. Use for adding new pages, buttons, API endpoints, polling patterns, or debugging UI behavior. Do NOT use for the tuning backend (.tune/bin/, python/tune/), the code generator, or C++ code.
 ---
 
-You are an expert in the AOTriton Tuner v3 WebUI, located entirely under `.tune/webui/`.
+You are an expert in the AOTriton Tuner v3 WebUI, located entirely under `.def/webui/`.
 
 ## Directory map
 
 ```
-.tune/webui/
+.def/webui/
 ├── __init__.py              # Flask app factory: create_app(), registers blueprint, initializes TrackerRegistry & Scheduler
 ├── config.py                # TUNING_ARCHITECTURES list
 ├── routes.py                # All HTTP endpoints (single Blueprint `bp`)
@@ -44,7 +44,7 @@ You are an expert in the AOTriton Tuner v3 WebUI, located entirely under `.tune/
 **1. tasks.py** — subclass `CommandBuilder`:
 ```python
 class MyCommand(CommandBuilder):
-    RELATIVE = '.tune/bin/my-script'  # path relative to aotriton repo root
+    RELATIVE = '.def/bin/my-script'  # path relative to aotriton repo root
 
     def exec(self, workdir):
         return self._run(self.RELATIVE, [workdir], workdir, 'My command description')
@@ -264,6 +264,6 @@ Check that document before adding UI around task routing or progress.
 
 ## Out of scope
 
-- `.tune/bin/` scripts and their internals — use the tuner-v3 agent
+- `.def/`, `.tune/` and `.perfmon/` scripts (everything outside `.def/webui/`) and their internals — use the tuner-v3 agent
 - `python/tune/`, `modules/*/tune/` Python tuning stack — use the tuner-v3 agent
 - `python/codegen/`, `python/template_instantiation/`, `modules/*/aot/` — use the codegen agent

@@ -1,0 +1,146 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Initialize the PostgreSQL schemas (pgdef, tune, ...) for Tuner v3.5
+# Usage: initdb <workdir> [--recreate]
+
+set -e
+
+# readlink -f: the compatibility links in .tune/bin/ must find .def/, not .tune/.
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+AOTRITON_ROOT="$(cd "$DEF_ROOT/.." && pwd)"
+
+. "$DEF_ROOT/lib/config_load.sh"
+
+WORKDIR="$1"
+shift || true
+
+RECREATE_FLAG=""
+for arg in "$@"; do
+    case "$arg" in
+        --recreate) RECREATE_FLAG="--recreate" ;;
+        *)
+            echo "Usage: $0 <workdir> [--recreate]" >&2
+            echo "Error: unrecognized argument: $arg" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [ -z "$WORKDIR" ]; then
+    echo "Usage: $0 <workdir> [--recreate]" >&2
+    exit 1
+fi
+
+load_config "$WORKDIR"
+
+# Every layer ships an idempotent schema.sql next to its pq package. The
+# engine's (pgdef) is applied FIRST because the applications' schemas reference
+# its tables; then every other python/<app>/pq/schema.sql, sorted. The list is
+# the files themselves: a new application needs no edit here. Each layer's
+# PostgreSQL schema is named after its directory (pgdef, tune, ...).
+PGDEF_SCHEMA_SQL="$AOTRITON_ROOT/python/pgdef/pq/schema.sql"
+if [ ! -f "$PGDEF_SCHEMA_SQL" ]; then
+    echo "Error: Schema file not found: $PGDEF_SCHEMA_SQL" >&2
+    exit 1
+fi
+SCHEMA_FILES=("$PGDEF_SCHEMA_SQL")
+for f in "$AOTRITON_ROOT"/python/*/pq/schema.sql; do
+    [ -f "$f" ] || continue
+    [ "$f" = "$PGDEF_SCHEMA_SQL" ] && continue
+    SCHEMA_FILES+=("$f")
+done
+SCHEMA_NAMES=()
+for f in "${SCHEMA_FILES[@]}"; do
+    SCHEMA_NAMES+=("$(basename "$(dirname "$(dirname "$f")")")")
+done
+
+# Validate required config variables
+if [ -z "$POSTGRES_USER" ] || [ -z "$POSTGRES_PASSWORD" ]; then
+    echo "Error: POSTGRES_USER or POSTGRES_PASSWORD not set in config.rc" >&2
+    exit 1
+fi
+
+if [ -z "$POSTGRES_DOCKER_IMAGE" ]; then
+    echo "Error: POSTGRES_DOCKER_IMAGE not set in config.rc" >&2
+    exit 1
+fi
+
+# Extract PostgreSQL version from POSTGRES_DOCKER_IMAGE (e.g., postgres:17.6 -> 17.6)
+POSTGRES_VERSION=$(echo "$POSTGRES_DOCKER_IMAGE" | cut -d: -f2)
+
+# Use matching psql docker image version
+PSQL_IMAGE="alpine/psql:${POSTGRES_VERSION}"
+
+# PostgreSQL connection parameters
+# Default to localhost and standard port since containers use --network=host
+POSTGRES_HOST="${CELERY_SERVICE_HOST:-localhost}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+
+# Drop every layer's schema if --recreate flag is set. Applications first,
+# the engine last (the applications' tables reference the engine's); CASCADE
+# takes the tables, views, indexes and partitions with them. `public` is not
+# touched: nothing lives there any more.
+if [ "$RECREATE_FLAG" = "--recreate" ]; then
+    echo "WARNING: Recreating schemas (${SCHEMA_NAMES[*]}) - dropping all their tables first..."
+
+    DROP_SQL=""
+    for ((i = ${#SCHEMA_NAMES[@]} - 1; i >= 0; i--)); do
+        DROP_SQL+="DROP SCHEMA IF EXISTS ${SCHEMA_NAMES[$i]} CASCADE; "
+    done
+
+    docker run --rm \
+        --network=host \
+        -e PGPASSWORD="$POSTGRES_PASSWORD" \
+        "$PSQL_IMAGE" \
+        postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
+        -v ON_ERROR_STOP=1 \
+        -c "$DROP_SQL"
+
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to drop existing schemas" >&2
+        exit 1
+    fi
+
+    echo "All schemas dropped successfully"
+fi
+
+echo "Initializing database schema..."
+echo "Host: $POSTGRES_HOST"
+echo "Port: $POSTGRES_PORT"
+echo "User: $POSTGRES_USER"
+echo "Using psql: $PSQL_IMAGE"
+
+# Pull psql image if not present
+echo "Pulling psql image: $PSQL_IMAGE"
+docker pull "$PSQL_IMAGE"
+
+# Execute each schema SQL via containerized psql, in order.
+# Mount the schema file into the container and execute it.
+# ON_ERROR_STOP=1 is what makes the exit-status checks mean anything: without it
+# psql runs every remaining statement after a failure and still exits 0, so a
+# half-applied schema was reported as "initialized successfully".
+for f in "${SCHEMA_FILES[@]}"; do
+    echo "Applying $f"
+    docker run --rm \
+        --network=host \
+        -v "$f:/schema.sql:ro" \
+        -e PGPASSWORD="$POSTGRES_PASSWORD" \
+        "$PSQL_IMAGE" \
+        postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
+        -v ON_ERROR_STOP=1 \
+        -f /schema.sql
+
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to apply $f" >&2
+        exit 1
+    fi
+done
+
+echo "Database schema initialized successfully"
+
+# Pool partitions (pgdef.task_<pool>, pgdef.report_<pool>) come from the
+# schemas applied above: each application's schema.sql calls
+# pgdef.ensure_pool() for the pools it anticipates.

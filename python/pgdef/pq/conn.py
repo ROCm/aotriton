@@ -25,7 +25,7 @@ def params_from_env(environ=None) -> dict:
     uses (CELERY_SERVICE_HOST, POSTGRES_PORT, POSTGRES_USER, POSTGRES_PASSWORD)
     are accepted as a fallback, so a shell that merely sourced config.rc and
     exported its variables works too. Sourcing config.rc itself is the
-    infrastructure's job (`.tune/lib/config_load.sh`), not the engine's.
+    infrastructure's job (`.def/lib/config_load.sh`), not the engine's.
     """
     env = os.environ if environ is None else environ
 

@@ -14,10 +14,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
 
-. "$TUNE_ROOT/lib/config_load.sh"
-. "$TUNE_ROOT/lib/db_query.sh"
-. "$TUNE_ROOT/lib/host_filter.sh"
+. "$DEF_ROOT/lib/config_load.sh"
+. "$DEF_ROOT/lib/db_query.sh"
+. "$DEF_ROOT/lib/host_filter.sh"
 
 # ---- argument parsing ----
 POSITIONAL=()
@@ -79,7 +80,7 @@ for worker in "${WORKERS[@]}"; do
   # workdir. --workdir_override is passed only when the worker has one, rather
   # than as an empty value, so the two agree on "absent" without relying on an
   # empty argument surviving.
-  "$TUNE_ROOT/single/run-test.sh" \
+  "$TUNE_ROOT/libexec/run-test.sh" \
     --workdir "$WORKDIR" \
     --hostname "$hostname" \
     --arch "$arch" \

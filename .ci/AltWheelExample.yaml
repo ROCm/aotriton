@@ -1,6 +1,6 @@
 # Source-format AltWheel YAML: consumed by .ci's Triton wheel-building
 # machinery (build_triton_wheels.sh, resolve-triton-hashes.sh,
-# releasesuite-git-head.sh --yaml, and .tune/single/prebuild_wheel.sh via
+# releasesuite-git-head.sh --yaml, and .tune/host/prebuild_wheel.sh via
 # .ci/common-altwheel.sh) BEFORE any wheel exists. Every venvs.* entry names
 # a Triton commit to build from, not a wheel file.
 #

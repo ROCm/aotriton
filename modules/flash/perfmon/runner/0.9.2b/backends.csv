@@ -1,0 +1,3 @@
+# This release cannot force a backend (the v2 API has no such option), so no
+# rows: only the unforced operator is measured.
+iface,index,name,enum_hint

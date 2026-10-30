@@ -1,0 +1,66 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+#
+# Prepare a fleet peer to run perfmon nodes (automation doc 5.3, step A1).
+#
+#   setup_session --workdir <wkdir> --host <peer> [--rocm <ver>]
+#                 [--scratch <dir>] [--arch <arch>]
+#
+# Over `ssh <peer>` it checks that the checkout and the scratch are visible,
+# that /dev/kfd exists and rocminfo lists an arch; creates the shared venv
+# <scratch>/perfmon/venv/rocm<ver>/ if missing (ROCm wheels, aotriton from the
+# checkout, pytest); and prints the environment a node needs. Idempotent; the
+# work is in .perfmon/host/setup_peer.sh, which runs on the peer.
+#
+#   --workdir   the perfmon workdir (config.rc, workers.db)
+#   --host      the peer's ssh name
+#   --rocm      default: the first of workers.db's perfmon::rocm, else 10.1.0
+#   --scratch   default: the parent of the workdir
+#   --arch      the peer's arch, only for the first setup of a ROCm, when rocminfo
+#               is not available yet; default: the host's arch in workers.db
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+. "$ROOT/.def/lib/db_query.sh"
+. "$ROOT/.perfmon/lib/session.sh"
+
+usage() {
+    sed -n '/^#   setup_session/,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+    exit 1
+}
+
+WORKDIR=""
+HOST=""
+ROCM=""
+SCRATCH=""
+ARCH=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --workdir) WORKDIR="$2"; shift 2 ;;
+        --host)    HOST="$2"; shift 2 ;;
+        --rocm)    ROCM="$2"; shift 2 ;;
+        --scratch) SCRATCH="$2"; shift 2 ;;
+        --arch)    ARCH="$2"; shift 2 ;;
+        --help|-h) usage ;;
+        *) echo "Error: unknown option: $1" >&2; usage ;;
+    esac
+done
+if [ -z "$WORKDIR" ] || [ -z "$HOST" ]; then
+    echo "Error: --workdir and --host are required" >&2
+    usage
+fi
+[ -f "$WORKDIR/config.rc" ] || { echo "Error: $WORKDIR/config.rc not found" >&2; exit 1; }
+WORKDIR="$(cd "$WORKDIR" && pwd)"
+
+[ -n "$ROCM" ] || ROCM="$(perfmon_rocm_versions "$WORKDIR" | head -1)"
+SCRATCH="$(perfmon_scratch_root "$WORKDIR" "$SCRATCH")"
+if [ -z "$ARCH" ] && [ -f "$WORKDIR/workers.db" ]; then
+    ARCH="$(get_worker_by_hostname "$WORKDIR" "$HOST" | cut -d'|' -f1)"
+fi
+
+echo "Setting up $HOST: workdir=$WORKDIR scratch=$SCRATCH rocm=$ROCM"
+exec ssh "$HOST" bash "$(printf %q "$ROOT/.perfmon/host/setup_peer.sh")" \
+    "$(printf %q "$WORKDIR")" "$(printf %q "$SCRATCH")" "$(printf %q "$ROCM")" "$(printf %q "$ARCH")"

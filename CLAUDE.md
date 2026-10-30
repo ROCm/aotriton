@@ -196,7 +196,7 @@ The `config.rc` file is:
 
 **For general environment configuration**, use:
 - Docker environment variables: `docker run -e PYCACHEPREFIX=/tmp/pycache`
-- Worker startup scripts: `.tune/remote/worker_service.sh`
+- Worker startup scripts: `.def/container/worker_service.sh`
 - Container Dockerfiles or image configuration
 
 ## .gitignore Changes Require Human Review

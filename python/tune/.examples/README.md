@@ -1,6 +1,6 @@
 Simple example scripts for the `testrun` REPL. Pipe one in, e.g.
 
-    .tune/remote/testrun_direct flash --tuning_mode kernel < tt3_1.txt
+    .tune/host/testrun_direct flash --tuning_mode kernel < tt3_1.txt
 
 An impl is selected with `[<tuning_level>.]<iface_name>=<impl_index>`.
 Unprefixed names are kernel-level interfaces (`attn_fwd=3`,

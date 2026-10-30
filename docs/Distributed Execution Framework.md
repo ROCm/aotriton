@@ -190,7 +190,7 @@ provides three entry points, as modules of `aotriton.<app>`:
 |---|---|
 | `aotriton.<app>.node` | Starts one node process (broker, GPU/CPU worker, or reader), passing the app's handlers and runners to `pgdef.localq.node.run_node_role` |
 | `aotriton.<app>.dispatch` | Turns the app's CLI options into tasks, through `pgdef.pq.dispatch.drive` |
-| `aotriton.<app>.manifest` | Prints settings for the `.tune` scripts: image, container environment, install directories |
+| `aotriton.<app>.manifest` | Prints settings for the `.def` scripts: image, container environment, install directories |
 
 ```python
 # python/tune/node.py
@@ -198,13 +198,13 @@ run_node_role(app='tune', handlers=HANDLERS, start=TuneStartHandler,
               runners={'tuner': ExaidTunerWorker}, enrich=enrich, argv=sys.argv[1:])
 ```
 
-`.tune/remote/worker_service.sh --category tune,kernel` starts `python -m aotriton.tune.node <role>`.
-Despite its location under `.tune/`, `worker_service.sh` is the generic node
+`.def/container/worker_service.sh --category tune,kernel` starts `python -m aotriton.tune.node <role>`.
+`worker_service.sh` lives in `.def/container/`: it is the generic node
 starter for every application. It takes only engine options (`--category`,
 whose first level is the application, and `--subpool`), never an
 application's own flags such as tune's `--tuning_mode`.
 
-The `.tune` shell scripts learn everything application-specific from the
+The `.def` shell scripts learn everything application-specific from the
 application's `MANIFEST` dict (`python/<app>/manifest.py`), one key at a time:
 
 ```bash
@@ -212,7 +212,7 @@ python3 -m aotriton.tune.manifest deploy.role
 python3 -m aotriton.tune.manifest install.subtree --arch gfx950 --cat_level1 op
 ```
 
-(`.tune/lib/manifest.sh` wraps this as `app_manifest` and `require_app`, the one
+(`.def/lib/manifest.sh` wraps this as `app_manifest` and `require_app`, the one
 validation each script keeps.) The manifest holds where the build is installed, what to fetch from the build
 node, the host role that runs the application, and the category levels it accepts.
 A machine's subpool (MI355) is host inventory: a column of `workers.db`, set on
@@ -240,7 +240,7 @@ own terms instead. Tune says `tuning_level` and `--tuning_mode kernel|op`, not
 between the two and documents its mapping, e.g. "tune stores its tuning level
 as `cat_level1`".
 
-`.tune/bin/initdb`, which is also behind the webui's Init DB button, creates
+`.def/bin/initdb`, which is also behind the webui's Init DB button, creates
 every schema for every application. Each `pq` ships an idempotent
 `schema.sql`, and pgdef's runs first. `--recreate` drops and recreates them all.
 
@@ -254,7 +254,7 @@ it inserts into that pool, by calling the engine's SQL function
 # Dispatch: each application has its own dispatch command
 python -m aotriton.tune.dispatch --category tune,kernel --pool gfx950 --workdir <workdir> --module flash <tune options>
 
-# Start a node's processes (normally done by .tune/remote/worker_service.sh --category tune,kernel)
+# Start a node's processes (normally done by .def/container/worker_service.sh --category tune,kernel)
 python -m aotriton.tune.node reader --pool gfx950 --subpool MI355 --category tune,kernel
 ```
 

@@ -3,7 +3,7 @@
 --
 -- Application "tune": tables, views and indexes over pgdef.
 --
--- Applied by .tune/bin/initdb AFTER python/pgdef/pq/schema.sql (it references
+-- Applied by .def/bin/initdb AFTER python/pgdef/pq/schema.sql (it references
 -- the engine's tables). Plain, idempotent SQL; everything lives in schema
 -- `tune`, nothing in `public`.
 --

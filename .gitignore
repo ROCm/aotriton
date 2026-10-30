@@ -6,6 +6,9 @@ __pycache__/
 modules/flash/kernel/tune-*.json
 *.csv
 !/modules/*/database/.metadata/**/*.csv
+!/modules/*/perfmon/**/*.csv
+!/modules/*/perfdb/**/*.csv
+!/python/test/perfmon/golden/**/*.csv
 *.png
 1
 2

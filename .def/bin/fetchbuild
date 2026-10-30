@@ -1,0 +1,94 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Download build artifacts from the remote build node to local installed/.
+#
+# Reads build node config from <workdir>/workers.db (config table):
+#   buildnode::hostname          SSH hostname of the build node
+#   buildnode::workdir_override  Remote workdir (resolved via get_buildnode_workdir)
+#
+# A shared DEF tool: it serves every application and takes only the category,
+# <app>[,<level1>]. The application is the category's first level (cat_level0),
+# so there is no separate --apps. What to fetch is the application manifest's
+# business (fetchbuild.path and fetchbuild.exclude, per category level). For
+# example:
+#   --category tune,kernel   tuning libraries: installed/, excluding
+#                            installed/database/ and installed/test/
+#   --category tune,op       testing libraries: installed/test/
+#
+# Usage:
+#   fetchbuild <workdir> --category <category>
+
+set -euo pipefail
+
+CATEGORY=""
+WORKDIR=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --category) CATEGORY="$2"; shift 2 ;;
+    *)          WORKDIR="$1"; shift ;;
+  esac
+done
+
+if [ -z "$WORKDIR" ] || [ -z "$CATEGORY" ]; then
+  cat >&2 <<EOF
+Usage: $0 <workdir> --category <category>
+
+  --category <app>[,<level1>]  What to fetch, e.g. tune,kernel (tuning libraries),
+                               tune,op (testing libraries).
+                               The application is the first level.
+
+Build node config (workers.db config table):
+  buildnode::hostname          SSH hostname of the build node.
+  buildnode::workdir_override  Remote workdir (falls back to default_workdir).
+EOF
+  exit 1
+fi
+
+if [ ! -d "$WORKDIR" ]; then
+  echo "Error: workdir does not exist: $WORKDIR" >&2
+  exit 1
+fi
+
+# readlink -f: the compatibility links in .tune/bin/ must find .def/, not .tune/.
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$DEF_ROOT/lib/config_load.sh"
+. "$DEF_ROOT/lib/db_query.sh"
+. "$DEF_ROOT/lib/manifest.sh"
+. "$DEF_ROOT/lib/category.sh"
+
+# Entry script and endpoint: the levels pick what to fetch.
+validate_category "$CATEGORY" || exit 1
+parse_category "$CATEGORY"
+FETCH_PATH="$(app_manifest "$CAT_LEVEL0" fetchbuild.path ${CAT_LEVEL1:+--cat_level1 "$CAT_LEVEL1"})"
+FETCH_EXCLUDES=()
+while IFS= read -r _pat; do
+  [ -n "$_pat" ] && FETCH_EXCLUDES+=(--exclude "$_pat")
+done < <(app_manifest "$CAT_LEVEL0" fetchbuild.exclude ${CAT_LEVEL1:+--cat_level1 "$CAT_LEVEL1"})
+
+load_config "$WORKDIR"
+
+BUILD_NODE_HOST=$(sqlite3 "$WORKDIR/workers.db" \
+  "SELECT COALESCE(value,'') FROM config WHERE key='buildnode::hostname'" 2>/dev/null || true)
+
+if [ -z "$BUILD_NODE_HOST" ]; then
+  echo "Error: remote build node hostname is not configured in workers.db" >&2
+  exit 1
+fi
+
+REMOTE_WORKDIR="$(get_buildnode_workdir "$WORKDIR")"
+
+# MUST NOT USE rsync --delete. `installed/` is a shared location for various artifacts.
+echo "Fetching $CATEGORY build from $BUILD_NODE_HOST:$REMOTE_WORKDIR/installed/$FETCH_PATH ..."
+mkdir -p "$WORKDIR/installed/$FETCH_PATH"
+rsync -az --checksum --info=progress2 \
+  ${FETCH_EXCLUDES[@]+"${FETCH_EXCLUDES[@]}"} \
+  "$BUILD_NODE_HOST:$REMOTE_WORKDIR/installed/$FETCH_PATH" \
+  "$WORKDIR/installed/$FETCH_PATH"
+
+echo ""
+echo "Fetch complete: $WORKDIR/installed/"

@@ -1,0 +1,164 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Worker control orchestration
+# Usage: wkctl <workdir> <action> --category <app>[,<level1>] [--host <hostname>]...
+# The application is the category's first level; it picks the hosts (its manifest's deploy.role).
+# Actions: start|stop|graceful|restart|stopwait
+# GPU selection is read from the workers DB and applied automatically for start/restart.
+
+set -e
+
+# readlink -f: the compatibility links in .tune/bin/ must find .def/, not .tune/.
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Load utilities
+. "$DEF_ROOT/lib/config_load.sh"
+. "$DEF_ROOT/lib/db_query.sh"
+. "$DEF_ROOT/lib/host_filter.sh"
+. "$DEF_ROOT/lib/manifest.sh"
+. "$DEF_ROOT/lib/category.sh"
+
+# Parse arguments
+parse_host_filter "$@"
+
+# Remove --host options from args; extract --category
+ARGS=()
+CATEGORY=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --host)
+            shift
+            while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; do
+                shift
+            done
+            ;;
+        --category)
+            CATEGORY="$2"
+            shift 2
+            ;;
+        *)
+            ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+WORKDIR="${ARGS[0]}"
+ACTION="${ARGS[1]}"
+
+if [ -z "$WORKDIR" ] || [ -z "$ACTION" ] || [ -z "$CATEGORY" ]; then
+    echo "Usage: $0 <workdir> <action> --category <app>[,<level1>] [--host <hostname>]..." >&2
+    echo "" >&2
+    echo "Actions:" >&2
+    echo "  start      Start worker (applies GPU selection from workers DB)" >&2
+    echo "  stop       Stop worker immediately (kill container)" >&2
+    echo "  graceful   Stop worker gracefully (waits for in-flight tasks to finish)" >&2
+    echo "  restart    Stop then start worker (applies GPU selection)" >&2
+    echo "  stopwait   Stop worker and wait for full shutdown" >&2
+    echo "" >&2
+    echo "Options:" >&2
+    echo "  --category <app>[,<level1>]  Required. The application (its first level) picks the hosts;" >&2
+    echo "                               start/restart pass it to the workers, e.g. tune,kernel or tune,op" >&2
+    echo "  --host <hostname>...         Filter to specific worker hosts (can be repeated)" >&2
+    echo "" >&2
+    echo "Examples:" >&2
+    echo "  $0 /path/to/workdir start --category tune,kernel" >&2
+    echo "  $0 /path/to/workdir graceful --category tune,kernel --host gpu1.example.com" >&2
+    echo "  $0 /path/to/workdir stop --category tune,op --host gpu1.example.com gpu2.example.com" >&2
+    exit 1
+fi
+# Entry script: validate early so a typo fails before any ssh (the worker node
+# checks it again). Only level 0 is used here, to pick hosts; the category is
+# forwarded to the workers as it is.
+validate_category "$CATEGORY" || exit 1
+parse_category "$CATEGORY"
+
+# Load config
+load_config "$WORKDIR"
+
+# Get workers and iterate
+# The hosts that run the application are those with its role (manifest deploy.role)
+mapfile -t WORKERS < <(get_workers "$WORKDIR" "$(app_manifest "$CAT_LEVEL0" deploy.role)")
+
+COUNT=0
+for worker in "${WORKERS[@]}"; do
+    IFS='|' read -r hostname arch workdir_override <<< "$worker"
+
+    if ! should_process_host "$hostname"; then
+        continue
+    fi
+
+    WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
+
+    # Get GPU selection from workers.db
+    GPU_SELECTION=$(get_worker_gpu_selection "$WORKDIR" "$hostname")
+
+    # Build --multi_gpu args if selection exists
+    MULTI_GPU_ARGS=()
+    if [ -n "$GPU_SELECTION" ]; then
+        MULTI_GPU_ARGS+=("--" "--multi_gpu")
+
+        # Parse GPU selection: "-1" for all, or comma-separated IDs like "1,2,3"
+        if [ "$GPU_SELECTION" = "-1" ]; then
+            MULTI_GPU_ARGS+=("-1")
+        else
+            # Split by comma and add each ID
+            IFS=',' read -ra GPU_IDS <<< "$GPU_SELECTION"
+            MULTI_GPU_ARGS+=("${GPU_IDS[@]}")
+        fi
+    fi
+
+    echo "[$hostname] ${ACTION}ing worker (arch: $arch, workdir: $WORKER_WORKDIR, gpus: ${GPU_SELECTION:-all})"
+
+    # Disable exit-on-error for stop/stopwait to continue on failures
+    if [ "$ACTION" = "stop" ] || [ "$ACTION" = "stopwait" ] || [ "$ACTION" = "graceful" ]; then
+        set +e
+    fi
+
+    case "$ACTION" in
+        start)
+            "$DEF_ROOT/libexec/start_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}" -- --category "$CATEGORY"
+            ;;
+        stop)
+            "$DEF_ROOT/libexec/stop_worker.sh" "$WORKDIR" "$hostname"
+            ;;
+        graceful)
+            "$DEF_ROOT/libexec/stop_worker.sh" "$WORKDIR" "$hostname" --graceful
+            ;;
+        restart)
+            "$DEF_ROOT/libexec/restart_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}" -- --category "$CATEGORY"
+            ;;
+        stopwait)
+            "$DEF_ROOT/libexec/stopwait_worker.sh" "$WORKDIR" "$hostname"
+            ;;
+        *)
+            echo "Unknown action: $ACTION" >&2
+            exit 1
+            ;;
+    esac
+
+    EXIT_CODE=$?
+
+    # Re-enable exit-on-error
+    if [ "$ACTION" = "stop" ] || [ "$ACTION" = "stopwait" ] || [ "$ACTION" = "graceful" ]; then
+        set -e
+    fi
+
+    if [ $EXIT_CODE -eq 0 ]; then
+        echo "[$hostname] Worker ${ACTION}ed successfully"
+    else
+        echo "[$hostname] Failed to ${ACTION} worker (exit code: $EXIT_CODE)" >&2
+    fi
+
+    COUNT=$((COUNT + 1))
+done
+
+if [ "$COUNT" -eq 0 ]; then
+    echo "Warning: No workers matched the specified criteria" >&2
+    exit 1
+fi
+
+echo "Worker control completed: $ACTION on $COUNT worker(s)"

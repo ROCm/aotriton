@@ -7,7 +7,7 @@ in one dict, queried by the `.tune` scripts with
 
     python3 -m aotriton.tune.manifest <key> [--arch A] [--cat_level1 kernel|op]
 
-(see `.tune/lib/manifest.sh`). Tuning containers still run as root and install
+(see `.def/lib/manifest.sh`). Tuning containers still run as root and install
 aotriton when the container starts; moving them to the non-root,
 installed-in-the-image contract is a separate change.
 """

@@ -1,0 +1,64 @@
+{#
+  Macro: category_radios
+  Renders the Category (tune,kernel / tune,op / perfmon) radio inputs and defines
+  getCategory(). The first component of a category is its application; perfmon
+  has no second level.
+
+  getCategory() reads the radio value at call time so every button that
+  needs the current category can use hx-vals='js:{category: getCategory()}' rather
+  than coupling to a DOM id via hx-include.
+
+  Parameters:
+    category        - current value from template context ('tune,kernel', 'tune,op', 'perfmon')
+    with_own_save_form - if true, emits the Save button in its own
+                         <form hx-post="/api/config/category"> (servers.html
+                         style, where the radios are not already inside a form).
+                         If false, the caller wraps the macro call in a form
+                         (workers.html style).
+    description_extra  - optional extra sentence appended to the description
+                         paragraph.
+    with_perfmon       - offer the perfmon category (default true). The Servers
+                         page passes false: its tools are tune-only.
+#}
+{% macro category_radios(category, with_own_save_form=false, description_extra='', with_perfmon=true) %}
+<div id="category-inputs">
+    <label>
+        <input type="radio" name="category" value="tune,kernel"
+               {% if category == 'tune,kernel' %}checked{% endif %}>
+        Kernel Tuning &mdash; select best HSACO within each backend
+    </label><br>
+    <label>
+        <input type="radio" name="category" value="tune,op"
+               {% if category == 'tune,op' %}checked{% endif %}>
+        Operator Tuning &mdash; select fastest backend for operators
+    </label>
+    {% if with_perfmon %}<br>
+    <label>
+        <input type="radio" name="category" value="perfmon"
+               {% if category == 'perfmon' %}checked{% endif %}>
+        Perfmon &mdash; measure AOTriton releases (Perfmon-role hosts)
+    </label>
+    {% endif %}
+</div>
+{% if with_own_save_form %}
+<form hx-post="/api/config/category"
+      hx-include="#category-inputs"
+      hx-swap="none"
+      hx-on::after-request="location.reload()"
+      style="display: inline; margin-top: 0.5rem;">
+    <button type="submit">Save as Default (pre-selects on page load)</button>
+</form>
+{% endif %}
+<p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
+    Operator tuning requires the testing build
+    (<code>installed/test/&lt;arch&gt;/</code>) deployed to workers.
+    After changing category, redeploy and restart workers.
+    {% if description_extra %}{{ description_extra }}{% endif %}
+</p>
+<script>
+function getCategory() {
+    const el = document.querySelector('#category-inputs input[name="category"]:checked');
+    return el ? el.value : 'tune,kernel';
+}
+</script>
+{% endmacro %}

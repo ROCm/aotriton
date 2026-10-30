@@ -1,0 +1,13 @@
+# What attn_options::force_backend_index means in this release (0.11b and
+# 0.11.2b). index is the position in the operator's @ati.backend list, read
+# from v3python/rules/flash/__init__.py of the tag. name is the canonical name,
+# the one the head tree declares, so a backend that was renamed keeps one name
+# across releases. enum_hint is a part of the build's internal BackendEnum
+# name; build_subject.sh uses it to check this table against the build.
+#
+# Declared names here: bwd 1 is "bwd_kernel_fuse" and bwd 2 is "aiter_asm".
+iface,index,name,enum_hint
+op_attn_fwd,0,triton,Triton
+op_attn_bwd,0,triton_split,TritonSplit
+op_attn_bwd,1,triton_fuse,Fuse
+op_attn_bwd,2,aiter,Aiter

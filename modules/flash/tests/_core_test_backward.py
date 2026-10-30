@@ -49,7 +49,7 @@ USE_ADIFFS_TXT = os.getenv('USE_ADIFFS_TXT', default=None)
 # CPUREF validates the test against the CPU reference instead of the GPU one,
 # which is the same thing as saying the GPU reference is not trustworthy for it.
 # No writer emits CPUREF -- the recorder below prints `utname TAB json` and
-# .tune/bin/append_oom_to_adiffs.sh prints `utname (call) TAB OOM` -- so every
+# .tune/container/append_oom_to_adiffs.sh prints `utname (call) TAB OOM` -- so every
 # such line is hand-added.
 #
 # Comments and blank lines are allowed because the file is hand-edited.
