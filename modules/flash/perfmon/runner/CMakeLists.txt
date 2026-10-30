@@ -161,7 +161,10 @@ target_link_libraries(perfmon_flash PRIVATE
 set_target_properties(perfmon_flash PROPERTIES
   BUILD_WITH_INSTALL_RPATH TRUE
   INSTALL_RPATH "${_perfmon_rpath_adapter}")
-target_link_options(perfmon_flash PRIVATE "LINKER:--enable-new-dtags")
+# hipcc (clang) adds -rpath <ROCm>/lib on its own when linking against the HIP
+# runtime; on theRock that is the devel package, which the RUNPATH must never
+# contain. -fno-rtlib-add-rpath suppresses it, leaving only INSTALL_RPATH.
+target_link_options(perfmon_flash PRIVATE "LINKER:--enable-new-dtags" -fno-rtlib-add-rpath)
 
 # --- bin/runner -------------------------------------------------------------------------------------
 # main.cc comes from the checkout, never from a release's tree (old releases
@@ -176,7 +179,7 @@ target_link_libraries(runner PRIVATE
 set_target_properties(runner PROPERTIES
   BUILD_WITH_INSTALL_RPATH TRUE
   INSTALL_RPATH "${_perfmon_rpath_runner}")
-target_link_options(runner PRIVATE "LINKER:--enable-new-dtags")
+target_link_options(runner PRIVATE "LINKER:--enable-new-dtags" -fno-rtlib-add-rpath)
 
 install(TARGETS perfmon_flash LIBRARY DESTINATION lib)
 install(TARGETS runner RUNTIME DESTINATION bin)

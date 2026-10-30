@@ -83,7 +83,10 @@ set_target_properties(perfmon_core PROPERTIES
   OUTPUT_NAME "perfmon_core+rocm${PERFMON_ROCM_VERSION}"
   BUILD_WITH_INSTALL_RPATH TRUE
   INSTALL_RPATH "${_perfmon_rocm_rpath}")
-target_link_options(perfmon_core PRIVATE "LINKER:--enable-new-dtags")
+# hipcc (clang) adds -rpath <ROCm>/lib on its own when linking against the HIP
+# runtime; on theRock that is the devel package, which the RUNPATH must never
+# contain. -fno-rtlib-add-rpath suppresses it, leaving only INSTALL_RPATH.
+target_link_options(perfmon_core PRIVATE "LINKER:--enable-new-dtags" -fno-rtlib-add-rpath)
 
 if(PERFMON_ENABLE_AMDSMI)
   # No soft fallback: a missing amd-smi must fail the build, not produce a
