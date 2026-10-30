@@ -639,7 +639,8 @@ def test_no_raw_tuning_db_sql_outside_pq():
         if not d.is_dir():
             continue
         for f in d.rglob('*'):
-            if not f.is_file() or f.suffix in {'.html', '.js', '.css'}:
+            # The compatibility links in .tune/bin/ are scanned at their target.
+            if f.is_symlink() or not f.is_file() or f.suffix in {'.html', '.js', '.css'}:
                 continue
             if str(f.relative_to(_REPO_ROOT)) in EXEMPT:
                 continue
