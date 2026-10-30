@@ -110,9 +110,11 @@ def dashboard():
     for arch_workers in workers_by_arch.values():
         workers.extend(arch_workers)
     tuning_progress = tasks.get_tuning_progress(workdir)
+    perfmon_progress = tasks.get_perfmon_progress(workdir)
     refresh_interval = current_app.config['REFRESH_INTERVAL']
     return render_template('dashboard.html', status=status, workers=workers,
                            tuning_progress=tuning_progress,
+                           perfmon_progress=perfmon_progress,
                            refresh_interval=refresh_interval)
 
 
@@ -173,6 +175,8 @@ def perfmon():
     workdir = current_app.config['WORKDIR']
     build_node_config = tasks.get_build_node_config(workdir)
     return render_template('perfmon.html',
+                           perfmon_progress=tasks.get_perfmon_progress(workdir),
+                           refresh_interval=current_app.config['REFRESH_INTERVAL'],
                            perfmon_settings=tasks.get_perfmon_settings(workdir),
                            perfmon_defaults=tasks.PERFMON_DEFAULTS,
                            build_node_config=build_node_config,
@@ -963,6 +967,14 @@ def api_get_tuning_progress():
     workdir = current_app.config['WORKDIR']
     tuning_progress = tasks.get_tuning_progress(workdir)
     return render_template('_tuning_progress_table.html', tuning_progress=tuning_progress, last_refresh=None)
+
+
+@bp.route('/api/perfmon/progress', methods=['GET'])
+def api_get_perfmon_progress():
+    """Perfmon progress (for HTMX polling)"""
+    workdir = current_app.config['WORKDIR']
+    return render_template('_perfmon_progress_table.html',
+                           perfmon_progress=tasks.get_perfmon_progress(workdir))
 
 
 @bp.route('/api/debug/resolve_entry', methods=['POST'])

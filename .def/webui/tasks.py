@@ -37,6 +37,8 @@ except ImportError:
     )
 
 from aotriton.pgdef.workdir import get_db_connection_params
+from aotriton.pgdef.pq import progress as pgdef_progress
+from aotriton.perfmon import pq as perfmon_pq
 from aotriton.tune.pq import tasks as tune_tasks
 from aotriton.tune.pq.results import get_task_debug_snapshot
 from aotriton.tune.registry import load_flash_entry_module
@@ -219,6 +221,41 @@ def get_tuning_progress(workdir):
     except Exception as e:
         logging.error(f"Failed to get tuning progress: {e}")
         return {'kernel': [], 'op': []}
+
+
+def get_perfmon_progress(workdir):
+    """Perfmon queue progress: per arch from the engine's generic queue
+    progress (category 'perfmon'), and per subject from aotriton.perfmon.pq.
+
+    Returns {'arches': [...], 'subjects': [...]}; arch rows are shaped like
+    the tuning progress rows (see _merge_progress_rows). On a database error
+    both are empty and 'error' says why.
+    """
+    category = ('perfmon',)
+    try:
+        conn_params = get_db_connection_params(Path(workdir))
+        with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
+            by_pool: dict[str, dict] = {}
+            for row in pgdef_progress.queue_progress(conn, category):
+                acc = by_pool.setdefault(row['pool'], {'arch': row['pool'], 'pending': 0, 'running': 0,
+                                                       'done': 0, 'failed': 0, 'cancelled': 0, 'total': 0})
+                for key in ('pending', 'running', 'done', 'failed', 'cancelled', 'total'):
+                    acc[key] += row[key]
+            speed = [{'arch': r['pool'], 'recent_completions': r['recent_completions']}
+                     for r in pgdef_progress.recent_completions(conn, category, window_s=300.0)]
+            stale = [{'arch': r['pool'], 'stale_count': r['expired_count']}
+                     for r in pgdef_progress.expired_leases(conn, category)]
+            subjects = []
+            for row in perfmon_pq.subject_progress(conn):
+                row = dict(row)
+                effective_total = row['total'] - (row['cancelled'] or 0)
+                row['pct_complete'] = round(100.0 * row['done'] / effective_total, 1) if effective_total > 0 else 0.0
+                subjects.append(row)
+            return {'arches': _merge_progress_rows(sorted(by_pool.values(), key=lambda r: r['arch']), speed, stale),
+                    'subjects': subjects}
+    except Exception as e:
+        logging.error(f"Failed to get perfmon progress: {e}")
+        return {'arches': [], 'subjects': [], 'error': str(e)}
 
 
 _TUNE_V3BIS_MARKER = 'TUNE_V3BIS testrun Item: '

@@ -110,4 +110,13 @@
     <p style="color: gray;">No host has the Perfmon role. Assign it on the Workers page.</p>
     {% endif %}
 </section>
+
+<section id="perfmon-progress">
+    <div id="perfmon-progress-container"
+         hx-get="/api/perfmon/progress"
+         hx-trigger="load, every {{ refresh_interval }}s"
+         hx-swap="innerHTML">
+        {% include '_perfmon_progress_table.html' %}
+    </div>
+</section>
 {% endblock %}

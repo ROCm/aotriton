@@ -1,0 +1,72 @@
+{# Perfmon progress: per arch (the engine's queue progress, category perfmon)
+   and per subject (aotriton.perfmon.pq.subject_progress). #}
+<h3>Perfmon Progress</h3>
+{% if perfmon_progress.error %}
+<p style="color: #dc3545;">Progress is unavailable: {{ perfmon_progress.error }}</p>
+{% endif %}
+{% if perfmon_progress.arches %}
+<table style="width: 100%;">
+    <thead>
+        <tr>
+            <th>Architecture</th>
+            <th>Pending</th>
+            <th>Running</th>
+            <th>Completed</th>
+            <th>Failed</th>
+            <th>Total</th>
+            <th>Cancelled</th>
+            <th>Progress</th>
+            <th>Speed</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in perfmon_progress.arches %}
+        <tr>
+            <td><code>{{ row.arch }}</code></td>
+            <td>{{ row.pending }}</td>
+            <td>{{ row.running }}{% if row.stale > 0 %} <span style="color: #ff6b6b;">({{ row.stale }} stale)</span>{% endif %}</td>
+            <td>{{ row.done }}</td>
+            <td>{{ row.failed }}</td>
+            <td>{{ row.effective_total }} <span style="color:#888;">({{ row.total }})</span></td>
+            <td>{{ row.cancelled }}</td>
+            <td>{{ "%.1f"|format(row.pct_complete) }}%</td>
+            <td>{{ "%.1f"|format(row.speed_per_minute) }} tasks/min</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<h4>By Subject</h4>
+<table style="width: 100%;">
+    <thead>
+        <tr>
+            <th>Architecture</th>
+            <th>Variant</th>
+            <th>Subject</th>
+            <th>Pending</th>
+            <th>Running</th>
+            <th>Completed</th>
+            <th>Failed</th>
+            <th>Total</th>
+            <th>Progress</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in perfmon_progress.subjects %}
+        <tr>
+            <td><code>{{ row.arch }}</code></td>
+            <td>{{ row.variant }}</td>
+            <td><code>{{ row.subject }}</code></td>
+            <td>{{ row.pending }}</td>
+            <td>{{ row.running }}</td>
+            <td>{{ row.done }}</td>
+            <td>{{ row.failed }}</td>
+            <td>{{ row.total }}</td>
+            <td>{{ "%.1f"|format(row.pct_complete) }}%</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% elif not perfmon_progress.error %}
+<p>No perfmon tasks in queue.</p>
+{% endif %}

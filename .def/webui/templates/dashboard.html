@@ -69,6 +69,15 @@
 </section>
 
 <section>
+    <div id="perfmon-progress-container"
+         hx-get="/api/perfmon/progress"
+         hx-trigger="load, every {{ refresh_interval }}s"
+         hx-swap="innerHTML">
+        {% include '_perfmon_progress_table.html' %}
+    </div>
+</section>
+
+<section>
     <h3>Getting Started</h3>
     <ol>
         <li><a href="/workers">Manage Workers</a> - Start/stop GPU workers</li>
