@@ -413,15 +413,16 @@ class RootGenerator(object):
         truncated payload is far harder to debug than this assert firing.
         """
         log(lambda : f'{ksig=}')
-        # The DEFAULT venv, never a rule-matched alt venv. The altwheel rules
-        # (--alt_triton_wheel_config_file) key on arch/family, not on backend
-        # kind, so a flyc functional matches them exactly as a Triton one does --
-        # but an alt venv holds only requirements.txt plus a Triton wheel. It has
+        # The MAIN build venv (VENV_DIR), never an altwheel venv -- not even
+        # venvs.default, which maps to altvenvs/default or a "python:"
+        # interpreter. The altwheel rules key on arch/family, not on backend,
+        # so a flyc functional matches them exactly as a Triton one does -- but
+        # an alt venv holds only requirements.txt plus a Triton wheel. It has
         # neither `flydsl` (installed only into VENV_DIR by aotriton_venv_flydsl)
         # nor `aotriton` itself, so `<altvenv>/bin/python -m aotriton.flyc_compile`
         # dies with ModuleNotFoundError at ninja time for every flyc image.
         # Choosing a Triton version is meaningless for a FlyDSL compile anyway.
-        python = self._venvpython['default']
+        python = self._main_python
         def _kv(name, choice):
             value = repr(choice.triton_compile_signature)
             assert ' ' not in value, (
