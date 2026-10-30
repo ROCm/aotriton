@@ -10,7 +10,8 @@
 #   Which build to sync to a worker host; required in that mode. The
 #   application is the category's first level, and its manifest says where the
 #   build is installed (install.subtree, e.g. installed/<arch> for tune,kernel,
-#   installed/test/<arch> for tune,op).
+#   installed/test/<arch> for tune,op). install.subtree may be a list, as
+#   perfmon's is (core and arch); every entry is synced.
 #   --buildnode and --remote_workdir do not use it.
 #
 # --remote_workdir <path>
@@ -101,25 +102,36 @@ rsync -az --checksum --info=progress2 \
 # --exclude '*.pyc' prevents deleting bytecode (may be root-owned from container)
 # We minimize rsync calls since some deployments have long SSH authentication time
 # TODO: Re-use SSH connection between multiple rsyncs (e.g., SSH ControlMaster)
+SUBDIRS=()
 if [ "$BUILDNODE_MODE" -eq 1 ]; then
-  SUBDIR="/database"
+  SUBDIRS=("/database")
 elif [ "$arch" = "ALL" ]; then
-  SUBDIR=""
+  SUBDIRS=("")
 else
   # The application's manifest says where its build is installed, relative to the
   # workdir (installed/<arch> or installed/test/<arch>); rsync works under installed/.
-  SUBTREE="$(app_manifest "$CAT_LEVEL0" install.subtree --arch "$arch" ${CAT_LEVEL1:+--cat_level1 "$CAT_LEVEL1"})"
-  SUBDIR="/${SUBTREE#installed/}"
+  # install.subtree is one string (tune) or a list, printed one entry per line
+  # (perfmon: installed/perfmon/core and installed/perfmon/<arch>); each entry
+  # is synced.
+  while IFS= read -r _sub; do
+    [ -n "$_sub" ] && SUBDIRS+=("/${_sub#installed/}")
+  done < <(app_manifest "$CAT_LEVEL0" install.subtree --arch "$arch" ${CAT_LEVEL1:+--cat_level1 "$CAT_LEVEL1"})
+  if [ "${#SUBDIRS[@]}" -eq 0 ]; then
+    echo "Error: manifest of '$CAT_LEVEL0' has an empty install.subtree" >&2
+    exit 1
+  fi
 fi
 
 # Always use --delete so aotriton.src is an exact copy.
 # When SUBDIR is empty (ALL), protect installed/ from deletion so remote
 # arch dirs not present locally are not wiped.
 FILTER_ARGS=()
-[ -z "$SUBDIR" ] && FILTER_ARGS+=("--filter=P /installed/***")
+[ "${SUBDIRS[0]}" = "" ] && FILTER_ARGS+=("--filter=P /installed/***")
 
 SOURCES=()
-[ -d "$WORKDIR/installed$SUBDIR" ] && SOURCES+=("$WORKDIR/./installed$SUBDIR")
+for SUBDIR in "${SUBDIRS[@]}"; do
+  [ -d "$WORKDIR/installed$SUBDIR" ] && SOURCES+=("$WORKDIR/./installed$SUBDIR")
+done
 SOURCES+=("$WORKDIR/./aotriton.src")
 
 rsync -azR --checksum --info=progress2 --delete "${FILTER_ARGS[@]}" --exclude '*.pyc' \
