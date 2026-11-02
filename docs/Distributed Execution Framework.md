@@ -257,24 +257,33 @@ networks eats the replies), though SSH to them works. Such a host is marked
 means direct access). It is a host property shared by every application.
 
 * `srvctl <workdir> start` starts PostgreSQL and then the tunnel manager,
-  `.def/libexec/tunnels.py`, which keeps one reverse tunnel
-  (`ssh -N -R 127.0.0.1:<POSTGRES_PORT>:127.0.0.1:<POSTGRES_PORT> <host>`) up
-  per firewalled host and restarts it with back-off. `stop` stops both;
-  `status` shows PostgreSQL and the tunnels. It runs on the server's bare
-  metal and needs non-interactive ssh to each host (start `ssh-agent` and
-  `ssh-add` your key first if it has a passphrase); each host's sshd and
-  SELinux must permit remote port forwarding.
+  `.def/libexec/tunnels.py`, which keeps one reverse tunnel to a Unix socket
+  (`ssh -N -R <host workdir>/run/pgsql/.s.PGSQL.<POSTGRES_PORT>:127.0.0.1:<POSTGRES_PORT> <host>`)
+  up per firewalled host and restarts it with back-off. `<host workdir>` is the
+  host's workdir as the server knows it (`workdir_override` in `workers.db`,
+  else `default_workdir`). Before each (re)start the manager runs
+  `mkdir -p` and `rm -f` on the socket over ssh, because sshd does not unlink
+  a stale socket. A Unix socket works where a TCP port on the host's loopback
+  does not: a claudepak peer on a Docker bridge has its own loopback, but sees
+  the host workdir at the same path. `stop` stops both; `status` shows
+  PostgreSQL and the tunnels. It runs on the server's bare metal and needs
+  non-interactive ssh to each host (start `ssh-agent` and `ssh-add` your key
+  first if it has a passphrase); each host's sshd must allow remote
+  Unix-socket forwarding (`AllowStreamLocalForwarding`, on by default) and so
+  must SELinux.
 * Changing the row (the checkbox, or an agent writing the workdir) is followed
   by a touch of `<workdir>/run/touch-me-to-refresh-ssh-tunnel`; the manager
   polls it and reloads. The result is in `<workdir>/run/ssh-tunnels.status`
   (also on the webui's Servers tab); its log is `ssh-tunnels.log`.
-* A node on a firewalled host is started with `PGHOST=127.0.0.1` and
-  `PGPORT=<POSTGRES_PORT>`: `.perfmon/bin/node` and `start_worker.sh` read the
-  row on the server and pass the values on as arguments, so host-side scripts
-  never open `workers.db`. `worker_service.sh` keeps a preset `PGHOST`/`PGPORT`
+* A node on a firewalled host is started with
+  `PGHOST=<host workdir>/run/pgsql` (the socket's directory; libpq treats a
+  `PGHOST` starting with `/` that way) and `PGPORT=<POSTGRES_PORT>` (it names
+  the file `.s.PGSQL.<port>`): `.perfmon/bin/node` and `start_worker.sh` read
+  the row on the server and pass the values on as arguments, so host-side
+  scripts never open `workers.db`. A tune docker worker mounts the workdir at
+  the image workdir, so it gets `PGHOST=<image workdir>/run/pgsql` (usually
+  `/wkdir/run/pgsql`). `worker_service.sh` keeps a preset `PGHOST`/`PGPORT`
   over `config.rc`'s.
-* Whether a claudepak peer (on a Docker bridge) reaches the host's loopback is
-  open; see `perfmon-pgsql-ssh-tunnel.md` section 2.4.
 
 ## Common operations
 
