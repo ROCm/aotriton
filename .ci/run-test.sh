@@ -40,9 +40,18 @@ done
 if [ -n "${AOTRITON_TEST_LIBDIR:-}" ]; then
   bdir=""
 else
-  mapfile -d '' bdir_cans < <(find . -maxdepth 1 -type d -name "build-${aotriton_major}.${aotriton_minor}-test-*${native_arch}*" -print0)
+  # Exact arch match, not a glob: *gfx1250* would also pick gfx1250-strict.
+  # See aotriton_build_dir for the name protocol.
+  bdir_cans=()
+  for d in ./build-${aotriton_major}.${aotriton_minor}-test-*/; do
+    d="${d%/}"
+    [ -d "$d" ] || continue
+    if aotriton_build_dir_archs "$d" test | grep -qxF -- "${native_arch}"; then
+      bdir_cans+=("$d")
+    fi
+  done
   if [ ${#bdir_cans[@]} -gt 1 ]; then
-    echo "There are multiple build directory candidates matching pattern 'build-${aotriton_major}.${aotriton_minor}-test-*${native_arch}*' for testing: ${bdir_cans[@]}. Please keep one only"
+    echo "There are multiple test build directories for ${native_arch}: ${bdir_cans[@]}. Please keep one only"
     exit 1
   fi
   bdir="${bdir_cans[0]}"

@@ -23,10 +23,34 @@ ngpus=$(rocm_agent_enumerator|grep -v gfx000|wc -l)
 # `build-for-torch.sh` left there. Those two used to spell it out separately,
 # so a rename in one was a silent "Cannot find aotriton install directory" in
 # the other.
+#
+# Name protocol: build-<major>.<minor>-<build for>-<archs>. Everything after
+# "<build for>-" is the target arch list VERBATIM, ';' joined as '_'. Never
+# split a name on '-' or match an arch in it as a substring: arch names
+# contain '-' themselves (gfx1250-strict), and gfx1250 is a substring of
+# gfx1250-strict. Read the list back with aotriton_build_dir_archs. Hence
+# <build for> may not contain '-', and an arch may not contain '_'.
 aotriton_build_dir() {
   local build_for="$1"
   local target_arch="$2"
+  if [[ "${build_for}" == *-* || "${target_arch}" == *_* ]]; then
+    echo "aotriton_build_dir: '-' in build for '${build_for}' or '_' in target arch '${target_arch}'" >&2
+    return 1
+  fi
   echo "build-${aotriton_major}.${aotriton_minor}-${build_for}-${target_arch//;/_}"
+}
+
+# aotriton_build_dir_archs <dir name> <build for>
+#
+# The target arch list of a name aotriton_build_dir made for <build for>, one
+# arch per line; nothing if the name is not one. An ALL build prints ALL.
+aotriton_build_dir_archs() {
+  local prefix="build-${aotriton_major}.${aotriton_minor}-$2-"
+  local name="${1##*/}"
+  [[ "${name}" == "${prefix}"* ]] || return 0
+  local archs
+  IFS=_ read -ra archs <<< "${name#"${prefix}"}"
+  printf '%s\n' "${archs[@]}"
 }
 
 get_llvm_hash() {
