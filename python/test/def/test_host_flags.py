@@ -8,6 +8,8 @@ Flask is not needed: the webui modules are imported against a stub `flask`,
 and the accessors and the route function are called directly.
 """
 
+import os
+import shlex
 import shutil
 import sqlite3
 import subprocess
@@ -191,3 +193,59 @@ def test_ssh_tunnel_status_file(webui, tmp_path):
     (tmp_path / 'run').mkdir()
     (tmp_path / 'run' / 'ssh-tunnels.status').write_text('a up\n')
     assert tasks.get_ssh_tunnel_status(tmp_path) == 'a up\n'
+
+
+_FAKE_SSH = """#!/bin/bash
+# Fake ssh: writes its arguments to $FAKE_SSH_OUT.
+printf '%s\\n' "$@" > "$FAKE_SSH_OUT"
+"""
+
+
+def _fake_ssh_run(tmp_path, args, extra_env=None):
+    bin_dir = tmp_path / 'fakebin'
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / 'ssh').write_text(_FAKE_SSH)
+    (bin_dir / 'ssh').chmod(0o755)
+    out = tmp_path / 'ssh.out'
+    env = dict(os.environ, PATH=f'{bin_dir}:{os.environ["PATH"]}', FAKE_SSH_OUT=str(out))
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    return out.read_text().splitlines()
+
+
+def _prepare(tasks, tmp_path):
+    workdir = tmp_path / 'wk'
+    workdir.mkdir()
+    (workdir / 'config.rc').write_text('CELERY_SERVICE_HOST=server.example\nPOSTGRES_PORT=6789\n')
+    _workers(tasks, workdir, 'fw', 'direct')
+    tasks.set_worker_firewalled(workdir, 'fw', True)
+    return workdir
+
+
+@pytest.mark.parametrize('host,expected', [('fw', ['127.0.0.1', '6789']), ('direct', ['', ''])])
+def test_node_passes_the_endpoint(webui, tmp_path, sqlite3_cli, host, expected):
+    tasks, _ = webui
+    workdir = _prepare(tasks, tmp_path)
+    lines = _fake_ssh_run(tmp_path,
+                          [str(_REPO / '.perfmon' / 'bin' / 'node'), '--workdir', str(workdir), '--host', host,
+                           '--rocm', '7.0', '--scratch', str(tmp_path / 'scratch'), '--arch', 'gfx942', 'start'])
+    assert lines[0] == host
+    remote = shlex.split(lines[1])
+    # node_run.sh <workdir> <scratch> <rocm> <thermal_gate> <pghost> <pgport> <command> <arch> ...
+    assert remote[1].endswith('node_run.sh')
+    assert remote[5:9] == ['off', *expected, 'start']
+
+
+def test_start_worker_passes_the_endpoint(webui, tmp_path, sqlite3_cli):
+    tasks, _ = webui
+    workdir = _prepare(tasks, tmp_path)
+    with sqlite3.connect(workdir / 'workers.db') as conn:
+        conn.execute("INSERT INTO config (key, value) VALUES ('default_workdir', '/w')")
+    script = _REPO / '.def' / 'libexec' / 'start_worker.sh'
+    for host, expect_env in (('fw', True), ('direct', False)):
+        lines = _fake_ssh_run(tmp_path, ['bash', str(script), str(workdir), host, '--', '--category', 'perfmon'])
+        assert lines[0] == host
+        # bash -s <WORKER_WORKDIR> <arch> <image> <4 paths> <thermal_gate> <pghost> <pgport> <extra args...>
+        args = lines[1:]
+        pg = args[args.index('off') + 1:args.index('off') + 3]
+        assert pg == (['127.0.0.1', '6789'] if expect_env else ['', ''])
