@@ -17,8 +17,9 @@ TaskSource:
 * Tasks are yielded subject-major: claims follow insert order, and switching
   subjects restarts the native runner, so grouping keeps the switches rare.
 * `--subject` defaults to every subject installed for the arch under
-  `<workdir>/installed/perfmon/<arch>/`; a subject that is not installed is
-  an error here, not on a worker.
+  `<workdir>/installed/perfmon/<pool>/`, where the pool is `MAJOR` for a major
+  arch (AOTRITON_MAJOR_ARCHES) and the arch itself otherwise; a subject that
+  is not installed is an error here, not on a worker.
 * One `--<axis>` option per axis of the family's entry sets. `--entry_set`
   only chooses the default values; an option given replaces them.
 * `--entry_set llm` dispatches the family's LLM cases instead of a grid;
@@ -37,7 +38,7 @@ from aotriton.pgdef.pq.category import format_category
 from aotriton.pgdef.pq.tasks import TaskSpec
 from aotriton.pgdef.workdir import load_config
 
-from .exaid_perfmon import INSTALL_SUBTREE
+from .exaid_perfmon import INSTALL_SUBTREE, subject_pool
 from .registry import available_module_names, make_perf_desc
 
 APP = 'perfmon'
@@ -47,7 +48,7 @@ SUBJECT_PREFIX = 'aotriton-'
 
 
 def installed_subjects(workdir: Path, arch: str) -> list[str]:
-    root = workdir / INSTALL_SUBTREE / arch
+    root = workdir / INSTALL_SUBTREE / subject_pool(arch)
     if not root.is_dir():
         return []
     return sorted(p.name for p in root.iterdir() if p.is_dir() and p.name.startswith(SUBJECT_PREFIX))
@@ -183,11 +184,11 @@ class PerfmonTaskSource:
         installed = installed_subjects(args.workdir, pool)
         if args.subject is None:
             if not installed:
-                sys.exit(f'no subject installed under {args.workdir / INSTALL_SUBTREE / pool}')
+                sys.exit(f'no subject installed under {args.workdir / INSTALL_SUBTREE / subject_pool(pool)}')
             return installed
         missing = [s for s in args.subject if s not in installed]
         if missing:
-            sys.exit(f'subject(s) not installed for {pool} under {args.workdir / INSTALL_SUBTREE / pool}: '
+            sys.exit(f'subject(s) not installed for {pool} under {args.workdir / INSTALL_SUBTREE / subject_pool(pool)}: '
                      f'{", ".join(missing)}')
         return list(args.subject)
 

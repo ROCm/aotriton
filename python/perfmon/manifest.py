@@ -23,8 +23,13 @@ MANIFEST = {
     },
     'install': {
         # What `deploy` syncs to a worker, relative to the workdir: the core
-        # (one per ROCm, shared by every arch) and the arch's subjects.
-        'subtree': ['installed/perfmon/core', 'installed/perfmon/{arch}'],
+        # (one per ROCm, shared by every arch), the MAJOR subjects (one per
+        # release, serving every arch of AOTRITON_MAJOR_ARCHES) and the
+        # subjects of the worker's own arch, which exist only for a non-major
+        # arch (the deploy script skips a directory that does not exist).
+        'subtree': ['installed/perfmon/core',
+                    'installed/perfmon/MAJOR',
+                    'installed/perfmon/{arch}'],
     },
     'deploy': {
         # the workers.db role of the hosts that run this application

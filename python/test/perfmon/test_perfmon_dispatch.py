@@ -21,8 +21,8 @@ S14 = 'aotriton-0.14.2b+rocm10.1.0'
 def workdir(tmp_path):
     (tmp_path / 'config.rc').write_text('# no settings needed here\n')
     for subject in (S14, S13):
-        (tmp_path / 'installed' / 'perfmon' / 'gfx950' / subject).mkdir(parents=True)
-    (tmp_path / 'installed' / 'perfmon' / 'gfx950' / 'core').mkdir()       # not a subject
+        (tmp_path / 'installed' / 'perfmon' / 'MAJOR' / subject).mkdir(parents=True)
+    (tmp_path / 'installed' / 'perfmon' / 'MAJOR' / 'core').mkdir()       # not a subject
     return tmp_path
 
 
@@ -45,6 +45,14 @@ SMALL = ['--hdim', '64', '--causal', '0', '--seqlen', '16', '32']
 def test_installed_subjects_exclude_the_core(workdir):
     assert pdispatch.installed_subjects(workdir, 'gfx950') == sorted([S13, S14])
     assert pdispatch.installed_subjects(workdir, 'gfx000') == []
+
+
+def test_a_major_arch_is_served_by_the_major_pool_and_others_by_their_own(workdir):
+    for arch in ('gfx90a', 'gfx942', 'gfx950', 'gfx1100', 'gfx1201'):
+        assert pdispatch.installed_subjects(workdir, arch) == sorted([S13, S14])
+    (workdir / 'installed' / 'perfmon' / 'gfx1101' / S13).mkdir(parents=True)
+    assert pdispatch.installed_subjects(workdir, 'gfx1101') == [S13]
+    assert pdispatch.installed_subjects(workdir, 'gfx1102') == []
 
 
 def test_default_category_is_perfmon_with_no_second_level(workdir):
@@ -84,7 +92,7 @@ def test_a_subject_that_is_not_installed_is_an_error_at_dispatch(workdir):
 
 def test_no_installed_subject_is_an_error(workdir):
     with pytest.raises(SystemExit) as e:
-        _plan(workdir, *SMALL, pool='gfx942')
+        _plan(workdir, *SMALL, pool='gfx1101')
     assert 'no subject installed' in str(e.value)
 
 
@@ -111,7 +119,6 @@ def test_the_coverage_set_is_an_l_shape(workdir):
 
 
 def test_entries_the_arch_rejects_are_reported_and_not_dispatched(workdir, capsys):
-    (workdir / 'installed' / 'perfmon' / 'gfx1100' / S13).mkdir(parents=True)
     options = ['--subject', S13, '--hdim', '64', '512', '--causal', '0', '--seqlen', '16']
     _, _, specs = _plan(workdir, *options, pool='gfx1100')
     assert {s.payload['entry']['hdim_qk'] for s in specs} == {64}

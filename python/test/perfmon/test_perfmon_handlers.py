@@ -295,10 +295,19 @@ def test_the_runner_spawns_the_launcher_for_the_current_subject(runner):
 
 def test_the_runner_passes_the_arch_to_the_launcher(runner, monkeypatch, tmp_path):
     monkeypatch.setenv('AOTRITON_WORKDIR', str(tmp_path))
-    (tmp_path / 'installed' / 'perfmon' / 'gfx950' / 'aotriton-0.13b+rocm10.1.0').mkdir(parents=True)
+    (tmp_path / 'installed' / 'perfmon' / 'MAJOR' / 'aotriton-0.13b+rocm10.1.0').mkdir(parents=True)
     runner.use_subject('aotriton-0.13b+rocm10.1.0', arch='gfx950')
     argv = runner.proxy.spawn_argv()
     assert argv[-2:] == ['--arch', 'gfx950']
+
+
+def test_a_non_major_arch_uses_its_own_pool(monkeypatch, tmp_path):
+    monkeypatch.setenv('AOTRITON_WORKDIR', str(tmp_path))
+    s = 'aotriton-0.13b+rocm10.1.0'
+    assert exaid_perfmon.subject_pool('gfx942') == 'MAJOR'
+    assert exaid_perfmon.subject_pool('gfx1101') == 'gfx1101'
+    assert exaid_perfmon.subject_dir('gfx1201', s) == tmp_path / 'installed' / 'perfmon' / 'MAJOR' / s
+    assert exaid_perfmon.subject_dir('gfx1101', s) == tmp_path / 'installed' / 'perfmon' / 'gfx1101' / s
 
 
 def test_the_runner_keeps_two_processes_and_evicts_the_least_recently_used(runner):
@@ -327,8 +336,7 @@ def test_the_runner_keeps_two_processes_and_evicts_the_least_recently_used(runne
 def test_the_same_subject_on_two_arches_is_two_runners(runner, monkeypatch, tmp_path):
     monkeypatch.setenv('AOTRITON_WORKDIR', str(tmp_path))
     s = 'aotriton-0.13b+rocm10.1.0'
-    for arch in ('gfx942', 'gfx950'):
-        (tmp_path / 'installed' / 'perfmon' / arch / s).mkdir(parents=True)
+    (tmp_path / 'installed' / 'perfmon' / 'MAJOR' / s).mkdir(parents=True)
     runner.use_subject(s, arch='gfx942')
     p1 = runner.proxy
     runner.use_subject(s, arch='gfx950')
@@ -366,7 +374,7 @@ def test_use_subject_checks_the_install_when_given_an_arch(runner, monkeypatch, 
     monkeypatch.setenv('AOTRITON_WORKDIR', str(tmp_path))
     with pytest.raises(FileNotFoundError):
         runner.use_subject('aotriton-0.13b+rocm10.1.0', arch='gfx950')
-    (tmp_path / 'installed' / 'perfmon' / 'gfx950' / 'aotriton-0.13b+rocm10.1.0').mkdir(parents=True)
+    (tmp_path / 'installed' / 'perfmon' / 'MAJOR' / 'aotriton-0.13b+rocm10.1.0').mkdir(parents=True)
     runner.use_subject('aotriton-0.13b+rocm10.1.0', arch='gfx950')
     assert runner.subject == 'aotriton-0.13b+rocm10.1.0'
 

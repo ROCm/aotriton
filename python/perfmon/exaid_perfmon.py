@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from aotriton.gpu_targets import AOTRITON_MAJOR_ARCHES
 from aotriton.pgdef import paths
 from aotriton.pgdef.exaid import ExaidProxy, ExaidSubprocessNotOK
 
@@ -53,8 +54,21 @@ class BackendUnavailable(Exception):
     error instead."""
 
 
+#: The pool that holds the subjects of every major arch.
+MAJOR_POOL = 'MAJOR'
+
+
+def subject_pool(arch: str) -> str:
+    """The directory under installed/perfmon/ that serves a device arch:
+    MAJOR for the arches of AOTRITON_MAJOR_ARCHES (one 5-in-1 subject per
+    release), the arch itself for any other. `perfmon_subject_pool` of
+    perfmon/scripts/lib/arches.sh is the same rule."""
+    return MAJOR_POOL if arch in AOTRITON_MAJOR_ARCHES else arch
+
+
 def subject_dir(arch: str, subject: str) -> Path:
-    return paths.workdir() / INSTALL_SUBTREE / arch / subject
+    """The installed subject that serves `arch`, a device arch."""
+    return paths.workdir() / INSTALL_SUBTREE / subject_pool(arch) / subject
 
 
 def launcher() -> Path:
@@ -146,8 +160,9 @@ class ExaidPerfmonRunner:
                     '--module', self._module,
                     '--gpu', str(self._gpu_id)]
             if arch is not None:
-                # The runner identity is (subject, arch): a subject installed
-                # under two arches is ambiguous to the launcher without it.
+                # The runner identity is (subject, arch), the arch of the
+                # device: the launcher maps it to the pool, and without it a
+                # subject installed under two pools is ambiguous.
                 argv += ['--arch', arch]
             return argv
         return spawn_argv
