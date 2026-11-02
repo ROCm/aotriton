@@ -6,11 +6,13 @@
 # the binary, and talks to it over stdin and stdout.
 #
 # Usage: launch_runner.sh --subject <name> --module <module> --gpu <id> [--arch <arch>]
-#   --subject   a directory name under installed/perfmon/<arch>/, e.g.
+#   --subject   a directory name under installed/perfmon/<pool>/, e.g.
 #               aotriton-0.13b+rocm10.1.0
 #   --module    the family; only "flash" has a runner
 #   --gpu       the GPU ordinal on this host
-#   --arch      the arch directory; if absent it is the one directory under
+#   --arch      the arch of the device; its pool is MAJOR when it is one of
+#               AOTRITON_MAJOR_ARCHES (python/gpu_targets.py), else the arch
+#               itself. If absent, <pool> is the one directory under
 #               installed/perfmon/ that holds <name>, and it is an error when
 #               there is none or more than one
 #
@@ -55,6 +57,7 @@ case "${SUBJECT}" in
 esac
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.def/lib/paths.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/lib/arches.sh"
 ROOT="$AOTRITON_WORKDIR/installed/perfmon"
 
 if [ -z "${ARCH}" ]; then
@@ -66,13 +69,13 @@ if [ -z "${ARCH}" ]; then
     echo "launch_runner.sh: no subject '${SUBJECT}' under ${ROOT}/*/." >&2
     exit 1
   elif [ "${#MATCHES[@]}" -gt 1 ]; then
-    echo "launch_runner.sh: subject '${SUBJECT}' is under more than one arch;" \
+    echo "launch_runner.sh: subject '${SUBJECT}' is under more than one pool;" \
          "pass --arch. Found: ${MATCHES[*]}" >&2
     exit 1
   fi
   SUBJECT_DIR="${MATCHES[0]}"
 else
-  SUBJECT_DIR="${ROOT}/${ARCH}/${SUBJECT}"
+  SUBJECT_DIR="${ROOT}/$(perfmon_subject_pool "${ARCH}")/${SUBJECT}"
 fi
 
 RUNNER="${SUBJECT_DIR}/bin/runner"
