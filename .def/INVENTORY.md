@@ -70,6 +70,7 @@ notes:
 | `.tune/single/sync_workdir.sh` | `.def/libexec/sync_workdir.sh` | control host (rsync to the host) | `deploy`, `remotebld`; webui | all |
 | `.tune/single/start_services.sh` | `.def/libexec/start_services.sh` | control host (docker) | `srvctl` | all |
 | `.tune/single/stop_services.sh` | `.def/libexec/stop_services.sh` | control host (docker) | `srvctl` | all |
+| (new) | `.def/libexec/tunnels.py` | control host, bare metal (Python, standard library only) | `srvctl start`/`stop` (pid file `run/ssh-tunnels.pid`) | all |
 | `.tune/lib/create_dockerfile.sh` | `.def/libexec/create_dockerfile.sh` | control host | `prepwkdir` (it generates a file; it is not sourced) | all |
 | `.tune/remote/run_worker.sh` | `.def/host/run_worker.sh` | worker host | operator on that host | all |
 | `.tune/remote/slurm_worker_job.sh` | `.def/host/slurm_worker_job.sh` | SLURM compute node | `sbatch` from `submit_slurm_job.sh` | all |

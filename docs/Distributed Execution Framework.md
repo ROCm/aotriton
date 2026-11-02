@@ -248,6 +248,34 @@ Partitions need no setup. Dispatch creates a pool's partitions the first time
 it inserts into that pool, by calling the engine's SQL function
 `pgdef.ensure_pool(pool)` with the pool name as a query argument.
 
+## Firewalled hosts
+
+Some hosts cannot reach the server's PostgreSQL (a firewall between the
+networks eats the replies), though SSH to them works. Such a host is marked
+**Firewalled** on the webui's Workers page (a config row
+`firewalled::<hostname>` = 1 in `workers.db`, no schema change; absent or `0`
+means direct access). It is a host property shared by every application.
+
+* `srvctl <workdir> start` starts PostgreSQL and then the tunnel manager,
+  `.def/libexec/tunnels.py`, which keeps one reverse tunnel
+  (`ssh -N -R 127.0.0.1:<POSTGRES_PORT>:127.0.0.1:<POSTGRES_PORT> <host>`) up
+  per firewalled host and restarts it with back-off. `stop` stops both;
+  `status` shows PostgreSQL and the tunnels. It runs on the server's bare
+  metal and needs non-interactive ssh to each host (start `ssh-agent` and
+  `ssh-add` your key first if it has a passphrase); each host's sshd and
+  SELinux must permit remote port forwarding.
+* Changing the row (the checkbox, or an agent writing the workdir) is followed
+  by a touch of `<workdir>/run/touch-me-to-refresh-ssh-tunnel`; the manager
+  polls it and reloads. The result is in `<workdir>/run/ssh-tunnels.status`
+  (also on the webui's Servers tab); its log is `ssh-tunnels.log`.
+* A node on a firewalled host is started with `PGHOST=127.0.0.1` and
+  `PGPORT=<POSTGRES_PORT>`: `.perfmon/bin/node` and `start_worker.sh` read the
+  row on the server and pass the values on as arguments, so host-side scripts
+  never open `workers.db`. `worker_service.sh` keeps a preset `PGHOST`/`PGPORT`
+  over `config.rc`'s.
+* Whether a claudepak peer (on a Docker bridge) reaches the host's loopback is
+  open; see `perfmon-pgsql-ssh-tunnel.md` section 2.4.
+
 ## Common operations
 
 ```bash
