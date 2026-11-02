@@ -12,7 +12,7 @@
 # Over `ssh <host>` it runs `.def/container/worker_service.sh <command>
 # --category perfmon` in the shared venv with the path variables set
 # (AOTRITON_RUNDIR node-local: ${XDG_RUNTIME_DIR:-/tmp}/aotriton-perfmon), with
-#   AOTRITON_THERMAL_GATE   from workers.db thermal_gate of the host (off if unset)
+#   AOTRITON_THERMAL_GATE   from the config row thermal_gate::<host> (off if unset)
 #   --subpool               the host's subpool in workers.db, when it has one
 # The peer must have been prepared with setup_session. The host's arch comes
 # from workers.db unless --arch is given. --rocm defaults to the first of

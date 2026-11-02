@@ -1,0 +1,132 @@
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+"""Per-host settings (thermal gate) are rows of workers.db's config table,
+`thermal_gate::<hostname>` = 1, not columns of the workers table.
+
+Flask is not needed: the webui modules are imported against a stub `flask`,
+and the accessors and the route function are called directly.
+"""
+
+import shutil
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
+import pytest
+
+_REPO = Path(__file__).resolve().parents[3]
+_DB_QUERY_SH = _REPO / '.def' / 'lib' / 'db_query.sh'
+_OLD_SCHEMA = """
+CREATE TABLE workers (id INTEGER PRIMARY KEY AUTOINCREMENT, hostname TEXT NOT NULL UNIQUE,
+                      arch TEXT NOT NULL, workdir_override TEXT, subpool TEXT,
+                      thermal_gate INTEGER NOT NULL DEFAULT 0,
+                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT NOT NULL,
+                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+"""
+
+
+class _Blueprint:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def route(self, *args, **kwargs):
+        return lambda f: f
+
+    def before_request(self, f):
+        return f
+
+    def __getattr__(self, name):
+        return lambda f: f
+
+
+@pytest.fixture
+def webui(monkeypatch):
+    """(tasks, routes) of the webui, imported against a stub flask."""
+    stub = mock.MagicMock()
+    stub.Blueprint = _Blueprint
+    stub.jsonify = lambda x: x
+    monkeypatch.setitem(sys.modules, 'flask', stub)
+    monkeypatch.syspath_prepend(str(_REPO / '.def'))
+    try:
+        import webui.tasks as tasks
+        import webui.routes as routes
+    except ImportError as e:
+        pytest.skip(f'webui is not importable here: {e}')
+    yield tasks, routes
+    for name in [n for n in sys.modules if n == 'webui' or n.startswith('webui.')]:
+        del sys.modules[name]
+
+
+def _workers(tasks, workdir, *hosts):
+    tasks.init_workers_db(workdir)
+    with sqlite3.connect(workdir / 'workers.db') as conn:
+        for h in hosts:
+            conn.execute("INSERT INTO workers (hostname, arch) VALUES (?, 'gfx942')", (h,))
+
+
+def test_fresh_schema_has_no_thermal_gate_column(webui, tmp_path):
+    tasks, _ = webui
+    tasks.init_workers_db(tmp_path)
+    with sqlite3.connect(tmp_path / 'workers.db') as conn:
+        assert 'thermal_gate' not in [r[1] for r in conn.execute("PRAGMA table_info(workers)")]
+
+
+def test_thermal_gate_rows(webui, tmp_path):
+    tasks, _ = webui
+    _workers(tasks, tmp_path, 'a', 'b')
+    assert tasks.get_worker_thermal_gate(tmp_path, 'a') is False
+    assert tasks.set_worker_thermal_gate(tmp_path, 'a', True)['success']
+    assert tasks.get_worker_thermal_gate(tmp_path, 'a') is True
+    assert tasks.get_worker_thermal_gates(tmp_path) == {'a': True}
+    with sqlite3.connect(tmp_path / 'workers.db') as conn:
+        assert conn.execute("SELECT value FROM config WHERE key = 'thermal_gate::a'").fetchone() == ('1',)
+    assert tasks.set_worker_thermal_gate(tmp_path, 'a', False)['success']
+    assert tasks.get_worker_thermal_gate(tmp_path, 'a') is False
+    assert not tasks.set_worker_thermal_gate(tmp_path, 'nope', True)['success']
+
+
+def test_thermal_gate_route(webui, tmp_path):
+    tasks, routes = webui
+    _workers(tasks, tmp_path, 'a')
+    routes.current_app = SimpleNamespace(config={'WORKDIR': str(tmp_path)})
+    routes.request = SimpleNamespace(form={'enabled': 'true'})
+    assert routes.api_save_thermal_gate('a')['success']
+    assert tasks.get_worker_thermal_gate(tmp_path, 'a') is True
+
+
+def test_migration_moves_column_to_rows(webui, tmp_path):
+    tasks, _ = webui
+    with sqlite3.connect(tmp_path / 'workers.db') as conn:
+        conn.executescript(_OLD_SCHEMA)
+        conn.executemany("INSERT INTO workers (hostname, arch, thermal_gate) VALUES (?, 'gfx942', ?)",
+                         [('on1', 1), ('off1', 0), ('on2', 1)])
+        # An explicit row wins over the column.
+        conn.execute("INSERT INTO config (key, value) VALUES ('thermal_gate::on2', '0')")
+    tasks.init_workers_db(tmp_path)
+    with sqlite3.connect(tmp_path / 'workers.db') as conn:
+        rows = dict(conn.execute("SELECT key, value FROM config WHERE key LIKE 'thermal_gate::%'"))
+        columns = [r[1] for r in conn.execute("PRAGMA table_info(workers)")]
+    assert rows == {'thermal_gate::on1': '1', 'thermal_gate::on2': '0'}
+    assert 'thermal_gate' not in columns
+    tasks.init_workers_db(tmp_path)   # idempotent
+
+
+@pytest.mark.skipif(shutil.which('sqlite3') is None, reason='sqlite3 CLI missing')
+def test_shell_helper(webui, tmp_path):
+    tasks, _ = webui
+    _workers(tasks, tmp_path, 'a', 'b')
+    tasks.set_worker_thermal_gate(tmp_path, 'a', True)
+
+    def helper(host):
+        return subprocess.run(['bash', '-c', f'. {_DB_QUERY_SH}; get_worker_thermal_gate {tmp_path} {host}'],
+                              capture_output=True,
+                              text=True,
+                              check=True).stdout.strip()
+
+    assert [helper('a'), helper('b'), helper('unknown')] == ['on', 'off', 'off']

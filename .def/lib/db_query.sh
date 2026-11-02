@@ -81,16 +81,13 @@ get_worker_gpu_selection() {
 
 
 # The thermal gate of a host, "on" or "off". A host property shared by every
-# DEF application (workers.thermal_gate, 0/1), not a perfmon setting: it
-# describes the machine's cooling. Reaches a node as AOTRITON_THERMAL_GATE.
-# "off" on a workers.db made before the column existed, or for an unknown host.
+# DEF application (config row thermal_gate::<hostname>, 1 = on), not a perfmon
+# setting: it describes the machine's cooling. Reaches a node as
+# AOTRITON_THERMAL_GATE. "off" when the row is absent.
 get_worker_thermal_gate() {
     local workdir="$1"
     local hostname="$2"
-    local v
-    v=$(sqlite3 "$workdir/workers.db" \
-        "SELECT COALESCE(thermal_gate, 0) FROM workers WHERE hostname = '$hostname' LIMIT 1" 2>/dev/null || true)
-    if [ "$v" = "1" ]; then echo on; else echo off; fi
+    if [ "$(get_config_value "$workdir" "thermal_gate::$hostname")" = "1" ]; then echo on; else echo off; fi
 }
 
 # A value of the workers.db config table, empty when the key is absent.

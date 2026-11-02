@@ -6,7 +6,7 @@
 #   PM_WORKDIR    the perfmon workdir (the scratch's wkdir.<name>)
 #   PM_SCRATCH    the shared scratch
 #   PM_ROCM       the ROCm version of the shared venv
-#   PM_THERMAL_GATE  optional, on|off (workers.db thermal_gate of this host)
+#   PM_THERMAL_GATE  optional, on|off (config row thermal_gate::<host> of this host)
 # set. It defines the environment a perfmon node needs (the path variables of
 # .def/lib/paths.sh, automation doc 2.2) and picks the venv. The checkout is
 # the one this file lives in: a peer mounts it at the same path as the control
@@ -97,7 +97,7 @@ export AOTRITON_SRC=$AOTRITON_SRC
 export AOTRITON_RUNDIR=$AOTRITON_RUNDIR
 export AOTRITON_TMPFS=$AOTRITON_TMPFS
 export PYTHONPYCACHEPREFIX=$PYTHONPYCACHEPREFIX
-export AOTRITON_THERMAL_GATE=${AOTRITON_THERMAL_GATE:-off}   # per host: workers.db thermal_gate
+export AOTRITON_THERMAL_GATE=${AOTRITON_THERMAL_GATE:-off}   # per host: config row thermal_gate::<host>
 export PYTHONPATH=$PYTHONPATH
 export AOTRITON_MODULES_DIR=$AOTRITON_MODULES_DIR
 PRINT

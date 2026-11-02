@@ -1027,7 +1027,6 @@ def init_workers_db(workdir):
                 arch TEXT NOT NULL,
                 workdir_override TEXT,
                 subpool TEXT,
-                thermal_gate INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -1090,10 +1089,26 @@ def init_workers_db(workdir):
         columns = [row[1] for row in conn.execute("PRAGMA table_info(workers)")]
         if 'subpool' not in columns:
             conn.execute("ALTER TABLE workers ADD COLUMN subpool TEXT")
-        # Likewise the thermal gate (0 off, 1 on): a host property shared by
-        # every DEF application, read by the node start path.
-        if 'thermal_gate' not in columns:
-            conn.execute("ALTER TABLE workers ADD COLUMN thermal_gate INTEGER NOT NULL DEFAULT 0")
+        # The thermal gate was once a column here. Per-host settings are rows of
+        # the config table (thermal_gate::<hostname>), so the schema stays
+        # fixed: move a leftover column's values over, then drop it.
+        if 'thermal_gate' in columns:
+            _migrate_thermal_gate_column(conn)
+
+
+def _migrate_thermal_gate_column(conn):
+    """Copy every nonzero workers.thermal_gate into a thermal_gate::<hostname>
+    config row (only where none exists), then drop the column. SQLite older
+    than 3.35 cannot drop a column: it stays, unused (the rows are copied
+    anyway)."""
+    conn.execute("INSERT OR IGNORE INTO config (key, value) "
+                 "SELECT 'thermal_gate::' || hostname, '1' FROM workers WHERE thermal_gate != 0")
+    if sqlite3.sqlite_version_info >= (3, 35, 0):
+        conn.execute("ALTER TABLE workers DROP COLUMN thermal_gate")
+    else:
+        logging.getLogger(__name__).warning(
+            "SQLite %s cannot drop workers.thermal_gate (needs 3.35); the column is left unused",
+            sqlite3.sqlite_version)
 
 
 def get_supported_architectures():
@@ -1284,11 +1299,37 @@ def get_worker_subpools(workdir):
             "SELECT hostname, subpool FROM workers WHERE subpool IS NOT NULL AND subpool != ''")}
 
 
-def get_worker_thermal_gates(workdir) -> dict[str, bool]:
-    """{hostname: gate on?} for every registered host."""
+def get_host_flags(workdir, name) -> dict[str, bool]:
+    """{hostname: on?} for the per-host flag <name>, stored as config rows
+    `<name>::<hostname>` = 1 (absent or 0: off). Host properties live in the
+    config table so that the workers table keeps its schema."""
     init_workers_db(workdir)
+    prefix = f'{name}::'
     with sqlite3.connect((Path(workdir) / 'workers.db').as_posix()) as conn:
-        return {h: bool(g) for h, g in conn.execute("SELECT hostname, thermal_gate FROM workers")}
+        return {k[len(prefix):]: v == '1' for k, v in conn.execute(
+            "SELECT key, value FROM config WHERE key GLOB ?", (prefix + '*',))}
+
+
+def set_host_flag(workdir, name, hostname, enabled, label):
+    """Set the per-host flag <name> of a registered host (see get_host_flags)."""
+    init_workers_db(workdir)
+    try:
+        with sqlite3.connect((Path(workdir) / 'workers.db').as_posix()) as conn:
+            if conn.execute("SELECT 1 FROM workers WHERE hostname = ?", (hostname,)).fetchone() is None:
+                return {'success': False, 'error': f'Unknown host {hostname}'}
+            value = '1' if enabled else '0'
+            conn.execute("INSERT INTO config (key, value) VALUES (?, ?) "
+                         "ON CONFLICT(key) DO UPDATE SET value = ?",
+                         (f'{name}::{hostname}', value, value))
+        return {'success': True,
+                'message': f"{label} {'on' if enabled else 'off'} for {hostname}"}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+def get_worker_thermal_gates(workdir) -> dict[str, bool]:
+    """{hostname: gate on?} for the hosts that have a thermal_gate row."""
+    return get_host_flags(workdir, 'thermal_gate')
 
 
 def get_worker_thermal_gate(workdir, hostname) -> bool:
@@ -1298,18 +1339,8 @@ def get_worker_thermal_gate(workdir, hostname) -> bool:
 
 def set_worker_thermal_gate(workdir, hostname, enabled):
     """Turn the thermal gate of a host on or off. A host property, not an
-    application setting: every DEF application reads the same column."""
-    init_workers_db(workdir)
-    try:
-        with sqlite3.connect((Path(workdir) / 'workers.db').as_posix()) as conn:
-            cur = conn.execute("UPDATE workers SET thermal_gate = ? WHERE hostname = ?",
-                               (1 if enabled else 0, hostname))
-            if cur.rowcount == 0:
-                return {'success': False, 'error': f'Unknown host {hostname}'}
-        return {'success': True,
-                'message': f"Thermal gate {'on' if enabled else 'off'} for {hostname}"}
-    except Exception as e:
-        return {'success': False, 'error': str(e)}
+    application setting: every DEF application reads the same config row."""
+    return set_host_flag(workdir, 'thermal_gate', hostname, enabled, 'Thermal gate')
 
 
 def get_worker_role(workdir, hostname, role):
