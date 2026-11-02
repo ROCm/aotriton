@@ -183,3 +183,41 @@ scl enable gcc-toolset-13 -- bash /tmp/runc-build-triton-wheel.sh \
   file:///mirror "$HASH" /cache/wheels "$TRITON_WHEEL_VERSION_SUFFIX" /scratch/build
 EOF
 done
+
+# Fetch each {pep508} entry into the same cache, with pip wheel: it takes a
+# published wheel when there is one, and otherwise builds one from source
+# (an sdist, or a direct reference such as git+https://...@<sha>), so no
+# detection is needed here. Same image, toolchain, version suffix and scratch
+# space as the builds above, so pip picks the wheel for PYVER and the image's
+# platform, and a source build matches a hash build. --no-deps: only Triton
+# itself is cached; the final pip install resolves its dependencies.
+if [[ -n "${ALTWHEEL_YAML}" ]]; then
+  for key in $(yq -r '.venvs | keys | .[]' "${ALTWHEEL_YAML}"); do
+    req="$(altwheel_venv_pep508 "${ALTWHEEL_YAML}" ".venvs.${key}")"
+    [[ -z "${req}" ]] && continue
+    if [[ -n "$(altwheel_resolve_pep508_path "${WHEEL_OUTPUT_DIR}" "${req}" "${PYVER}")" ]]; then
+      echo "Wheel for ${req} (python ${PYVER}) already cached, skipping."
+      continue
+    fi
+    index="$(altwheel_pep508_index "${WHEEL_OUTPUT_DIR}" "${req}" "${PYVER}")"
+    docker run --network=host -i --rm \
+      --mount "type=bind,source=$(realpath ${WHEEL_OUTPUT_DIR}),target=/cache/wheels" \
+      --tmpfs "/scratch:exec" \
+      -e TRITON_WHEEL_VERSION_SUFFIX="${TRITON_WHEEL_VERSION_SUFFIX}" \
+      "${BASE_DOCKER_IMAGE}" \
+      bash -s "${req}" "$(basename "${index}")" << 'EOS' || exit 1
+set -ex
+OUT=/scratch/wheel
+mkdir -p "$OUT"
+TMPDIR=/scratch scl enable gcc-toolset-13 -- python -m pip wheel --no-deps -w "$OUT" "$1"
+shopt -s nullglob
+whls=("$OUT"/*.whl)
+if [ "${#whls[@]}" -ne 1 ]; then
+  echo "Error: expected one wheel for '$1', got ${#whls[@]}" >&2
+  exit 1
+fi
+cp "${whls[0]}" /cache/wheels/
+basename "${whls[0]}" > "/cache/wheels/$2"
+EOS
+  done
+fi
