@@ -24,6 +24,20 @@ AOTRITON_SUPPORTED_GPUS = (
     'gfx1250_mod0',
 )
 
+# The arches the dev team measures and ships first. perfmon builds one
+# "MAJOR" subject per release that serves all of them (images of every major
+# arch next to one shim), so a release's artifacts cannot diverge between
+# arches; other arches get a subject of their own. Shell scripts read this
+# literal through `ast`, like AOTRITON_SUPPORTED_GPUS, so keep it a plain tuple
+# of strings.
+AOTRITON_MAJOR_ARCHES = (
+    'gfx90a',
+    'gfx942',
+    'gfx950',
+    'gfx1100',
+    'gfx1201',
+)
+
 # An arch without tuning of its own shares another arch's tuning through base
 # references in the tuning database, e.g. amd/gfx1101/attn_fwd.txtdb holds
 # "#! base" naming ../gfx1100/attn_fwd.*, plus .dbpatch files for what it
