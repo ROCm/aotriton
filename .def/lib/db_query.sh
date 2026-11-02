@@ -90,6 +90,16 @@ get_worker_thermal_gate() {
     if [ "$(get_config_value "$workdir" "thermal_gate::$hostname")" = "1" ]; then echo on; else echo off; fi
 }
 
+# Whether a host reaches the server's services through SSH tunnels: 1 or 0.
+# A host property shared by every DEF application (config row
+# firewalled::<hostname>, 1 = yes); 0 when the row is absent. It describes the
+# host's network, not the remedy (perfmon-pgsql-ssh-tunnel.md).
+get_worker_firewalled() {
+    local workdir="$1"
+    local hostname="$2"
+    if [ "$(get_config_value "$workdir" "firewalled::$hostname")" = "1" ]; then echo 1; else echo 0; fi
+}
+
 # A value of the workers.db config table, empty when the key is absent.
 get_config_value() {
     local workdir="$1"
