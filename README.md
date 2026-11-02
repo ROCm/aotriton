@@ -27,9 +27,7 @@ LLVM from `third_party/flydsl-llvm.txt`. Image-mode builds only:
 
 ### Prerequisites
 
-* `python >= 3.10`
-  - For `python >= 3.14`, Triton needs patch https://github.com/triton-lang/triton/commit/c44b870bdd9e1ea8933fd4057b6b59a5e6e5407b
-    to fix `ast.Num` error.
+* `python >= 3.12`
 * `gcc >= 8` or `clang >= 10`
   - For Designated initializers, but only gcc >= 9 is tested.
   - The binary delivery is compiled with gcc13
