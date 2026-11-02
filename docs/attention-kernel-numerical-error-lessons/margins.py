@@ -18,9 +18,11 @@ for case in tb.COMMON_MISTAKES_CASES:
         worst = {}
         for seed in range(6):
             seqlen_q, seqlen_k, sc, causal, sm = tb._common_mistakes_case(case)
+            # A negative input scale means U[0, -sc) for every input, see one_signed_values.
+            draw = (lambda s, sd: torch.rand(s, device='cuda') * -sc) if sc < 0 else (lambda s, sd: torch.randn(s, device='cuda') * sd)
             torch.manual_seed(seed)
             B, H, D = 2, 3, 128
-            mk = lambda n, s: (torch.randn(B, H, n, D, device='cuda') * s).to(dtype)
+            mk = lambda n, s: draw((B, H, n, D), s).to(dtype)
             q, k, v, dout = mk(seqlen_q, sc).requires_grad_(), mk(seqlen_k, sc).requires_grad_(), mk(seqlen_k, 1.0).requires_grad_(), mk(seqlen_q, 1.0)
             ext = tb.AttentionExtraArgs(is_testing=False, fillnan=True, return_logsumexp=True)
             o, _, L = tb.attention(q, k, v, None, causal, sm, 0.0, ext)
