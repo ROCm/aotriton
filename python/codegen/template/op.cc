@@ -5,7 +5,9 @@
 #include "iface.[[iface_name]].h"
 #include <aotriton/_internal/log.h>
 #include <aotriton/util.h>
+#ifndef NDEBUG
 #include <iostream>
+#endif
 #include <tuple>
 [[includes]]
 
