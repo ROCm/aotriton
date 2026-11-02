@@ -100,6 +100,19 @@ get_worker_firewalled() {
     if [ "$(get_config_value "$workdir" "firewalled::$hostname")" = "1" ]; then echo 1; else echo 0; fi
 }
 
+# "<PGHOST> <PGPORT>" for a firewalled host, empty for any other. The server
+# decides: the start paths read it here and hand it to the remote side as
+# arguments, so host-side scripts never open workers.db. A firewalled host
+# reaches PostgreSQL through the tunnel (tunnels.py) on its own loopback, same
+# port as the server's (config.rc POSTGRES_PORT).
+get_worker_pg_endpoint() {
+    local workdir="$1"
+    local hostname="$2"
+    if [ "$(get_worker_firewalled "$workdir" "$hostname")" = "1" ]; then
+        echo "127.0.0.1 $(. "$workdir/config.rc" && echo "${POSTGRES_PORT:-5432}")"
+    fi
+}
+
 # A value of the workers.db config table, empty when the key is absent.
 get_config_value() {
     local workdir="$1"

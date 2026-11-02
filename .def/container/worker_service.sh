@@ -259,8 +259,10 @@ fi
 
 # The engine reads the connection parameters from PG* variables (never a
 # database name); sourcing config.rc is this infrastructure's job, not its.
-export PGHOST="${CELERY_SERVICE_HOST:-localhost}"
-export PGPORT="${POSTGRES_PORT:-5432}"
+# A preset PGHOST/PGPORT wins: a firewalled host is started with 127.0.0.1 and
+# the port of its SSH tunnel (see .def/libexec/tunnels.py).
+export PGHOST="${PGHOST:-${CELERY_SERVICE_HOST:-localhost}}"
+export PGPORT="${PGPORT:-${POSTGRES_PORT:-5432}}"
 export PGUSER="${POSTGRES_USER:-aotriton}"
 export PGPASSWORD="${POSTGRES_PASSWORD:-}"
 

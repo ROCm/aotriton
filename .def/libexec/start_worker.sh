@@ -68,7 +68,14 @@ EXTRA_ARGS=(--hostname "$HOSTNAME" "${EXTRA_ARGS[@]}" ${SUBPOOL:+--subpool "$SUB
 # worker_service.sh takes no flag for it.
 THERMAL_GATE="$(get_worker_thermal_gate "$WORKDIR" "$HOSTNAME")"
 
-ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$CELERY_WORKER_IMAGE" "$AOTRITON_IMAGE_WORKDIR" "$AOTRITON_IMAGE_TMPFS" "$AOTRITON_IMAGE_SRC" "$AOTRITON_IMAGE_RUNDIR" "$THERMAL_GATE" "${EXTRA_ARGS[@]}" <<'EOF'
+# A firewalled host (workers.db, shared by every DEF application) reaches
+# PostgreSQL through an SSH tunnel on its own loopback: PGHOST/PGPORT go into
+# the container's environment, only then. Empty for any other host.
+PG_ENDPOINT="$(get_worker_pg_endpoint "$WORKDIR" "$HOSTNAME")"
+PG_HOST="${PG_ENDPOINT% *}"
+PG_PORT="${PG_ENDPOINT#* }"
+
+ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$CELERY_WORKER_IMAGE" "$AOTRITON_IMAGE_WORKDIR" "$AOTRITON_IMAGE_TMPFS" "$AOTRITON_IMAGE_SRC" "$AOTRITON_IMAGE_RUNDIR" "$THERMAL_GATE" "$PG_HOST" "$PG_PORT" "${EXTRA_ARGS[@]}" <<'EOF'
 WORKER_WORKDIR="$1"
 ARCH="$2"
 CELERY_WORKER_IMAGE="$3"
@@ -79,7 +86,14 @@ IMG_TMPFS="$5"
 IMG_SRC="$6"
 IMG_RUNDIR="$7"
 THERMAL_GATE="$8"
-shift 8
+PG_HOST="$9"
+PG_PORT="${10}"
+shift 10
+# Only a firewalled host gets them; the others read config.rc as before.
+PG_ENV=()
+if [ -n "$PG_HOST" ]; then
+  PG_ENV=(-e "PGHOST=$PG_HOST" -e "PGPORT=$PG_PORT")
+fi
 EXTRA_ARGS=("$@")
 
 # Read --category from EXTRA_ARGS. It is forwarded to worker_service.sh as it
@@ -138,6 +152,7 @@ WORKER_CONTAINER_ID=$(docker run -d \
   -e AOTRITON_RUNDIR=$IMG_RUNDIR \
   -e AOTRITON_TMPFS=$IMG_TMPFS \
   -e AOTRITON_THERMAL_GATE=$THERMAL_GATE \
+  "${PG_ENV[@]}" \
   -e PYTHONPYCACHEPREFIX=$IMG_RUNDIR/pycache \
   --mount type=bind,source=$(realpath $WORKER_WORKDIR),target=$IMG_WORKDIR \
   "$CELERY_WORKER_IMAGE" \
