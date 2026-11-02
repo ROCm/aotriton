@@ -69,11 +69,14 @@ EXTRA_ARGS=(--hostname "$HOSTNAME" "${EXTRA_ARGS[@]}" ${SUBPOOL:+--subpool "$SUB
 THERMAL_GATE="$(get_worker_thermal_gate "$WORKDIR" "$HOSTNAME")"
 
 # A firewalled host (workers.db, shared by every DEF application) reaches
-# PostgreSQL through an SSH tunnel on its own loopback: PGHOST/PGPORT go into
-# the container's environment, only then. Empty for any other host.
+# PostgreSQL through an SSH tunnel that ends in a Unix socket in its workdir:
+# PGHOST/PGPORT go into the container's environment, only then. Empty for any
+# other host. The endpoint names the socket directory on the host; the
+# container sees the same directory under its image workdir.
 PG_ENDPOINT="$(get_worker_pg_endpoint "$WORKDIR" "$HOSTNAME")"
 PG_HOST="${PG_ENDPOINT% *}"
 PG_PORT="${PG_ENDPOINT#* }"
+[ -z "$PG_HOST" ] || PG_HOST="$AOTRITON_IMAGE_WORKDIR/run/pgsql"
 
 ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$CELERY_WORKER_IMAGE" "$AOTRITON_IMAGE_WORKDIR" "$AOTRITON_IMAGE_TMPFS" "$AOTRITON_IMAGE_SRC" "$AOTRITON_IMAGE_RUNDIR" "$THERMAL_GATE" "$PG_HOST" "$PG_PORT" "${EXTRA_ARGS[@]}" <<'EOF'
 WORKER_WORKDIR="$1"

@@ -219,10 +219,29 @@ def _prepare(tasks, tmp_path):
     (workdir / 'config.rc').write_text('CELERY_SERVICE_HOST=server.example\nPOSTGRES_PORT=6789\n')
     _workers(tasks, workdir, 'fw', 'direct')
     tasks.set_worker_firewalled(workdir, 'fw', True)
+    with sqlite3.connect(workdir / 'workers.db') as conn:
+        conn.execute("INSERT INTO config (key, value) VALUES ('default_workdir', '/w')")
     return workdir
 
 
-@pytest.mark.parametrize('host,expected', [('fw', ['127.0.0.1', '6789']), ('direct', ['', ''])])
+@pytest.mark.parametrize('host,expected', [('fw', ['/w/run/pgsql', '6789']), ('direct', ['', ''])])
+def test_pg_endpoint_uses_the_hosts_workdir(webui, tmp_path, sqlite3_cli):
+    tasks, _ = webui
+    workdir = _prepare(tasks, tmp_path)
+
+    def endpoint(host):
+        return subprocess.run(['bash', '-c', f'. {_DB_QUERY_SH}; get_worker_pg_endpoint {workdir} {host}'],
+                              capture_output=True,
+                              text=True,
+                              check=True).stdout.strip()
+
+    assert endpoint('fw') == '/w/run/pgsql 6789'
+    assert endpoint('direct') == ''
+    with sqlite3.connect(workdir / 'workers.db') as conn:
+        conn.execute("UPDATE workers SET workdir_override = '/scratch/wk' WHERE hostname = 'fw'")
+    assert endpoint('fw') == '/scratch/wk/run/pgsql 6789'
+
+
 def test_node_passes_the_endpoint(webui, tmp_path, sqlite3_cli, host, expected):
     tasks, _ = webui
     workdir = _prepare(tasks, tmp_path)
@@ -239,8 +258,6 @@ def test_node_passes_the_endpoint(webui, tmp_path, sqlite3_cli, host, expected):
 def test_start_worker_passes_the_endpoint(webui, tmp_path, sqlite3_cli):
     tasks, _ = webui
     workdir = _prepare(tasks, tmp_path)
-    with sqlite3.connect(workdir / 'workers.db') as conn:
-        conn.execute("INSERT INTO config (key, value) VALUES ('default_workdir', '/w')")
     script = _REPO / '.def' / 'libexec' / 'start_worker.sh'
     for host, expect_env in (('fw', True), ('direct', False)):
         lines = _fake_ssh_run(tmp_path, ['bash', str(script), str(workdir), host, '--', '--category', 'perfmon'])
@@ -248,4 +265,5 @@ def test_start_worker_passes_the_endpoint(webui, tmp_path, sqlite3_cli):
         # bash -s <WORKER_WORKDIR> <arch> <image> <4 paths> <thermal_gate> <pghost> <pgport> <extra args...>
         args = lines[1:]
         pg = args[args.index('off') + 1:args.index('off') + 3]
-        assert pg == (['127.0.0.1', '6789'] if expect_env else ['', ''])
+        # The in-container path of the socket directory (image workdir /wkdir).
+        assert pg == (['/wkdir/run/pgsql', '6789'] if expect_env else ['', ''])

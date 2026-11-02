@@ -48,8 +48,9 @@ start_tunnels() {
     if [ -z "${SSH_AUTH_SOCK:-}" ]; then
         echo "  SSH_AUTH_SOCK is not set in this shell: no ssh-agent is reachable." >&2
     fi
-    echo "  Each firewalled host must also permit remote port forwarding, in its sshd" >&2
-    echo "  (AllowTcpForwarding) and in SELinux. See $TUNNELS_STATUS" >&2
+    echo "  Each firewalled host must also permit remote Unix-socket forwarding, in its" >&2
+    echo "  sshd (AllowStreamLocalForwarding, on by default) and in SELinux." >&2
+    echo "  See $TUNNELS_STATUS" >&2
 }
 
 stop_tunnels() {

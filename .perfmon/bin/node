@@ -13,9 +13,10 @@
 # --category perfmon` in the shared venv with the path variables set
 # (AOTRITON_RUNDIR node-local: ${XDG_RUNTIME_DIR:-/tmp}/aotriton-perfmon), with
 #   AOTRITON_THERMAL_GATE   from the config row thermal_gate::<host> (off if unset)
-#   PGHOST, PGPORT          127.0.0.1 and POSTGRES_PORT when the config row
-#                           firewalled::<host> is 1 (PostgreSQL then comes through
-#                           the SSH tunnel of .def/libexec/tunnels.py)
+#   PGHOST, PGPORT          <host workdir>/run/pgsql and POSTGRES_PORT when the
+#                           config row firewalled::<host> is 1 (PostgreSQL then
+#                           comes through the Unix socket of the SSH tunnel of
+#                           .def/libexec/tunnels.py)
 #   --subpool               the host's subpool in workers.db, when it has one
 # The peer must have been prepared with setup_session. The host's arch comes
 # from workers.db unless --arch is given. --rocm defaults to the first of

@@ -100,16 +100,33 @@ get_worker_firewalled() {
     if [ "$(get_config_value "$workdir" "firewalled::$hostname")" = "1" ]; then echo 1; else echo 0; fi
 }
 
+# The workdir of a worker as the server knows it (its workdir_override, else
+# the default_workdir): the path on the host itself.
+get_worker_workdir() {
+    local workdir="$1"
+    local hostname="$2"
+    local override
+    override="$(sqlite3 "$workdir/workers.db" \
+        "SELECT COALESCE(workdir_override, '') FROM workers WHERE hostname = '$hostname' LIMIT 1" 2>/dev/null || true)"
+    if [ -n "$override" ]; then
+        echo "$override"
+    else
+        get_default_workdir "$workdir"
+    fi
+}
+
 # "<PGHOST> <PGPORT>" for a firewalled host, empty for any other. The server
 # decides: the start paths read it here and hand it to the remote side as
 # arguments, so host-side scripts never open workers.db. A firewalled host
-# reaches PostgreSQL through the tunnel (tunnels.py) on its own loopback, same
-# port as the server's (config.rc POSTGRES_PORT).
+# reaches PostgreSQL through a Unix socket that the tunnel (tunnels.py) puts
+# in its own workdir: PGHOST is the socket's directory <host workdir>/run/pgsql
+# (libpq treats a PGHOST starting with / so), PGPORT is config.rc's
+# POSTGRES_PORT (it names the file .s.PGSQL.<port>).
 get_worker_pg_endpoint() {
     local workdir="$1"
     local hostname="$2"
     if [ "$(get_worker_firewalled "$workdir" "$hostname")" = "1" ]; then
-        echo "127.0.0.1 $(. "$workdir/config.rc" && echo "${POSTGRES_PORT:-5432}")"
+        echo "$(get_worker_workdir "$workdir" "$hostname")/run/pgsql $(. "$workdir/config.rc" && echo "${POSTGRES_PORT:-5432}")"
     fi
 }
 

@@ -11,10 +11,17 @@ A firewalled host cannot reach the server's services (today: PostgreSQL)
 directly. For each host with a config row `firewalled::<hostname>` = 1 in
 <workdir>/workers.db this keeps one reverse tunnel up,
 
-    ssh -N -R 127.0.0.1:<port>:127.0.0.1:<port> <hostname>
+    ssh -N -R <socket>:127.0.0.1:<port> <hostname>
 
-so that the host reaches the service as localhost:<port>. Design and
-assumptions: perfmon-pgsql-ssh-tunnel.md.
+where <socket> is a Unix socket in the host's own workdir (as the server
+knows it: workers.db workdir_override, else default_workdir),
+<workdir>/run/pgsql/.s.PGSQL.<port> for PostgreSQL. A process on the host
+(a claudepak peer sees the workdir at the same path, a docker worker mounts it)
+sets PGHOST=<workdir>/run/pgsql and PGPORT=<port>, and libpq connects to the
+socket. Unlike a TCP port on the host's loopback this works from a container
+on a Docker bridge. Before each (re)start the stale socket is removed over
+ssh, because sshd does not unlink it by itself. Design and assumptions:
+perfmon-pgsql-ssh-tunnel.md.
 
 Started and stopped by `srvctl <workdir> start|stop` on the server's bare
 metal (pid file <workdir>/run/ssh-tunnels.pid). Standard library only, and it
@@ -34,6 +41,7 @@ import argparse
 import datetime
 import os
 import re
+import shlex
 import signal
 import sqlite3
 import subprocess
@@ -42,19 +50,20 @@ import threading
 import time
 from pathlib import Path
 
-# The address the tunnel listens on, on the firewalled host. Loopback works
-# for tune's host-network workers; whether a claudepak peer (a Docker bridge)
-# reaches it is the open question of perfmon-pgsql-ssh-tunnel.md section 2.4.
-# Option B there (the bridge gateway, e.g. 172.17.0.1) may replace this after
-# the first real test.
-BIND_ADDRESS = '127.0.0.1'
-
 # The services forwarded to a firewalled host: (name, config.rc variable
-# holding its port). Adding a service adds one `-R` per tunnel.
-SERVICES = (('postgresql', 'POSTGRES_PORT'),)
+# holding its port, socket directory under <host workdir>/run, socket file name
+# for a port). Adding a service adds one `-R` per tunnel. The PostgreSQL
+# socket is where libpq looks for it: PGHOST=<directory>, PGPORT=<port>.
+SERVICES = (('postgresql', 'POSTGRES_PORT', 'pgsql', '.s.PGSQL.{port}'),)
 DEFAULT_PORTS = {'POSTGRES_PORT': 5432}
 
 POLL_INTERVAL = 2.0          # seconds between main loop wakeups
+# A Unix socket path must fit in sockaddr_un.sun_path, 108 bytes including the
+# terminating NUL, so at most 107 bytes. The path depends on the host's
+# workdir; a longer one cannot be bound, so such a tunnel is not started.
+MAX_SOCKET_PATH = 107
+
+SSH_PREP_TIMEOUT = 30.0      # seconds for the stale-socket clean-up ssh
 UP_AFTER = 3.0               # an ssh alive this long (no exit on a refused forward) counts as up
 STABLE_AFTER = 60.0          # an ssh alive this long resets the back-off
 BACKOFF_BASE = 2.0
@@ -98,16 +107,44 @@ def classify_failure(stderr_text, host):
         return ('auth',
                 'non-interactive ssh is needed: start ssh-agent and ssh-add your key, '
                 f'and make sure {host} is in known_hosts')
-    if 'remote port forwarding failed for listen port' in low:
+    if 'remote port forwarding failed for listen path' in low:
         return ('forward',
-                f'check sshd AllowTcpForwarding/GatewayPorts and SELinux on {host} '
+                f'check sshd AllowStreamLocalForwarding and SELinux on {host} '
                 '(its audit log names the denial)')
     return 'other', ''
 
 
-def forwards_for(config):
-    """[(service, port)] to forward, from the config.rc values."""
-    return [(name, int(config.get(var) or DEFAULT_PORTS[var])) for name, var in SERVICES]
+def forwards_for(config, host_workdir):
+    """[(service, port, socket)] to forward to a host whose workdir is
+    <host_workdir>, from the config.rc values. [] without a workdir."""
+    if not host_workdir:
+        return []
+    forwards = []
+    for name, var, subdir, filename in SERVICES:
+        port = int(config.get(var) or DEFAULT_PORTS[var])
+        socket = f'{host_workdir}/run/{subdir}/{filename.format(port=port)}'
+        forwards.append((name, port, socket))
+    return forwards
+
+
+def socket_path_problem(host, forwards):
+    """The hint for a socket path over the limit, or '' when all fit."""
+    for _, _, socket in forwards:
+        size = len(os.fsencode(socket))
+        if size > MAX_SOCKET_PATH:
+            return (f'Unix socket path is {size} bytes, over the {MAX_SOCKET_PATH}-byte limit; '
+                    f'shorten the workdir path on {host}')
+    return ''
+
+
+def prepare_command(host, forwards):
+    """The argv of the ssh that makes the socket directories on <host> and
+    removes stale sockets (sshd does not unlink one itself)."""
+    dirs = sorted({os.path.dirname(socket) for _, _, socket in forwards})
+    sockets = [socket for _, _, socket in forwards]
+    remote = 'mkdir -p ' + ' '.join(shlex.quote(d) for d in dirs)
+    remote += ' && rm -f ' + ' '.join(shlex.quote(s) for s in sockets)
+    return ['ssh', '-o', 'BatchMode=yes', host, remote]
 
 
 def ssh_command(host, forwards):
@@ -117,8 +154,8 @@ def ssh_command(host, forwards):
            '-o', 'ServerAliveInterval=15',
            '-o', 'ServerAliveCountMax=3',
            '-o', 'BatchMode=yes']
-    for _, port in forwards:
-        cmd += ['-R', f'{BIND_ADDRESS}:{port}:127.0.0.1:{port}']
+    for _, port, socket in forwards:
+        cmd += ['-R', f'{socket}:127.0.0.1:{port}']
     cmd.append(host)
     return cmd
 
@@ -129,7 +166,7 @@ def format_time(t):
 
 def format_status_line(host, forwards, state, since, note):
     """host, services, state, since, note: tab separated."""
-    services = ','.join(f'{name}:{port}' for name, port in forwards)
+    services = ','.join(f'{name}:{socket}' for name, _, socket in forwards) or '-'
     return '\t'.join((host, services, state, format_time(since), note))
 
 
@@ -173,6 +210,20 @@ def read_firewalled_hosts(workdir):
     return {key[len('firewalled::'):] for (key,) in rows}
 
 
+def read_host_workdir(workdir, host):
+    """The workdir of <host> as the server knows it: workers.db
+    workdir_override, else the default_workdir config row; '' if neither."""
+    conn = sqlite3.connect(f'file:{Path(workdir) / "workers.db"}?mode=ro', uri=True)
+    try:
+        row = conn.execute('SELECT workdir_override FROM workers WHERE hostname = ?', (host,)).fetchone()
+        if row and row[0]:
+            return row[0]
+        row = conn.execute("SELECT value FROM config WHERE key = 'default_workdir'").fetchone()
+        return row[0] if row and row[0] else ''
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Supervision
 
@@ -192,6 +243,13 @@ class Tunnel:
         self.state = RESTARTING
         self.since = now
         self.note = 'starting'
+        self.blocked = socket_path_problem(host, forwards)
+        if not forwards:
+            self.blocked = 'no workdir known for this host (workers.db workdir_override or default_workdir)'
+        if self.blocked:
+            self.state = DOWN
+            self.note = self.blocked
+            self.log(host, f'tunnel not started: {self.blocked}')
         self._stderr = []
         self._reader = None
 
@@ -209,7 +267,28 @@ class Tunnel:
                 self._stderr.append(line)
                 self.log(self.host, f'ssh: {line}')
 
+    def _prepare(self):
+        """Make the socket directory and remove stale sockets on the host;
+        the error text on failure, '' on success."""
+        cmd = prepare_command(self.host, self.forwards)
+        self.log(self.host, 'preparing: ' + ' '.join(cmd))
+        try:
+            result = subprocess.run(cmd,
+                                    stdin=subprocess.DEVNULL,
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=SSH_PREP_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return str(e) or 'timeout'
+        if result.returncode != 0:
+            return result.stderr.strip() or f'ssh exited with status {result.returncode}'
+        return ''
+
     def start(self, now):
+        error = self._prepare()
+        if error:
+            self.proc = None
+            return self._failed(now, error, 0.0)
         cmd = ssh_command(self.host, self.forwards)
         self.log(self.host, 'starting: ' + ' '.join(cmd))
         self._stderr = []
@@ -241,6 +320,8 @@ class Tunnel:
 
     def poll(self, now):
         """Advance the state machine; True when the status changed."""
+        if self.blocked:
+            return False
         if self.proc is None:
             return self.start(now) if now >= self.next_start else False
         code = self.proc.poll()
@@ -323,7 +404,7 @@ class Manager:
         try:
             config = read_config(self.workdir)
             wanted = {h for h in read_firewalled_hosts(self.workdir) if _HOSTNAME.match(h)}
-            forwards = forwards_for(config)
+            host_forwards = {h: forwards_for(config, read_host_workdir(self.workdir, h)) for h in wanted}
         except (RuntimeError, sqlite3.Error, ValueError) as e:
             self.log(None, f'reload failed, keeping the current tunnels: {e}')
             return
@@ -332,12 +413,12 @@ class Manager:
             self.tunnels.pop(host).stop(now)
             self.log(host, 'no longer firewalled: tunnel removed')
         for host, tunnel in sorted(self.tunnels.items()):
-            if tunnel.forwards != forwards:
+            if tunnel.forwards != host_forwards[host]:
                 self.log(host, 'forwarded services changed: restarting')
                 tunnel.stop(now)
-                self.tunnels[host] = Tunnel(host, forwards, self.log, now, self.up_after)
+                self.tunnels[host] = Tunnel(host, host_forwards[host], self.log, now, self.up_after)
         for host in to_start:
-            self.tunnels[host] = Tunnel(host, forwards, self.log, now, self.up_after)
+            self.tunnels[host] = Tunnel(host, host_forwards[host], self.log, now, self.up_after)
         self.log(None, f'reload: wanted={sorted(wanted)} started={to_start} stopped={to_stop}')
 
     # -- main loop
