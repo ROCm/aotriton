@@ -269,9 +269,10 @@ class FlashTune(TuningDescription):
         binning_seqlen = self._clamp_memory_usage(binning_seqlen)
         yield self._write_ref(binning_seqlen, data_root, '06_binning_seqlen')
 
+        # max(): 2 * 16 - 37 is negative, and 2 * 32 - 37 is not past the bin.
         binning_irregular_both = dataclasses.replace(im,
-                                                     seqlen_q=2 * im.seqlen_q - 37,
-                                                     seqlen_k=2 * im.seqlen_k - 37,
+                                                     seqlen_q=max(im.seqlen_q + 7, 2 * im.seqlen_q - 37),
+                                                     seqlen_k=max(im.seqlen_k + 7, 2 * im.seqlen_k - 37),
                                                      hdim=im.hdim - 8)
         binning_irregular_both = self._clamp_memory_usage(binning_irregular_both)
         yield self._write_ref(binning_irregular_both, data_root, '07_binning_irregular_both')

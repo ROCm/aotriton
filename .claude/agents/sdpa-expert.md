@@ -307,7 +307,7 @@ from input.
 - `04_irregular_both`: combined
 - `05_bshd`: `storage_flip=(1,2)` (BSHD layout)
 - `06_binning_seqlen`: `2 * seqlen_q/k` (binning clamp past the entry's bin)
-- `07_binning_irregular_both`: `2 * seqlen_q/k - 37`, `hdim - 8`
+- `07_binning_irregular_both`: `max(seqlen_q/k + 7, 2 * seqlen_q/k - 37)`, `hdim - 8`
 
 `_gen_ref()` numbers any `extra_ims` from `08_utextra` onwards.
 
