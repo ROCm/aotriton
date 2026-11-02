@@ -70,7 +70,16 @@
             {% for host in build_hosts %}<option value="{{ host }}">{% endfor %}
         </datalist>
         <div style="display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: center; margin: 0.4rem 0;">
-            <span style="font-size: 0.9em; color: gray;">Arches (none: the script's default):</span>
+            <span style="font-size: 0.9em; color: gray;">Target (none: MAJOR):</span>
+            <label style="margin: 0; display: flex; align-items: center; gap: 0.3rem;"
+                   title="One subject per tag for gfx90a, gfx942, gfx950, gfx1100 and gfx1201, in installed/perfmon/MAJOR">
+                <input type="checkbox" name="arch" value="MAJOR" checked style="margin: 0;">MAJOR
+            </label>
+            <label style="margin: 0; display: flex; align-items: center; gap: 0.3rem;"
+                   title="MAJOR, and a subject per tag and arch for every other supported arch">
+                <input type="checkbox" name="arch" value="ALL" style="margin: 0;">ALL
+            </label>
+            <span style="font-size: 0.9em; color: gray;">or arches (a major arch means MAJOR):</span>
             {% for arch in archs %}
             <label style="margin: 0; display: flex; align-items: center; gap: 0.3rem;">
                 <input type="checkbox" name="arch" value="{{ arch }}" style="margin: 0;">{{ arch }}

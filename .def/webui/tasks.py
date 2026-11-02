@@ -2278,19 +2278,27 @@ def get_perfmon_build_hosts(workdir) -> list[str]:
     return hosts
 
 
+# What build_subjects takes besides an arch: MAJOR is one subject per tag for
+# the five arches of AOTRITON_MAJOR_ARCHES (python/gpu_targets.py), ALL adds a
+# subject per other supported arch.
+PERFMON_BUILD_TARGETS = ('MAJOR', 'ALL')
+
+
 def build_perfmon_subjects(workdir, host: str, archs: list[str] | None = None, dry_run: bool = False):
     """Build the configured tags x ROCm versions on a build host.
 
     One `.perfmon/bin/build_subjects` run per ROCm version, each through the
-    action tracker (its own streamed and logged action). `archs` empty means
-    the script's default arch list. Returns {'status', 'message', 'action_ids'}
+    action tracker (its own streamed and logged action). `archs` are the
+    targets of the build: MAJOR, ALL or arches (a major arch means MAJOR); empty
+    means MAJOR, the dev team's choice, built as one subject per tag, not one
+    per arch. Returns {'status', 'message', 'action_ids'}
     (and 'action_id' of the first run, like the single-command functions).
     """
     host = (host or '').strip()
     if not _HOST_RE.match(host):
         return {'status': 'error', 'message': f'Invalid build host {host!r}'}
     archs = list(archs or [])
-    bad = [a for a in archs if a not in TUNING_ARCHITECTURES]
+    bad = [a for a in archs if a not in TUNING_ARCHITECTURES and a not in PERFMON_BUILD_TARGETS]
     if bad:
         return {'status': 'error', 'message': f'Unsupported architecture(s): {", ".join(bad)}'}
     settings = get_perfmon_settings(workdir)
@@ -2301,11 +2309,11 @@ def build_perfmon_subjects(workdir, host: str, archs: list[str] | None = None, d
     results = []
     for rocm in rocms:
         cmd = ['.perfmon/bin/build_subjects', '--workdir', workdir, '--host', host, '--rocm', rocm]
-        for arch in archs:
-            cmd += ['--arch', arch]
+        cmd += ['--arch', *(archs or ['MAJOR'])]
         cmd += tags
         results.append(run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
-                                   description=f'Build perfmon subjects on {host} (ROCm {rocm}: {" ".join(tags)})',
+                                   description=(f'Build perfmon subjects on {host} '
+                                                f'(ROCm {rocm}, {" ".join(archs or ["MAJOR"])}: {" ".join(tags)})'),
                                    dry_run=dry_run))
     out = dict(results[0])
     out['action_ids'] = [r['action_id'] for r in results if r.get('action_id')]
