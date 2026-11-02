@@ -5,6 +5,9 @@
 #include "shim.[[shim_kernel_name]].h"
 #include <aotriton/util.h>
 #include <aotriton/_internal/log.h>
+#ifndef NDEBUG
+#include <iostream>
+#endif
 #include <tuple>
 #if AOTRITON_BUILD_FOR_TUNING
 #include <aotriton/cpp_tune.h>
