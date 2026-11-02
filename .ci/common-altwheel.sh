@@ -2,18 +2,20 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Read altwheel YAML venvs.* entries: either a bare hash string (old syntax)
-# or a {hash, origin} map (new syntax, for a hash living in a different
-# Triton origin than the default). yq's if/then/else and try/catch don't
-# reliably branch on mixed scalar/map types across yq versions -- branch in
-# bash on `tag` instead, which is stable everywhere.
+# Read altwheel YAML venvs.* entries: a bare hash string (old syntax), a
+# {hash, origin} map (new syntax, for a hash living in a different Triton
+# origin than the default), or a {pep508} map (a pip requirement, fetched
+# with pip wheel rather than built from the mirror). yq's if/then/else and try/catch don't reliably branch on
+# mixed scalar/map types across yq versions -- branch in bash on `tag`
+# instead, which is stable everywhere.
 
+# Empty for a {pep508} entry, which names no commit.
 altwheel_venv_hash() {
   local yaml="$1" path="$2"
   local t
   t=$(yq -r "${path} | tag" "$yaml" 2>/dev/null)
   if [ "$t" = "!!map" ]; then
-    yq -r "${path}.hash" "$yaml"
+    yq -r "${path}.hash // \"\"" "$yaml"
   else
     yq -r "${path} // \"\"" "$yaml"
   fi
@@ -42,6 +44,36 @@ altwheel_venv_pat_environ() {
   else
     echo ""
   fi
+}
+
+# The pip requirement of a {pep508} entry, empty for every other entry.
+altwheel_venv_pep508() {
+  local yaml="$1" path="$2"
+  local t
+  t=$(yq -r "${path} | tag" "$yaml" 2>/dev/null)
+  if [ "$t" = "!!map" ]; then
+    yq -r "${path}.pep508 // \"\"" "$yaml"
+  else
+    echo ""
+  fi
+}
+
+# A {pep508} wheel is cached next to the built ones, under its own file name.
+# This index file, keyed on the requirement and Python version, records that
+# name: a requirement like triton>=3.9 does not determine it.
+altwheel_pep508_index() {
+  local host_wheel_dir="$1" req="$2" pyver="$3"
+  echo "${host_wheel_dir}/pep508-$(printf '%s\n%s\n' "${req}" "${pyver}" | sha256sum | cut -c1-16).txt"
+}
+
+# The cached wheel for <req> and <pyver>, or nothing if it is not cached yet.
+altwheel_resolve_pep508_path() {
+  local host_wheel_dir="$1" req="$2" pyver="$3" index whl
+  index="$(altwheel_pep508_index "${host_wheel_dir}" "${req}" "${pyver}")"
+  [ -f "${index}" ] || return 0
+  whl="${host_wheel_dir}/$(cat "${index}")"
+  [ -f "${whl}" ] && echo "${whl}"
+  return 0
 }
 
 # Wheel filenames pip produces embed the CPython ABI tag as cp<major><minor>
@@ -96,7 +128,7 @@ altwheel_resolve_wheel_path() {
 #                       host_wheel_dir.
 altwheel_resolve_config() {
   local yaml="$1" host_wheel_dir="$2" container_wheel_dir="$3" default_hash="$4" pyver="$5"
-  local key hash host_wheel
+  local key hash req host_wheel
 
   local resolved_default_hash
   resolved_default_hash=$(altwheel_venv_hash "${yaml}" ".venvs.default")
@@ -113,6 +145,16 @@ altwheel_resolve_config() {
 
   for key in $(yq -r '.venvs | keys | .[]' "${yaml}"); do
     [ "${key}" = "default" ] && continue
+    req=$(altwheel_venv_pep508 "${yaml}" ".venvs.${key}")
+    if [ -n "${req}" ]; then
+      host_wheel=$(altwheel_resolve_pep508_path "${host_wheel_dir}" "${req}" "${pyver}")
+      if [ -z "${host_wheel}" ]; then
+        echo "Error: no fetched wheel found for altwheel venv '${key}' (pep508 ${req}, python ${pyver})" >&2
+        return 1
+      fi
+      expr="${expr} | .venvs.${key} = \"${container_wheel_dir}/$(basename "${host_wheel}")\""
+      continue
+    fi
     hash=$(altwheel_venv_hash "${yaml}" ".venvs.${key}")
     host_wheel=$(altwheel_resolve_wheel_path "${host_wheel_dir}" "${hash}" "${pyver}")
     if [ -z "${host_wheel}" ]; then
