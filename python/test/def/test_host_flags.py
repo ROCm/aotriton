@@ -260,10 +260,12 @@ def test_start_worker_passes_the_endpoint(webui, tmp_path, sqlite3_cli):
     workdir = _prepare(tasks, tmp_path)
     script = _REPO / '.def' / 'libexec' / 'start_worker.sh'
     for host, expect_env in (('fw', True), ('direct', False)):
-        lines = _fake_ssh_run(tmp_path, ['bash', str(script), str(workdir), host, '--', '--category', 'perfmon'])
+        lines = _fake_ssh_run(tmp_path,
+                              ['bash', str(script), str(workdir), host, '--', '--category', 'perfmon'],
+                              extra_env={'AOTRITON_IMAGE_WORKDIR': '/img'})
         assert lines[0] == host
         # bash -s <WORKER_WORKDIR> <arch> <image> <4 paths> <thermal_gate> <pghost> <pgport> <extra args...>
         args = lines[1:]
         pg = args[args.index('off') + 1:args.index('off') + 3]
-        # The in-container path of the socket directory (image workdir /wkdir).
-        assert pg == (['/wkdir/run/pgsql', '6789'] if expect_env else ['', ''])
+        # The in-container path of the socket directory.
+        assert pg == (['/img/run/pgsql', '6789'] if expect_env else ['', ''])
