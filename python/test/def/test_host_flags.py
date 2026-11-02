@@ -224,7 +224,6 @@ def _prepare(tasks, tmp_path):
     return workdir
 
 
-@pytest.mark.parametrize('host,expected', [('fw', ['/w/run/pgsql', '6789']), ('direct', ['', ''])])
 def test_pg_endpoint_uses_the_hosts_workdir(webui, tmp_path, sqlite3_cli):
     tasks, _ = webui
     workdir = _prepare(tasks, tmp_path)
@@ -242,6 +241,7 @@ def test_pg_endpoint_uses_the_hosts_workdir(webui, tmp_path, sqlite3_cli):
     assert endpoint('fw') == '/scratch/wk/run/pgsql 6789'
 
 
+@pytest.mark.parametrize('host,expected', [('fw', ['/w/run/pgsql', '6789']), ('direct', ['', ''])])
 def test_node_passes_the_endpoint(webui, tmp_path, sqlite3_cli, host, expected):
     tasks, _ = webui
     workdir = _prepare(tasks, tmp_path)
