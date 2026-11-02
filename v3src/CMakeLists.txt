@@ -199,6 +199,11 @@ endif(NOT AOTRITON_COMMON_LIBRARY)
 # Compile HSACO Kernels
 if(NOT AOTRITON_NOIMAGE_MODE)
   set(SIGNATURE_FILE "${AOTRITON_V2_BUILD_DIR}/__signature__.json")
+  # A python: altwheel default compiles with its own Triton; the main venv has none.
+  set(AOTRITON_SIGNATURE_TRITON_PYTHON_OPTION "")
+  if(ALT_DEFAULT_MODE STREQUAL "python")
+    set(AOTRITON_SIGNATURE_TRITON_PYTHON_OPTION --triton_python "${ALT_DEFAULT_VALUE}")
+  endif()
   add_custom_command(OUTPUT "${SIGNATURE_FILE}"
     COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
     "${VENV_BIN_PYTHON}"
@@ -210,6 +215,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     --git_treesha1 ${AOTRITON_GIT_TREESHA1}
     --target_arch ${AOTRITON_TARGET_ARCH}
     --output_file "${SIGNATURE_FILE}"
+    ${AOTRITON_SIGNATURE_TRITON_PYTHON_OPTION}
     DEPENDS ${AOTRITON_TUNING_DATABASE_FILES}
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
   )
