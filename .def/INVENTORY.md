@@ -134,6 +134,13 @@ notes:
 | `.perfmon/bin/dispatch` | control host | operator |
 | `.perfmon/bin/export` | control host | operator |
 
+`build_subjects --arch` takes `MAJOR` (the default: one 5-in-1 subject per tag
+in `installed/perfmon/MAJOR/`, for the arches of `AOTRITON_MAJOR_ARCHES` in
+`python/gpu_targets.py`), `ALL` (MAJOR plus a subject per other supported arch)
+or arches (`installed/perfmon/<arch>/`, non-major only, for external users).
+`perfmon/scripts/lib/arches.sh` and `python/perfmon/exaid_perfmon.py`'s
+`subject_pool` map a device arch to its pool.
+
 These source `.def/lib/paths.sh` after the move. `perfmon/launch_runner.sh`
 (not an operator tool; runs inside the perfmon image) does too.
 
