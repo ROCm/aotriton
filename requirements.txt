@@ -5,6 +5,10 @@ pluggy
 numpy
 setuptools
 wheel
-pybind11
+# Python bindings. nanobind-backend is also needed at run time by a
+# PYAOTRITON_ABI3 build, which imports it. Its major version is the backend
+# ABI major.
+nanobind>=3.1
+nanobind-backend>=1.0,<2
 pandas
 pyyaml

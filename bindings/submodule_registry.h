@@ -10,16 +10,16 @@
 // instantiate them all. Adding a family's bindings needs no edit to the core.
 //
 // All binding TUs are compiled directly into the pyaotriton module, so the
-// static registrars run at module load, before PYBIND11_MODULE's setup body.
+// static registrars run at module load, before NB_MODULE's setup body.
 
 #pragma once
 
-#include <pybind11/pybind11.h>
+#include <nanobind/nanobind.h>
 #include <functional>
 
 namespace pyaotriton {
 
-using SubmoduleSetup = std::function<void(pybind11::module_&)>;
+using SubmoduleSetup = std::function<void(nanobind::module_&)>;
 
 // Registering the same submodule name from multiple TUs is allowed: the
 // submodule is get-or-created, so several families may share one version
@@ -29,6 +29,6 @@ struct SubmoduleRegistrar {
 };
 
 // Instantiate every registered submodule under m and run its setup.
-void setup_registered_submodules(pybind11::module_& m);
+void setup_registered_submodules(nanobind::module_& m);
 
 } // namespace pyaotriton

@@ -4,12 +4,10 @@
 #ifndef AOTRITON_V3_BINDING_LAZY_TENSOR_TEMPLATE_H
 #define AOTRITON_V3_BINDING_LAZY_TENSOR_TEMPLATE_H
 
-#include <ATen/core/Tensor.h>
-#include <ATen/ops/zeros.h>
-#include <ATen/ops/empty.h>
 #include <aotriton/util.h>
+#include "torch_stable_min.h"
 
-namespace py = pybind11;
+namespace nb = nanobind;
 #if AOTRITON_ENABLE_SUFFIX
 namespace aotriton = AOTRITON_NS;
 #endif
@@ -22,7 +20,7 @@ struct LazyTensorHelper {
   struct context {
     aotriton::TensorView<kRank> like_tensor;
     int device_index;
-    at::Tensor tensor;
+    torch_stable_min::Tensor tensor;
     std::array<uint64_t, kRank> tensor_strides;
   };
 
@@ -44,29 +42,18 @@ struct LazyTensorHelper {
     return self->eager;
   }
 private:
-  // FIXME: This is not optimal but easier to understand...
   static void create_tensor(context* ctx) {
-    auto options = at::dtype(at::kFloat).device(at::kCUDA);
-#define SZ(i) (static_cast<int64_t>(ctx->like_tensor.size(i)))
-#define ST(i) (static_cast<uint64_t>(ctx->tensor.stride(i)))
-    if constexpr (kRank == 4) {
-      if constexpr (kRequireZeros) {
-        ctx->tensor = at::zeros({ SZ(0), SZ(1), SZ(2), SZ(3) }, options);
-      } else {
-        ctx->tensor = at::empty({ SZ(0), SZ(1), SZ(2), SZ(3) }, options);
-      }
-      ctx->tensor_strides = { ST(0), ST(1), ST(2), ST(3) };
-    } else if constexpr (kRank == 2) {
-      if constexpr (kRequireZeros) {
-        ctx->tensor = at::zeros({ SZ(0), SZ(1) }, options);
-      } else {
-        ctx->tensor = at::empty({ SZ(0), SZ(1) }, options);
-      }
-      ctx->tensor_strides = { ST(0), ST(1) };
+    std::array<int64_t, kRank> sizes;
+    for (int i = 0; i < kRank; i++) {
+      sizes[i] = static_cast<int64_t>(ctx->like_tensor.size(i));
     }
-    static_assert(kRank == 4 || kRank == 2, "Unimplementd kRank in LazyTensorHelper");
-#undef SZ
-#undef ST
+    ctx->tensor = torch_stable_min::empty_float32(sizes, ctx->device_index);
+    if constexpr (kRequireZeros) {
+      torch_stable_min::zero_(ctx->tensor);
+    }
+    for (int i = 0; i < kRank; i++) {
+      ctx->tensor_strides[i] = static_cast<uint64_t>(ctx->tensor.stride(i));
+    }
   }
 
 }; // LazyTensorHelper
