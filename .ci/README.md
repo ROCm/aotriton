@@ -183,6 +183,16 @@ same PAT authenticates both the git clone and any artifact downloads from
 private GitHub instances during the build. If `pat_environ` is omitted, no
 PAT is used.
 
+A `{pep508}` map names a pip requirement instead of a commit, e.g.
+`pep508: triton==3.9.0`. `pip wheel` turns it into a wheel in the same wheel
+cache as the built ones: it takes a published wheel if there is one, and
+otherwise builds one from the sdist or the direct reference
+(`triton @ git+https://...@<sha>`) the requirement names. It runs in the same
+`aotriton:base-py<X.Y>` image as the source builds, so the wheel matches the
+Python version, and the entry resolves to that wheel's path. Unlike a hash
+entry, a source it builds from is fetched directly, not through the mirror.
+It is not allowed for `.venvs.default`.
+
 To build wheels manually:
 ```bash
 bash .ci/build_triton_wheels.sh \
