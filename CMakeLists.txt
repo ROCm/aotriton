@@ -545,7 +545,11 @@ if(NOT AOTRITON_NOIMAGE_MODE AND AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
     execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv "${ALT_VENV_DIR}")
     set(ALT_VENV_BIN_PYTHON "${ALT_VENV_DIR}/${VENV_REL_PYTHON}")
     execute_process(COMMAND "${ALT_VENV_BIN_PYTHON}" -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt")
-    set(AOTRITON_TRITON_SO "${ALT_VENV_DIR}/${VENV_REL_TRITON}")
+    # pip installs into the venv's site-packages, not its top directory.
+    execute_process(COMMAND "${ALT_VENV_BIN_PYTHON}" -c "import site; print(site.getsitepackages()[0], end='')"
+      OUTPUT_VARIABLE ALT_VENV_SITE
+      COMMAND_ERROR_IS_FATAL ANY)
+    set(AOTRITON_TRITON_SO "${ALT_VENV_SITE}/${VENV_REL_TRITON}")
     if(ALT_VENV_MODE STREQUAL "pep508")
       aotriton_pip_install_pep508(OUTPUT "${AOTRITON_TRITON_SO}"
                                   VENV "${ALT_VENV_DIR}"
