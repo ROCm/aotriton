@@ -271,6 +271,17 @@
                                 <strong>Thermal gate</strong>
                             </label>
                         </div>
+                        <div style="margin-top: 0.3rem;">
+                            <label style="font-size: 0.85em; margin: 0; display: flex; align-items: center; gap: 0.3rem;"
+                                   title="The server's services (PostgreSQL) are not reachable from this host directly: carry them over an SSH tunnel kept up by srvctl. Host property shared by every application; takes effect when the node is (re)started.">
+                                <input type="checkbox"
+                                       id="firewalled-{{ worker.hostname }}"
+                                       {% if worker.firewalled %}checked{% endif %}
+                                       onchange="saveFirewalled('{{ worker.hostname }}', this)"
+                                       style="margin: 0;">
+                                <strong>Firewalled</strong>
+                            </label>
+                        </div>
                     </div>
                 </td>
                 <td>
@@ -457,6 +468,22 @@ function saveThermalGate(hostname, checkbox) {
             console.error('Error saving thermal gate:', error);
             checkbox.checked = !checkbox.checked;
             alert('Failed to save thermal gate for ' + hostname + ': ' + error.message);
+        });
+}
+
+function saveFirewalled(hostname, checkbox) {
+    const body = new URLSearchParams({ enabled: checkbox.checked ? 'true' : 'false' });
+    fetch(`/api/workers/${hostname}/firewalled`, { method: 'POST', body })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                throw new Error(data.error || 'save failed');
+            }
+        })
+        .catch(error => {
+            console.error('Error saving firewalled:', error);
+            checkbox.checked = !checkbox.checked;
+            alert('Failed to save firewalled for ' + hostname + ': ' + error.message);
         });
 }
 

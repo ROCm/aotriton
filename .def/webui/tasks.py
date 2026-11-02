@@ -1191,6 +1191,7 @@ def get_workers_by_architecture(workdir):
 
     subpools = get_worker_subpools(workdir)
     thermal_gates = get_worker_thermal_gates(workdir)
+    firewalleds = get_worker_firewalleds(workdir)
     for hostname, arch, workdir_override in workers:
         if arch in workers_by_arch:
             gpu_info = gpu_info_map.get(hostname, {})
@@ -1208,6 +1209,7 @@ def get_workers_by_architecture(workdir):
                 'is_tuner': hostname in tuner_set,
                 'is_perfmon': hostname in perfmon_set,
                 'thermal_gate': thermal_gates.get(hostname, False),
+                'firewalled': firewalleds.get(hostname, False),
             })
 
     return workers_by_arch
@@ -1341,6 +1343,45 @@ def set_worker_thermal_gate(workdir, hostname, enabled):
     """Turn the thermal gate of a host on or off. A host property, not an
     application setting: every DEF application reads the same config row."""
     return set_host_flag(workdir, 'thermal_gate', hostname, enabled, 'Thermal gate')
+
+
+def get_worker_firewalleds(workdir) -> dict[str, bool]:
+    """{hostname: firewalled?} for the hosts that have a firewalled row."""
+    return get_host_flags(workdir, 'firewalled')
+
+
+def get_worker_firewalled(workdir, hostname) -> bool:
+    """Whether a host reaches the server's services through SSH tunnels
+    (default off: it reaches them directly)."""
+    return get_worker_firewalleds(workdir).get(hostname, False)
+
+
+def set_worker_firewalled(workdir, hostname, enabled):
+    """Mark a host as firewalled (or not), then ask the tunnel manager to
+    reload. A host property describing its network, shared by every DEF
+    application; see perfmon-pgsql-ssh-tunnel.md."""
+    result = set_host_flag(workdir, 'firewalled', hostname, enabled, 'Firewalled')
+    if result['success']:
+        touch_ssh_tunnel_refresh(workdir)
+    return result
+
+
+def touch_ssh_tunnel_refresh(workdir):
+    """Touch <workdir>/run/touch-me-to-refresh-ssh-tunnel: the tunnel manager
+    (.def/libexec/tunnels.py) polls its mtime and re-reads the firewalled rows.
+    Non-blocking, and safe when the manager is down (it reloads on start)."""
+    run_dir = Path(workdir) / 'run'
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / 'touch-me-to-refresh-ssh-tunnel').touch()
+
+
+def get_ssh_tunnel_status(workdir) -> str | None:
+    """The text of <workdir>/run/ssh-tunnels.status written by the tunnel
+    manager, or None when it never ran."""
+    try:
+        return (Path(workdir) / 'run' / 'ssh-tunnels.status').read_text()
+    except OSError:
+        return None
 
 
 def get_worker_role(workdir, hostname, role):

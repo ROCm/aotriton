@@ -421,6 +421,17 @@ def api_save_thermal_gate(hostname):
     return jsonify(result)
 
 
+@bp.route('/api/workers/<hostname>/firewalled', methods=['POST'])
+def api_save_firewalled(hostname):
+    """Mark a host as firewalled or not (body: enabled=true|false) and ask the
+    tunnel manager to reload"""
+    workdir = current_app.config['WORKDIR']
+    enabled_raw = request.form.get('enabled', 'false').strip().lower()
+    enabled = enabled_raw in ('1', 'true', 'yes', 'on')
+    result = tasks.set_worker_firewalled(workdir, hostname, enabled)
+    return jsonify(result)
+
+
 @bp.route('/api/workers/probe-all-status', methods=['POST'])
 def api_probe_all_workers_status():
     """Probe status for all workers"""
@@ -559,6 +570,14 @@ def api_server_status():
     workdir = current_app.config['WORKDIR']
     result = tasks.get_server_status(workdir)
     return render_template('partials/server_status.html', **result)
+
+
+@bp.route('/api/servers/ssh-tunnels', methods=['GET'])
+def api_ssh_tunnel_status():
+    """SSH tunnel status for the firewalled hosts (returns HTML for HTMX)"""
+    workdir = current_app.config['WORKDIR']
+    return render_template('partials/ssh_tunnel_status.html',
+                           status=tasks.get_ssh_tunnel_status(workdir))
 
 
 @bp.route('/api/workers/git-status', methods=['GET'])

@@ -23,6 +23,15 @@
 </section>
 
 <section>
+    <h3>SSH Tunnels</h3>
+    <p>PostgreSQL reaches the hosts marked <em>Firewalled</em> (Workers tab) through SSH tunnels kept up by
+       <code>srvctl</code>. Ticking the box asks the tunnel manager to reload.</p>
+    <div hx-get="/api/servers/ssh-tunnels"
+         hx-trigger="load, every 10s"
+         hx-swap="innerHTML">Loading...</div>
+</section>
+
+<section>
     <h3>Database Schema</h3>
     <p>Initialize or update the PostgreSQL database schema for Tuner v3.5. <strong style="color: #856404; background-color: #fff3cd; padding: 0.2rem 0.5rem; border-radius: 3px;">Note: Re-run this when registering workers with new GPU architectures.</strong></p>
 

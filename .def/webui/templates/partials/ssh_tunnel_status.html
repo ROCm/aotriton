@@ -1,0 +1,5 @@
+{% if status %}
+<pre style="font-size: 0.85em; overflow-x: auto;">{{ status }}</pre>
+{% else %}
+<span style="color: gray;">No tunnel status yet (the tunnel manager has not run: <code>srvctl &lt;workdir&gt; start</code>).</span>
+{% endif %}

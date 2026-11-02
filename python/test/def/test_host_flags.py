@@ -147,3 +147,47 @@ def test_shell_helper(webui, tmp_path, sqlite3_cli):
                               check=True).stdout.strip()
 
     assert [helper('a'), helper('b'), helper('unknown')] == ['on', 'off', 'off']
+
+
+def test_firewalled_rows_and_touch_file(webui, tmp_path, sqlite3_cli):
+    tasks, routes = webui
+    _workers(tasks, tmp_path, 'a', 'b')
+    touch = tmp_path / 'run' / 'touch-me-to-refresh-ssh-tunnel'
+    assert tasks.get_worker_firewalled(tmp_path, 'a') is False
+    assert not touch.exists()
+
+    routes.current_app = SimpleNamespace(config={'WORKDIR': str(tmp_path)})
+    routes.request = SimpleNamespace(form={'enabled': 'true'})
+    assert routes.api_save_firewalled('a')['success']
+    assert tasks.get_worker_firewalleds(tmp_path) == {'a': True}
+    assert touch.exists()
+    # Independent of the thermal gate.
+    assert tasks.get_worker_thermal_gates(tmp_path) == {}
+
+    touch.unlink()
+    assert not tasks.set_worker_firewalled(tmp_path, 'nope', True)['success']
+    assert not touch.exists()
+
+    def helper(host):
+        return subprocess.run(['bash', '-c', f'. {_DB_QUERY_SH}; get_worker_firewalled {tmp_path} {host}'],
+                              capture_output=True,
+                              text=True,
+                              check=True).stdout.strip()
+
+    assert [helper('a'), helper('b'), helper('unknown')] == ['1', '0', '0']
+
+
+def test_workers_by_arch_carries_the_flags(webui, tmp_path):
+    tasks, _ = webui
+    _workers(tasks, tmp_path, 'a')
+    tasks.set_worker_firewalled(tmp_path, 'a', True)
+    workers = tasks.get_workers_by_architecture(tmp_path)['gfx942']
+    assert [(w['hostname'], w['firewalled'], w['thermal_gate']) for w in workers] == [('a', True, False)]
+
+
+def test_ssh_tunnel_status_file(webui, tmp_path):
+    tasks, _ = webui
+    assert tasks.get_ssh_tunnel_status(tmp_path) is None
+    (tmp_path / 'run').mkdir()
+    (tmp_path / 'run' / 'ssh-tunnels.status').write_text('a up\n')
+    assert tasks.get_ssh_tunnel_status(tmp_path) == 'a up\n'
