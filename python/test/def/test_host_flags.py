@@ -117,8 +117,25 @@ def test_migration_moves_column_to_rows(webui, tmp_path):
     tasks.init_workers_db(tmp_path)   # idempotent
 
 
-@pytest.mark.skipif(shutil.which('sqlite3') is None, reason='sqlite3 CLI missing')
-def test_shell_helper(webui, tmp_path):
+_SQLITE3_SHIM = """#!{python}
+import sqlite3, sys
+for row in sqlite3.connect(sys.argv[1]).execute(sys.argv[2]):
+    print('|'.join('' if v is None else str(v) for v in row))
+"""
+
+
+@pytest.fixture
+def sqlite3_cli(tmp_path, monkeypatch):
+    """The sqlite3 command-line tool, or a shim of it (it is not installed everywhere)."""
+    if shutil.which('sqlite3') is None:
+        shim = tmp_path / 'shimbin' / 'sqlite3'
+        shim.parent.mkdir()
+        shim.write_text(_SQLITE3_SHIM.format(python=sys.executable))
+        shim.chmod(0o755)
+        monkeypatch.setenv('PATH', f'{shim.parent}:/usr/bin:/bin')
+
+
+def test_shell_helper(webui, tmp_path, sqlite3_cli):
     tasks, _ = webui
     _workers(tasks, tmp_path, 'a', 'b')
     tasks.set_worker_thermal_gate(tmp_path, 'a', True)
