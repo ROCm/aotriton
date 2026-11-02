@@ -5,7 +5,7 @@
 # Builds subjects: AOTriton releases (or the checkout, "head"), each with the
 # perfmon harness built against it. One subject is
 #
-#   <prefix>/<arch>/aotriton-<tag>+rocm<ver>/
+#   <prefix>/<pool>/aotriton-<tag>+rocm<ver>/
 #     bin/runner                    main.cc linked with the adapter and the core
 #     lib/libperfmon_flash.so       the adapter of this release's API
 #     lib/libaotriton_pmon_v2.so    the release's runtime (suffix _pmon)
@@ -16,10 +16,20 @@
 # contains. All of it resolves through $ORIGIN RUNPATHs, so the tree can be
 # moved as a whole.
 #
+# <pool> is MAJOR or an arch. MAJOR is one subject for the five arches of
+# AOTRITON_MAJOR_ARCHES (python/gpu_targets.py): one shim built for all of them
+# and the release's images of all of them in lib/aotriton.images/, so that
+# the artifacts cannot diverge between arches; the dev team always uses it. An
+# arch the release has no images for is listed in missing_images.txt in the
+# subject. A subject of one arch (<prefix>/<arch>/...) is for external users of
+# a non-major arch. At run time a device arch is served by the pool
+# perfmon_subject_pool (scripts/lib/arches.sh) names, MAJOR for a major arch.
+#
 # Usage: build_subject.sh [options] --rocm <ver> <arch> <prefix> <tag>...
 #   --rocm <ver>      the ROCm the toolchain must be, e.g. 10.1.0; it is part of
 #                     every name, so a different toolchain is refused
-#   <arch>            e.g. gfx942; the AOTriton target arch
+#   <arch>            MAJOR, or one AOTriton target arch, e.g. gfx1101; a major
+#                     arch (e.g. gfx942) is refused: it is served by MAJOR
 #   <prefix>          e.g. ${AOTRITON_WORKDIR}/installed/perfmon
 #   <tag>...          release tags, e.g. 0.13b 0.14.2b, or head (a full build of
 #                     this checkout: HEAD has no published images)
@@ -71,6 +81,13 @@ shift 2
 TAGS=("$@")
 if [ -z "${PREFIX}" ]; then
   echo "Error: empty prefix." >&2
+  exit 1
+fi
+
+. "${SCRIPT_DIR}/scripts/lib/arches.sh"
+if [ "${ARCH}" != "${PERFMON_MAJOR_POOL}" ] && \
+   [ "$(perfmon_subject_pool "${ARCH%%:*}")" = "${PERFMON_MAJOR_POOL}" ]; then
+  echo "Error: ${ARCH} is a major arch: build ${PERFMON_MAJOR_POOL}, which serves it." >&2
   exit 1
 fi
 

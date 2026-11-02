@@ -30,6 +30,27 @@ else:
 PYEOF
 }
 
+# Prints the arches of AOTRITON_SUPPORTED_GPUS, space-separated, without the
+# _mod<n> suffix.
+perfmon_supported_arches() {
+  python3 -I - "${_PERFMON_ARCHES_LIB_DIR}/../../../python/gpu_targets.py" <<'PYEOF'
+import ast, sys
+tree = ast.parse(open(sys.argv[1]).read())
+for node in tree.body:
+    if isinstance(node, ast.Assign) and any(
+            getattr(t, 'id', None) == 'AOTRITON_SUPPORTED_GPUS' for t in node.targets):
+        seen = []
+        for gpu in ast.literal_eval(node.value):
+            arch = gpu.split('_mod')[0]
+            if arch not in seen:
+                seen.append(arch)
+        print(' '.join(seen))
+        break
+else:
+    sys.exit('AOTRITON_SUPPORTED_GPUS not found in ' + sys.argv[1])
+PYEOF
+}
+
 # perfmon_subject_pool <device arch> -- MAJOR for a major arch, else the arch.
 perfmon_subject_pool() {
   local arch="$1" major

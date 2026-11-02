@@ -2,14 +2,14 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Builds the core for each ROCm, then subjects for each arch, into
+# Builds the core for each ROCm, then subjects for each target, into
 # <workdir>/installed/perfmon. The host that builds must have that ROCm
 # toolchain: the perfmon image, or a fleet peer with a ROCm venv (the
 # managed venv of its session, else the shared one; setup_session). Thin on purpose: perfmon/build_core.sh and
 # perfmon/build_subject.sh do the work.
 #
 # Usage: build_subjects --workdir <wkdir> [--host <build host>] [--rocm <ver>]...
-#                       [--arch <arch>...] [--prefix <dir>] [--scratch <dir>]
+#                       [--arch <target>...] [--prefix <dir>] [--scratch <dir>]
 #                       [--without_amdsmi] [<tag>...] [-- <build_subject.sh options>]
 #   --workdir <wkdir> the perfmon workdir; default $AOTRITON_WORKDIR
 #                     (.def/lib/paths.sh)
@@ -18,7 +18,14 @@
 #                     each ROCm (the active managed one, else the shared one). Without it, run here, with the
 #                     toolchain already in the environment.
 #   --rocm <ver>      repeatable; default workers.db perfmon::rocm, else 10.1.0
-#   --arch <arch>...  default: the arches of the workers.db hosts of role Perfmon
+#   --arch <target>...  what to build; default MAJOR. A target is
+#                       MAJOR   one subject per tag for the five arches of
+#                               AOTRITON_MAJOR_ARCHES (python/gpu_targets.py),
+#                               in <prefix>/MAJOR; the dev team's choice
+#                       ALL     MAJOR, and a subject of its own for every other
+#                               arch of AOTRITON_SUPPORTED_GPUS
+#                       <arch>  a subject of that arch, in <prefix>/<arch>, for
+#                               external users; a major arch means MAJOR
 #   --prefix <dir>    default <wkdir>/installed/perfmon
 #   --scratch <dir>   default: the parent of the workdir (locates the venv)
 #   <tag>...          release tags, or head; default workers.db perfmon::tags
@@ -31,6 +38,7 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 . "$ROOT/.def/lib/paths.sh"
 . "$ROOT/.def/lib/db_query.sh"
 . "$ROOT/.perfmon/lib/session.sh"
+. "$ROOT/perfmon/scripts/lib/arches.sh"
 
 usage() {
     sed -n '/^# Usage:/,/^# Options after/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
@@ -52,10 +60,10 @@ while [ "$#" -gt 0 ]; do
         --host)    HOST="$2"; shift 2 ;;
         --rocm)    ROCMS+=("$2"); shift 2 ;;
         --arch)
-            # One or more arches; a tag never looks like gfx<hex>.
+            # One or more targets; a tag never looks like gfx<hex>, MAJOR or ALL.
             shift
-            [ "$#" -gt 0 ] && [[ "$1" =~ ^gfx[0-9a-f]+$ ]] || { echo "Error: --arch needs an arch" >&2; usage; }
-            while [ "$#" -gt 0 ] && [[ "$1" =~ ^gfx[0-9a-f]+$ ]]; do
+            [ "$#" -gt 0 ] && [[ "$1" =~ ^(gfx[0-9a-f]+|MAJOR|ALL)$ ]] || { echo "Error: --arch needs a target" >&2; usage; }
+            while [ "$#" -gt 0 ] && [[ "$1" =~ ^(gfx[0-9a-f]+|MAJOR|ALL)$ ]]; do
                 ARCHES+=("$1"); shift
             done ;;
         --prefix)  PREFIX="$2"; shift 2 ;;
@@ -94,13 +102,28 @@ if [ "${#TAGS[@]}" -eq 0 ]; then
 print("\n".join(json.loads(sys.argv[1])))' "$PERFMON_DEFAULT_TAGS")
     fi
 fi
-if [ "${#ARCHES[@]}" -eq 0 ] && [ "$HAVE_DB" -eq 1 ]; then
-    mapfile -t ARCHES < <(get_workers "$WORKDIR" Perfmon | cut -d'|' -f2 | sort -u)
-fi
-if [ "${#ARCHES[@]}" -eq 0 ]; then
-    echo "Error: no --arch, and workers.db has no host of role Perfmon" >&2
-    exit 1
-fi
+[ "${#ARCHES[@]}" -gt 0 ] || ARCHES=("$PERFMON_MAJOR_POOL")
+# The targets as subject pools: ALL is MAJOR and the other supported arches, a
+# major arch is MAJOR, and a pool is built once however it was named.
+TARGETS=()
+_add_target() {
+    local t
+    for t in ${TARGETS[@]+"${TARGETS[@]}"}; do [ "$t" = "$1" ] && return 0; done
+    TARGETS+=("$1")
+}
+for ARCH in "${ARCHES[@]}"; do
+    if [ "$ARCH" = ALL ]; then
+        _add_target "$PERFMON_MAJOR_POOL"
+        for A in $(perfmon_supported_arches); do _add_target "$(perfmon_subject_pool "$A")"; done
+    elif [ "$ARCH" = "$PERFMON_MAJOR_POOL" ]; then
+        _add_target "$ARCH"
+    else
+        POOL="$(perfmon_subject_pool "$ARCH")"
+        [ "$POOL" = "$ARCH" ] || echo "[perfmon] $ARCH is a major arch: building $POOL" >&2
+        _add_target "$POOL"
+    fi
+done
+ARCHES=("${TARGETS[@]}")
 if [ "${#TAGS[@]}" -eq 0 ]; then
     echo "Error: no tag given and perfmon::tags is empty" >&2
     exit 1
