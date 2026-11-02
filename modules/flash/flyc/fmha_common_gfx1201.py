@@ -102,6 +102,7 @@ __all__ = [
     "bitcast_i32",
     "pack_bf16_pair",
     "bf16_trunc_pack_v8",
+    "bf16_rne_pack_v8",
     "FastMath",
     "MaskedAxis",
     "Aperture",
@@ -440,21 +441,51 @@ def bf16_trunc_pack_v8(f32_vals, elem_dtype):
     Note also that V is *not* downcast: it reaches GEMM2 at the input
     tensor's native 16-bit width, so only P loses precision.
 
-    Truncation is round-toward-zero. Measured against an fp64 reference
-    (`accuracy_probe.py`, B=1 H=4 N=1024 d=128): no output bias (O sums
-    P*V and V is zero-mean, so the one-sided P error cancels), but the
-    RMS error is 1.6x torch SDPA's at bf16 (4.43e-3 vs 2.78e-3). f16 is
-    already at exact parity. Switching to round-to-nearest-even --
-    `x += 0x7FFF + ((x >> 16) & 1)` before the shift -- closes that gap
-    exactly (2.79e-3) but costs 2-3% at distance 1 and 2.7-5.4% at
-    ROW_SUBTILES=2, so it is deliberately not done. Truncation by
-    decision, not oversight.
+    Truncation is round-toward-zero, so it is only safe for operands whose
+    sign varies, such as dS: the error of each element points toward zero,
+    and a signed operand's products cancel. **Do not use it for P.** P is
+    non-negative, so every truncation lowers it, and `O = P @ V` inherits a
+    bias of about -2**-9 relative whenever V does not have zero mean. The
+    original measurement (`accuracy_probe.py`, B=1 H=4 N=1024 d=128) used a
+    zero-mean V, which hides exactly that. With V in [0, 1) the bf16 O
+    comes out 1.5e-3 low on average, and the backward's
+    `Delta = rowsum(dO * O)` sums that bias over head_dim, which made dQ
+    6x less accurate than the Triton backend (AOTriton issue #259). P goes
+    through `bf16_rne_pack_v8` instead.
     """
     _c16 = fx.Int32(16)
     _cmask = fx.Int32(0xFFFF0000)
     pairs = []
     for j in range_constexpr(4):
         pairs.append(pack_bf16_pair(f32_vals[j * 2], f32_vals[j * 2 + 1], _c16, _cmask))
+    return Vec.from_elements(pairs, fx.Int32).bitcast(elem_dtype).ir_value()
+
+
+def bf16_rne_pack_v8(f32_vals, elem_dtype):
+    """Pack 8 f32 values into v8bf16, rounding to nearest even.
+
+    `x += 0x7FFF + ((x >> 16) & 1)` before `bf16_trunc_pack_v8`'s shift turns
+    its truncation into round-to-nearest-even. That makes the result unbiased
+    for operands of one sign, which is what P needs, see
+    `bf16_trunc_pack_v8`. NaN is not preserved, so this is only for finite
+    inputs; P is in [0, 1]. Rounding costs 2-3% at K_PREFETCH_DIST 1 and
+    2.7-5.4% at ROW_SUBTILES 2 compared with truncation, and brings the bf16
+    RMS error of O to parity with torch SDPA (2.79e-3 vs 4.43e-3 truncated).
+    """
+    _c16 = fx.Int32(16)
+    _cmask = fx.Int32(0xFFFF0000)
+    _cone = fx.Int32(1)
+    _chalf = fx.Int32(0x7FFF)
+
+    def _rne(value):
+        bits = bitcast_i32(value)
+        return bits + _chalf + (arith.shrui(bits, _c16) & _cone)
+
+    pairs = []
+    for j in range_constexpr(4):
+        lo = _rne(f32_vals[j * 2])
+        hi = _rne(f32_vals[j * 2 + 1])
+        pairs.append((hi & _cmask) | arith.shrui(lo, _c16))
     return Vec.from_elements(pairs, fx.Int32).bitcast(elem_dtype).ir_value()
 
 
