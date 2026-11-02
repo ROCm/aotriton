@@ -19,7 +19,7 @@ shim_require_lzma
 
 # Word splitting is intended: the variable holds a list of -D options.
 # shellcheck disable=SC2086
-shim_build OFF -DAOTRITON_TARGET_ARCH="${ARCH}" ${PERFMON_HEAD_CMAKE_ARGS:-}
+shim_build OFF -DAOTRITON_TARGET_ARCH="${ARCH_LIST}" ${PERFMON_HEAD_CMAKE_ARGS:-}
 if [ ! -f "${INSTALL_DIR}/include/aotriton/flash/backends.h" ]; then
   echo "[build-${TAG}] ERROR: the install has no include/aotriton/flash/backends.h." >&2
   exit 1

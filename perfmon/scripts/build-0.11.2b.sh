@@ -18,15 +18,17 @@ esac
 shim_init "${TAG}" "$@"
 shim_require_lzma
 
-case "${ARCH%%:*}" in
-  gfx90a)  GROUP=gfx90a ;;
-  gfx942)  GROUP=gfx942 ;;
-  gfx950)  GROUP=gfx950 ;;
-  gfx1100|gfx1101|gfx1150|gfx1151) GROUP=gfx11xx ;;
-  gfx1200|gfx1201) GROUP=gfx120x ;;
-  *) echo "[build-${TAG}] ERROR: ${TAG} publishes no kernel images for '${ARCH}'." >&2; exit 1 ;;
-esac
+image_pack_of() {
+  case "$1" in
+    gfx90a)  echo gfx90a ;;
+    gfx942)  echo gfx942 ;;
+    gfx950)  echo gfx950 ;;
+    gfx1100|gfx1101|gfx1150|gfx1151) echo gfx11xx ;;
+    gfx1200|gfx1201) echo gfx120x ;;
+    *) return 1 ;;
+  esac
+}
 
-shim_build ON -DAOTRITON_TARGET_ARCH="${ARCH}"
-shim_install_images "aotriton-${TAG}-images-amd-${GROUP}.tar.gz"
+shim_build ON -DAOTRITON_TARGET_ARCH="${ARCH_LIST}"
+shim_install_packs "aotriton-${TAG}-images-amd-%s.tar.gz"
 shim_finish

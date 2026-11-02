@@ -28,9 +28,24 @@ print(by_gfx[gfx])
 PYEOF
 }
 
-TARGET_GPU="$(target_gpu_of "${ARCH}")"
-echo "[build-${TAG}] arch ${ARCH} -> TARGET_GPUS=${TARGET_GPU}" >&2
+# The jumbo tarball has the images of every arch of the release; the pack names
+# only serve shim_record_missing_images, which looks for amd-<name> directories.
+image_pack_of() {
+  case "$1" in
+    gfx90a|gfx942|gfx950|gfx1250) echo "$1" ;;
+    gfx1100|gfx1101|gfx1102|gfx1103) echo "gfx110x gfx11xx $1" ;;
+    gfx1150|gfx1151|gfx1152|gfx1153) echo "gfx115x gfx11xx $1" ;;
+    gfx1200|gfx1201) echo "gfx120x $1" ;;
+    *) return 1 ;;
+  esac
+}
 
-shim_build ON -DTARGET_GPUS="${TARGET_GPU}"
+TARGET_GPUS_LIST=""
+for arch in "${ARCHES[@]}"; do
+  TARGET_GPUS_LIST="${TARGET_GPUS_LIST:+${TARGET_GPUS_LIST};}$(target_gpu_of "${arch}")"
+done
+echo "[build-${TAG}] arch ${ARCH} -> TARGET_GPUS=${TARGET_GPUS_LIST}" >&2
+
+shim_build ON -DTARGET_GPUS="${TARGET_GPUS_LIST}"
 shim_install_images "aotriton-0.9.2b-manylinux_2_28_x86_64-rocm7.0-shared.tar.gz"
 shim_finish

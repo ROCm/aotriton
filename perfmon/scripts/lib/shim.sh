@@ -11,7 +11,12 @@
 # unpacked next to it, so the kernels measured are exactly the shipped ones.
 # A per-tag script is called as
 #     build-<tag>.sh <src_dir> <install_dir> <arch>
-# with, optionally, in the environment:
+# where <arch> is one arch, or MAJOR: one shim built for every arch of
+# AOTRITON_MAJOR_ARCHES (python/gpu_targets.py) with the release's images of
+# all of them. An arch the release has no images for is not an error then: it
+# is listed in <install_dir>/missing_images.txt (see shim_record_missing_images),
+# and the runner on that arch reports the entries as unavailable. With one arch
+# it is an error. In the environment, optionally:
 #     AOTRITON_BUILD_PATH     the cmake build tree (kept after the build:
 #                             build_subject.sh reads the generated
 #                             iface.op_attn_*.h from it)
@@ -25,6 +30,7 @@
 
 _SHIM_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${_SHIM_LIB_DIR}/rocm.sh"
+. "${_SHIM_LIB_DIR}/arches.sh"
 . "${_SHIM_LIB_DIR}/release_asset.sh"
 
 # The suffix is pasted into the library file name (libaotriton_pmon_v2.so) and
@@ -33,7 +39,10 @@ _SHIM_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SHIM_NAME_SUFFIX="_pmon"
 
 # shim_init <tag> <src_dir> <install_dir> <arch>
-# Sets TAG, SRC_DIR, INSTALL_DIR, ARCH and BUILD_DIR.
+# Sets TAG, SRC_DIR, INSTALL_DIR, ARCH (as given), ARCHES (the arches it stands
+# for: one, or the major arches for MAJOR), ARCH_LIST (the same as the value of
+# the release's arch option: ARCH, or the major arches joined by ';') and
+# BUILD_DIR.
 shim_init() {
   if [ "$#" -ne 4 ]; then
     echo "Usage: build-<tag>.sh <src_dir> <install_dir> <arch>" >&2
@@ -51,6 +60,13 @@ shim_init() {
   if [ -z "${ARCH}" ]; then
     echo "[build-${TAG}] ERROR: empty <arch>." >&2
     exit 1
+  fi
+  if [ "${ARCH}" = "${PERFMON_MAJOR_POOL}" ]; then
+    read -r -a ARCHES <<< "$(perfmon_major_arches)"
+    ARCH_LIST="$(IFS=';'; echo "${ARCHES[*]}")"
+  else
+    ARCHES=("${ARCH%%:*}")
+    ARCH_LIST="${ARCH}"
   fi
   BUILD_DIR="${AOTRITON_BUILD_PATH:-${TMPDIR:-/tmp}/aotriton-${TAG}-shim-${ARCH}}"
   AOTRITON_CXX="${AOTRITON_CXX:-g++}"
@@ -109,6 +125,64 @@ shim_install_images() {
   install_images_from_tarball "${tarball}" "${INSTALL_DIR}"
 }
 
+# shim_install_packs <asset_name_format>
+# For a release with one images package per arch pack. The caller defines
+# image_pack_of <arch>, which prints the pack of an arch (the first word is the
+# name in the package's file name; any further words are other names the
+# pack's directory has had) and fails for an arch the release has no pack for.
+# <asset_name_format> is a printf format with one %s, the pack. Every distinct
+# pack is installed once. An arch without a pack is an error, except for MAJOR.
+shim_install_packs() {
+  local fmt="$1" arch pack p known
+  local packs=()
+  for arch in "${ARCHES[@]}"; do
+    if pack="$(image_pack_of "${arch%%:*}")"; then
+      pack="${pack%% *}"
+      known=0
+      for p in "${packs[@]}"; do [ "${p}" = "${pack}" ] && known=1; done
+      [ "${known}" -eq 1 ] || packs+=("${pack}")
+    elif [ "${ARCH}" != "${PERFMON_MAJOR_POOL}" ]; then
+      echo "[build-${TAG}] ERROR: ${TAG} publishes no kernel images for '${ARCH}'." >&2
+      exit 1
+    fi
+  done
+  if [ "${#packs[@]}" -eq 0 ]; then
+    echo "[build-${TAG}] ERROR: ${TAG} publishes no kernel images for any of: ${ARCHES[*]}." >&2
+    exit 1
+  fi
+  for p in "${packs[@]}"; do
+    # shellcheck disable=SC2059
+    shim_install_images "$(printf "${fmt}" "${p}")"
+  done
+}
+
+# shim_record_missing_images
+# For MAJOR: writes <install_dir>/missing_images.txt, one arch per line, for
+# every arch with no images in lib/aotriton.images (image_pack_of fails for it,
+# or none of the directories amd-<name> of its pack exists and is non-empty),
+# and removes it when none is missing. Nothing is invented for such an arch.
+shim_record_missing_images() {
+  [ "${ARCH}" = "${PERFMON_MAJOR_POOL}" ] || return 0
+  # A script without image_pack_of (head) has no published images to check.
+  declare -F image_pack_of >/dev/null || return 0
+  local list="${INSTALL_DIR}/missing_images.txt" arch names name found
+  rm -f "${list}"
+  for arch in "${ARCHES[@]}"; do
+    found=0
+    if names="$(image_pack_of "${arch}")"; then
+      for name in ${names}; do
+        if compgen -G "${INSTALL_DIR}/lib/aotriton.images/amd-${name}/*" >/dev/null; then
+          found=1
+        fi
+      done
+    fi
+    if [ "${found}" -eq 0 ]; then
+      echo "${arch}" >> "${list}"
+      echo "[build-${TAG}] WARNING: ${TAG} has no kernel images for ${arch}." >&2
+    fi
+  done
+}
+
 # shim_finish
 # Fails unless the install holds what build_subject.sh and the adapter need.
 shim_finish() {
@@ -125,5 +199,6 @@ shim_finish() {
          "have no kernels to measure." >&2
     exit 1
   fi
+  shim_record_missing_images
   echo "[build-${TAG}] ok: ${INSTALL_DIR}" >&2
 }

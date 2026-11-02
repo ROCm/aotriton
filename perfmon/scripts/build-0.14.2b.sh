@@ -16,19 +16,21 @@ set -euo pipefail
 shim_init 0.14.2b "$@"
 shim_require_lzma
 
-case "${ARCH%%:*}" in
-  gfx90a)  PACK=gfx90a ;;
-  gfx942)  PACK=gfx942 ;;
-  gfx950)  PACK=gfx950 ;;
-  gfx1250) PACK=gfx1250 ;;
-  gfx1100|gfx1101|gfx1102|gfx1103) PACK=gfx110x ;;
-  gfx1150|gfx1151|gfx1152|gfx1153) PACK=gfx115x ;;
-  gfx1200|gfx1201) PACK=gfx120x ;;
-  *) echo "[build-${TAG}] ERROR: ${TAG} publishes no kernel images for '${ARCH}'." >&2; exit 1 ;;
-esac
+image_pack_of() {
+  case "$1" in
+    gfx90a)  echo gfx90a ;;
+    gfx942)  echo gfx942 ;;
+    gfx950)  echo gfx950 ;;
+    gfx1250) echo gfx1250 ;;
+    gfx1100|gfx1101|gfx1102|gfx1103) echo gfx110x ;;
+    gfx1150|gfx1151|gfx1152|gfx1153) echo gfx115x ;;
+    gfx1200|gfx1201) echo gfx120x ;;
+    *) return 1 ;;
+  esac
+}
 
-shim_build ON -DAOTRITON_TARGET_ARCH="${ARCH}"
-shim_install_images "aotriton-${TAG}-images-amd-${PACK}.tar.gz"
+shim_build ON -DAOTRITON_TARGET_ARCH="${ARCH_LIST}"
+shim_install_packs "aotriton-${TAG}-images-amd-%s.tar.gz"
 if [ ! -f "${INSTALL_DIR}/include/aotriton/flash/backends.h" ]; then
   echo "[build-${TAG}] ERROR: the install has no include/aotriton/flash/backends.h." >&2
   exit 1
