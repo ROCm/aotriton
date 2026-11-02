@@ -207,7 +207,7 @@ def _fake_ssh_run(tmp_path, args, extra_env=None):
     (bin_dir / 'ssh').write_text(_FAKE_SSH)
     (bin_dir / 'ssh').chmod(0o755)
     out = tmp_path / 'ssh.out'
-    env = dict(os.environ, PATH=f'{bin_dir}:{os.environ["PATH"]}', FAKE_SSH_OUT=str(out))
+    env = dict(os.environ, PATH=f'{bin_dir}:{os.environ["PATH"]}', FAKE_SSH_OUT=str(out), **(extra_env or {}))
     result = subprocess.run(args, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     return out.read_text().splitlines()
