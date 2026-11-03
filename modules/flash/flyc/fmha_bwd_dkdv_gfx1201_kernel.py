@@ -837,13 +837,13 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
             RDNA4 WMMA has no f32 A/B form, so bf16 operands lose precision
             either way. A `signed` operand (dS) goes through the bitwise
             truncation, whose errors cancel in the products; a non-negative
-            one (P) is rounded to nearest even, because truncation would bias
+            one (P) is rounded to nearest, because truncation would bias
             dV low. See `fmha.bf16_trunc_pack_v8`.
             """
             if const_expr(dtype_str == "bf16"):
                 if const_expr(signed):
                     return fmha.bf16_trunc_pack_v8(vals, elem_dtype)
-                return fmha.bf16_rne_pack_v8(vals, elem_dtype)
+                return fmha.bf16_round_pack_v8(vals, elem_dtype)
             return Vec.from_elements([fx.Float32(v).to(elem_dtype) for v in vals], elem_dtype).ir_value()
 
         loop_results = init_args

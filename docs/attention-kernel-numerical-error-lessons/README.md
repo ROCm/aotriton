@@ -30,7 +30,7 @@ agree with every kernel it hands data to.
 | saved LSE | **natural base**, `logsumexp(sm_scale * S + bias)`; the backward multiplies it by `log2(e)` on load; may be null | context parallelism reads it; see [LSE base](#5-the-lse-in-the-wrong-base-or-units) |
 | fully masked row | `O = 0`, `LSE = +inf`, `dQ = 0` | `+inf` makes the backward's `exp(S - LSE)` vanish |
 | `Delta` | `rowsum(dO * O)` in fp32, from the O the forward **stored** | see [Delta in low precision](#6-delta-in-low-precision) |
-| P as a GEMM operand | rounded to the input dtype **to nearest even**, never truncated | P is never negative; see [Rounding toward zero](#16-rounding-a-one-signed-operand-toward-zero) |
+| P as a GEMM operand | rounded to the input dtype **to nearest**, never truncated | P is never negative; see [Rounding toward zero](#16-rounding-a-one-signed-operand-toward-zero) |
 | `dS` | `P * (dP - Delta)`, the gradient with respect to the *scaled* logits | `sm_scale` then multiplies dQ and dK exactly once |
 | `dB` | `dS` itself, no `log2(e)`, no `sm_scale` | the bias enters the softmax unscaled |
 | dropout | `l_i` sums P **before** the mask; `1/(1-p)` applied once; identical Philox offsets and word order in every kernel of every backend | fwd and bwd backends are chosen independently; see [Dropout](#9-dropout) |
@@ -549,17 +549,16 @@ bits of each fp32 value, which is truncation, i.e. rounding toward zero:
 packed = (hi_bits & 0xFFFF0000) | (lo_bits >> 16)
 ```
 
-It is cheaper than a rounding convert on a target with no hardware fp32 to
-bf16 convert (RDNA4 has none; gfx950 has `v_cvt_pk_bf16_f32`, which rounds to
-nearest even). Rounding to nearest even in software,
-`x += 0x7FFF + ((x >> 16) & 1)` before the shift, costs a few percent.
+It is cheaper than rounding on a target with no hardware fp32 to bf16
+convert (RDNA4 has none; gfx950 and gfx1250 have `v_cvt_pk_bf16_f32`, which
+rounds to nearest even).
 
 **Why it is wrong.** Truncation errs toward zero, so its error has the sign of
 the value. For an operand whose sign varies, such as dS, those errors cancel
 in the GEMM's sums. P is never negative, so every element of P rounds *down*,
 by about `2**-9` of its value on average in bf16, and the sum does not cancel
 it: whenever V does not have zero mean, `O = P @ V` comes out low by about
-`2**-9` relative. The correct rounding to nearest even is unbiased.
+`2**-9` relative. Rounding to nearest is unbiased.
 
 The backward amplifies the bias. `Delta = rowsum(dO * O)` sums O's bias over
 head_dim (see [Delta in low precision](#6-delta-in-low-precision)), so dQ's
@@ -589,11 +588,28 @@ the one-sided error of P cancels. That holds only for zero-mean V, which is
 what the accuracy probe used. Measure a numerical shortcut on inputs that
 can break it, not only on the inputs that make it look free.
 
+**Rounding in software is not free.** The head_dim-16 gfx1201 forward is
+VALU-bound (32 WMMA to ~1000 VALU per loop iteration), so every op added per P
+element shows in the kernel time. Measured against truncation, JIT, B=4 H=16
+N=4096:
+
+| P rounding | VALU ops per pair | head_dim 16 | 32 | 64 | 128 |
+|---|---|---|---|---|---|
+| truncate (the mistake) | 2 | - | - | - | - |
+| to nearest even, `x + 0x7FFF + ((x >> 16) & 1)`, as LLVM lowers it | 6 | +16% | +15% | +11% | +2% |
+| to nearest, ties away, `x + 0x8000`, packed with `v_perm_b32` | 3 | +3% | +7% | +5% | -5% |
+
+The second differs from round-to-nearest-even only at exact ties: 8128 of the
+1.07e9 fp32 values in [0, 1], each rounded up by half an ulp, a bias near
+`2**-25`. A carry out of the mantissa into the exponent is correct in both:
+positive floats order like their bit patterns, so adding to the bits steps to
+the next representable value.
+
 **History.** The gfx1201 flyc forward and dK/dV kernels, from their first
 version (#227, selected by the op database from #239) to #259. Fixed by
-`bf16_rne_pack_v8` in `modules/flash/flyc/fmha_common_gfx1201.py`, used for P
-in the forward and in dV. dS keeps the truncation: it is signed, and dQ and dK
-showed no material bias from it.
+`bf16_round_pack_v8` in `modules/flash/flyc/fmha_common_gfx1201.py`, used for
+P in the forward and in dV. dS keeps the truncation: it is signed, and dQ and
+dK showed no material bias from it.
 
 **Related.** #253 is a different problem with the same carrier. There, O is
 rounded *correctly* to the input dtype, and Delta inherits that unbiased
