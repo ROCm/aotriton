@@ -20,12 +20,13 @@ add_library(perfmon_core_cpu STATIC
   "${_core}/protocol.cc"
   "${_core}/stats.cc"
   "${_core}/config.cc"
+  "${_core}/iterations.cc"
   "${_core}/pon.cc")
 target_include_directories(perfmon_core_cpu PUBLIC "${_core}")
 target_compile_options(perfmon_core_cpu PRIVATE -Wall -Wextra -Werror)
 
 enable_testing()
-foreach(_t protocol stats pon config)
+foreach(_t protocol stats pon config iterations)
   add_executable(test_${_t} test_${_t}.cc)
   target_link_libraries(test_${_t} PRIVATE perfmon_core_cpu)
   target_compile_options(test_${_t} PRIVATE -Wall -Wextra -Werror)

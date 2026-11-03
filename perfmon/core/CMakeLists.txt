@@ -60,6 +60,7 @@ add_library(perfmon_core SHARED
   protocol.cc
   stats.cc
   config.cc
+  iterations.cc
   pon.cc
   fill.cc
   timing.cc
