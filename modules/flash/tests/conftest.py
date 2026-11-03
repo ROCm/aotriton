@@ -16,7 +16,14 @@ kernel in isolation — run it explicitly (`pytest .../test_forward.py`); its co
 is a subset of test_backward.py's.
 """
 
+import os
 from pathlib import Path
+
+# Triton 3.9 cannot parse "gfx1250-strict", so torch's native Triton ops (e.g. the
+# bmm the reference backward runs at seqlen 1) fail there; use their aten versions.
+# Set before torch is imported: torch reads it once.
+if os.getenv('AOTRITON_UT_ARCH') == 'gfx1250-strict':
+    os.environ.setdefault('TORCH_DISABLE_NATIVE_JIT', '1')
 
 # Exclude the forward-only suite from `pytest modules/flash/tests` (see docstring).
 collect_ignore = ['test_forward.py']
