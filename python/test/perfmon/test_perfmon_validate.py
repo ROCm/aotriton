@@ -146,3 +146,33 @@ def test_run_job_timeout_without_probe_is_an_error():
     job = {'subject': 's', 'iface': 'op_attn_fwd', 'backend': '-', 'entry_pon': 'a=1'}
     assert [r['status'] for r in validate.run_job(runner, job, 5)] == ['error']
     assert runner.restarted == 0
+
+
+def test_parse_gpu_activity():
+    text = json.dumps({'gpu_data': [{'gpu': 0, 'usage': {'gfx_activity': {'value': 100, 'unit': '%'}}},
+                                    {'gpu': 1, 'usage': {'gfx_activity': {'value': 0, 'unit': '%'}}},
+                                    {'gpu': 2, 'usage': {'gfx_activity': 'N/A'}}]})
+    activity = validate.parse_gpu_activity(text)
+    assert activity[:2] == [100.0, 0.0] and activity[2] != activity[2]
+
+
+def test_shard_jobs_partition_the_list():
+    jobs = [{'n': i} for i in range(10)]
+    shards = [validate.shard_jobs(jobs, f'{k}/3') for k in range(3)]
+    assert [j for s in shards for j in s] == jobs
+    assert all(shards)
+    with pytest.raises(ValueError):
+        validate.shard_jobs(jobs, '3/3')
+
+
+def test_run_job_records_host_load():
+    runner = FakeRunner([{'status': 'ok', 'data': {'median': 1.0}}])
+    loads = iter([7, 6])
+    job = {'subject': 's', 'iface': 'op_attn_fwd', 'backend': '-', 'entry_pon': 'a=1'}
+    record = validate.run_job(runner, job, 5, load=lambda: next(loads))[0]
+    assert (record['busy_before'], record['busy_after']) == (7, 6)
+
+
+def test_noise_plan_seqlens(desc):
+    jobs = validate_plans.noise_jobs(desc, ['s'], seqlens=(16, 64))
+    assert {j['entry']['seqlen_q'] for j in jobs} == {16, 64}

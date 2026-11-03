@@ -142,9 +142,15 @@ def main(argv=None) -> int:
     p.add_argument('plan', choices=sorted(PLANS))
     p.add_argument('--subjects', required=True, help='comma list of subject names')
     p.add_argument('--out', default='-')
+    p.add_argument('--seqlens', default='', help='noise plan: comma list of seqlens')
     args = p.parse_args(argv)
     desc = registry.make_perf_desc('flash')
-    jobs = PLANS[args.plan](desc, [s for s in args.subjects.split(',') if s])
+    options = {}
+    if args.seqlens:
+        if args.plan != 'noise':
+            p.error('--seqlens applies to the noise plan only')
+        options['seqlens'] = tuple(int(x) for x in args.seqlens.split(','))
+    jobs = PLANS[args.plan](desc, [s for s in args.subjects.split(',') if s], **options)
     out = sys.stdout if args.out == '-' else open(args.out, 'w', encoding='utf-8')
     for job in jobs:
         out.write(json.dumps(job) + '\n')

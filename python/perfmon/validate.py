@@ -90,6 +90,42 @@ def read_jobs(lines) -> list[dict]:
     return jobs
 
 
+def parse_gpu_activity(text: str) -> list[float]:
+    """GFX activity (percent) of every GPU from `amd-smi metric -u --json`."""
+    out = []
+    for gpu in json.loads(text).get('gpu_data', []):
+        value = gpu.get('usage', {}).get('gfx_activity', {})
+        value = value.get('value') if isinstance(value, dict) else value
+        out.append(float(value) if isinstance(value, (int, float)) else float('nan'))
+    return out
+
+
+def busy_gpus(threshold: float = 50.0) -> int | None:
+    """How many GPUs of this host show at least `threshold` percent GFX
+    activity right now; None when amd-smi cannot tell. amd-smi's index is
+    not the HIP ordinal inside a container, so the caller samples between its
+    own commands, when its own GPU is idle, and the count is of the others."""
+    try:
+        text = subprocess.run(['amd-smi', 'metric', '-u', '--json'],
+                              capture_output=True,
+                              text=True,
+                              timeout=30,
+                              check=True).stdout
+        return sum(1 for a in parse_gpu_activity(text) if a >= threshold)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def shard_jobs(jobs: list[dict], spec: str) -> list[dict]:
+    """`K/N`: the K-th (from 0) of N contiguous slices of the job list, so
+    each GPU gets a run of jobs and the subjects change as seldom as in the
+    whole list."""
+    k, n = (int(x) for x in spec.split('/'))
+    if not 0 <= k < n:
+        raise ValueError(f'shard {spec!r}: need 0 <= K < N')
+    return jobs[len(jobs) * k // n: len(jobs) * (k + 1) // n]
+
+
 def group_by_subject(jobs: list[dict]) -> list[tuple[str, list[dict]]]:
     """Consecutive jobs of one subject share a runner process; the order of
     first appearance is kept."""
@@ -198,14 +234,17 @@ class RunnerProcess:
             self._stderr.close()
 
 
-def run_job(runner, job: dict, timeout: float, probe: bool = False) -> list[dict]:
+def run_job(runner, job: dict, timeout: float, probe: bool = False, load=None) -> list[dict]:
     """Run one job on a live runner; one record per measured backend.
 
     With `probe`, `timeout` is how long a measure may take before it counts as
     "started": the entry was built, its buffers allocated and its first launch
     accepted (a failure of any of these replies at once), and the long timed
     loop is not waited for. The runner is then dead, and the caller relaunches
-    it."""
+    it.
+
+    `load`, when given, is called before and after each measure and its value
+    recorded as busy_before and busy_after (see busy_gpus)."""
     pon = job_pon(job)
     iface = job['iface']
     backend = job['backend']
@@ -221,6 +260,7 @@ def run_job(runner, job: dict, timeout: float, probe: bool = False) -> list[dict
     else:
         backends = [backend]
     for name in backends:
+        busy_before = load() if load else None
         t0 = time.time()
         reply = runner.command(f'measure {pon} {iface} {name}', timeout)
         status = reply['status']
@@ -231,6 +271,9 @@ def run_job(runner, job: dict, timeout: float, probe: bool = False) -> list[dict
             record['stats'] = reply['data']
         else:
             record['message'] = reply['message']
+        if load:
+            record['busy_before'] = busy_before
+            record['busy_after'] = load()
         if runner.keepalives:
             record['keepalives'] = runner.keepalives
         records.append(record)
@@ -274,7 +317,11 @@ def run(jobs: list[dict], out, args, launcher: Path) -> int:
                         close_live()
                         live = (subject, RunnerProcess(launcher, subject, args.arch, args.gpu, method, stderr_path))
                     timeout = args.probe_seconds or args.timeout
-                    records = run_job(live[1], job, timeout, probe=bool(args.probe_seconds))
+                    records = run_job(live[1],
+                                      job,
+                                      timeout,
+                                      probe=bool(args.probe_seconds),
+                                      load=busy_gpus if args.record_host_load else None)
                     emit(job, records, method, rep)
                     if live[1].dead:
                         close_live()        # relaunch for the next job
@@ -306,10 +353,15 @@ def main(argv=None) -> int:
     p.add_argument('--probe_seconds', type=float, default=0.0,
                    help='allocation probe: a measure still running after this many seconds counts as '
                         '"started" and its runner is killed (for entries whose timed loop takes minutes)')
+    p.add_argument('--record_host_load', action='store_true',
+                   help='record how many GPUs of the host were busy before and after each measure '
+                        '(busy_before, busy_after: amd-smi GFX activity of 50%% or more)')
+    p.add_argument('--shard', default='0/1',
+                   help='K/N: run the K-th of N contiguous slices of the jobs (one runner per GPU)')
     p.add_argument('--timeout', type=float, default=900.0, help='seconds per reply line')
     args = p.parse_args(argv)
     lines = sys.stdin if args.jobs == '-' else open(args.jobs, encoding='utf-8')
-    jobs = read_jobs(lines)
+    jobs = shard_jobs(read_jobs(lines), args.shard)
     launcher = find_launcher()
     with open(args.out, 'a', encoding='utf-8') as out:
         failures = run(jobs, out, args, launcher)
