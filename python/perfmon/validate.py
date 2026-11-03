@@ -189,6 +189,11 @@ class RunnerProcess:
                     self._proc.kill()
                     self._proc.wait()
         finally:
+            try:
+                self._proc.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass            # the runner died with a command still buffered
+            self._proc.stdout.close()
             self._sel.close()
             self._stderr.close()
 
