@@ -389,12 +389,13 @@ def test_excluded_for_sets_follows_validate_hw_feature(desc):
     assert export.excluded_for_sets(desc, 'gfx950', ['prime', 'llm']) == []
 
 
-def test_the_rdna_seqlen_cap_is_exported_as_excluded_lines(desc):
-    long = {e for e, _ in export.excluded_for_sets(desc, 'gfx1201', ['prime'])
-            if max(e.seqlen_q, e.seqlen_k) > 8192}
-    every = [e for e in desc.entries(desc.entry_sets()['prime'])
-             if max(e.seqlen_q, e.seqlen_k) > 8192 and max(e.hdim_qk, e.hdim_v) <= 256]
-    assert long and set(every) <= long
+def test_the_rdna_seqlen_cap_is_exported_as_excluded_lines():
+    from aotriton.perfmon.registry import make_perf_desc
+    flash = make_perf_desc('flash')
+    capped = {e for e, _ in export.excluded_for_sets(flash, 'gfx1201', ['prime'])}
+    long = [e for e in flash.entries(flash.entry_sets()['prime']) if max(e.seqlen_q, e.seqlen_k) > 8192]
+    assert long and set(long) <= capped
+    assert export.excluded_for_sets(flash, 'gfx942', ['prime']) == []
 
 
 def test_platform_csv_comes_from_the_rows(tmp_path, desc):

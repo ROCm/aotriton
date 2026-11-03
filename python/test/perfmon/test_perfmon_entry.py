@@ -230,7 +230,7 @@ def test_validate_hw_feature(desc, prime):
 
 
 def test_rdna_is_capped_at_seqlen_8192_and_cdna_is_not(desc):
-    entries = desc.entries(desc.entry_sets()['prime'])
+    entries = list(desc.entries(desc.entry_sets()['prime']))
     long = [e for e in entries if max(e.seqlen_q, e.seqlen_k) == 16384]
     edge = [e for e in entries if max(e.seqlen_q, e.seqlen_k) == 8192 and e.hdim_qk <= 256]
     assert long and edge
