@@ -893,11 +893,6 @@ def core_test_large_bf16_nan_values(hdim):
     k = torch.full((1, 1, 1, hdim), 133120.0, dtype=torch.bfloat16, device=real_device)
     v = torch.full((1, 1, 1, hdim), 133120.0, dtype=torch.bfloat16, device=real_device)
     b = None
-    from torch.nn.functional import scaled_dot_product_attention
-    from torch.nn.attention import sdpa_kernel, SDPBackend
-    with sdpa_kernel(SDPBackend.MATH):
-        out = scaled_dot_product_attention(q, k, v)
-    print(out)
 
     causal = False
     sm_scale = 0.125
