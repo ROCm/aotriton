@@ -5,8 +5,8 @@
 import argparse
 from pathlib import Path
 import json
-import triton
 import hashlib
+import subprocess
 import itertools
 import importlib.metadata
 
@@ -23,8 +23,20 @@ def parse():
     p.add_argument('--target_arch', nargs='+')
     p.add_argument('--vendors', nargs='*', default=['amd'])
     p.add_argument('--output_file', required=True)
+    p.add_argument('--triton_python',
+                   default=None,
+                   help='Read the Triton version from this interpreter instead of this one, '
+                        'e.g. a python: altwheel default whose venv this one is not')
     args = p.parse_args()
     return args
+
+def triton_version(python):
+    if python is None:
+        return str(importlib.metadata.version("triton"))
+    return subprocess.check_output([python,
+                                    '-c',
+                                    'import importlib.metadata as m; print(m.version("triton"), end="")'],
+                                   text=True)
 
 def hashfile(fn):
     CHUNK_SIZE = 1024 * 1024
@@ -92,7 +104,7 @@ def main():
     db['primary'] = dict(gen_primary_db_hash())
     db['secondary'] = {f'{family}.metadata': hash_metadata(d) for family, d in databases.items()}
     sig['DB_SHA256'] = db
-    sig['TRITON_VERSION'] = str(importlib.metadata.version("triton"))
+    sig['TRITON_VERSION'] = triton_version(args.triton_python)
     try:
         sig['FLYC_VERSION'] = str(importlib.metadata.version("flydsl"))
     except importlib.metadata.PackageNotFoundError:

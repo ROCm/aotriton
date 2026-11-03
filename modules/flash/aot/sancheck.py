@@ -16,7 +16,7 @@ Torch-free: safe to import outside a GPU container.
 from aotriton.gpu_targets import AOTRITON_ARCH_WARPSIZE
 from aotriton.utils import log
 
-from ._common import check_value, _empty_generator
+from ._common import check_value, _empty_generator, GFX1250_ARCHES
 
 
 # Flash's LUT axes. These live here, not on the ATI kdesc: the kdesc is the
@@ -26,6 +26,8 @@ from ._common import check_value, _empty_generator
 LUT_FULL_SEQLEN_Q = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
 LUT_FULL_SEQLEN_K = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
 LUT_FULL_SEQLEN_NAVI = [16, 32, 64, 128, 256, 512, 1024, 2048]
+# gfx1250's tech-preview database is tuned on three seqlen entries only.
+LUT_FULL_SEQLEN_TP = [64, 256, 2048]
 
 
 class LutSancheck:
@@ -47,6 +49,14 @@ class LutSancheck:
             hdim = check_value(functional, 'BLOCK_DMODEL')
             if hdim > 256:
                 return True
+        # Mirrors _common.flash_disabled's gfx1250 rules: that one reads
+        # f.choices, this one check_value, so neither can call the other.
+        if functional.arch in GFX1250_ARCHES:
+            hdim = check_value(functional, 'BLOCK_DMODEL')
+            if hdim > 256:
+                return True
+            if hdim & (hdim - 1) != 0:
+                return True
         return False
 
     def sancheck_lut_tensor(self,
@@ -61,12 +71,19 @@ class LutSancheck:
             return True, [], _empty_generator()
         MI = (AOTRITON_ARCH_WARPSIZE[arch] == 64)
         Navi = (AOTRITON_ARCH_WARPSIZE[arch] == 32)
+        TECH_PREVIEW = (arch in GFX1250_ARCHES)
         LUT_TENSOR_SIZE = (len(LUT_FULL_SEQLEN_Q), len(LUT_FULL_SEQLEN_K))
         LUT_TENSOR_SIZE_NAVI = (len(LUT_FULL_SEQLEN_NAVI), len(LUT_FULL_SEQLEN_NAVI))
+        LUT_TENSOR_SIZE_TP = (len(LUT_FULL_SEQLEN_TP), len(LUT_FULL_SEQLEN_TP))
         log(lambda : f'{lut_tensor.shape=} ==? {LUT_TENSOR_SIZE=}')
         all_pos = (lut_tensor >= 0).all()
         shape = lut_tensor.shape[1:]
-        if MI:
+        # Tested before Navi: gfx1250 is wave32, and the Navi branch alone would
+        # reject its three-entry tech-preview table.
+        if TECH_PREVIEW:
+            shape_match = (shape == LUT_TENSOR_SIZE or shape == LUT_TENSOR_SIZE_NAVI
+                           or shape == LUT_TENSOR_SIZE_TP)
+        elif MI:
             shape_match = shape == LUT_TENSOR_SIZE
         elif Navi:
             shape_match = (shape == LUT_TENSOR_SIZE or shape == LUT_TENSOR_SIZE_NAVI)
@@ -79,12 +96,19 @@ class LutSancheck:
         if not all_pos:
             errors.append("certain entries are empty (-1)")
         if not shape_match:
-            if Navi:
+            if TECH_PREVIEW:
+                errors.append(f"Unexpected {shape=}, Expecting {LUT_TENSOR_SIZE}, "
+                              f"{LUT_TENSOR_SIZE_NAVI} or {LUT_TENSOR_SIZE_TP}")
+            elif Navi:
                 errors.append(f"Unexpected {shape=}, Expecting {LUT_TENSOR_SIZE} or {LUT_TENSOR_SIZE_NAVI}")
             else:
                 errors.append(f"Unexpected {shape=}, Expecting {LUT_TENSOR_SIZE}")
         # Pick the seqlen lists that match the actual lut_tensor shape for this arch.
-        if Navi and lut_tensor.shape[1:] == LUT_TENSOR_SIZE_NAVI:
+        if TECH_PREVIEW and lut_tensor.shape[1:] == LUT_TENSOR_SIZE_TP:
+            lut_full_seqlen_q = LUT_FULL_SEQLEN_TP
+            lut_full_seqlen_k = LUT_FULL_SEQLEN_TP
+            expected_size = LUT_TENSOR_SIZE_TP
+        elif Navi and lut_tensor.shape[1:] == LUT_TENSOR_SIZE_NAVI:
             lut_full_seqlen_q = LUT_FULL_SEQLEN_NAVI
             lut_full_seqlen_k = LUT_FULL_SEQLEN_NAVI
             expected_size = LUT_TENSOR_SIZE_NAVI

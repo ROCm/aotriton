@@ -41,6 +41,7 @@ Options (shared by every .ci/build-*.sh):
   --altwheel_config <yaml>    -DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE
   --name_suffix <suffix>      -DAOTRITON_NAME_SUFFIX; '' for no suffix
   --mold / --no_mold          Force the mold linker on/off
+  -D <var>=<value>            Passed to cmake as is, after every other flag
   --help                      This message
 
 Environment: AOTRITON_BUILD_PATH, AOTRITON_INSTALL_PATH,

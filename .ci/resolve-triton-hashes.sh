@@ -4,6 +4,8 @@
 
 # Resolve the Triton commit hashes to build: the default (submodule-pinned,
 # or .venvs.default) plus every other .venvs.* entry in an altwheel YAML.
+# A {pep508} entry names no commit: pip wheel fetches it, or builds it from
+# whatever source it names, without the mirror. It contributes no hash.
 # Shared by releasesuite-git-head.sh and .tune.
 #
 # Usage: resolve-triton-hashes.sh <aotriton_src_dir> [<altwheel_yaml>]
@@ -26,6 +28,11 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 # .venvs.default overrides the submodule-pinned commit if set.
 DEFAULT_HASH=""
 if [[ -n "${ALTWHEEL_YAML}" ]]; then
+  # Callers build the first hash as the default, so it must name a commit.
+  if [[ -n "$(altwheel_venv_pep508 "${ALTWHEEL_YAML}" ".venvs.default")" ]]; then
+    echo "Error: ${ALTWHEEL_YAML}: .venvs.default cannot be a {pep508} entry" >&2
+    exit 1
+  fi
   DEFAULT_HASH=$(altwheel_venv_hash "${ALTWHEEL_YAML}" ".venvs.default")
 fi
 if [[ -z "${DEFAULT_HASH}" ]]; then
@@ -37,6 +44,9 @@ echo "${DEFAULT_HASH}"
 if [[ -n "${ALTWHEEL_YAML}" ]]; then
   for key in $(yq -r '.venvs | keys | .[]' "${ALTWHEEL_YAML}"); do
     [ "$key" = "default" ] && continue
-    altwheel_venv_hash "${ALTWHEEL_YAML}" ".venvs.${key}"
+    hash=$(altwheel_venv_hash "${ALTWHEEL_YAML}" ".venvs.${key}")
+    if [ -n "$hash" ]; then
+      echo "$hash"
+    fi
   done
 fi

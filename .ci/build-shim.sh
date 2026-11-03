@@ -10,7 +10,7 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 
 usage() {
   cat <<'EOF' >&2
-Usage: build-shim.sh [options] <target arch> [optional pre-compiled triton wheel]
+Usage: build-shim.sh [options] <target arch> [optional triton wheel or PEP 508 requirement]
 
 The C++ shim only (AOTRITON_NOIMAGE_MODE=ON): codegen and a C++ compile, no
 kernel images -- the fastest check that the tree still builds. Mold linker on.

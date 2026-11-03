@@ -240,7 +240,7 @@ class InterfaceGenerator(ABC):
         lets = []
         for i, arch in enumerate(self._target_arch_keys):
             for j, gpu in enumerate(self._target_arch[arch]):
-                gpu_enum = f'GPU_AMD_ARCH_{gpu}'.upper()
+                gpu_enum = f'GPU_AMD_ARCH_{gpu}'.upper().replace('-', '_')
                 # CAVEAT: must return j because some GPU mod may not be selected.
                 lets.append(f'if (gpu == {gpu_enum}) return {{ {i}, {j} }}')
         ALIGN = ';\n' + ' ' * 4

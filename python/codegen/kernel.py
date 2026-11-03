@@ -89,7 +89,8 @@ class KernelShimGenerator(InterfaceGenerator):
         print(self.SOURCE_TEMPLATE.format_map(d), file=fout)
 
     def codegen_per_kernel_packed_string(self):
-        return self._this_repo.get_data('per_kernel_packed_string')
+        # A kernel disabled on every target arch registers nothing; see flyc.py.
+        return self._this_repo.get_data('per_kernel_packed_string', return_none=True) or '""'
 
     def codegen_declare_compiled_in_features(self):
         kdesc = self._iface
@@ -124,7 +125,8 @@ const std::vector<{infotype}>& {meta_class}::get_{tp.repr_name}_choices()
 
     def codegen_kernel_arguments(self):
         param_class_name = self._iface.param_class_name
-        pp_registry = self._this_repo.get_data('pp_function')
+        # return_none=True: same all-disabled case as above (bwd_kernel_fuse on gfx1250).
+        pp_registry = self._this_repo.get_data('pp_function', return_none=True) or {}
         stmt = []
         # array = ['PP_FUNC prepare_arguments [] = {']
         array = []
@@ -137,4 +139,8 @@ const std::vector<{infotype}>& {meta_class}::get_{tp.repr_name}_choices()
             stmt.append(f'}}')
             array.append(pp_function_name)
         pp_func_num = len(pp_registry.keys())
+        if pp_func_num == 0:
+            # Avoid a zero-length array; the all-null autotune table keeps it unindexed.
+            pp_func_num = 1
+            array.append('nullptr')
         return '\n'.join(stmt), ',\n  '.join(array), pp_func_num

@@ -8,7 +8,7 @@ mkdir build
 cd build
 export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:${CONDA_PREFIX}/lib/pkgconfig"
 # See https://github.com/ROCm/FlyDSL for build instructions
-cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 -DAOTRITON_USE_LOCAL_TRITON_WHEEL=/tmp/triton_wheel/<triton_wheel>.whl -DAOTRITON_USE_LOCAL_FLYDSL_WHEEL=<absolute path to flydsl>.whl -G Ninja
+cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 -DAOTRITON_TRITON_WHEEL_PEP508=/tmp/triton_wheel/<triton_wheel>.whl -DAOTRITON_USE_LOCAL_FLYDSL_WHEEL=<absolute path to flydsl>.whl -G Ninja
 # Use ccmake to tweak options
 ninja install/strip  # Use `ninja install` to keep symbols
 ```

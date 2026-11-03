@@ -10,7 +10,7 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 
 usage() {
   cat <<'EOF' >&2
-Usage: build-for-torch.sh [options] <target arch> [optional pre-compiled triton wheel]
+Usage: build-for-torch.sh [options] <target arch> [optional triton wheel or PEP 508 requirement]
 
 The AOTriton PyTorch links against, for torch-build.sh to consume: NO name
 suffix (this build IS torch's libaotriton_v2.so, it does not coexist with one)

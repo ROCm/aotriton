@@ -155,7 +155,7 @@ if [ "${NOIMAGE_MODE}" == "OFF" ]; then
   if [[ "${WHEEL_CFG}" == *.yml || "${WHEEL_CFG}" == *.yaml ]]; then
     cmake_arg="-DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=${WHEEL_CFG}"
   else
-    cmake_arg="-DAOTRITON_USE_LOCAL_TRITON_WHEEL=${WHEEL_CFG}"
+    cmake_arg="-DAOTRITON_TRITON_WHEEL_PEP508=${WHEEL_CFG}"
   fi
   build_args+=("${cmake_arg}")
   # Only image builds compile kernels, so only they need a FlyDSL compiler at

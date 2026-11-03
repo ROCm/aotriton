@@ -22,6 +22,7 @@ from .common import (
     hsaco_inaks2_name,
 )
 from ..gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
+from .. import altwheel
 import sys
 import os
 import re
@@ -177,7 +178,8 @@ class RootGenerator(object):
             if (AOTRITON_DEBUG_SKIP_TRITON_KERNELS
                     and k.NAME not in AOTRITON_SKIP_TRITON_KEEP_KERNELS):
                 continue
-            hsacos = ksg.this_repo.get_data('hsaco')
+            # A kernel disabled on every target arch registers no hsaco (see flyc below).
+            hsacos = ksg.this_repo.get_data('hsaco', return_none=True) or {}
             hsaco_for_kernels.append((k, hsacos))
 
         # TODO: Fix this for Windows
@@ -411,15 +413,16 @@ class RootGenerator(object):
         truncated payload is far harder to debug than this assert firing.
         """
         log(lambda : f'{ksig=}')
-        # The DEFAULT venv, never a rule-matched alt venv. The altwheel rules
-        # (--alt_triton_wheel_config_file) key on arch/family, not on backend
-        # kind, so a flyc functional matches them exactly as a Triton one does --
-        # but an alt venv holds only requirements.txt plus a Triton wheel. It has
+        # The MAIN build venv (VENV_DIR), never an altwheel venv -- not even
+        # venvs.default, which maps to altvenvs/default or a "python:"
+        # interpreter. The altwheel rules key on arch/family, not on backend,
+        # so a flyc functional matches them exactly as a Triton one does -- but
+        # an alt venv holds only requirements.txt plus a Triton wheel. It has
         # neither `flydsl` (installed only into VENV_DIR by aotriton_venv_flydsl)
         # nor `aotriton` itself, so `<altvenv>/bin/python -m aotriton.flyc_compile`
         # dies with ModuleNotFoundError at ninja time for every flyc image.
         # Choosing a Triton version is meaningless for a FlyDSL compile anyway.
-        python = self._venvpython['default']
+        python = self._main_python
         def _kv(name, choice):
             value = repr(choice.triton_compile_signature)
             assert ' ' not in value, (
@@ -456,49 +459,27 @@ class RootGenerator(object):
         return full.absolute().as_posix()
 
     def _load_altwheel_config(self, d: dict):
-        venvs = d.get("venvs", {})
         rules = d.get("rules", [])
         self._altwheels = {}
         self._venvpython = {}
-        # NOT IMPLEMENTED, and deliberately recorded rather than left to be
-        # rediscovered: today `value` must be a YAML scalar -- either
-        # "python:<interpreter>" (use it, install nothing) or a wheel path, and
-        # either way `self._altwheels[name] = Path(value)`. A venv therefore maps
-        # to exactly one thing, so a per-arch flydsl pin (one arch wanting a
-        # different flydsl version from another) is not expressible; every venv
-        # gets the same third_party/flydsl-compiler.txt pin instead.
-        #
-        # A backward-compatible extension is specified in
-        # `docs/AltWheelExample.yaml`, which carries both forms side by side and
-        # the full rule. In outline: branch on the YAML node type. The scalar
-        # branch is unchanged and stays *wheels-only* -- a non-"python:" scalar
-        # must end in ".whl" and anything else must RAISE, pointing at the
-        # sequence form, because CMake's verbatim `pip install ${WHEEL}` would
-        # otherwise install a stray requirement string by accident and let the two
-        # forms drift. A *sequence* value is the new part: several pip requirement
-        # lines installed in order. `[value]` is not a safe stand-in, since the
-        # validation differs per branch.
-        #
-        # `CMakeLists.txt` parses this same file with an inline Python one-liner
-        # that assumes one wheel per venv (`list(POP_FRONT)` over alternating
-        # name/wheel pairs); it needs a matching update in lockstep, or a list
-        # value silently corrupts that 2-periodic alternation.
-        for name, value in venvs.items():
-            if value.startswith("python:"):
-                # Use the provided Python executable directly
-                python_path = value[len("python:"):]
-                self._venvpython[name] = Path(python_path).absolute()
+        # Three entry forms, parsed by aotriton.altwheel (shared with CMake):
+        # a .whl path, "pep508:<requirement>" (both installed into
+        # altvenvs/<name>), or "python:<interpreter>" (used as is).
+        for name, entry in altwheel.parse_venvs(d).items():
+            if entry.mode == 'python':
+                self._venvpython[name] = Path(entry.value)
             else:
-                self._altwheels[name] = Path(value)
+                self._altwheels[name] = entry.value
                 self._venvpython[name] = (self._args.build_dir.parent / "altvenvs" / name / REL_PYTHON).absolute()
+        # The main build venv, which has flydsl and aotriton; an alt venv does not.
+        # VIRTUAL_ENV is set by CMake (v3src/CMakeLists.txt).
+        venv_dir = os.getenv('VIRTUAL_ENV')
+        if venv_dir:
+            self._main_python = (Path(venv_dir) / REL_PYTHON).absolute()
+        else:
+            self._main_python = (self._args.build_dir.parent / 'venv' / REL_PYTHON).absolute()
         if "default" not in self._venvpython:
-            # Use VIRTUAL_ENV environment variable if set (by CMake in v3src/CMakeLists.txt)
-            # This ensures we use an existing build environment before falling back to venv
-            venv_dir = os.getenv('VIRTUAL_ENV')
-            if venv_dir:
-                self._venvpython['default'] = (Path(venv_dir) / REL_PYTHON).absolute()
-            else:
-                self._venvpython['default'] = (self._args.build_dir.parent / 'venv' / REL_PYTHON).absolute()
+            self._venvpython['default'] = self._main_python
         self._altrules = [ self._create_rule_function(rule) for rule in rules ]
 
     def _create_rule_function(self, rule):

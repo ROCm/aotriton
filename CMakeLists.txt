@@ -163,12 +163,24 @@ if(DEFINED ENV{AOTRITON_DEBUG_SKIP_TRITON_KERNELS})
     "earlier configure of this build directory takes precedence).")
 endif()
 option(AOTRITON_INHERIT_SYSTEM_SITE_TRITON "Use system site packages and verify triton availability instead of building from source" OFF)
-# No plan to support network based pip install
-set(AOTRITON_USE_LOCAL_TRITON_WHEEL "" CACHE STRING "Substitute install from third_party/triton with install from local pip wheel package.")
+set(_triton_pep508_doc "Install Triton with pip from this PEP 508 requirement (e.g. triton==3.9.0) or local wheel path, instead of building third_party/triton.")
+set(AOTRITON_TRITON_WHEEL_PEP508 "" CACHE STRING "${_triton_pep508_doc}")
+set(AOTRITON_USE_LOCAL_TRITON_WHEEL "" CACHE STRING "Deprecated alias of AOTRITON_TRITON_WHEEL_PEP508.")
+# Move the alias into the new name and clear it, so a reused build directory
+# that cached the alias keeps working. The new name wins if both are set.
+if(AOTRITON_USE_LOCAL_TRITON_WHEEL)
+  if(NOT AOTRITON_TRITON_WHEEL_PEP508)
+    message(DEPRECATION "AOTRITON_USE_LOCAL_TRITON_WHEEL is deprecated, use AOTRITON_TRITON_WHEEL_PEP508.")
+    set(AOTRITON_TRITON_WHEEL_PEP508 "${AOTRITON_USE_LOCAL_TRITON_WHEEL}" CACHE STRING "${_triton_pep508_doc}" FORCE)
+  elseif(NOT AOTRITON_TRITON_WHEEL_PEP508 STREQUAL AOTRITON_USE_LOCAL_TRITON_WHEEL)
+    message(WARNING "Ignoring deprecated AOTRITON_USE_LOCAL_TRITON_WHEEL=${AOTRITON_USE_LOCAL_TRITON_WHEEL}; AOTRITON_TRITON_WHEEL_PEP508=${AOTRITON_TRITON_WHEEL_PEP508} takes precedence.")
+  endif()
+  set(AOTRITON_USE_LOCAL_TRITON_WHEEL "" CACHE STRING "Deprecated alias of AOTRITON_TRITON_WHEEL_PEP508." FORCE)
+endif()
 set(AOTRITON_USE_LOCAL_FLYDSL_WHEEL "" CACHE STRING "Substitute the install from third_party/flydsl-compiler.txt with an install from a local flydsl wheel file. Must be an absolute path to an existing .whl.")
 set(AOTRITON_GPU_BUILD_TIMEOUT "8.0" CACHE STRING "GPU kernel compiler times out after X minutes. 0 for indefinite. Highly recommended if AOTRITON_BUILD_FOR_TUNING=On.")
 option(AOTRITON_TERMINATE_WHEN_GPU_BUILD_TIMEOUT "compile.py will return error when GPU built timeout. Defensive option for CI" OFF)
-set(AOTRITON_TARGET_ARCH "gfx90a;gfx942;gfx950;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1170;gfx1171;gfx1201;gfx1200;gfx1250" CACHE STRING "Target GPU Architecture. Select all GPUs within the given list")
+set(AOTRITON_TARGET_ARCH "gfx90a;gfx942;gfx950;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1170;gfx1171;gfx1201;gfx1200;gfx1250;gfx1250-strict" CACHE STRING "Target GPU Architecture. Select all GPUs within the given list")
 set(TARGET_GPUS "OBSOLETE" CACHE STRING "OBSOLETE. To select only one GPU, use AOTRITON_TARGET_ARCH or AOTRITON_OVERRIDE_TARGET_GPUS.")
 set(AOTRITON_OVERRIDE_TARGET_GPUS "" CACHE STRING "Override AOTRITON_TARGET_ARCH, and only build for GPUs within this list.")
 set(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE "" CACHE STRING "Specify how to use alternative Triton wheels for different architectures in a YAML config file (resolved format -- see docs/AltWheelExample.yaml).")
@@ -182,8 +194,8 @@ if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
   if(NOT ${altwheel_yaml_is_absolute})
     message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE must be absolute path, but configured as ${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}")
   endif()
-  if(AOTRITON_USE_LOCAL_TRITON_WHEEL)
-    message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE and AOTRITON_USE_LOCAL_TRITON_WHEEL are mutually exclusive -- the altwheel config's own .venvs.default entry supplies the default Triton wheel.")
+  if(AOTRITON_TRITON_WHEEL_PEP508)
+    message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE and AOTRITON_TRITON_WHEEL_PEP508 are mutually exclusive -- the altwheel config's own .venvs.default entry supplies the default Triton wheel.")
   endif()
 endif()
 
@@ -373,6 +385,47 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_
 execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install "${CMAKE_CURRENT_LIST_DIR}"
   COMMAND_ERROR_IS_FATAL ANY)
 
+# Read venvs.<NAME> of the altwheel config: MODE is wheel, python or pep508.
+# One call per field, so a ';' in VALUE never passes through a CMake list.
+function(aotriton_altwheel_entry NAME OUT_MODE OUT_VALUE)
+  foreach(_field mode value)
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}"
+      -m aotriton.altwheel "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}"
+      --venv "${NAME}" --field ${_field}
+      OUTPUT_VARIABLE _out
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      COMMAND_ERROR_IS_FATAL ANY
+    )
+    set(_${_field} "${_out}")
+  endforeach()
+  set(${OUT_MODE} "${_mode}" PARENT_SCOPE)
+  set(${OUT_VALUE} "${_value}" PARENT_SCOPE)
+endfunction()
+
+# pip install a PEP 508 REQUIREMENT into VENV, producing OUTPUT.
+function(aotriton_pip_install_pep508)
+  # PARSE_ARGV keeps a ";" of an environment marker inside REQUIREMENT.
+  cmake_parse_arguments(PARSE_ARGV 0 _arg "" "OUTPUT;VENV;REQUIREMENT;STAMP" "")
+  # Rewritten only when the requirement changes, so changing it reinstalls.
+  # Not file(CONFIGURE): it would substitute the @...@ of a URL.
+  set(_old "")
+  if(EXISTS "${_arg_STAMP}")
+    file(READ "${_arg_STAMP}" _old)
+  endif()
+  if(NOT _old STREQUAL "${_arg_REQUIREMENT}\n")
+    file(WRITE "${_arg_STAMP}" "${_arg_REQUIREMENT}\n")
+  endif()
+  # Quoted and VERBATIM: a requirement may contain '>', ';' or spaces.
+  # The touch keeps the output newer than the stamp when pip has nothing to do.
+  add_custom_command(OUTPUT "${_arg_OUTPUT}"
+    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${_arg_VENV} "${_arg_VENV}/${VENV_REL_PYTHON}" -m pip install "${_arg_REQUIREMENT}"
+    COMMAND ${CMAKE_COMMAND} -E touch "${_arg_OUTPUT}"
+    DEPENDS "${_arg_STAMP}"
+    VERBATIM
+  )
+endfunction()
+
 set(ALL_TRITON_SOS "")
 # Triton is needed ONLY to compile the GPU kernel images: the ATI code generator is
 # triton-free (@ati.source AST-parses the kernel sources, see
@@ -403,27 +456,32 @@ else()
 
   set(AOTRITON_TRITON_SO "${VENV_SITE}/${VENV_REL_TRITON}")
 
-  if(AOTRITON_USE_LOCAL_TRITON_WHEEL)
+  # The altwheel config's .venvs.default supplies the main venv's Triton
+  # (mutually exclusive with AOTRITON_TRITON_WHEEL_PEP508, enforced above), so
+  # callers using altwheel need not check out third_party/triton/ at all.
+  set(ALT_DEFAULT_MODE "")
+  if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+    aotriton_altwheel_entry(default ALT_DEFAULT_MODE ALT_DEFAULT_VALUE)
+  endif()
+
+  if(AOTRITON_TRITON_WHEEL_PEP508 OR ALT_DEFAULT_MODE STREQUAL "pep508")
+    if(AOTRITON_TRITON_WHEEL_PEP508)
+      set(_triton_req "${AOTRITON_TRITON_WHEEL_PEP508}")
+    else()
+      set(_triton_req "${ALT_DEFAULT_VALUE}")
+    endif()
+    aotriton_pip_install_pep508(OUTPUT "${AOTRITON_TRITON_SO}"
+                                VENV "${VENV_DIR}"
+                                REQUIREMENT "${_triton_req}"
+                                STAMP "${CMAKE_CURRENT_BINARY_DIR}/triton_wheel_pep508.txt")
+  elseif(ALT_DEFAULT_MODE STREQUAL "wheel")
     add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
-      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install ${AOTRITON_USE_LOCAL_TRITON_WHEEL}
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install "${ALT_DEFAULT_VALUE}"
+      VERBATIM
     )
-  elseif(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
-    # The main venv's wheel comes from the altwheel config's own
-    # .venvs.default entry (mutually exclusive with AOTRITON_USE_LOCAL_TRITON_WHEEL,
-    # enforced above) -- install it here instead of falling back to
-    # third_party/triton/, which callers using altwheel are not required to
-    # have checked out at all.
-    execute_process(
-      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c
-      "import yaml,sys; f = open(sys.argv[1]); d = yaml.load(f, Loader=yaml.Loader); print(d['venvs']['default'])"
-      "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}"
-      OUTPUT_VARIABLE AOTRITON_ALT_DEFAULT_WHEEL
-      OUTPUT_STRIP_TRAILING_WHITESPACE
-      COMMAND_ERROR_IS_FATAL ANY
-    )
-    add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
-      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install ${AOTRITON_ALT_DEFAULT_WHEEL}
-    )
+  elseif(ALT_DEFAULT_MODE STREQUAL "python")
+    # Kernels compile with that interpreter; the alt-venv loop below checks it.
+    message(STATUS "[AOTriton] .venvs.default is python:${ALT_DEFAULT_VALUE}, no Triton installed into ${VENV_DIR}")
   else()
     # Check if pip is available at configure time
     execute_process(
@@ -444,38 +502,75 @@ else()
       )
     endif()
   endif()
-  LIST(APPEND ALL_TRITON_SOS "${AOTRITON_TRITON_SO}")
+  if(NOT ALT_DEFAULT_MODE STREQUAL "python")
+    LIST(APPEND ALL_TRITON_SOS "${AOTRITON_TRITON_SO}")
+  endif()
 endif()
 
 if(NOT AOTRITON_NOIMAGE_MODE AND AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+  # Every entry, default included: root.py maps a non-"python:" default to
+  # altvenvs/default, not to VENV_DIR.
   execute_process(
-    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c
-    "import yaml,sys; f = open(sys.argv[1]); d = yaml.load(f, Loader=yaml.Loader); print(';'.join([f'{k};{v}' for k, v in d['venvs'].items()]))"
-    "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}"
-    OUTPUT_VARIABLE ALT_VENVS
+    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}"
+    -m aotriton.altwheel "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}"
+    OUTPUT_VARIABLE ALT_VENV_NAMES
     OUTPUT_STRIP_TRAILING_WHITESPACE
+    COMMAND_ERROR_IS_FATAL ANY
   )
-  while(ALT_VENVS)
-    list(POP_FRONT ALT_VENVS ALT_VENV_NAME)
-    list(POP_FRONT ALT_VENVS WHEEL)
+  foreach(ALT_VENV_NAME IN LISTS ALT_VENV_NAMES)
+    aotriton_altwheel_entry("${ALT_VENV_NAME}" ALT_VENV_MODE ALT_VENV_VALUE)
+    if(ALT_VENV_MODE STREQUAL "python")
+      # Use as is: no venv, nothing installed, nothing for ninja to build.
+      if(NOT EXISTS "${ALT_VENV_VALUE}")
+        message(FATAL_ERROR "[AOTriton] altwheel venv '${ALT_VENV_NAME}': interpreter python:${ALT_VENV_VALUE} does not exist.")
+      endif()
+      execute_process(
+        COMMAND "${ALT_VENV_VALUE}" -c "import triton; import triton.language; print('Triton found: ', triton.__version__)"
+        RESULT_VARIABLE TRITON_CHECK_RESULT
+        OUTPUT_VARIABLE TRITON_OUTPUT
+        ERROR_VARIABLE TRITON_OUTPUT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+      )
+      if(NOT TRITON_CHECK_RESULT EQUAL 0)
+        message(FATAL_ERROR "[AOTriton] altwheel venv '${ALT_VENV_NAME}' is python:${ALT_VENV_VALUE}, which cannot import triton. ${TRITON_OUTPUT}")
+      endif()
+      message(STATUS "[AOTriton] altwheel venv '${ALT_VENV_NAME}': ${ALT_VENV_VALUE}: ${TRITON_OUTPUT}")
+      continue()
+    endif()
     # FIXME: altvenvs is separately defined here and codegen/root.py. Find a way to unify?
-    set(ALT_VENV_DIR "altvenvs/${ALT_VENV_NAME}")
+    # Absolute: relative would follow cmake's cwd, not the build directory.
+    set(ALT_VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/altvenvs/${ALT_VENV_NAME}")
     message(STATUS "ALT_VENV_DIR ${ALT_VENV_DIR}")
-    message(STATUS "WHEEL ${WHEEL}")
+    message(STATUS "${ALT_VENV_MODE} ${ALT_VENV_VALUE}")
     execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv "${ALT_VENV_DIR}")
     set(ALT_VENV_BIN_PYTHON "${ALT_VENV_DIR}/${VENV_REL_PYTHON}")
     execute_process(COMMAND "${ALT_VENV_BIN_PYTHON}" -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt")
-    set(AOTRITON_TRITON_SO "${ALT_VENV_DIR}/${VENV_REL_TRITON}")
-    add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
-      COMMAND "${ALT_VENV_BIN_PYTHON}" -m pip install ${WHEEL}
-    )
+    # pip installs into the venv's site-packages, not its top directory.
+    execute_process(COMMAND "${ALT_VENV_BIN_PYTHON}" -c "import site; print(site.getsitepackages()[0], end='')"
+      OUTPUT_VARIABLE ALT_VENV_SITE
+      COMMAND_ERROR_IS_FATAL ANY)
+    set(AOTRITON_TRITON_SO "${ALT_VENV_SITE}/${VENV_REL_TRITON}")
+    if(ALT_VENV_MODE STREQUAL "pep508")
+      aotriton_pip_install_pep508(OUTPUT "${AOTRITON_TRITON_SO}"
+                                  VENV "${ALT_VENV_DIR}"
+                                  REQUIREMENT "${ALT_VENV_VALUE}"
+                                  STAMP "${CMAKE_CURRENT_BINARY_DIR}/altvenvs/${ALT_VENV_NAME}.pep508.txt")
+    else()
+      add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
+        COMMAND "${ALT_VENV_BIN_PYTHON}" -m pip install "${ALT_VENV_VALUE}"
+        VERBATIM
+      )
+    endif()
     LIST(APPEND ALL_TRITON_SOS "${AOTRITON_TRITON_SO}")
-  endwhile(ALT_VENVS)
+  endforeach()
 endif(NOT AOTRITON_NOIMAGE_MODE AND AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
 
 if(ALL_TRITON_SOS)
   add_custom_target(aotriton_venv_triton ALL DEPENDS "${ALL_TRITON_SOS}")
-endif(ALL_TRITON_SOS)
+elseif(NOT TARGET aotriton_venv_triton)
+  # E.g. every altwheel entry is "python:"; image rules still DEPEND on it.
+  add_custom_target(aotriton_venv_triton ALL)
+endif()
 
 # Two independent pins: the COMPILER wheel (flydsl-compiler.txt, overridden by
 # AOTRITON_USE_LOCAL_FLYDSL_WHEEL) and the kernel SOURCE TREE (flydsl-kernel.txt).
