@@ -229,6 +229,19 @@ def test_validate_hw_feature(desc, prime):
     assert desc.validate_hw_feature('gfx942', big) == (True, '')
 
 
+def test_rdna_is_capped_at_seqlen_8192_and_cdna_is_not(desc):
+    entries = desc.entries(desc.entry_sets()['prime'])
+    long = [e for e in entries if max(e.seqlen_q, e.seqlen_k) == 16384]
+    edge = [e for e in entries if max(e.seqlen_q, e.seqlen_k) == 8192 and e.hdim_qk <= 256]
+    assert long and edge
+    for arch in ('gfx1100', 'gfx1201', 'gfx1030'):
+        ok, reason = desc.validate_hw_feature(arch, long[0])
+        assert not ok and '8192' in reason
+        assert desc.validate_hw_feature(arch, edge[0]) == (True, '')
+    for arch in ('gfx942', 'gfx950', 'gfx90a'):
+        assert desc.validate_hw_feature(arch, long[0]) == (True, '')
+
+
 # -- the wire form ---------------------------------------------------------------------------------
 
 def test_entry_pon_has_exactly_the_runner_keys_in_order(desc, prime):

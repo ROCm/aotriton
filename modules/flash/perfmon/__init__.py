@@ -25,10 +25,18 @@ from . import workloads as _workloads
 
 IFACES = ('op_attn_fwd', 'op_attn_bwd')
 
-#: Largest seqlen each arch can hold, filled from measurement only. An arch
-#: absent here is unconstrained, which fails loudly at run time rather than
-#: silently skipping entries.
-_MAX_SEQLEN_BY_ARCH: dict[str, int] = {}
+#: Largest seqlen measured on an arch family, by arch prefix. A cost decision,
+#: not a measured hardware limit: seqlen 16384 backward takes 10-31 minutes per
+#: backend on gfx1201 and gfx1100, too long for a release campaign. An arch with
+#: no matching prefix (CDNA, gfx9*) is unconstrained.
+_MAX_SEQLEN_BY_ARCH_PREFIX: dict[str, int] = {'gfx10': 8192, 'gfx11': 8192, 'gfx12': 8192}
+
+
+def _max_seqlen(arch: str) -> int | None:
+    for prefix, limit in _MAX_SEQLEN_BY_ARCH_PREFIX.items():
+        if arch.startswith(prefix):
+            return limit
+    return None
 
 
 class PerfDesc(PerfDescription):
@@ -62,9 +70,9 @@ class PerfDesc(PerfDescription):
         # gfx11xx has no kernels for hdim > 256 (LDS and register limits).
         if arch.startswith('gfx11') and max(entry.hdim_qk, entry.hdim_v) > 256:
             return False, f'{arch} does not support hdim > 256'
-        limit = _MAX_SEQLEN_BY_ARCH.get(arch)
+        limit = _max_seqlen(arch)
         if limit is not None and max(entry.seqlen_q, entry.seqlen_k) > limit:
-            return False, f'{arch} does not support seqlen > {limit}'
+            return False, f'{arch} is not measured at seqlen > {limit}'
         return True, ''
 
     def size(self, problem, seqlen_q, seqlen_k):

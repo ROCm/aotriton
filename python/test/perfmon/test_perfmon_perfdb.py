@@ -389,6 +389,14 @@ def test_excluded_for_sets_follows_validate_hw_feature(desc):
     assert export.excluded_for_sets(desc, 'gfx950', ['prime', 'llm']) == []
 
 
+def test_the_rdna_seqlen_cap_is_exported_as_excluded_lines(desc):
+    long = {e for e, _ in export.excluded_for_sets(desc, 'gfx1201', ['prime'])
+            if max(e.seqlen_q, e.seqlen_k) > 8192}
+    every = [e for e in desc.entries(desc.entry_sets()['prime'])
+             if max(e.seqlen_q, e.seqlen_k) > 8192 and max(e.hdim_qk, e.hdim_v) <= 256]
+    assert long and set(every) <= long
+
+
 def test_platform_csv_comes_from_the_rows(tmp_path, desc):
     rows = [row(desc, _prime(desc)[0], day=3), row(desc, _prime(desc)[1], day=1),
             row(desc, _prime(desc)[2], day=2, gpu_device='0x75a1')]
