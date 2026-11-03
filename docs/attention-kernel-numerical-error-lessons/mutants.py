@@ -106,6 +106,24 @@ MUTANTS = {
          '            if qk_scale == 0.0:\n                p = tl.where(libdevice.isnan(p), 0.0, p)\n',
          '            pass\n'),
     ],
+    # #259: the gfx1201 flyc forward packed P to bf16 by truncation. P is never
+    # negative, so every element rounds down, and over a non-negative V the
+    # output comes out low. The mask keeps the upper 16 bits, so in fp16 this
+    # truncates P to bf16 precision, which errs the same way.
+    'fwd_p_truncated': [
+        ('fwd_kernel_inner.py',
+         'acc0, acc1, acc2 = composed_dot_rhs(p.to(v0.type.element_ty),',
+         'acc0, acc1, acc2 = composed_dot_rhs((p.to(tl.uint32, bitcast=True) & 0xFFFF0000)'
+         '.to(tl.float32, bitcast=True).to(v0.type.element_ty),'),
+    ],
+    # #259, backward half: the gfx1201 flyc dK/dV kernel truncated P the same
+    # way for dV = P^T @ dO.
+    'bwd_dv_p_truncated': [
+        ('bwd_inner_dk_dv.py',
+         'dv0, dv1, dv2 = composed_dot_rhs(p_dropped,',
+         'dv0, dv1, dv2 = composed_dot_rhs((p_dropped.to(tl.uint32, bitcast=True) & 0xFFFF0000)'
+         '.to(tl.float32, bitcast=True),'),
+    ],
     # Delta = rowsum(dO * O) reduced in the input dtype instead of fp32.
     'bwd_delta_lowp': [
         ('composed_tensors.py',

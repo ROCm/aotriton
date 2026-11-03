@@ -831,16 +831,19 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
         for _ in range_constexpr(DV_STEPS_OWN):
             init_args.append(fx.as_ir_value(c_zero_v8f32))
 
-        def _pack_v8(vals):
+        def _pack_v8(vals, signed):
             """Eight f32 to one 16-bit WMMA operand.
 
-            bf16 goes through the forward's bitwise truncation rather than a
-            rounding convert, for the reason recorded there: RDNA4 WMMA has no
-            f32 A/B form, and round-to-nearest costs 2-5% for an error the
-            output sums away.
+            RDNA4 WMMA has no f32 A/B form, so bf16 operands lose precision
+            either way. A `signed` operand (dS) goes through the bitwise
+            truncation, whose errors cancel in the products; a non-negative
+            one (P) is rounded to nearest, because truncation would bias
+            dV low. See `fmha.bf16_trunc_pack_v8`.
             """
             if const_expr(dtype_str == "bf16"):
-                return fmha.bf16_trunc_pack_v8(vals, elem_dtype)
+                if const_expr(signed):
+                    return fmha.bf16_trunc_pack_v8(vals, elem_dtype)
+                return fmha.bf16_round_nonan_pack_v8(vals, elem_dtype)
             return Vec.from_elements([fx.Float32(v).to(elem_dtype) for v in vals], elem_dtype).ir_value()
 
         loop_results = init_args
@@ -1095,8 +1098,8 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
                     _p_vals.append(_p_drop)
                     _ds_vals.append(fx.as_ir_value(fastmath.mul(fx.Float32(_p), fastmath.sub(_dpv, fx.Float32(_di)))))
 
-                _p_pack = _pack_v8(_p_vals)
-                _ds_pack = _pack_v8(_ds_vals)
+                _p_pack = _pack_v8(_p_vals, signed=False)
+                _ds_pack = _pack_v8(_ds_vals, signed=True)
 
                 # One transposed A operand, from whichever source the knob
                 # selects. "tile" reads the eight halves contiguously out of the

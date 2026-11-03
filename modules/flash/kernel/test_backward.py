@@ -186,7 +186,7 @@ def test_large_bf16_nan_values():
 # ---------------------------------------------------------------------------
 
 COMMON_MISTAKES_CASES = ['sharp_softmax', 'zero_sm_scale', 'negative_sm_scale',
-                         'bottom_right_masked_rows']
+                         'bottom_right_masked_rows', 'one_signed_values']
 
 # A correct kernel lands at or below 1.0x the floor (the Triton kernels on
 # gfx90a: 0.7x-1.02x for O, dQ, dK and dV over six seeds). The mistakes
@@ -233,7 +233,11 @@ def _common_mistakes_reference(q, k, v, dout, sm_scale, mask, round_to=None, flu
     return o, lse.squeeze(-1), dq, dk, dv
 
 def _common_mistakes_case(case):
-    '''(seqlen_q, seqlen_k, input scale, causal, sm_scale) for one case.'''
+    '''(seqlen_q, seqlen_k, input scale, causal, sm_scale) for one case.
+
+    A negative input scale draws every input from U[0, -scale) instead of
+    N(0, scale), see one_signed_values.
+    '''
     D_HEAD = 128
     if case == 'sharp_softmax':
         # Logits with a standard deviation of 16: a trained model's attention
@@ -253,6 +257,15 @@ def _common_mistakes_case(case):
         # of every BLOCK_M, so fully masked rows share a tile with live ones
         # and cannot take the whole-tile early exit.
         return 301, 190, 1.0, CausalType.BOTTOM_RIGHT, D_HEAD ** -0.5
+    if case == 'one_signed_values':
+        # Q, K, V and dO all drawn from U[0, 1), as in ROCm/aotriton#259. P is
+        # never negative, so a kernel that truncates P to the input dtype
+        # rounds every element down. N(0, 1) values hide that: O sums P * V
+        # and the one-sided error of P cancels over a zero-mean V. Here it does
+        # not, O and dV come out low, and the backward's Delta = rowsum(dO * O)
+        # sums O's bias over head_dim into dQ. 143 x 579 is #259's shape, which
+        # the gfx1201 tuning database routes to the flyc forward for bf16.
+        return 143, 579, -1.0, False, D_HEAD ** -0.5
     assert False, f'Unknown case {case}'
 
 def _common_mistakes_mask(causal, seqlen_q, seqlen_k, device):
@@ -270,6 +283,8 @@ def core_test_common_mistakes(case, dtype, device_str='cuda'):
     seqlen_q, seqlen_k, input_scale, causal, sm_scale = _common_mistakes_case(case)
     torch.manual_seed(0)
     def randn(seqlen, scale):
+        if input_scale < 0:
+            return (torch.rand(BATCH, N_HEADS, seqlen, D_HEAD, device=device_str) * -input_scale).to(dtype)
         return (torch.randn(BATCH, N_HEADS, seqlen, D_HEAD, device=device_str) * scale).to(dtype)
     q = randn(seqlen_q, input_scale).requires_grad_()
     k = randn(seqlen_k, input_scale).requires_grad_()
@@ -319,6 +334,23 @@ def core_test_common_mistakes(case, dtype, device_str='cuda'):
         for name, t in (('out', tri_out), ('dq', tri_dq)):
             n_nonzero = int((t[:, :, dead] != 0).sum())
             assert n_nonzero == 0, f'{ctx}: {n_nonzero} nonzero elements in fully masked {name} rows'
+
+    # **No one-sided rounding.** A correct rounding to the input dtype is
+    # unbiased, so the mean *signed* error of O and dV is a small fraction of
+    # an ulp. Truncating P is not: on one_signed_values it put O and dV
+    # 2**-8.5 of their magnitude low on gfx1201 (#259). The bound is eps/8,
+    # 2**-10 in bf16 and 2**-13 in fp16; the Triton kernels measure at most
+    # 7.2e-5 (bf16) and 2.1e-5 (fp16) on any case, 14x and 6x below it.
+    for i in (0, 4):
+        name, t, ref = names[i], tri[i], exact[i]
+        scale = ref.abs().mean().item()
+        if scale == 0:
+            continue
+        bias = (t.double() - ref).mean().item() / scale
+        bound = torch.finfo(dtype).eps / 8
+        assert abs(bias) <= bound, \
+            f'{ctx}: {name} is biased by {bias:+.3e} of its mean magnitude (bound {bound:.3e}); ' \
+            f'something rounds one-signed values in one direction, e.g. truncating P'
 
     # **O and every gradient, against the floor.**
     def relrms(x, ref):

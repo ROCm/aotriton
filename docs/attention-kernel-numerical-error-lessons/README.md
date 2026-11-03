@@ -30,6 +30,7 @@ agree with every kernel it hands data to.
 | saved LSE | **natural base**, `logsumexp(sm_scale * S + bias)`; the backward multiplies it by `log2(e)` on load; may be null | context parallelism reads it; see [LSE base](#5-the-lse-in-the-wrong-base-or-units) |
 | fully masked row | `O = 0`, `LSE = +inf`, `dQ = 0` | `+inf` makes the backward's `exp(S - LSE)` vanish |
 | `Delta` | `rowsum(dO * O)` in fp32, from the O the forward **stored** | see [Delta in low precision](#6-delta-in-low-precision) |
+| P as a GEMM operand | rounded to the input dtype **to nearest**, never truncated | P is never negative; see [Rounding toward zero](#16-rounding-a-one-signed-operand-toward-zero) |
 | `dS` | `P * (dP - Delta)`, the gradient with respect to the *scaled* logits | `sm_scale` then multiplies dQ and dK exactly once |
 | `dB` | `dS` itself, no `log2(e)`, no `sm_scale` | the bias enters the softmax unscaled |
 | dropout | `l_i` sums P **before** the mask; `1/(1-p)` applied once; identical Philox offsets and word order in every kernel of every backend | fwd and bwd backends are chosen independently; see [Dropout](#9-dropout) |
@@ -81,9 +82,14 @@ brings its own absolute bound on O.
     dtype. Rounding anything in the logit domain to fp16 costs `2**-11` of the
     largest score, and to bf16 `2**-8`.
   - **Fully masked rows:** exactly zero in O and dQ.
+  - **No bias:** the mean *signed* error of O and dV at most `eps/8` of
+    their mean magnitude (`2**-10` in bf16, `2**-13` in fp16). A correct
+    rounding is unbiased: the Triton kernels on gfx1201 measure at most
+    7.2e-5 in bf16 and 2.1e-5 in fp16 over three seeds, 14x and 6x below the
+    bound. A truncated P measured 2.7e-3-2.9e-3.
   - **NaN:** none, anywhere.
 
-Four cases, fp16 and bf16:
+Five cases, fp16 and bf16:
 
 | case | inputs | aimed at |
 |---|---|---|
@@ -91,6 +97,7 @@ Four cases, fp16 and bf16:
 | `zero_sm_scale` | `sm_scale = 0`, top-left causal, 257 x 519 | mistake 7 |
 | `negative_sm_scale` | `sm_scale = -1/sqrt(128)`, top-left causal, 257 x 519 | mistake 7 |
 | `bottom_right_masked_rows` | bottom-right causal, 301 x 190: 111 rows attend to nothing, 111 is off every BLOCK_M grid | mistakes 7, 8 |
+| `one_signed_values` | Q, K, V and dO from U[0, 1), 143 x 579 (#259's shape) | mistake 16 |
 
 Each case was shown to catch its mistake by re-introducing that mistake into the
 Triton kernels. The JIT twin of the test is in
@@ -107,7 +114,14 @@ On gfx90a:
 | running max initialised to `-inf` (7) | `bottom_right_masked_rows` | NaN in O |
 | backward scales the masked accumulator, as before #247 (7) | `negative_sm_scale` | NaN in dQ |
 | the same, without the `sm_scale == 0` guard (7) | `zero_sm_scale`, `negative_sm_scale` | NaN in dQ |
-| Delta reduced in the input dtype (6) | `sharp_softmax` | dQ 2.6x-2.8x the floor |
+| Delta reduced in the input dtype (6) | `sharp_softmax`, `one_signed_values` | dQ 2.6x-2.8x the floor on `sharp_softmax`; 14x-19x on `one_signed_values` (gfx1201) |
+| fwd: P truncated before `P @ V` (16) | `one_signed_values`; in fp16 also `sharp_softmax`, `negative_sm_scale`, `bottom_right_masked_rows` | O biased by -2.9e-3 of its magnitude, bound 9.8e-4 (bf16) and 1.2e-4 (fp16); gfx1201 |
+| dK/dV: P truncated before `P^T @ dO` (16) | `one_signed_values`; in fp16 also the other cases | dV biased by -2.7e-3 of its magnitude; gfx1201 |
+
+`one_signed_values` is the only case that catches a truncated P in bf16, the
+dtype the gfx1201 flyc kernels truncated. The mutants keep the upper 16 bits in
+both dtypes, which in fp16 drops more precision than the kernels ever did, so
+the fp16 failures on the other cases are the mutant's, not the mistake's.
 
 Running it:
 
@@ -522,6 +536,88 @@ check before storing to it.
   included, and the flyc kernels honour the same contract.
   - A kernel that stores the LSE unconditionally faults on such a call.
   - No test passes a null `L` today.
+
+## Rounding direction
+
+### 16. Rounding a one-signed operand toward zero
+
+**Mistake.** Converting P to bf16 for the `P @ V` GEMM by keeping the upper 16
+bits of each fp32 value, which is truncation, i.e. rounding toward zero:
+
+```python
+# FlyDSL, gfx1201: bf16_trunc_pack_v8, used for P until #259
+packed = (hi_bits & 0xFFFF0000) | (lo_bits >> 16)
+```
+
+It is cheaper than rounding on a target with no hardware fp32 to bf16
+convert (RDNA4 has none; gfx950 and gfx1250 have `v_cvt_pk_bf16_f32`, which
+rounds to nearest even).
+
+**Why it is wrong.** Truncation errs toward zero, so its error has the sign of
+the value. For an operand whose sign varies, such as dS, those errors cancel
+in the GEMM's sums. P is never negative, so every element of P rounds *down*,
+by about `2**-8.5` of its value on average in bf16, and the sum does not cancel
+it: whenever V does not have zero mean, `O = P @ V` comes out low by about
+`2**-8.5` relative. Rounding to nearest is unbiased.
+
+The backward amplifies the bias. `Delta = rowsum(dO * O)` sums O's bias over
+head_dim (see [Delta in low precision](#6-delta-in-low-precision)), so dQ's
+error grows with head_dim. With #259's inputs (U[0, 1), 143 x 579), the
+error in Delta grew from 1.3e-2 at head_dim 64 to 0.12 at 128 and 0.22 at
+256. The dK/dV kernel truncated P too, for `dV = P^T @ dO`, which put dV
+`3.3e-4` low on average, twice its rounding floor.
+
+**Exposed by:** one-signed V and dO, the ordinary case for activations after
+a ReLU, a softmax or a sigmoid. Zero-mean inputs hide it: with V ~ N(0, 1) the
+bias averages out, and the error looks like plain noise at 1.6x the RMS of a
+correct kernel, under `test_common_mistakes`' 2x limit. Measured on gfx1201
+with bf16 U[0, 1) inputs at 143 x 579:
+
+| | head_dim 64 (Triton) | 128 (flyc) | 256 (flyc) |
+|---|---|---|---|
+| mean signed error of O | -2.0e-5 | -1.48e-3 | -1.46e-3 |
+| max dQ error against fp32 | 1.04e-3 | 5.76e-3 | 7.47e-3 |
+| max dQ error, with the exact O fed to the same backward | 0.92e-3 | 1.09e-3 | 0.95e-3 |
+
+The last row shows that the backward was not at fault for dQ: the bias came
+in through O.
+
+**How it got through.** The kernel documented the choice ("Truncation by
+decision, not oversight"), arguing that O sums `P * V` and V is zero-mean, so
+the one-sided error of P cancels. That holds only for zero-mean V, which is
+what the accuracy probe used. Measure a numerical shortcut on inputs that
+can break it, not only on the inputs that make it look free.
+
+**Rounding in software is not free.** The head_dim-16 gfx1201 forward is
+VALU-bound (32 WMMA to ~1000 VALU per loop iteration), so every op added per P
+element shows in the kernel time. Measured against truncation, JIT, B=4 H=16
+N=4096:
+
+| P rounding | VALU ops per pair | head_dim 16 | 32 | 64 | 128 |
+|---|---|---|---|---|---|
+| truncate (the mistake) | 2 | - | - | - | - |
+| to nearest even, `x + 0x7FFF + ((x >> 16) & 1)`, as LLVM lowers it | 6 | +16% | +15% | +11% | +2% |
+| to nearest, ties away, `x + 0x8000`, packed with `v_perm_b32` | 3 | +3% | +7% | +5% | -5% |
+
+The second differs from round-to-nearest-even only at exact ties: 8128 of the
+1.07e9 fp32 values in [0, 1], each rounded up by half an ulp, a bias near
+`2**-25`. A carry out of the mantissa into the exponent is correct in both:
+positive floats order like their bit patterns, so adding to the bits steps to
+the next representable value.
+
+**History.** The gfx1201 flyc forward and dK/dV kernels, from their first
+version (#227, selected by the op database from #239) to #259. Fixed by
+`bf16_round_nonan_pack_v8` in `modules/flash/flyc/fmha_common_gfx1201.py`, used for
+P in the forward and in dV. dS keeps the truncation: it is signed, and dQ and
+dK showed no material bias from it.
+
+**Related.** #253 is a different problem with the same carrier. There, O is
+rounded *correctly* to the input dtype, and Delta inherits that unbiased
+rounding error. That is the ~1e-3 dQ floor every backend has, and it does not
+grow with head_dim.
+
+**Guard.** `test_common_mistakes[one_signed_values]`: the mean signed error
+of O and dV against `eps/8` of their magnitude, and dQ against the floor.
 
 ## Not mistakes: what the hardware does
 

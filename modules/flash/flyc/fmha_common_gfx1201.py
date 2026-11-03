@@ -102,6 +102,7 @@ __all__ = [
     "bitcast_i32",
     "pack_bf16_pair",
     "bf16_trunc_pack_v8",
+    "bf16_round_nonan_pack_v8",
     "FastMath",
     "MaskedAxis",
     "Aperture",
@@ -440,21 +441,65 @@ def bf16_trunc_pack_v8(f32_vals, elem_dtype):
     Note also that V is *not* downcast: it reaches GEMM2 at the input
     tensor's native 16-bit width, so only P loses precision.
 
-    Truncation is round-toward-zero. Measured against an fp64 reference
-    (`accuracy_probe.py`, B=1 H=4 N=1024 d=128): no output bias (O sums
-    P*V and V is zero-mean, so the one-sided P error cancels), but the
-    RMS error is 1.6x torch SDPA's at bf16 (4.43e-3 vs 2.78e-3). f16 is
-    already at exact parity. Switching to round-to-nearest-even --
-    `x += 0x7FFF + ((x >> 16) & 1)` before the shift -- closes that gap
-    exactly (2.79e-3) but costs 2-3% at distance 1 and 2.7-5.4% at
-    ROW_SUBTILES=2, so it is deliberately not done. Truncation by
-    decision, not oversight.
+    Truncation is round-toward-zero, so it is only safe for operands whose
+    sign varies, such as dS: the error of each element points toward zero,
+    and a signed operand's products cancel. **Do not use it for P.** P is
+    non-negative, so every truncation lowers it, and `O = P @ V` inherits a
+    bias of about -2**-8.5 relative whenever V does not have zero mean. The
+    original measurement (`accuracy_probe.py`, B=1 H=4 N=1024 d=128) used a
+    zero-mean V, which hides exactly that. With V in [0, 1) the bf16 O
+    comes out 1.5e-3 low on average, and the backward's
+    `Delta = rowsum(dO * O)` sums that bias over head_dim, which made dQ
+    6x less accurate than the Triton backend (AOTriton issue #259). P goes
+    through `bf16_round_nonan_pack_v8` instead.
     """
     _c16 = fx.Int32(16)
     _cmask = fx.Int32(0xFFFF0000)
     pairs = []
     for j in range_constexpr(4):
         pairs.append(pack_bf16_pair(f32_vals[j * 2], f32_vals[j * 2 + 1], _c16, _cmask))
+    return Vec.from_elements(pairs, fx.Int32).bitcast(elem_dtype).ir_value()
+
+
+def bf16_round_nonan_pack_v8(f32_vals, elem_dtype):
+    """Pack 8 f32 values into v8bf16, rounding to nearest, ties away from zero.
+
+    **Not for values that can be NaN**, which is what `nonan` in the name
+    warns about. A NaN whose dropped half is >= 0x8000 and whose kept
+    mantissa is all ones carries out of the exponent: 0x7FFFFFFF comes out
+    as -0.0 and 0xFFFFFFFF as +0.0, so the NaN silently becomes a zero. P is
+    in [0, 1] and is safe; for anything else use a convert that preserves NaN.
+    Everything else is right: +-inf stays +-inf, values beyond the bf16
+    maximum round to inf as round-to-nearest-even does, and subnormals and
+    -0.0 come out as torch's rounding gives them.
+
+    RDNA4 has no f32 -> bf16 convert (`v_cvt_pk_bf16_f32` is gfx950 and
+    gfx1250 only), so the rounding is done on the bits: add 0x8000, then keep
+    the upper 16. A carry out of the mantissa steps into the exponent, which
+    is exactly the next representable value, since floats order like their
+    bit patterns within each sign.
+
+    Unbiased for operands of one sign, which is what P needs, see
+    `bf16_trunc_pack_v8`. It differs from round-to-nearest-even only at exact
+    ties, 8128 of the 1.07e9 fp32 values in [0, 1], where it rounds up by half
+    an ulp: a bias around 2**-25, far below anything a test can see.
+
+    Round-to-nearest-even would cost two dependent VOP3 ops per element
+    (`v_bfe_u32`, `v_add3_u32`), this costs one add, and `v_perm_b32` packs a
+    pair in one op where the shift and and_or took two. On the head_dim-16
+    forward, which is VALU-bound (32 WMMA to ~1000 VALU per loop iteration),
+    measured against truncation: RNE +16%, this +3%; at head_dim 128 both are
+    within noise.
+    """
+    _chalf = fx.Int32(0x8000)
+    # v_perm_b32 selects bytes 2-3 of `lo` and bytes 2-3 of `hi`: the two
+    # upper halves, as (hi & 0xFFFF0000) | (lo >> 16).
+    _sel = fx.Int32(0x07060302)
+    pairs = []
+    for j in range_constexpr(4):
+        lo = bitcast_i32(f32_vals[j * 2]) + _chalf
+        hi = bitcast_i32(f32_vals[j * 2 + 1]) + _chalf
+        pairs.append(fx.Int32(rocdl.perm_b32(hi, lo, _sel)))
     return Vec.from_elements(pairs, fx.Int32).bitcast(elem_dtype).ir_value()
 
 
