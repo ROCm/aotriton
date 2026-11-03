@@ -154,6 +154,9 @@ class Runner {
     o << "{\"timing_method\":" << json_string(t.method)
       << ",\"l2_flush\":true"
       << ",\"n\":" << s.n
+      << ",\"iterations\":" << s.n
+      << ",\"iterations_fixed\":" << (t.iterations_fixed ? "true" : "false")
+      << ",\"warm_call_us\":" << json_double(t.warm_call_us)
       << ",\"median\":" << json_double(s.median)
       << ",\"mean\":" << json_double(s.mean)
       << ",\"stddev\":" << json_double(s.stddev)

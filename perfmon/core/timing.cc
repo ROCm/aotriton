@@ -50,8 +50,8 @@ struct Scratch {
   hipGraph_t graph = nullptr;
   hipGraphExec_t graph_exec = nullptr;
 
-  Scratch() : start_ev(kTimingIters, nullptr), end_ev(kTimingIters, nullptr) {
-    for (int i = 0; i < kTimingIters; ++i) {
+  explicit Scratch(int n) : start_ev(n, nullptr), end_ev(n, nullptr) {
+    for (int i = 0; i < n; ++i) {
       check(hipEventCreateWithFlags(&start_ev[i], hipEventDefault), "hipEventCreateWithFlags");
       check(hipEventCreateWithFlags(&end_ev[i], hipEventDefault), "hipEventCreateWithFlags");
     }
@@ -64,8 +64,9 @@ struct Scratch {
   }
 
   std::vector<double> elapsed_us() const {
-    std::vector<double> out(kTimingIters);
-    for (int i = 0; i < kTimingIters; ++i) {
+    const size_t n = start_ev.size();
+    std::vector<double> out(n);
+    for (size_t i = 0; i < n; ++i) {
       float ms = 0.0f;
       check(hipEventElapsedTime(&ms, start_ev[i], end_ev[i]), "hipEventElapsedTime");
       out[i] = static_cast<double>(ms) * 1000.0;
@@ -86,15 +87,15 @@ struct Scratch {
 //  * Each iteration has its own start and end event. A shared event between
 //    two iterations is recorded twice and keeps the later timestamp, which
 //    folds the next iteration's 1 GiB flush into the sample.
-std::vector<double> run_hipgraph_ev100(Measurement& measurement, hipStream_t stream) {
+std::vector<double> run_hipgraph_ev100(Measurement& measurement, hipStream_t stream, int iters) {
   void* flush_buf = flush_buffer();
-  Scratch s;
+  Scratch s(iters);
 
   check(hipStreamBeginCapture(stream, hipStreamCaptureModeThreadLocal),
         "hipStreamBeginCapture (hipgraph_ev100)");
   hipError_t rec_err = hipSuccess;
   std::string launch_error;
-  for (int i = 0; i < kTimingIters; ++i) {
+  for (int i = 0; i < iters; ++i) {
     rec_err = hipMemsetAsync(flush_buf, 0, kL2FlushBytes, stream);
     if (rec_err != hipSuccess) break;
     rec_err = hipEventRecordWithFlags(s.start_ev[i], stream, hipEventRecordExternal);
@@ -130,11 +131,11 @@ std::vector<double> run_hipgraph_ev100(Measurement& measurement, hipStream_t str
     check(hipGraphNodeGetType(n, &t), "hipGraphNodeGetType");
     if (t == hipGraphNodeTypeEventRecord) ++event_nodes;
   }
-  if (event_nodes != static_cast<size_t>(2 * kTimingIters)) {
+  if (event_nodes != static_cast<size_t>(2 * iters)) {
     throw std::runtime_error("timing: the captured graph has " + std::to_string(event_nodes) +
-                             " event nodes, expected " + std::to_string(2 * kTimingIters));
+                             " event nodes, expected " + std::to_string(2 * iters));
   }
-  if (num_nodes - event_nodes <= static_cast<size_t>(kTimingIters)) {
+  if (num_nodes - event_nodes <= static_cast<size_t>(iters)) {
     throw std::runtime_error("timing: launch() enqueued no work on the stream it was given");
   }
 
@@ -150,15 +151,15 @@ std::vector<double> run_hipgraph_ev100(Measurement& measurement, hipStream_t str
 // An earlier batched variant (two events around 100 calls) kept the flush
 // inside the window and was off by +0.21 ms per sample on gfx942, i.e. +937%
 // at seqlen 128.
-std::vector<double> run_stream_ev(Measurement& measurement, hipStream_t stream) {
+std::vector<double> run_stream_ev(Measurement& measurement, hipStream_t stream, int iters) {
   void* flush_buf = flush_buffer();
-  Scratch s;
+  Scratch s(iters);
   for (int i = 0; i < kWarmupIters; ++i) {
     check(hipMemsetAsync(flush_buf, 0, kL2FlushBytes, stream), "hipMemsetAsync (L2 flush)");
     launch_checked(measurement, stream, "launch (warm-up)");
   }
   check(hipStreamSynchronize(stream), "hipStreamSynchronize (warm-up)");
-  for (int i = 0; i < kTimingIters; ++i) {
+  for (int i = 0; i < iters; ++i) {
     check(hipMemsetAsync(flush_buf, 0, kL2FlushBytes, stream), "hipMemsetAsync (L2 flush)");
     check(hipEventRecord(s.start_ev[i], stream), "hipEventRecord");
     launch_checked(measurement, stream, "launch");
@@ -166,6 +167,20 @@ std::vector<double> run_stream_ev(Measurement& measurement, hipStream_t stream) 
   }
   check(hipStreamSynchronize(stream), "hipStreamSynchronize (timed)");
   return s.elapsed_us();
+}
+
+// One iteration of the timed loop, issued on the stream and read back: the
+// flush outside the event pair, as in both methods. The caller has already
+// made the launch's first (untimed) call.
+double time_warm_call(Measurement& measurement, hipStream_t stream) {
+  void* flush_buf = flush_buffer();
+  Scratch s(1);
+  check(hipMemsetAsync(flush_buf, 0, kL2FlushBytes, stream), "hipMemsetAsync (L2 flush, warm call)");
+  check(hipEventRecord(s.start_ev[0], stream), "hipEventRecord");
+  launch_checked(measurement, stream, "launch (warm call)");
+  check(hipEventRecord(s.end_ev[0], stream), "hipEventRecord");
+  check(hipStreamSynchronize(stream), "hipStreamSynchronize (warm call)");
+  return s.elapsed_us()[0];
 }
 
 }  // namespace
@@ -177,12 +192,21 @@ TimingResult time_launches(Measurement& measurement, hipStream_t stream) {
     throw std::runtime_error("PERFMON_TIMING_METHOD must be 'hipgraph_ev100' or 'stream_ev', got '" +
                              want + "'");
   }
+  int iters = 0;
+  try {
+    iters = parse_iterations_override(std::getenv("PERFMON_ITERATIONS"));
+  } catch (const std::invalid_argument& e) {
+    throw std::runtime_error(e.what());
+  }
   TimingResult r;
+  r.warm_call_us = time_warm_call(measurement, stream);
+  r.iterations_fixed = iters != 0;
+  if (iters == 0) iters = adaptive_iterations(r.warm_call_us);
   if (want == "stream_ev") {
-    r.samples_us = run_stream_ev(measurement, stream);
+    r.samples_us = run_stream_ev(measurement, stream, iters);
     r.method = "stream_ev";
   } else {
-    r.samples_us = run_hipgraph_ev100(measurement, stream);
+    r.samples_us = run_hipgraph_ev100(measurement, stream, iters);
     r.method = "hipgraph_ev100";
   }
   return r;
