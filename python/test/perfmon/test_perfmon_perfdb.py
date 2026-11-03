@@ -559,6 +559,29 @@ def test_the_render_check_command_exits_nonzero_when_out_of_date(tmp_path, desc,
     assert perfdb.main(['render', str(tmp_path), '--check']) == 0
 
 
+def test_the_family_is_inferred_from_the_path_or_given_by_module(tmp_path, monkeypatch):
+    from aotriton.perfmon import registry
+    seen = []
+    monkeypatch.setattr(registry, 'make_perf_desc', lambda family, modules_dir=None: seen.append((family, modules_dir)))
+    tree = tmp_path / 'modules' / 'flash' / 'perfdb'
+    tree.mkdir(parents=True)
+    perfdb._desc_for(tree, None)
+    assert seen[-1] == ('flash', tmp_path / 'modules')
+    export = tmp_path / 'planedit'
+    export.mkdir()
+    perfdb._desc_for(export, 'flash')                       # outside modules/<family>/perfdb
+    assert seen[-1] == ('flash', None)
+    with pytest.raises(SystemExit) as err:
+        perfdb._desc_for(export, None)
+    assert '--module' in str(err.value)
+
+
+def test_the_render_check_command_fails_when_the_family_is_unknown(tmp_path, capsys):
+    with pytest.raises(SystemExit) as err:
+        perfdb.main(['render', str(tmp_path), '--check'])
+    assert err.value.code not in (0, None)
+
+
 README_NAME = 'README.md'
 
 

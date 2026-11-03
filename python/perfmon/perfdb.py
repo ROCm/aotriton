@@ -792,11 +792,20 @@ def render(root: Path, desc, *, check: bool = False) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 def _desc_for(root: Path, module: str | None):
-    """The family of a perfdb tree, `modules/<family>/perfdb`, loaded from the
-    same modules tree."""
-    from .registry import make_perf_desc
+    """The family of a perfdb tree. With `module`, that family from the
+    repository's modules tree, wherever the tree is (a temporary export, say).
+    Without it, the family is inferred from the path `modules/<family>/perfdb`
+    and loaded from the same modules tree."""
+    from .registry import available_module_names, make_perf_desc
     root = Path(root).resolve()
-    return make_perf_desc(module or root.parent.name, modules_dir=root.parent.parent)
+    if module:
+        return make_perf_desc(module)
+    inferred = root.parent.name
+    if inferred not in available_module_names():
+        raise SystemExit(f'cannot tell the family of {root}: it is not modules/<family>/perfdb '
+                         f'(inferred {inferred!r}, available: {available_module_names()}); '
+                         'pass --module <family>')
+    return make_perf_desc(inferred, modules_dir=root.parent.parent)
 
 
 def _cmd_show(args) -> int:
@@ -871,7 +880,7 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument('file')
     show.add_argument('--module',
                       default=None,
-                      help='family (default: from the tree)')
+                      help='family (default: inferred from modules/<family>/perfdb)')
     show.set_defaults(func=_cmd_show)
 
     rend = sub.add_parser('render', help='regenerate every README.md and <arch>.md')
@@ -882,7 +891,7 @@ def build_parser() -> argparse.ArgumentParser:
                       help='write nothing; fail if any file is out of date')
     rend.add_argument('--module',
                       default=None,
-                      help='family (default: from the tree)')
+                      help='family (default: inferred from modules/<family>/perfdb)')
     rend.set_defaults(func=_cmd_render)
 
     comp = sub.add_parser('compare', help='compare two tags (A old, B new)')
