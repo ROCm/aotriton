@@ -255,6 +255,37 @@ def test_node_passes_the_endpoint(webui, tmp_path, sqlite3_cli, host, expected):
     assert remote[5:9] == ['off', *expected, 'start']
 
 
+@pytest.mark.parametrize('stored,given,expected', [
+    ('0,1,2,3,4,7', [], ['--multi_gpu', '0', '1', '2', '3', '4', '7']),
+    ('-1', [], ['--multi_gpu', '-1']),
+    (None, [], None),
+    ('0,1', ['--multi_gpu', '5'], ['--multi_gpu', '5']),
+])
+def test_node_start_uses_the_stored_gpu_selection(webui, tmp_path, sqlite3_cli, stored, given, expected):
+    tasks, _ = webui
+    workdir = _prepare(tasks, tmp_path)
+    if stored is not None:
+        with sqlite3.connect(workdir / 'workers.db') as conn:
+            conn.execute("INSERT INTO config (key, value) VALUES ('direct::gpu_selection', ?)", (stored,))
+    lines = _fake_ssh_run(tmp_path,
+                          [str(_REPO / '.perfmon' / 'bin' / 'node'), '--workdir', str(workdir), '--host', 'direct',
+                           '--rocm', '7.0', '--scratch', str(tmp_path / 'scratch'), '--arch', 'gfx942', *given,
+                           'start'])
+    remote = shlex.split(lines[1])
+    assert 'start' in remote
+    flag = remote.index('--multi_gpu') if '--multi_gpu' in remote else None
+    if expected is None:
+        assert flag is None
+    else:
+        assert remote[flag:flag + len(expected)] == expected
+        assert remote.count('--multi_gpu') == 1
+    # stop never takes a selection
+    lines = _fake_ssh_run(tmp_path,
+                          [str(_REPO / '.perfmon' / 'bin' / 'node'), '--workdir', str(workdir), '--host', 'direct',
+                           '--rocm', '7.0', '--scratch', str(tmp_path / 'scratch'), '--arch', 'gfx942', 'stop'])
+    assert '--multi_gpu' not in shlex.split(lines[1])
+
+
 def test_start_worker_passes_the_endpoint(webui, tmp_path, sqlite3_cli):
     tasks, _ = webui
     workdir = _prepare(tasks, tmp_path)

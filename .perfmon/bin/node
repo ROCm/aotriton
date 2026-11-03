@@ -12,6 +12,9 @@
 # Over `ssh <host>` it runs `.def/container/worker_service.sh <command>
 # --category perfmon` in the shared venv with the path variables set
 # (AOTRITON_RUNDIR node-local: ${XDG_RUNTIME_DIR:-/tmp}/aotriton-perfmon), with
+#   --multi_gpu             the host's GPU selection in workers.db (config row
+#                           <host>::gpu_selection, -1 = all, or 0,1,2) on `start`
+#                           when --multi_gpu is not given, as `.tune/bin/wkctl` does
 #   AOTRITON_THERMAL_GATE   from the config row thermal_gate::<host> (off if unset)
 #   PGHOST, PGPORT          <host workdir>/run/pgsql and POSTGRES_PORT when the
 #                           config row firewalled::<host> is 1 (PostgreSQL then
@@ -41,6 +44,7 @@ SCRATCH=""
 ARCH=""
 COMMAND=""
 SERVICE_ARGS=()
+EXPLICIT_GPUS=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --workdir) WORKDIR="$2"; shift 2 ;;
@@ -51,6 +55,7 @@ while [ "$#" -gt 0 ]; do
         --session_name|--nreader|--ncpu)
             SERVICE_ARGS+=("$1" "$2"); shift 2 ;;
         --multi_gpu)
+            EXPLICIT_GPUS=1
             SERVICE_ARGS+=("$1"); shift
             while [ "$#" -gt 0 ] && [[ "$1" =~ ^-?[0-9]+$ ]]; do
                 SERVICE_ARGS+=("$1"); shift
@@ -88,6 +93,15 @@ PG_PORT="${PG_ENDPOINT#* }"
 if [ "$COMMAND" = start ]; then
     SERVICE_ARGS+=(--category perfmon --hostname "$HOST")
     [ -z "$SUBPOOL" ] || SERVICE_ARGS+=(--subpool "$SUBPOOL")
+    # The stored selection applies unless --multi_gpu was given.
+    GPU_SELECTION=""
+    if [ "$EXPLICIT_GPUS" = 0 ]; then
+        GPU_SELECTION="$(get_worker_gpu_selection "$WORKDIR" "$HOST")"
+        if [ -n "$GPU_SELECTION" ]; then
+            IFS=',' read -ra GPU_IDS <<< "$GPU_SELECTION"
+            SERVICE_ARGS+=(--multi_gpu "${GPU_IDS[@]}")
+        fi
+    fi
 fi
 
 # One word per argument, quoted for the remote shell.
@@ -95,5 +109,5 @@ REMOTE=(bash "$ROOT/.perfmon/host/node_run.sh" "$WORKDIR" "$SCRATCH" "$ROCM" "$T
              "$COMMAND" "$ARCH" ${SERVICE_ARGS[@]+"${SERVICE_ARGS[@]}"})
 PG_DESC="direct"
 [ -z "$PG_HOST" ] || PG_DESC="$PG_HOST:$PG_PORT"
-echo "node $COMMAND on $HOST: arch=$ARCH rocm=$ROCM thermal_gate=$THERMAL_GATE pg=$PG_DESC subpool=${SUBPOOL:-(none)}" >&2
+echo "node $COMMAND on $HOST: arch=$ARCH rocm=$ROCM thermal_gate=$THERMAL_GATE pg=$PG_DESC subpool=${SUBPOOL:-(none)} gpus=${GPU_SELECTION:-(default)}" >&2
 exec ssh "$HOST" "$(printf '%q ' "${REMOTE[@]}")"
