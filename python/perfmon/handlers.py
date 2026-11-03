@@ -126,6 +126,8 @@ def make_report(msg, ctx, iface: str, backend: str | None, status: str, platform
         measured.update({
             'timing_method': data.get('timing_method'),
             'n': data.get('n'),
+            'iterations_fixed': data.get('iterations_fixed'),
+            'warm_call_us': data.get('warm_call_us'),
             'l2_flush': int(bool(data.get('l2_flush'))),
             'seed': data.get('seed'),
             'stats': {k: data.get(k) for k in ('median', 'mean', 'stddev', 'min', 'p05', 'p95')},
