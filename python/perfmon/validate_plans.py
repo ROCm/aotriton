@@ -143,6 +143,7 @@ def main(argv=None) -> int:
     p.add_argument('--subjects', required=True, help='comma list of subject names')
     p.add_argument('--out', default='-')
     p.add_argument('--seqlens', default='', help='noise plan: comma list of seqlens')
+    p.add_argument('--hdims', default='', help='size plan: comma list of head dims')
     args = p.parse_args(argv)
     desc = registry.make_perf_desc('flash')
     options = {}
@@ -150,6 +151,10 @@ def main(argv=None) -> int:
         if args.plan != 'noise':
             p.error('--seqlens applies to the noise plan only')
         options['seqlens'] = tuple(int(x) for x in args.seqlens.split(','))
+    if args.hdims:
+        if args.plan != 'size':
+            p.error('--hdims applies to the size plan only')
+        options['hdims'] = tuple(int(x) for x in args.hdims.split(','))
     jobs = PLANS[args.plan](desc, [s for s in args.subjects.split(',') if s], **options)
     out = sys.stdout if args.out == '-' else open(args.out, 'w', encoding='utf-8')
     for job in jobs:
