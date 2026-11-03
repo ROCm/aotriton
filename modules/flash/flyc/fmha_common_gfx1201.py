@@ -445,7 +445,7 @@ def bf16_trunc_pack_v8(f32_vals, elem_dtype):
     sign varies, such as dS: the error of each element points toward zero,
     and a signed operand's products cancel. **Do not use it for P.** P is
     non-negative, so every truncation lowers it, and `O = P @ V` inherits a
-    bias of about -2**-9 relative whenever V does not have zero mean. The
+    bias of about -2**-8.5 relative whenever V does not have zero mean. The
     original measurement (`accuracy_probe.py`, B=1 H=4 N=1024 d=128) used a
     zero-mean V, which hides exactly that. With V in [0, 1) the bf16 O
     comes out 1.5e-3 low on average, and the backward's

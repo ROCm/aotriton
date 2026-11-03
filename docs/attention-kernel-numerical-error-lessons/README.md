@@ -556,9 +556,9 @@ rounds to nearest even).
 **Why it is wrong.** Truncation errs toward zero, so its error has the sign of
 the value. For an operand whose sign varies, such as dS, those errors cancel
 in the GEMM's sums. P is never negative, so every element of P rounds *down*,
-by about `2**-9` of its value on average in bf16, and the sum does not cancel
+by about `2**-8.5` of its value on average in bf16, and the sum does not cancel
 it: whenever V does not have zero mean, `O = P @ V` comes out low by about
-`2**-9` relative. Rounding to nearest is unbiased.
+`2**-8.5` relative. Rounding to nearest is unbiased.
 
 The backward amplifies the bias. `Delta = rowsum(dO * O)` sums O's bias over
 head_dim (see [Delta in low precision](#6-delta-in-low-precision)), so dQ's
