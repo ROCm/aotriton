@@ -40,6 +40,43 @@ GIB = 1 << 30
 _STAT_FIELDS = tuple(f'{c}_us' for c in perfdb.STAT_COLUMNS)
 
 
+#: Iteration count of a measurement stored without one (reports of the
+#: harness before the count became adaptive always used this).
+DEFAULT_ITERATIONS = 100
+
+
+def row_iterations(row: dict) -> int:
+    """The iteration count of a database row; old reports without it used 100."""
+    value = row.get('iterations')
+    return DEFAULT_ITERATIONS if value is None else int(value)
+
+
+def parse_iterations(text: str, where: str) -> tuple[int, int]:
+    """(min, max) of a file's `iterations` metadata: `N` or `MIN-MAX`."""
+    try:
+        low, _, high = text.partition('-')
+        low, high = int(low), int(high or low)
+    except ValueError:
+        raise PerfdbError(f'{where}: iterations {text!r} is neither N nor MIN-MAX') from None
+    if not 0 < low <= high:
+        raise PerfdbError(f'{where}: iterations {text!r} is not an ascending positive range')
+    return low, high
+
+
+def format_iterations(low: int, high: int) -> str:
+    return str(low) if low == high else f'{low}-{high}'
+
+
+def _holds_unreplaced_measurements(f, seen: dict) -> bool:
+    """Whether `f` has statistics lines this export did not write."""
+    for variant, block in f.blocks.items():
+        replaced = seen.get((f.name, variant), ())
+        for ordinal, line in block.items():
+            if ordinal not in replaced and line not in (perfdb.NO_DATA, perfdb.EXCLUDED):
+                return True
+    return False
+
+
 @dataclass
 class ExportResult:
     """What an export did, for the summary line."""
@@ -154,6 +191,7 @@ def export_rows(root: Path, desc, arch: str, rows, excluded_entries=()) -> Expor
         touched: set[str] = set()
         seen: dict[tuple, set] = {}     # (file name, variant) -> entry ordinals with a database row
         configs = []
+        counts: dict[str, set[int]] = {}        # file -> iteration counts of the lines written now
         skipped_why: dict[str, str] = {}    # file -> first mismatch message
         for row in tag_rows:
             name = perfdb.file_name(row['iface'], row['backend'])
@@ -162,7 +200,6 @@ def export_rows(root: Path, desc, arch: str, rows, excluded_entries=()) -> Expor
                 f = files[name] = perfdb.new_file(row['iface'], row['backend'])
             try:
                 f.set_measurement_keys({'timing_method': row.get('timing_method'),
-                                        'iterations': row.get('iterations'),
                                         'l2_flush': row.get('l2_flush'),
                                         'unit': perfdb.UNIT},
                                        where=f'{tag}/{arch}/{name}')
@@ -175,6 +212,8 @@ def export_rows(root: Path, desc, arch: str, rows, excluded_entries=()) -> Expor
             entry = desc.entry_from_dict(row['entry'])
             ordinal = entries.ordinal_of(desc, entry, add=True)
             line = row_line(row)
+            if line not in (perfdb.NO_DATA, perfdb.EXCLUDED):
+                counts.setdefault(name, set()).add(row_iterations(row))
             if line == perfdb.NO_DATA:
                 out.no_data += 1
             elif line == perfdb.EXCLUDED:
@@ -188,6 +227,20 @@ def export_rows(root: Path, desc, arch: str, rows, excluded_entries=()) -> Expor
 
         for message in skipped_why.values():
             out.warnings.append(f'rows skipped: {message}')
+
+        # `iterations`: what the lines of the file used. The lines this export
+        # wrote, and the lines of the file it left alone (the file's own range).
+        for name, used in sorted(counts.items()):
+            f = files[name]
+            low, high = min(used), max(used)
+            old = f.metadata.get('iterations')
+            if old is not None and _holds_unreplaced_measurements(f, seen):
+                old_low, old_high = parse_iterations(old, f'{tag}/{arch}/{name}')
+                low, high = min(low, old_low), max(high, old_high)
+            text = format_iterations(low, high)
+            if old != text:
+                f.metadata['iterations'] = text
+                touched.add(name)
 
         # Excluded lines, for the files and variants this export covers.
         variants = sorted({r['variant'] for r in tag_rows})
