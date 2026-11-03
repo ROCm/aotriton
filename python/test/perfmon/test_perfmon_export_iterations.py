@@ -83,3 +83,13 @@ def test_parse_iterations():
             export.parse_iterations(bad, 'f')
     assert export.format_iterations(100, 100) == '100'
     assert export.format_iterations(20, 100) == '20-100'
+
+
+def test_compare_does_not_refuse_files_that_differ_in_iterations(tmp_path, desc):
+    _export(tmp_path, desc, _rows(desc, [100, 100]))
+    _export(tmp_path, desc, _rows(desc, [100, 20], subject='aotriton-0.14.2b+rocm10.1.0'))
+    old, new = (perfdb.load_arch(tmp_path, tag, ARCH) for tag in ('0.13b', '0.14.2b'))
+    assert old['op_a.perfdb'].metadata['iterations'] == '100'
+    assert new['op_a.perfdb'].metadata['iterations'] == '20-100'
+    ratios, refused = perfdb.compare_files(old, new)
+    assert refused == [] and ratios

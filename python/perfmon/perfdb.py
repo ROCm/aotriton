@@ -54,9 +54,11 @@ RESULTS = 'results'
 STAT_COLUMNS = ('median', 'mean', 'stddev', 'min', 'p05', 'p95')
 RESULTS_HEADER = ('entry',) + STAT_COLUMNS
 #: `#! metadata` keys, in writing order. The last four say how the times were
-#: taken; files that differ in any of them are never compared.
+#: taken; files that differ in a MEASUREMENT_KEYS key are never compared. The
+#: iteration count is adaptive and may be a range (`20-100`), so it only
+#: describes a file.
 METADATA_KEYS = ('iface', 'backend', 'timing_method', 'iterations', 'l2_flush', 'unit')
-MEASUREMENT_KEYS = ('timing_method', 'iterations', 'l2_flush', 'unit')
+MEASUREMENT_KEYS = ('timing_method', 'l2_flush', 'unit')
 UNIT = 'us'
 #: A change of the median time below this fraction is noise (phase-1 report,
 #: noise floor); `compare --noise` and the rendered ratios use it.
