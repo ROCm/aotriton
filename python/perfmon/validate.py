@@ -49,6 +49,7 @@ from aotriton.utils.pon import render_pon
 METHODS = ('hipgraph_ev100', 'stream_ev')
 UNFORCED = '-'
 KEEPALIVE_PREFIX = 'OVERHEATING:'
+ENUMERATE_TIMEOUT = 120.0
 
 
 def job_pon(job: dict) -> str:
@@ -121,37 +122,54 @@ class RunnerProcess:
     """One native runner on one GPU, spoken to over its line protocol."""
 
     def __init__(self, launcher: Path, subject: str, arch: str, gpu: int, method: str, stderr_path: Path):
-        env = dict(os.environ)
-        env['PERFMON_TIMING_METHOD'] = method
-        self._stderr = open(stderr_path, 'ab')
-        self._proc = subprocess.Popen(['bash', str(launcher), '--subject', subject, '--module', 'flash',
-                                       '--gpu', str(gpu), '--arch', arch],
+        self._argv = ['bash', str(launcher), '--subject', subject, '--module', 'flash', '--gpu', str(gpu),
+                      '--arch', arch]
+        self._env = dict(os.environ)
+        self._env['PERFMON_TIMING_METHOD'] = method
+        self._stderr_path = stderr_path
+        self._spawn()
+
+    def _spawn(self):
+        self._stderr = open(self._stderr_path, 'ab')
+        self._proc = subprocess.Popen(self._argv,
                                       stdin=subprocess.PIPE,
                                       stdout=subprocess.PIPE,
                                       stderr=self._stderr,
-                                      env=env,
+                                      env=self._env,
                                       text=True,
                                       bufsize=1)
         self._sel = selectors.DefaultSelector()
         self._sel.register(self._proc.stdout, selectors.EVENT_READ)
         #: OVERHEATING keep-alives seen since the last command.
         self.keepalives = 0
+        #: Set when a command found the process gone or stuck.
+        self.dead = False
+
+    def restart(self):
+        self.close()
+        self._spawn()
 
     def command(self, text: str, timeout: float) -> dict:
         """Send one command; return the parsed reply. The deadline restarts at
         each OVERHEATING keep-alive, like the node's."""
         self.keepalives = 0
+        reply = self._command(text, timeout)
+        if reply.get('dead'):
+            self.dead = True
+        return reply
+
+    def _command(self, text: str, timeout: float) -> dict:
         try:
             self._proc.stdin.write(text + '\n')
             self._proc.stdin.flush()
         except (BrokenPipeError, OSError) as e:
-            return {'status': 'error', 'message': f'runner is gone: {e}'}
+            return {'status': 'error', 'message': f'runner is gone: {e}', 'dead': True}
         while True:
             if not self._sel.select(timeout):
-                return {'status': 'error', 'message': f'timeout after {timeout}s'}
+                return {'status': 'timeout', 'message': f'timeout after {timeout}s', 'dead': True}
             line = self._proc.stdout.readline()
             if line == '':
-                return {'status': 'error', 'message': f'runner exited with {self._proc.poll()}'}
+                return {'status': 'error', 'message': f'runner exited with {self._proc.poll()}', 'dead': True}
             if line.startswith(KEEPALIVE_PREFIX):
                 self.keepalives += 1
                 continue
@@ -159,7 +177,10 @@ class RunnerProcess:
 
     def close(self):
         try:
-            if self._proc.poll() is None:
+            if self._proc.poll() is None and self.dead:
+                self._proc.kill()       # stuck in a long timed loop: exit would wait for it
+                self._proc.wait()
+            elif self._proc.poll() is None:
                 try:
                     self._proc.stdin.write('exit\n')
                     self._proc.stdin.flush()
@@ -172,16 +193,24 @@ class RunnerProcess:
             self._stderr.close()
 
 
-def run_job(runner, job: dict, timeout: float) -> list[dict]:
-    """Run one job on a live runner; one record per measured backend."""
+def run_job(runner, job: dict, timeout: float, probe: bool = False) -> list[dict]:
+    """Run one job on a live runner; one record per measured backend.
+
+    With `probe`, `timeout` is how long a measure may take before it counts as
+    "started": the entry was built, its buffers allocated and its first launch
+    accepted (a failure of any of these replies at once), and the long timed
+    loop is not waited for. The runner is then dead, and the caller relaunches
+    it."""
     pon = job_pon(job)
     iface = job['iface']
     backend = job['backend']
     base = {k: v for k, v in job.items() if k not in ('backend', 'entry_pon')}
     records = []
     if backend == 'all':
-        listing = runner.command(f'enumerate {pon} {iface}', timeout)
+        listing = runner.command(f'enumerate {pon} {iface}', max(timeout, ENUMERATE_TIMEOUT))
         if listing['status'] != 'ok':
+            listing.pop('dead', None)
+            listing['status'] = 'error' if listing['status'] == 'timeout' else listing['status']
             return [dict(base, backend='all', **listing)]
         backends = [UNFORCED] + list(listing['data'].get('backends', []))
     else:
@@ -189,7 +218,10 @@ def run_job(runner, job: dict, timeout: float) -> list[dict]:
     for name in backends:
         t0 = time.time()
         reply = runner.command(f'measure {pon} {iface} {name}', timeout)
-        record = dict(base, backend=name, status=reply['status'], wall_s=round(time.time() - t0, 3))
+        status = reply['status']
+        if status == 'timeout':
+            status = 'started' if probe else 'error'
+        record = dict(base, backend=name, status=status, wall_s=round(time.time() - t0, 3))
         if reply['status'] == 'ok':
             record['stats'] = reply['data']
         else:
@@ -197,9 +229,11 @@ def run_job(runner, job: dict, timeout: float) -> list[dict]:
         if runner.keepalives:
             record['keepalives'] = runner.keepalives
         records.append(record)
-        if reply['status'] == 'error' and ('exited' in reply['message'] or 'runner is gone' in reply['message']
-                                           or 'timeout' in reply['message']):
-            break           # the process is dead or stuck: the caller relaunches
+        if reply.get('dead'):
+            if probe and status == 'started' and hasattr(runner, 'restart'):
+                runner.restart()    # killed on purpose: the next backend needs a runner
+                continue
+            break           # the process is gone or stuck: the caller relaunches
     return records
 
 
@@ -234,12 +268,10 @@ def run(jobs: list[dict], out, args, launcher: Path) -> int:
                     if live is None or live[0] != subject:
                         close_live()
                         live = (subject, RunnerProcess(launcher, subject, args.arch, args.gpu, method, stderr_path))
-                    records = run_job(live[1], job, args.timeout)
+                    timeout = args.probe_seconds or args.timeout
+                    records = run_job(live[1], job, timeout, probe=bool(args.probe_seconds))
                     emit(job, records, method, rep)
-                    if any(r['status'] == 'error' and ('exited' in r.get('message', '')
-                                                       or 'runner is gone' in r.get('message', '')
-                                                       or 'timeout' in r.get('message', ''))
-                           for r in records):
+                    if live[1].dead:
                         close_live()        # relaunch for the next job
                 if args.new_process_per_rep:
                     close_live()
@@ -266,6 +298,9 @@ def main(argv=None) -> int:
     p.add_argument('--reps', type=int, default=1, help='repeat the whole job list this many times')
     p.add_argument('--new_process_per_rep', action='store_true',
                    help='start a fresh runner process for every repetition')
+    p.add_argument('--probe_seconds', type=float, default=0.0,
+                   help='allocation probe: a measure still running after this many seconds counts as '
+                        '"started" and its runner is killed (for entries whose timed loop takes minutes)')
     p.add_argument('--timeout', type=float, default=900.0, help='seconds per reply line')
     args = p.parse_args(argv)
     lines = sys.stdin if args.jobs == '-' else open(args.jobs, encoding='utf-8')

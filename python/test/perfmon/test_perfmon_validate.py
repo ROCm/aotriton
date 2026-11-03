@@ -121,3 +121,28 @@ def test_aiter_plan_forces_aiter(desc):
     jobs = validate_plans.aiter_jobs(desc, ['s'], seqlens=(64,))
     assert {j['backend'] for j in jobs} == {'-', 'aiter'}
     assert {j['entry']['causal'] for j in jobs} == {0, 1}
+
+
+class RestartableRunner(FakeRunner):
+    restarted = 0
+
+    def restart(self):
+        self.restarted += 1
+
+
+def test_run_job_probe_counts_timeout_as_started_and_restarts():
+    timeout = {'status': 'timeout', 'message': 'timeout after 5s', 'dead': True}
+    runner = RestartableRunner([{'status': 'ok', 'data': {'backends': ['x']}},
+                                dict(timeout),
+                                dict(timeout)])
+    job = {'subject': 's', 'iface': 'op_attn_fwd', 'backend': 'all', 'entry_pon': 'a=1'}
+    records = validate.run_job(runner, job, 5, probe=True)
+    assert [(r['backend'], r['status']) for r in records] == [('-', 'started'), ('x', 'started')]
+    assert runner.restarted == 2
+
+
+def test_run_job_timeout_without_probe_is_an_error():
+    runner = RestartableRunner([{'status': 'timeout', 'message': 'timeout after 5s', 'dead': True}])
+    job = {'subject': 's', 'iface': 'op_attn_fwd', 'backend': '-', 'entry_pon': 'a=1'}
+    assert [r['status'] for r in validate.run_job(runner, job, 5)] == ['error']
+    assert runner.restarted == 0
