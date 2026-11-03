@@ -241,10 +241,18 @@ entry,median,mean,stddev,min,p05,p95
 `key,value` lines, in this order: `iface`, `backend`, `timing_method`,
 `iterations`, `l2_flush`, `unit`. `backend` is `-` in the unforced
 `<iface>.perfdb`. A reader checks that `iface` and `backend` agree with the
-file name. The last four keys say how the times were taken, and are the
-**measurement keys**: a file never mixes them (the export refuses to merge a
+file name. The last four keys say how the times were taken. Three of them are the
+**measurement keys**, `timing_method`, `l2_flush` and `unit`: a file never mixes them (the export refuses to merge a
 measurement taken another way into a file), and two files whose measurement
 keys differ are never compared.
+
+`iterations` is how many timed iterations the lines of the file used: one
+number when they all used the same count, else the range `MIN-MAX` (for
+example `20-100`). The count is adaptive: the harness times one warm call and
+takes `clamp(ceil(10 s / call time), 20, 100)` iterations, so entries whose
+call takes 100 ms or less have 100 and long entries as few as 20. A report
+stored without a count counts as 100. The key only describes the file: it is not
+a measurement key, and the export never refuses a measurement because its count differs.
 
 ### `#! results <variant>`
 
