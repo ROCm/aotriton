@@ -142,14 +142,14 @@ def main(argv=None) -> int:
     p.add_argument('plan', choices=sorted(PLANS))
     p.add_argument('--subjects', required=True, help='comma list of subject names')
     p.add_argument('--out', default='-')
-    p.add_argument('--seqlens', default='', help='noise plan: comma list of seqlens')
+    p.add_argument('--seqlens', default='', help='noise and aiter plans: comma list of seqlens')
     p.add_argument('--hdims', default='', help='size plan: comma list of head dims')
     args = p.parse_args(argv)
     desc = registry.make_perf_desc('flash')
     options = {}
     if args.seqlens:
-        if args.plan != 'noise':
-            p.error('--seqlens applies to the noise plan only')
+        if args.plan not in ('noise', 'aiter'):
+            p.error('--seqlens applies to the noise and aiter plans only')
         options['seqlens'] = tuple(int(x) for x in args.seqlens.split(','))
     if args.hdims:
         if args.plan != 'size':
