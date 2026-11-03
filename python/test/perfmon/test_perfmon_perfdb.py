@@ -496,7 +496,7 @@ def test_beyond_noise_is_a_change_of_the_time_above_the_threshold():
 
 def test_compare_lists_only_regressions_beyond_noise(tmp_path, desc, capsys):
     _export(tmp_path, desc, _campaign(desc, S13)[:4])
-    _export(tmp_path, desc, _campaign(desc, S14, scale=1 / 1.01)[:4])      # 1 % slower: noise
+    _export(tmp_path, desc, _campaign(desc, S14, scale=1.01)[:4])      # 1 % slower: noise
     args = ['compare', '0.13b', '0.14.2b', '--perfdb', str(tmp_path)]
     assert perfdb.main(args) == 0
     out = capsys.readouterr().out
@@ -504,7 +504,7 @@ def test_compare_lists_only_regressions_beyond_noise(tmp_path, desc, capsys):
     assert 'largest regressions' not in out and '0 regressions, 0 improvements' in out
     assert perfdb.main(args + ['--noise', '0.005']) == 0
     out = capsys.readouterr().out
-    assert ',yes\n' in out and 'largest regressions' in out and '0 improvements' not in out
+    assert ',yes\n' in out and 'largest regressions' in out and '4 regressions, 0 improvements' in out
 
 
 # -- rendering -------------------------------------------------------------------------------------------------------

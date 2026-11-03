@@ -2,7 +2,7 @@
 
 # AOTriton 0.14.2b
 
-Ratios are geometric means of old over new median time of the unforced operator, against the previous tag measured on the same arch and variant: above 1 is faster.
+Ratios are geometric means of old over new median time of the unforced operator, against the previous tag measured on the same arch and variant: above 1 is faster. In the LLM cases, (noise) marks a change of less than 3%.
 
 | arch | variant | previous | op_a | op_b | LLM cases |
 |---|---|---|---|---|---|
@@ -23,6 +23,6 @@ Ratios are geometric means of old over new median time of the unforced operator,
 
 | model | dtype | hdim | batch | seqlen | iface | old µs | new µs | old/new |
 |---|---|---|---|---|---|---|---|---|
-| model-x | fp16 | 64 | 4 | 128 | op_a | 360 | 360 | 1 |
-| model-x | fp16 | 64 | 4 | 128 | op_b | 900 | 900 | 1 |
-| model-y | bf16 | 64 | 3 | 100 | op_a | 380 | 380 | 1 |
+| model-x | fp16 | 64 | 4 | 128 | op_a | 360 | 360 | 1 (noise) |
+| model-x | fp16 | 64 | 4 | 128 | op_b | 900 | 900 | 1 (noise) |
+| model-y | bf16 | 64 | 3 | 100 | op_a | 380 | 380 | 1 (noise) |
