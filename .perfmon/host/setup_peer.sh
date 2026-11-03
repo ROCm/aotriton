@@ -41,7 +41,9 @@ ok() {
 # Arch names of the GPU agents, one per line, from whichever ROCm tool exists.
 peer_arches() {
     if command -v rocminfo >/dev/null 2>&1; then
-        rocminfo 2>/dev/null | grep -oE 'gfx[0-9a-f]+' | grep -v '^gfx000' | sort -u
+        # generic ISAs (gfx11-generic, gfx9-4-generic) are not arches
+        rocminfo 2>/dev/null | grep -oE 'gfx[0-9a-f]+(-[0-9a-z-]*)?' | grep -E '^gfx[0-9a-f]+$' \
+            | grep -v '^gfx000' | sort -u
     elif command -v rocm_agent_enumerator >/dev/null 2>&1; then
         rocm_agent_enumerator 2>/dev/null | grep -v '^gfx000' | sort -u
     fi
