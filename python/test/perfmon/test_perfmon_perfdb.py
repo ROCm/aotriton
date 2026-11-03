@@ -478,11 +478,33 @@ def test_the_compare_command_prints_ratios_and_fails_on_a_refusal(tmp_path, desc
     _export(tmp_path, desc, _campaign(desc, S14, scale=0.5)[:4])
     assert perfdb.main(['compare', '0.13b', '0.14.2b', '--perfdb', str(tmp_path)]) == 0
     out = capsys.readouterr().out
-    assert 'arch,file,variant,entry,median_a,median_b,a/b' in out
+    assert 'arch,file,variant,entry,median_a,median_b,a/b,beyond_noise' in out
     assert 'overall geometric mean' in out and 'a/b 2' in out
     path = tmp_path / '0.14.2b' / 'data' / ARCH / 'op_a.perfdb'
     path.write_text(path.read_text().replace('l2_flush,1', 'l2_flush,0'))
     assert perfdb.main(['compare', '0.13b', '0.14.2b', '--perfdb', str(tmp_path), '--summary_only']) == 1
+
+
+def test_beyond_noise_is_a_change_of_the_time_above_the_threshold():
+    assert not perfdb.beyond_noise(1.0)
+    assert not perfdb.beyond_noise(1 / 1.029)
+    assert perfdb.beyond_noise(1 / 1.04)
+    assert perfdb.beyond_noise(1.04)
+    assert not perfdb.beyond_noise(1.02)
+    assert perfdb.beyond_noise(1.02, noise=0.01)
+
+
+def test_compare_lists_only_regressions_beyond_noise(tmp_path, desc, capsys):
+    _export(tmp_path, desc, _campaign(desc, S13)[:4])
+    _export(tmp_path, desc, _campaign(desc, S14, scale=1 / 1.01)[:4])      # 1 % slower: noise
+    args = ['compare', '0.13b', '0.14.2b', '--perfdb', str(tmp_path)]
+    assert perfdb.main(args) == 0
+    out = capsys.readouterr().out
+    assert ',no\n' in out and ',yes\n' not in out
+    assert 'largest regressions' not in out and '0 regressions, 0 improvements' in out
+    assert perfdb.main(args + ['--noise', '0.005']) == 0
+    out = capsys.readouterr().out
+    assert ',yes\n' in out and 'largest regressions' in out and '0 improvements' not in out
 
 
 # -- rendering -------------------------------------------------------------------------------------------------------

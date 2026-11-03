@@ -58,6 +58,9 @@ RESULTS_HEADER = ('entry',) + STAT_COLUMNS
 METADATA_KEYS = ('iface', 'backend', 'timing_method', 'iterations', 'l2_flush', 'unit')
 MEASUREMENT_KEYS = ('timing_method', 'iterations', 'l2_flush', 'unit')
 UNIT = 'us'
+#: A change of the median time below this fraction is noise (phase-1 report,
+#: noise floor); `compare --noise` and the rendered ratios use it.
+NOISE_FRACTION = 0.03
 
 #: Line markers: measured without data (failed or crashed), and excluded (not
 #: supported by the subject or arch, or does not fit the GPU).
@@ -654,6 +657,12 @@ def compare_files(old: dict[str, PerfdbFile], new: dict[str, PerfdbFile], *, var
     return ratios, refused
 
 
+def beyond_noise(ratio: float, noise: float = NOISE_FRACTION) -> bool:
+    """Whether old/new `ratio` means the median time changed by more than
+    `noise` (a fraction of the old time)."""
+    return abs(1.0 / ratio - 1.0) > noise
+
+
 def _previous_tag(root: Path, tags: list[str], tag: str, arch: str) -> str | None:
     earlier = [t for t in tags if tag_sort_key(t) < tag_sort_key(tag) and data_dir(root, t, arch).is_dir()]
     return earlier[-1] if earlier else None
@@ -707,12 +716,17 @@ def _ratio_text(x) -> str:
     return '' if x is None else fmt4(x)
 
 
+def _case_ratio_text(ratio) -> str:
+    return fmt4(ratio) if beyond_noise(ratio) else f'{fmt4(ratio)} (noise)'
+
+
 def render_tag(root: Path, desc, entries: EntryList, tags: list[str], tag: str,
                views: dict | None = None) -> str:
     views = {} if views is None else views
     out = [GENERATED, '', f'# AOTriton {tag}', '',
            'Ratios are geometric means of old over new median time of the unforced operator, against '
-           'the previous tag measured on the same arch and variant: above 1 is faster.', '']
+           'the previous tag measured on the same arch and variant: above 1 is faster. '
+           f'In the LLM cases, (noise) marks a change of less than {NOISE_FRACTION:.0%}.', '']
     header = ['arch', 'variant', 'previous'] + list(desc.ifaces()) + ['LLM cases']
     rows, case_lines = [], []
     for arch in list_arches(root, tag):
@@ -728,7 +742,7 @@ def render_tag(root: Path, desc, entries: EntryList, tags: list[str], tag: str,
                 for case, iface, old_m, new_m, ratio in cases:
                     described = desc.case_columns(case.entry)
                     case_rows.append([case.model] + [described[c] for c in columns]
-                                     + [iface, fmt4(old_m), fmt4(new_m), fmt4(ratio)])
+                                     + [iface, fmt4(old_m), fmt4(new_m), _case_ratio_text(ratio)])
                 case_lines += _table(['model'] + columns + ['iface', 'old µs', 'new µs', 'old/new'], case_rows)
     out += _table(header, rows)
     if case_lines:
@@ -854,18 +868,23 @@ def _cmd_compare(args) -> int:
             print(f'{arch}/{name}: refused, the measurement keys differ', file=sys.stderr)
             status = 1
         if not args.summary_only:
-            print('arch,file,variant,entry,median_a,median_b,a/b')
+            print('arch,file,variant,entry,median_a,median_b,a/b,beyond_noise')
             for name, v, entry, ma, mb, r in ratios:
-                print(f'{arch},{name},{v},{entry},{fmt4(ma)},{fmt4(mb)},{fmt4(r)}')
+                flag = 'yes' if beyond_noise(r, args.noise) else 'no'
+                print(f'{arch},{name},{v},{entry},{fmt4(ma)},{fmt4(mb)},{fmt4(r)},{flag}')
         for name in sorted({r[0] for r in ratios}):
             g = geomean(r[5] for r in ratios if r[0] == name)
             print(f'# {arch} {name}: geometric mean a/b {_ratio_text(g)}')
         every += [(arch,) + r for r in ratios]
     print(f'# overall geometric mean a/b (above 1: {args.tag_b} is faster): '
           f'{_ratio_text(geomean(r[6] for r in every))} over {len(every)} lines')
-    worst = sorted(every, key=lambda r: r[6])[:args.top]
+    beyond = [r for r in every if beyond_noise(r[6], args.noise)]
+    regressions = [r for r in beyond if r[6] < 1.0]
+    print(f'# beyond noise ({args.noise:.1%}): {len(regressions)} regressions, '
+          f'{len(beyond) - len(regressions)} improvements, {len(every) - len(beyond)} within noise')
+    worst = sorted(regressions, key=lambda r: r[6])[:args.top]
     if worst:
-        print(f'# largest regressions of {args.tag_b} against {args.tag_a}:')
+        print(f'# largest regressions of {args.tag_b} against {args.tag_a} (beyond noise only):')
         for arch, name, v, entry, ma, mb, r in worst:
             print(f'#   {arch} {name} {v} entry {entry}: {fmt4(ma)} -> {fmt4(mb)} us, a/b {fmt4(r)}')
     return status
@@ -909,6 +928,10 @@ def build_parser() -> argparse.ArgumentParser:
                       type=int,
                       default=10,
                       help='how many of the largest regressions to list')
+    comp.add_argument('--noise',
+                      type=float,
+                      default=NOISE_FRACTION,
+                      help='a change of the median time below this fraction is noise (default: %(default)s)')
     comp.add_argument('--summary_only',
                       action='store_true',
                       help='omit the per-line ratios')
