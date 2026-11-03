@@ -362,6 +362,37 @@ def test_measure_wire_form_and_unavailable_reply(runner):
                             'measure PON op_attn_bwd triton_fuse']
 
 
+def test_a_failed_forced_launch_is_retried_once_in_a_fresh_process(runner):
+    runner.use_subject('aotriton-0.12.1b+rocm7.0.0')
+    proxy = runner.proxy
+    proxy.replies = [ExaidSubprocessNotOK('UNAVAILABLE launch failed: hipErrorPeerAccessUnsupported', ''),
+                     json.dumps({'median': 2.0})]
+    assert runner.measure('PON', 'op_attn_fwd', 'aiter') == {'median': 2.0}
+    assert proxy.shut == 1 and proxy.writes == ['measure PON op_attn_fwd aiter'] * 2
+
+
+def test_a_launch_failure_the_fresh_process_repeats_is_unavailable_and_says_so(runner):
+    runner.use_subject('aotriton-0.12.1b+rocm7.0.0')
+    proxy = runner.proxy
+    proxy.replies = [ExaidSubprocessNotOK('UNAVAILABLE launch failed: 217', '')] * 2
+    with pytest.raises(exaid_perfmon.BackendUnavailable, match='launch failed: 217 .*fresh runner'):
+        runner.measure('PON', 'op_attn_fwd', 'aiter')
+    assert proxy.shut == 1 and len(proxy.writes) == 2
+
+
+@pytest.mark.parametrize('backend, reply', [
+    ('aiter', 'UNAVAILABLE no aiter here'),                    # the adapter's own answer
+    (None, 'UNAVAILABLE launch failed: 217'),                  # the unforced operator
+])
+def test_other_unavailable_answers_are_not_retried(runner, backend, reply):
+    runner.use_subject('aotriton-0.12.1b+rocm7.0.0')
+    proxy = runner.proxy
+    proxy.replies = [ExaidSubprocessNotOK(reply, '')]
+    with pytest.raises(exaid_perfmon.BackendUnavailable) as e:
+        runner.measure('PON', 'op_attn_fwd', backend)
+    assert proxy.shut == 0 and len(proxy.writes) == 1 and 'fresh' not in str(e.value)
+
+
 def test_enumerate_returns_the_backend_names(runner):
     runner.use_subject('aotriton-0.13b+rocm10.1.0')
     runner.proxy.replies = [json.dumps({'backends': ['triton', 'aiter']}), json.dumps({'backends': []})]

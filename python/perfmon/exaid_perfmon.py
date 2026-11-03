@@ -39,6 +39,13 @@ logger = logging.getLogger(__name__)
 #: The runner's answer to a measure whose backend cannot run this entry here.
 UNAVAILABLE = 'UNAVAILABLE'
 
+#: The runner prefixes the UNAVAILABLE message of an untimed first launch that
+#: failed with it. The adapter's own "unsupported" answers have no such prefix.
+LAUNCH_FAILED = 'launch failed:'
+
+#: Appended to the reason of a launch failure that a fresh runner repeated.
+CONFIRMED_FRESH = '(confirmed in a fresh runner process)'
+
 #: Wire token of the unforced operator in `measure`.
 UNFORCED = '-'
 
@@ -222,7 +229,27 @@ class ExaidPerfmonRunner:
         """Time `iface` forced to `backend` (None: unforced). Returns the
         runner's statistics. Raises BackendUnavailable for an UNAVAILABLE
         reply, ExaidSubprocessNotOK for any other error reply, and OSError
-        when the runner dies or times out."""
+        when the runner dies or times out.
+
+        A forced backend whose untimed first launch failed (`launch failed:`)
+        may have been failed by a poisoned process: a failing AITER call makes
+        every later one in that process fail too. The runner is then replaced
+        and the measure repeated once; only a failure in the fresh process
+        counts as unavailable. The unforced operator and the adapter's own
+        unsupported answers are not retried."""
+        try:
+            return self._measure_once(entry_pon, iface, backend)
+        except BackendUnavailable as e:
+            if backend is None or not str(e).startswith(LAUNCH_FAILED):
+                raise
+            logger.warning(f'GPU {self._gpu_id}: {iface}/{backend} {e}; retrying in a fresh runner process')
+            self._current().proxy.shutdown()
+        try:
+            return self._measure_once(entry_pon, iface, backend)
+        except BackendUnavailable as e:
+            raise BackendUnavailable(f'{e} {CONFIRMED_FRESH}') from e
+
+    def _measure_once(self, entry_pon: str, iface: str, backend: str | None) -> dict:
         self.proxy.write('measure', entry_pon, iface, UNFORCED if backend is None else backend)
         try:
             return json.loads(self.proxy.readinfo(timeout=self.MEASURE_TIMEOUT))
