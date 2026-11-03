@@ -6,6 +6,7 @@ workers and PG reader in threads, an in-memory fake of the pq calls), with a
 scripted runner in place of the native one. CPU-only."""
 
 import json
+import sys
 
 import pytest
 
@@ -186,6 +187,62 @@ def test_notok_crash_and_unavailable_are_results_not_task_failures(run_node, db,
     assert reports[('op_attn_bwd', 'triton_split')]['status'] == 'crash'
     assert reports[('op_attn_bwd', 'triton_split')]['payload'].get('stats') is None
     assert reports[('op_attn_fwd', None)]['status'] == 'OK'
+    assert db.rows[tid].errors == []
+
+
+FAKE_LAUNCHER = """#!{python}
+import json, os, sys
+for line in sys.stdin:
+    words = line.split()
+    with open({log!r}, 'a') as f:
+        f.write(f'{{os.getpid()}} {{line.strip()}}\\n')
+    if words[0] == 'exit':
+        break
+    if words[0] == 'platform':
+        print('OK', json.dumps({platform!r}))
+    elif words[0] == 'enumerate':
+        print('OK', json.dumps({{'backends': {backends!r}[words[2]]}}))
+    elif words[0] == 'measure' and words[2:] == ['op_attn_fwd', 'aiter']:
+        os._exit(139)           # the native runner faults on this backend
+    else:
+        print('OK', json.dumps({stats!r}))
+    sys.stdout.flush()
+"""
+
+
+def test_a_runner_that_dies_on_a_forced_backend_is_a_crash_and_is_respawned(db, saved, monkeypatch, tmp_path):
+    log = tmp_path / 'runner.log'
+    launcher = tmp_path / 'launch_runner.sh'
+    launcher.write_text(FAKE_LAUNCHER.format(python=sys.executable,
+                                             log=str(log),
+                                             platform=PLATFORM,
+                                             stats=STATS,
+                                             backends=BACKENDS))
+    launcher.chmod(0o755)
+    monkeypatch.setattr(exaid_perfmon, 'launcher', lambda: launcher)
+    monkeypatch.setenv('AOTRITON_WORKDIR', str(tmp_path))
+    (tmp_path / 'installed' / 'perfmon' / 'MAJOR' / SUBJECT).mkdir(parents=True)
+    tid = _add(db)
+    node = Node(tmp_path,
+                handlers.HANDLERS,
+                handlers.START,
+                db,
+                runners={'perfmon': exaid_perfmon.ExaidPerfmonRunner},
+                category=('perfmon', None))
+    try:
+        assert wait_for(lambda: db.status(tid) == 'done', timeout=30)
+    finally:
+        node.stop()
+    reports = _by_pair(saved)
+    assert set(reports) == ALL_PAIRS
+    crashed = {k for k, r in reports.items() if r['status'] == 'crash'}
+    assert crashed == {('op_attn_fwd', 'aiter')}
+    # every other pair, including the ones measured after the death, is OK
+    assert {r['status'] for k, r in reports.items() if k not in crashed} == {'OK'}
+    # the one GPU slot ran at least two processes: the one that died and its replacement
+    assert len({line.split()[0] for line in log.read_text().splitlines()}) >= 2
+    # the crashed pair is recorded done, once
+    assert [tuple(v[0]) for _, _, v in saved['cookie']].count(('op_attn_fwd', 'aiter')) == 1
     assert db.rows[tid].errors == []
 
 
