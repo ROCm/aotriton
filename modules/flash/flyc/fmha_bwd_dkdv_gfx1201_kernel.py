@@ -843,7 +843,7 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
             if const_expr(dtype_str == "bf16"):
                 if const_expr(signed):
                     return fmha.bf16_trunc_pack_v8(vals, elem_dtype)
-                return fmha.bf16_round_pack_v8(vals, elem_dtype)
+                return fmha.bf16_round_nonan_pack_v8(vals, elem_dtype)
             return Vec.from_elements([fx.Float32(v).to(elem_dtype) for v in vals], elem_dtype).ir_value()
 
         loop_results = init_args

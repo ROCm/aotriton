@@ -607,7 +607,7 @@ the next representable value.
 
 **History.** The gfx1201 flyc forward and dK/dV kernels, from their first
 version (#227, selected by the op database from #239) to #259. Fixed by
-`bf16_round_pack_v8` in `modules/flash/flyc/fmha_common_gfx1201.py`, used for
+`bf16_round_nonan_pack_v8` in `modules/flash/flyc/fmha_common_gfx1201.py`, used for
 P in the forward and in dV. dS keeps the truncation: it is signed, and dQ and
 dK showed no material bias from it.
 

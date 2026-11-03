@@ -102,7 +102,7 @@ __all__ = [
     "bitcast_i32",
     "pack_bf16_pair",
     "bf16_trunc_pack_v8",
-    "bf16_round_pack_v8",
+    "bf16_round_nonan_pack_v8",
     "FastMath",
     "MaskedAxis",
     "Aperture",
@@ -451,7 +451,7 @@ def bf16_trunc_pack_v8(f32_vals, elem_dtype):
     comes out 1.5e-3 low on average, and the backward's
     `Delta = rowsum(dO * O)` sums that bias over head_dim, which made dQ
     6x less accurate than the Triton backend (AOTriton issue #259). P goes
-    through `bf16_round_pack_v8` instead.
+    through `bf16_round_nonan_pack_v8` instead.
     """
     _c16 = fx.Int32(16)
     _cmask = fx.Int32(0xFFFF0000)
@@ -461,15 +461,23 @@ def bf16_trunc_pack_v8(f32_vals, elem_dtype):
     return Vec.from_elements(pairs, fx.Int32).bitcast(elem_dtype).ir_value()
 
 
-def bf16_round_pack_v8(f32_vals, elem_dtype):
+def bf16_round_nonan_pack_v8(f32_vals, elem_dtype):
     """Pack 8 f32 values into v8bf16, rounding to nearest, ties away from zero.
+
+    **Not for values that can be NaN**, which is what `nonan` in the name
+    warns about. A NaN whose dropped half is >= 0x8000 and whose kept
+    mantissa is all ones carries out of the exponent: 0x7FFFFFFF comes out
+    as -0.0 and 0xFFFFFFFF as +0.0, so the NaN silently becomes a zero. P is
+    in [0, 1] and is safe; for anything else use a convert that preserves NaN.
+    Everything else is right: +-inf stays +-inf, values beyond the bf16
+    maximum round to inf as round-to-nearest-even does, and subnormals and
+    -0.0 come out as torch's rounding gives them.
 
     RDNA4 has no f32 -> bf16 convert (`v_cvt_pk_bf16_f32` is gfx950 and
     gfx1250 only), so the rounding is done on the bits: add 0x8000, then keep
     the upper 16. A carry out of the mantissa steps into the exponent, which
-    is exactly the next representable value, since positive floats order like
-    their bit patterns. NaN and the largest finite values are not handled, so
-    this is only for finite operands well inside the range; P is in [0, 1].
+    is exactly the next representable value, since floats order like their
+    bit patterns within each sign.
 
     Unbiased for operands of one sign, which is what P needs, see
     `bf16_trunc_pack_v8`. It differs from round-to-nearest-even only at exact

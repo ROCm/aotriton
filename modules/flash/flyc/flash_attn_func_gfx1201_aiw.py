@@ -1800,7 +1800,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
                         p_slice = [p_vals[p_base + j] for j in range(8)]
 
                         if const_expr(dtype_str == "bf16"):
-                            p_packs_st.append(fmha.bf16_round_pack_v8(p_slice, elem_dtype))
+                            p_packs_st.append(fmha.bf16_round_nonan_pack_v8(p_slice, elem_dtype))
                         else:
                             elem_list = []
                             for j in range_constexpr(8):
