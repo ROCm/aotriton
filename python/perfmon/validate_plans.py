@@ -12,6 +12,8 @@ checklist item, written as JSON lines on stdout:
     noise     bf16 hdim 128 entries at a few seqlens, for repeated runs
     features  one entry per feature (fp16, bias bhqk and b1qk, dropout, GQA,
               sliding window), both ifaces, unforced and every backend
+    aiter     bf16 hdim 128, causal and not, over the seqlen ladder (to 8192),
+              unforced and forced to aiter: known issue 1 (AITER capture)
     size      the largest prime entry of a few problems, both ifaces, every
               backend
 
@@ -119,7 +121,19 @@ def size_jobs(desc, subjects: list[str], hdims=SIZE_HDIMS) -> list[dict]:
     return jobs
 
 
-PLANS = {'llm': llm_jobs, 'noise': noise_jobs, 'features': feature_jobs, 'size': size_jobs}
+def aiter_jobs(desc, subjects: list[str], seqlens=(16, 64, 256, 1024, 4096, 8192)) -> list[dict]:
+    jobs = []
+    for subject in subjects:
+        for causal in (0, 1):
+            for seqlen in seqlens:
+                entry = make_entry(desc, seqlen, causal=causal)
+                for iface in IFACES:
+                    for backend in ('-', 'aiter'):
+                        jobs.append(make_job(subject, entry, iface, backend, f'aiter:causal{causal}'))
+    return jobs
+
+
+PLANS = {'llm': llm_jobs, 'noise': noise_jobs, 'features': feature_jobs, 'size': size_jobs, 'aiter': aiter_jobs}
 
 
 def main(argv=None) -> int:

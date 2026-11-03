@@ -115,3 +115,9 @@ def test_size_plan_has_small_and_large(desc):
     jobs = validate_plans.size_jobs(desc, ['s'], hdims=(64,))
     seqlens = {j['entry']['seqlen_q'] for j in jobs}
     assert seqlens == {16, 16384}
+
+
+def test_aiter_plan_forces_aiter(desc):
+    jobs = validate_plans.aiter_jobs(desc, ['s'], seqlens=(64,))
+    assert {j['backend'] for j in jobs} == {'-', 'aiter'}
+    assert {j['entry']['causal'] for j in jobs} == {0, 1}
