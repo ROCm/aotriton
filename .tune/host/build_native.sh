@@ -12,6 +12,11 @@
 #                               while third_party/flydsl-llvm.txt is non-empty (the
 #                               configure tripwire); the wheel is only installed
 #                               into the build venv, no arch but gfx950 uses it.
+#   --only_kernel <kernel>      build the GPU images of this kernel only (e.g. attn_fwd):
+#                               every other kernel's images are skipped, as if they
+#                               had failed to compile. The tuning build of one arch
+#                               compiles ~72k images, ~26k of them attn_fwd's. The
+#                               installed library cannot serve the other kernels.
 #   --jobs <n>                  ninja -j; the build runs under nice. A build host
 #                               shared with a measurement should not get all its
 #                               cores.
@@ -32,12 +37,14 @@ set -euo pipefail
 
 FLYDSL_WHEEL=""
 JOBS=""
+ONLY_KERNEL=""
 EXTERNAL_DB=""
 POSITIONAL=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --flydsl_wheel) FLYDSL_WHEEL="$2"; shift 2 ;;
         --external_tuning_database) EXTERNAL_DB="$2"; shift 2 ;;
+        --only_kernel) ONLY_KERNEL="$2"; shift 2 ;;
         --jobs) JOBS="$2"; shift 2 ;;
         -*) echo "Error: unknown option: $1" >&2; exit 1 ;;
         *) POSITIONAL+=("$1"); shift ;;
@@ -83,4 +90,16 @@ CMAKE_ARGS=(-DCMAKE_INSTALL_PREFIX="$INSTALL_DIR"
 set -x
 cd "$BUILD_DIR"
 cmake "$AOTRITON_ROOT" "${CMAKE_ARGS[@]}" -G Ninja
-nice -n 10 ninja ${JOBS:+-j "$JOBS"} install/strip
+NINJA=(nice -n 10 ninja ${JOBS:+-j "$JOBS"})
+if [ -z "$ONLY_KERNEL" ]; then
+    "${NINJA[@]}" install/strip
+    exit 0
+fi
+# The targets are listed, not excluded: ninja has no "all but". Source files
+# and CMake's own files in the list are not targets; and a command line holds
+# only so many, hence xargs.
+ninja -t targets all | cut -d: -f1 > "$BUILD_DIR/targets.txt"
+{ grep -v -E '\.hsaco$|^/|^CMakeFiles/|\.cmake$|^build\.ninja$|^(install|clean|help|edit_cache|rebuild_cache|list_install_components|all)' "$BUILD_DIR/targets.txt"
+  grep "gpu_kernel_image\.$ONLY_KERNEL/.*\.hsaco$" "$BUILD_DIR/targets.txt"
+} | xargs -n 4000 "${NINJA[@]}"
+cmake --install . --strip
