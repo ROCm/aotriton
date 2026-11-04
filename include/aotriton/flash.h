@@ -147,6 +147,26 @@ struct AOTRITON_API VarlenLseLayout {
   static constexpr uint32_t TH = 1;   // (T, H), offset (b*S + s)*H + h
 };
 
+// Which diagonal a NUMERIC window is measured from.
+//
+// With d = seqlen_k[z] - seqlen_q[z] of the sequence being processed and
+// p = VarlenBits::principal_diagonal_choice, a numeric window is shifted per
+// sequence before the usual predicate `i - L <= j <= i + R` is applied:
+//
+//     L = Window_left  - p * d
+//     R = Window_right + p * d
+//
+// TOP_LEFT (p = 0) measures from j - i = 0 and is the default; zero is also
+// what every caller older than kVersion 5 (fwd) / 8 (bwd) sends.
+// BOTTOM_RIGHT (p = 1) measures from j - i = d, flash-attention's convention.
+// Sentinel windows (TOP_LEFT_ALIGNED, BOTTOM_RIGHT_ALIGNED) already name their
+// own diagonal and are NOT shifted again. The bit is honored for dense calls
+// too, where d is simply the same for every batch entry.
+struct AOTRITON_API VarlenPrincipalDiagonal {
+  static constexpr uint32_t TOP_LEFT     = 0;  // j - i = 0 (default)
+  static constexpr uint32_t BOTTOM_RIGHT = 1;  // j - i = seqlen_k[z] - seqlen_q[z]
+};
+
 // One side's three axes. uint8_t, not uint32_t, so the struct really is the one
 // byte the encoding gives it rather than a 4-byte storage unit holding 8 bits.
 struct AOTRITON_API VarlenMode {
@@ -168,7 +188,8 @@ struct AOTRITON_API alignas(uint32_t) VarlenBits {
   VarlenMode qmode;          // bits 7:0
   VarlenMode kmode;          // bits 15:8 -- same layout, so one decoder twice
   uint16_t lse_layout : 2;   // bits 17:16
-  uint16_t reserved   : 14;  // bits 31:18
+  uint16_t principal_diagonal_choice : 1;  // bit 18, see VarlenPrincipalDiagonal
+  uint16_t reserved   : 13;  // bits 31:19
 };
 
 // Occupies exactly the space an int32_t would, so appending it to a params
@@ -210,7 +231,7 @@ struct AOTRITON_API attn_fwd_params {
   int32_t  window_right;
   VarlenBits varlen_bits = {};
 
-  static constexpr int32_t kVersion = 4;
+  static constexpr int32_t kVersion = 5;
   attn_fwd_params();
 };
 
@@ -255,7 +276,7 @@ struct AOTRITON_API attn_bwd_params {
   mutable LT4       DQ_ACC;         // fp32 accumulator of dq
   VarlenBits varlen_bits = {};
 
-  static constexpr int32_t kVersion = 7;
+  static constexpr int32_t kVersion = 8;
   attn_bwd_params();
 };
 

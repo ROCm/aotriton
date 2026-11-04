@@ -63,6 +63,8 @@ struct VarlenShift {
   static constexpr uint32_t POSITION   = 3;
   static constexpr uint32_t K_SIDE     = 8;   // K's byte, relative to Q's
   static constexpr uint32_t LSE_LAYOUT = 16;
+  static constexpr uint32_t PRINCIPAL_DIAGONAL = 18;
+  static constexpr uint32_t RESERVED   = 19;
 };
 
 // One side's byte. Q and K encode identically, so the whole-word encoder below
@@ -89,7 +91,8 @@ varlen_to_wire(VarlenBits v) {
   return varlen_mode_to_wire(v.qmode)
        | (varlen_mode_to_wire(v.kmode) << VarlenShift::K_SIDE)
        | (uint32_t(v.lse_layout) << VarlenShift::LSE_LAYOUT)
-       | (uint32_t(v.reserved) << 18);
+       | (uint32_t(v.principal_diagonal_choice) << VarlenShift::PRINCIPAL_DIAGONAL)
+       | (uint32_t(v.reserved) << VarlenShift::RESERVED);
 }
 
 // The four VarlenType rows, decomposed onto the three axes. This is the whole
@@ -172,7 +175,8 @@ varlen_from_wire(uint32_t wire) {
   v.qmode = varlen_mode_from_wire(wire & 0xFFu);
   v.kmode = varlen_mode_from_wire((wire >> VarlenShift::K_SIDE) & 0xFFu);
   v.lse_layout = (wire >> VarlenShift::LSE_LAYOUT) & 3u;
-  v.reserved = (wire >> 18) & 0x3FFFu;
+  v.principal_diagonal_choice = (wire >> VarlenShift::PRINCIPAL_DIAGONAL) & 1u;
+  v.reserved = (wire >> VarlenShift::RESERVED) & 0x1FFFu;
   return v;
 }
 
@@ -180,6 +184,12 @@ static_assert(varlen_to_wire(varlen_from_wire(0x1150Bu)) == 0x1150Bu,
               "varlen_from_wire must invert varlen_to_wire");
 static_assert(varlen_to_wire(varlen_from_wire(0x1313u)) == 0x1313u,
               "varlen_from_wire must invert varlen_to_wire");
+static_assert(varlen_to_wire(varlen_from_wire(0x4'150Bu)) == 0x4'150Bu,
+              "bit 18 (principal_diagonal_choice) must round-trip");
+static_assert(varlen_to_wire(VarlenBits{.principal_diagonal_choice = 1}) == 0x4'0000u,
+              "principal_diagonal_choice is bit 18");
+static_assert(varlen_to_wire(VarlenBits{.reserved = 1}) == 0x8'0000u,
+              "reserved starts at bit 19");
 static_assert(varlen_to_wire(varlen_from_wire(0xFFFFFFFFu)) == 0xFFFFFFFFu,
               "the inverse must be total, reserved bits included");
 

@@ -68,8 +68,16 @@ attn_bwd(const attn_bwd_params& in,
   // described layouts is exactly the supported set.
   if (params_version < attn_bwd_params::kVersion) {
     attn_bwd_params upgraded;
-    if (!translate_bwd_params(in, params_version, &upgraded)) {
-      return hipErrorInvalidSymbol; // too old to translate
+    switch (translate_bwd_params(in, params_version, &upgraded)) {
+      case TranslateStatus::kOk:
+        break;
+      case TranslateStatus::kMalformed:
+        // A reserved bit of THAT version is set (e.g. bit 18 of a v4/v7
+        // varlen_bits): invalid data, not an unsupported version.
+        return hipErrorInvalidValue;
+      case TranslateStatus::kTooOld:
+      default:
+        return hipErrorInvalidSymbol; // too old to translate
     }
     return attn_bwd(upgraded, attn_bwd_params::kVersion, stream_wrap, options);
   }

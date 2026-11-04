@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <limits>
 #include <aotriton/_internal/log.h>
+#include "varlen.h"
 
 namespace AOTRITON_NS::v3::flash {
 
@@ -35,7 +36,11 @@ AiterFmhaV3FwdContext::check_inputs_are_supported(Gpu gpu) {
   // Tested UNMASKED, unlike the persistent fallback in attn_fwd.cc: the ASM
   // kernels implement neither varlen addressing nor the _TH logsumexp layout,
   // so any non-dense word is out of scope here, not just the addressing bytes.
-  RETURN_IF(args.Varlen_bits != 0);
+  //
+  // principal_diagonal_choice (bit 18) is masked out: it only shifts NUMERIC
+  // windows, and this path accepts sentinel windows only, whose meaning the
+  // bit does not change. A caller that always sets it keeps the aiter path.
+  RETURN_IF((uint32_t(args.Varlen_bits) & ~(1u << internal::VarlenShift::PRINCIPAL_DIAGONAL)) != 0);
   // GQA only supported in varlen (aka. group mode)
   RETURN_IF(args.Num_head_q != args.Num_head_k);
   // GQA only supported in varlen (aka. group mode)

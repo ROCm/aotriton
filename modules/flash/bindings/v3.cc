@@ -62,6 +62,9 @@ namespace pyaotriton::v3 {
           .def_property("lse_layout",
                         [](const VarlenBits& v) { return uint32_t(v.lse_layout); },
                         [](VarlenBits& v, uint32_t x) { v.lse_layout = x; })
+          .def_property("principal_diagonal_choice",
+                        [](const VarlenBits& v) { return uint32_t(v.principal_diagonal_choice); },
+                        [](VarlenBits& v, uint32_t x) { v.principal_diagonal_choice = x; })
         ;
         // The axis-value constants, so Python can spell a configuration rather
         // than assemble one. py::enum_ (KernelSlot, below) is the local
@@ -84,6 +87,9 @@ namespace pyaotriton::v3 {
           py::class_<VarlenLseLayout>(m, "VarlenLseLayout")
             .def_readonly_static("HT", &VarlenLseLayout::HT)
             .def_readonly_static("TH", &VarlenLseLayout::TH);
+          py::class_<VarlenPrincipalDiagonal>(m, "VarlenPrincipalDiagonal")
+            .def_readonly_static("TOP_LEFT", &VarlenPrincipalDiagonal::TOP_LEFT)
+            .def_readonly_static("BOTTOM_RIGHT", &VarlenPrincipalDiagonal::BOTTOM_RIGHT);
           // So a test can assert the wire value from Python as well as from the
           // static_assert table in csrc/varlen.h. This is the only place the
           // pybind layer's correctness is observable: a bit-field bound with the
