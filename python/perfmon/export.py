@@ -15,6 +15,13 @@ The core is `export_rows()`, which takes the newest measurement of every point
 tree; it touches no database. The command line fetches the rows, calls it,
 renders the markdown and, with `--verify`, reads the files back.
 
+Completeness: a DEF task is marked `done` before all its result rows are
+written (by design). So the export compares, per task, the (iface, backend)
+pairs the task's appcookie records done with the report rows present
+(`pq.task_shortfalls`), and by default leaves the rows of an incomplete task
+out (and exits with status 3 after exporting the rest). `--include_incomplete`
+exports them anyway. `-l` shows the shortfall per selection.
+
 Merge rules: a line in the database replaces the file's line for the same
 entry; lines not in the database are kept, so exporting a partial campaign
 never erases data. A `head` subject is refused (HEAD is compared live, never
@@ -35,6 +42,8 @@ from .perfdb import PerfdbError
 APP = 'perfmon'
 HEAD_TAG = 'head'
 GIB = 1 << 30
+#: Exit status of an export that left incomplete tasks out.
+INCOMPLETE_STATUS = 3
 
 #: Statistic columns of a database row, in perfdb.STAT_COLUMNS order.
 _STAT_FIELDS = tuple(f'{c}_us' for c in perfdb.STAT_COLUMNS)
@@ -119,9 +128,12 @@ def platform_config(row: dict, rocm: str) -> dict:
     """The `platform.csv` columns (but `measured`) of one measurement row."""
     platform = row.get('platform') or {}
     harness = row.get('harness') or {}
-    # TODO(perfmon): the power caps, RAM speed and amdgpu version are not in the
-    # report yet (they come from amd-smi and the webui's host inventory); the
-    # columns stay empty until the fleet work provides them.
+    # TODO(perfmon): the power caps, RAM speed and amdgpu version are still not
+    # in the report: the runner's `platform` reply (perfmon/core/runner.cc) has
+    # no amd-smi data (the image has no amd-smi), and host_facts() reads only
+    # the CPU, OS, kernel and GPU count the container can see. The columns stay
+    # empty until the fleet work (the host inventory) provides them; the keys
+    # read below are the names to fill.
     return {
         'variant': row['variant'],
         'gpu_device_id': _device_id_text(platform.get('pci_device_id')),
@@ -324,17 +336,59 @@ def excluded_for_sets(desc, arch: str, entry_sets) -> list[tuple]:
     return out
 
 
-def format_listing(selections: list[dict], *, given: dict, exported) -> list[str]:
+def shortfall_text(shortfalls) -> str:
+    """'-' when complete, else '<tasks> tasks, <n> results missing'."""
+    if not shortfalls:
+        return '-'
+    missing = sum(len(t['missing']) for t in shortfalls)
+    return f'{len(shortfalls)} tasks, {missing} results missing'
+
+
+def selection_key(s: dict) -> tuple:
+    return (s['module'], s['arch'], s['variant'], s['subject'])
+
+
+def shortfalls_by_selection(shortfalls) -> dict[tuple, list[dict]]:
+    out: dict[tuple, list[dict]] = {}
+    for task in shortfalls:
+        out.setdefault(selection_key(task), []).append(task)
+    return out
+
+
+def split_incomplete(rows: list[dict], shortfalls) -> tuple[list[dict], list[dict]]:
+    """(rows of complete tasks, shortfalls of the tasks that own the rows left
+    out). Rows of a task with a shortfall are the ones that may be partial."""
+    short = {t['task_id']: t for t in shortfalls}
+    kept = [r for r in rows if r.get('task_id') not in short]
+    held_ids = {r['task_id'] for r in rows if r.get('task_id') in short}
+    return kept, [short[i] for i in sorted(held_ids)]
+
+
+def describe_shortfall(task: dict) -> str:
+    text = f'task {task["task_id"]} ({task["subject"]}, {task["variant"]}): {task["reason"]}'
+    if task['missing']:
+        pairs = ', '.join(f'{i}/{b or "unforced"}' for i, b in task['missing'][:6])
+        more = len(task['missing']) - 6
+        text += f'; missing {pairs}' + (f' and {more} more' if more > 0 else '')
+    return text
+
+
+def format_listing(selections: list[dict], *, given: dict, exported, shortfalls=None) -> list[str]:
     """The `-l` table. Levels (module, arch, variant, subject) that were given
     as options are not printed; `exported(selection)` says whether the
-    perfdb already has a block for it."""
+    perfdb already has a block for it. `shortfalls` (pq.task_shortfalls rows)
+    adds the `incomplete` column."""
     levels = [lv for lv in ('module', 'arch', 'variant', 'subject') if not given.get(lv)]
     header = levels + ['measured', 'OK', 'NotOK', 'crash', 'newest', 'exported']
+    by_selection = None if shortfalls is None else shortfalls_by_selection(shortfalls)
+    if by_selection is not None:
+        header.append('incomplete')
     table = [header]
     for s in selections:
         table.append([str(s[lv]) for lv in levels]
                      + [str(s['measured']), str(s['ok']), str(s['notok']), str(s['crash']),
-                        _day(s['newest']) or '-', 'yes' if exported(s) else 'no'])
+                        _day(s['newest']) or '-', 'yes' if exported(s) else 'no']
+                     + ([] if by_selection is None else [shortfall_text(by_selection.get(selection_key(s)))]))
     widths = [max(len(r[i]) for r in table) for i in range(len(header))]
     numeric = {header.index(c) for c in ('measured', 'OK', 'NotOK', 'crash')}
     lines = []
@@ -387,6 +441,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--verify',
                         action='store_true',
                         help='Read the files back and check every exported line')
+    parser.add_argument('--include_incomplete',
+                        action='store_true',
+                        help='Export the rows of tasks that look incomplete too (default: leave them '
+                             'out; a task is marked done before all its results are written)')
     parser.add_argument('-l',
                         '--list',
                         dest='list_only',
@@ -416,14 +474,24 @@ def _cmd_list(args) -> int:
                                         arch=args.arch,
                                         variant=args.variant,
                                         subjects=args.subject)
+        shortfalls = pq.task_shortfalls(conn,
+                                        module=args.module,
+                                        arch=args.arch,
+                                        variant=args.variant,
+                                        subjects=args.subject)
     finally:
         conn.close()
     if not selections:
         print('no measurements match')
         return 0
     given = {'module': args.module, 'arch': args.arch, 'variant': args.variant, 'subject': args.subject}
-    for line in format_listing(selections, given=given, exported=lambda s: _is_exported(s, args.output)):
+    for line in format_listing(selections,
+                               given=given,
+                               exported=lambda s: _is_exported(s, args.output),
+                               shortfalls=shortfalls):
         print(line)
+    for task in shortfalls:
+        print(f'incomplete: {describe_shortfall(task)}', file=sys.stderr)
     return 0
 
 
@@ -439,10 +507,23 @@ def _cmd_export(args) -> int:
         selection = dict(arch=args.arch, variant=args.variant, subjects=args.subject, module=args.module)
         rows = list(pq.iter_latest(conn, **selection))
         superseded = pq.count_superseded(conn, **selection)
+        shortfalls = pq.task_shortfalls(conn, **selection)
     finally:
         conn.close()
     if not rows:
         sys.exit('no measurements match; see -l')
+    held = []
+    if not args.include_incomplete:
+        rows, held = split_incomplete(rows, shortfalls)
+    for task in held:
+        print(f'warning: incomplete, left out (use --include_incomplete): {describe_shortfall(task)}',
+              file=sys.stderr)
+    held_ids = {t['task_id'] for t in held}
+    empty = [t for t in shortfalls if t['task_id'] not in held_ids and not t['reported']]
+    for task in empty:
+        print(f'warning: no results yet: {describe_shortfall(task)}', file=sys.stderr)
+    if not rows:
+        sys.exit('every selected measurement belongs to an incomplete task; see -l or --include_incomplete')
     failed = sum(1 for r in rows if r['status'] in ('NotOK', 'crash'))
     print(f'{len(rows)} measurements, {superseded} superseded by newer ones, {failed} NotOK or crash')
     try:
@@ -462,6 +543,9 @@ def _cmd_export(args) -> int:
         if bad:
             return 1
         print(f'verified {len(rows)} lines')
+    if held:
+        print(f'{len(held)} incomplete tasks left out of the export', file=sys.stderr)
+        return INCOMPLETE_STATUS
     return 0
 
 
