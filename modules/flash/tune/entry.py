@@ -53,11 +53,78 @@ class FlashEntry:
     def qkh(self):
         return self.seqlen_q * self.seqlen_k * self.hdim
 
+# ---------------------------------------------------------------------------
+# Input sizes: accuracy tests versus benchmarks
+#
+# The tuner uses two different (BATCH, N_HEADS) sets for one database entry.
+#
+# ACCURACY TESTS use TEST_BATCH x TEST_N_HEADS = 3 x 5 (the FlashInputMetadata
+# defaults below). Both are prime on purpose: a wrong batch or head stride
+# cannot cancel against a power-of-two extent, so indexing and stride errors
+# show up as a wrong result.
+#
+# BENCHMARKS use benchmark_shape(seqlen_q). Timing at 3 x 5 is misleading for
+# short sequences. batch x heads x seqlen_q is the number of query rows the
+# GPU has to work on; at 3 x 5 x 128 the whole launch is a few thousand rows,
+# the GPU is mostly idle, and the timing is dominated by launch overhead. The
+# tuner then prefers the candidates (kernel configs, and for the op level the
+# backend) that win on an idle GPU, and they lose at real sizes. Measured on
+# gfx950: the crossover is around batch x heads ~ 50, while real workloads run
+# batch x heads of 864-8192 at seqlen 128-512. The gfx950 fp16 hdim 64 dropout
+# .dbpatch fixes at large batch came from this; they cost up to 0.08 ms at
+# batch x heads <= 96 (23 of 150 entries measured), which is accepted:
+# small batch with short sequences is under-utilized by nature.
+#
+# Why the database is not keyed by batch and heads: a (batch, heads, seqlen_q,
+# seqlen_k) table is a rank-4 tensor on top of the dtype/hdim/causal/dropout/
+# bias axes, which the dense tuning tensor cannot afford. A decision tree over
+# batch x heads could work but is non-trivial, and it is not worth building
+# since the Triton kernels are being retired. So one benchmark size per
+# seqlen_q is chosen to represent the large-batch regime.
+# ---------------------------------------------------------------------------
+TEST_BATCH = 3
+TEST_N_HEADS = 5
+
+# batch x heads is chosen so that batch x heads x seqlen_q reaches
+# BENCH_QUERY_ROWS (2**17), clamped to [TEST_BATCH * TEST_N_HEADS,
+# BENCH_MAX_BATCH_HEADS]:
+#
+#   seqlen_q          16..128  256   512   1024  2048  4096  8192
+#   batch x heads       1024   512   256   128    64    32    16
+#   (batch, n_heads)  128x8   64x8  32x8  16x8   8x8   4x8   2x8
+#
+# Where batch x heads x seqlen_q already fills the GPU the floor keeps the
+# old 3 x 5. N_HEADS is the realistic BENCH_N_HEADS = 8; GQA entries keep
+# their (q heads, kv heads) ratio and scale batch only. The memory clamp
+# (FlashTune._clamp_memory_usage) still applies on top, so long sequences
+# with a large reference are shrunk exactly as before.
+BENCH_QUERY_ROWS = 1 << 17
+BENCH_MAX_BATCH_HEADS = 1024
+BENCH_N_HEADS = 8
+
+
+def benchmark_shape(seqlen_q: int,
+                    n_heads: int | tuple[int, int] = TEST_N_HEADS) -> tuple[int, int | tuple[int, int]]:
+    """(BATCH, N_HEADS) to time a database cell with `seqlen_q` query rows.
+
+    `n_heads` is the heads of the case being timed: an int, or a (q, kv) pair
+    for GQA, in which case the ratio is kept and only BATCH is scaled."""
+    floor = TEST_BATCH * TEST_N_HEADS
+    target = BENCH_QUERY_ROWS // seqlen_q
+    target = max(floor, min(BENCH_MAX_BATCH_HEADS, target))
+    if target <= floor:
+        return TEST_BATCH, n_heads
+    if isinstance(n_heads, int):
+        return -(-target // BENCH_N_HEADS), BENCH_N_HEADS
+    return -(-target // n_heads[0]), n_heads
+
+
 # Field names match mptune/flash/tuner.py and/or _core_test_backward.py
 @dataclass
 class FlashInputMetadata(FlashEntry):
-    N_HEADS: int | tuple[int, int] = 5
-    BATCH: int = 3
+    # Accuracy-test sizes. Benchmark sizes come from benchmark_shape().
+    N_HEADS: int | tuple[int, int] = TEST_N_HEADS
+    BATCH: int = TEST_BATCH
     sm_scale: str | float = 'l1'
     storage_flip: bool | tuple[int, int] = False
     prng_seed: int = 0x9be9_98d4_cf17_5339
