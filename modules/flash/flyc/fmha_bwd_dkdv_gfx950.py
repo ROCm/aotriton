@@ -924,8 +924,21 @@ class BwdDkDvKernelContext(ParityKernelContext):
             # A non-window build forwards `WINDOW_BOTRIGHT` for both, so the
             # left bound comes back as `seqlen_q` -- unbounded -- and every
             # left-bound comparison below is `const_expr`-ed away regardless.
+            #
+            # `VarlenBits` carries `principal_diagonal_choice` (bit 18), which
+            # moves a *numeric* bound to this sequence's bottom-right diagonal:
+            # `left - d`, `right + d`, `d = seqlen_k - seqlen_q`. Nothing below
+            # assumes the band touches the diagonal, or that either bound is
+            # non-negative or inside the sequence: `decompose_causal_regions`
+            # and `mask_if_clipped` work on whatever `(left, right)` comes back,
+            # and a KV block whose rows no q row sees walks zero tiles and
+            # stores the zero accumulators as its dK and dV.
             left, right = fmha.resolve_window(
-                self.window_left_arg, self.window_right_arg, fx.Int32(self.seqlen_q_v), self.seqlen_kv_i32
+                self.window_left_arg,
+                self.window_right_arg,
+                fx.Int32(self.seqlen_q_v),
+                self.seqlen_kv_i32,
+                self.varlen_bits_arg,
             )
             self.window_left_i32 = fx.Int32(left)
             # A (q, kv) element is live iff `kv - right <= q <= kv + left`, so
@@ -2411,6 +2424,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         philox_seed=None,
         philox_offset1=None,
         philox_offset2=0,
+        principal_diagonal=abi.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT,
         stream=None,
     ):
         """Every kernel argument but the stream, in launch order.
@@ -2418,7 +2432,20 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         One place that turns tensors into the wire format, so `_launch` and
         `_compile` cannot drift apart -- the same shape, and the same reason,
         as the forward's `_args`.
+
+        `principal_diagonal` is one of `abi.VARLEN_PRINCIPAL_DIAGONAL_*` and is
+        ORed into the `VarlenBits` on the wire, so a **dense** call can set it
+        too -- `varlen=None` would otherwise put 0 there. A varlen caller may
+        equally carry it in `varlen["bits"]` (`abi.varlen_bits(...,
+        principal_diagonal=...)`); either way the kernel reads one bit.
         """
+        if principal_diagonal not in (
+            abi.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT,
+            abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT,
+        ):
+            raise ValueError(
+                f"principal_diagonal must be abi.VARLEN_PRINCIPAL_DIAGONAL_*, got {principal_diagonal:#x}"
+            )
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
         _ptrs, shape_meta, st = abi.prep_tensors(
             [("Q", Q), ("K", K), ("V", V), ("DO", DO), ("DK", DK), ("DV", DV)],
@@ -2613,7 +2640,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
             _vl[2],
             _vl[3],
             _vl[4],
-            _vl[0],
+            _vl[0] | principal_diagonal,
             int(num_seqlens),
             *_vl[5:],  # max_seqlen_q, max_seqlen_k -- the decode's MAX fallback
             *_resolve_window_args(window),

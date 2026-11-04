@@ -1291,7 +1291,17 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
             # `fmha.resolve_window`. Everything derived from a window stays
             # i32 from here down: bounds go negative, and `fx.Index` is
             # unsigned.
-            _wl_i32, _wr_i32 = fmha.resolve_window(window_left, window_right, seqlen_q_i32, seqlen_k_i32)
+            #
+            # `varlen_bits` rides along for `principal_diagonal_choice` (bit
+            # 18): with it set, a *numeric* bound is measured from this
+            # sequence's bottom-right diagonal, `L = w_left - d` and
+            # `R = w_right + d` with `d = seqlen_k - seqlen_q`. Nothing
+            # downstream needs to know: `decompose_causal_regions` and the
+            # per-element mask below already take arbitrary signed bounds --
+            # L negative, R past seqlen_k, a band clear of the diagonal, a
+            # band that misses every key (O = 0, LSE = +inf). With the bit
+            # clear the shift is 0 and both bounds are the caller's values.
+            _wl_i32, _wr_i32 = fmha.resolve_window(window_left, window_right, seqlen_q_i32, seqlen_k_i32, varlen_bits)
 
         # ---- Split the KV range into full and masked regions ----
         #
@@ -2259,8 +2269,37 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     # an (H, T) logsumexp -- the conventional dense case, and the default.
     # `_HT` is AOTriton's and this kernel's default: shape (H, T), T
     # contiguous. `_TH` is Transformer Engine's (T, H).
+    #
+    # Bit 18 is `principal_diagonal_choice`, which is not a layout fact and
+    # applies to dense calls too: `_principal_diagonal_bits` below folds the
+    # launcher's `principal_diagonal=` into whatever word the layout produced.
 
     # 0x02
+
+    def _principal_diagonal_bits(bits, principal_diagonal):
+        """`bits` with `principal_diagonal_choice` (VarlenBits bit 18) applied.
+
+        `principal_diagonal` is `abi.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT`,
+        `abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT`, or None to keep whatever
+        `bits` already carries -- 0 for a dense call, or what the caller passed
+        to `abi.varlen_bits(..., principal_diagonal=)` under varlen. It is a
+        separate argument because the dense word is built here, not by the
+        caller, and the `varlen_*` helpers do not take it.
+
+        Only a *numeric* window is shifted; sentinels (causal_type 1/2) and the
+        non-causal build ignore the bit, so it is accepted everywhere.
+        """
+        if principal_diagonal is None:
+            return bits
+        _choices = (abi.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT, abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT)
+        if principal_diagonal not in _choices:
+            raise ValueError(f"principal_diagonal must be VARLEN_PRINCIPAL_DIAGONAL_* or None: {principal_diagonal!r}")
+        _bit = abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT
+        if bits & _bit and principal_diagonal != _bit:
+            # Zero in `bits` is indistinguishable from "not set", so the only
+            # detectable contradiction is this one.
+            raise ValueError("varlen['bits'] selects BOTTOM_RIGHT but principal_diagonal= selects TOP_LEFT")
+        return bits | principal_diagonal
 
     def _bias_args(bias):
         """(pointer, stride_b_batch, stride_b_head, stride_b_seq_q) for a (B, H, Sq, Sk) bias.
@@ -2302,8 +2341,12 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         philox_offset2=0,
         philox_seed_output=None,
         philox_offset_output=None,
+        principal_diagonal=None,
     ):  # noqa: E741
         """Every kernel argument but the stream, in launch order.
+
+        `principal_diagonal` selects the diagonal a numeric `window=` is
+        measured from; see `_principal_diagonal_bits`.
 
         `_launch` and `_compile` were 62 identical lines out of 66, differing
         only in whether the tail is `run_compiled` or `flyc.compile` and how
@@ -2316,6 +2359,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         _vb, _sq0, _sq1, _sk0, _sk1, _mq, _mk = abi.varlen_args(
             STRIDES_CONSTEXPR, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens
         )
+        _vb = _principal_diagonal_bits(_vb, principal_diagonal)
         _bp, _sb0, _sb1, _sb2 = _bias_args(bias)
         # `_hold` keeps a materialised philox scalar alive across the launch;
         # see `abi.u64_scalar`. Returned so the caller's frame owns it.

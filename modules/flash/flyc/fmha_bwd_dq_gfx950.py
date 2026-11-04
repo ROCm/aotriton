@@ -556,6 +556,14 @@ class BwdDqKernelContext(ParityKernelContext):
             # `delta_i32` is the resolved *right* bound under a window -- which
             # is why re-pointing it generalises the tile count as well as the
             # mask.
+            #
+            # **No assumption that the band touches the diagonal.** Under
+            # `principal_diagonal_choice` (VarlenBits bit 18) the resolved
+            # right bound is `window_right + (seqlen_k - seqlen_q)`, so it may
+            # be negative enough that the whole block's band ends before
+            # column 0 (the clamp below gives zero tiles, and the zero-seeded
+            # accumulator stores dQ = 0 -- see `compute_active_guard`), or
+            # past `seqlen_k` (the `num_kv_tiles` cap, then the tail mask).
             end_i32 = fx.Int32((self.causal_end_raw_i32 > fx.Int32(0)).select(self.causal_end_raw_i32, fx.Int32(0)))
             n = (fx.Index(end_i32) + fx.Index(traits.BLOCK_N - 1)) // fx.Index(traits.BLOCK_N)
             n = fx.Index((n < self.num_kv_tiles).select(n, self.num_kv_tiles))
@@ -584,6 +592,11 @@ class BwdDqKernelContext(ParityKernelContext):
         `q_start - window_left`, since `q_start` is the smallest row. Clamped
         before the divide rather than after: `fx.Index` is unsigned, so a
         negative would come out enormous and skip the whole range.
+
+        The left bound may be negative (a band strictly right of the
+        diagonal, or one shifted by `principal_diagonal_choice`), which puts
+        the first column past `q_start` and possibly past `split_t_end`; the
+        cap then leaves an empty walk, and the block stores zeros.
         """
         traits = self.traits
         first_col_i32 = fx.Int32(self.q_start) - self.window_left_i32
@@ -1673,6 +1686,12 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         kernel resolves it against each sequence's own lengths -- the only
         correct thing to do once varlen means there is more than one pair of
         lengths to resolve against.
+
+        A *numeric* pair goes on the wire unshifted. Which diagonal it is
+        measured from is VarlenBits bit 18 (`principal_diagonal_choice`, see
+        `_principal_diagonal_bits`), and the kernel applies that shift per
+        sequence in `fmha.resolve_window`, because `seqlen_k - seqlen_q`
+        differs per sequence. Sentinels are never shifted.
         """
         if not traits.CAUSAL:
             if window is not None:
@@ -1695,6 +1714,33 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         wl, wr = window
         return int(wl), int(wr)
 
+    def _principal_diagonal_bits(bits, varlen, principal_diagonal):
+        """`bits` with `principal_diagonal_choice` (VarlenBits bit 18) set as asked.
+
+        Two ways in, one bit on the wire. A varlen caller already builds the
+        bits (`abi.varlen_bits(..., principal_diagonal=...)`) and they pass
+        through unchanged. A dense call has no bits of its own -- `varlen=None`
+        *is* `bits == 0` -- so `principal_diagonal=` is how it sets the bit;
+        the kernel's addressing decode reads only the side bytes, so the bit
+        does not move a dense call onto the varlen path. Given both, they must
+        agree: silently preferring one would measure the window from a
+        diagonal the caller did not ask for, and the answer would be finite.
+        """
+        if principal_diagonal is None:
+            return bits
+        legal = (abi.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT, abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT)
+        if principal_diagonal not in legal:
+            raise ValueError(
+                f"principal_diagonal must be one of abi.VARLEN_PRINCIPAL_DIAGONAL_*, got {principal_diagonal:#x}"
+            )
+        carried = bits & abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT
+        if varlen is not None and carried != principal_diagonal:
+            raise ValueError(
+                f"principal_diagonal={principal_diagonal:#x} disagrees with varlen['bits'], which carries "
+                f"{carried:#x}; set it in one place"
+            )
+        return bits | principal_diagonal
+
     def _args(
         Q,
         K,
@@ -1712,6 +1758,7 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         window=None,
         varlen=None,
         num_seqlens=0,
+        principal_diagonal=None,
         dropout_p=None,
         philox_seed=None,
         philox_offset1=None,
@@ -1723,6 +1770,10 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         One place that turns tensors into the wire format, so `_launch` and
         `_compile` cannot drift apart -- the same shape, and the same reason,
         as the forward's `_args`.
+
+        `principal_diagonal=` (an `abi.VARLEN_PRINCIPAL_DIAGONAL_*`) chooses
+        the diagonal a numeric `window` is measured from; see
+        `_principal_diagonal_bits`.
         """
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
         _ptrs, shape_meta, st = abi.prep_tensors(
@@ -1880,7 +1931,7 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
             _vl[2],
             _vl[3],
             _vl[4],
-            _vl[0],  # varlen_bits
+            _principal_diagonal_bits(_vl[0], varlen, principal_diagonal),  # varlen_bits
             int(num_seqlens),
             *_vl[5:],  # max_seqlen_q, max_seqlen_k -- the decode's MAX fallback
             *_resolve_window_args(window),

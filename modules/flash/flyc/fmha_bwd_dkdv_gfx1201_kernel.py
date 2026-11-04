@@ -781,8 +781,24 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
         # ---- The window, and the visited Q-block range ----
         if const_expr(CAUSAL):
             # Sentinels resolve per sequence, not on the host -- under varlen
-            # bottom-right needs `seqlen_k[z] - seqlen_q[z]`.
-            _wl_i32, _wr_i32 = fmha.resolve_window(window_left, window_right, seqlen_q_i32, seqlen_k_i32)
+            # bottom-right needs `seqlen_k[z] - seqlen_q[z]`. So does a numeric
+            # bound under `principal_diagonal_choice` (VarlenBits bit 18), which
+            # shifts it by that same per-sequence `d`. The resolved bounds are
+            # arbitrary signed i32 -- `L` may be negative, `R` may run past
+            # seqlen_k, the band need not touch any diagonal -- and everything
+            # below consumes them as such: the transposed decomposition clamps
+            # the visited Q range to `[0, seqlen_q)` and collapses to zero
+            # blocks when no row sees this KV block, and the per-element test
+            # is the predicate itself. A KV column no row sees therefore
+            # leaves its accumulators at zero, and the epilogue stores
+            # dK = dV = 0 for it.
+            _wl_i32, _wr_i32 = fmha.resolve_window(
+                window_left,
+                window_right,
+                seqlen_q_i32,
+                seqlen_k_i32,
+                varlen_bits,
+            )
         else:
             # A window wide enough to admit everything, so the same
             # decomposition serves both arms. `smax` of the two lengths bounds
@@ -1349,12 +1365,23 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
         stream=None,
         window=None,
         varlen=None,
+        principal_diagonal=None,
         dropout_p=None,
         philox_seed=0,
         philox_offset1=None,
         philox_offset2=0,
         bias=None,
     ):
+        """Launch dK/dV.
+
+        `principal_diagonal` is `abi.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT` or
+        `_BOTTOM_RIGHT`, and sets VarlenBits bit 18: the diagonal a *numeric*
+        `window` bound is measured from. `None` keeps whatever `varlen["bits"]`
+        already carries, which for a dense call is top-left. It is a separate
+        argument because a dense call has no `varlen` dict to carry it, and the
+        bit means the same thing there (`d` is merely uniform). Same contract
+        as the gfx950 forward's launcher.
+        """
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
         ptrs, meta_t, st = abi.prep_tensors(
             [("Q", Q), ("K", K), ("V", V), ("DO", DO), ("DK", DK), ("DV", DV)],
@@ -1367,6 +1394,11 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
         _vb, _sq0, _sq1, _sk0, _sk1, _mq, _mk = abi.varlen_args(
             False, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens
         )
+        if principal_diagonal is not None:
+            # Validated by `abi.varlen_bits`, which is also what rejects
+            # anything but the two bit-18 constants.
+            _pd_mask = abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT
+            _vb = (_vb & ~_pd_mask) | abi.varlen_bits(principal_diagonal=principal_diagonal)
         _ps, _po1, _po2, _ip, _dsc, _hold = abi.dropout_args(
             ENABLE_DROPOUT, dropout_p, philox_seed, philox_offset1, philox_offset2, Q.device, stream
         )

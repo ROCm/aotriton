@@ -50,6 +50,8 @@ __all__ = [
     "VARLEN_POSITION_ARRAY",
     "VARLEN_LSE_LAYOUT_HT",
     "VARLEN_LSE_LAYOUT_TH",
+    "VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT",
+    "VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT",
     "VARLEN_DENSE",
     "VARLEN_COMPACT_SIDE",
     "CAUSAL_SENTINEL",
@@ -100,10 +102,19 @@ VARLEN_POSITION_ARRAY = 2 << 3
 # contiguous. `_TH` is Transformer Engine's (T, H).
 VARLEN_LSE_LAYOUT_HT = 0 << 16
 VARLEN_LSE_LAYOUT_TH = 1 << 16  # noqa: F841  (ditto)
+# Bit 18, principal_diagonal_choice: which diagonal a NUMERIC window is
+# measured from. Sentinel windows ignore it. See `fmha.resolve_window`.
+VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT = 0 << fmha.VARLEN_PRINCIPAL_DIAGONAL_SHIFT
+VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT = 1 << fmha.VARLEN_PRINCIPAL_DIAGONAL_SHIFT
 
 
-def varlen_bits(q_side=0, k_side=0, lse_layout=VARLEN_LSE_LAYOUT_HT):
-    """Assemble VarlenBits from per-side bytes."""
+def varlen_bits(q_side=0,
+                k_side=0,
+                lse_layout=VARLEN_LSE_LAYOUT_HT,
+                principal_diagonal=VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT):
+    """Assemble VarlenBits from per-side bytes, the LSE layout and the principal diagonal."""
+    if principal_diagonal not in (VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT, VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT):
+        raise ValueError(f"principal_diagonal must be VARLEN_PRINCIPAL_DIAGONAL_*, got {principal_diagonal:#x}")
     for name, b in (("q_side", q_side), ("k_side", k_side)):
         if not 0 <= b <= 0xFF:
             raise ValueError(f"{name} must fit in a byte, got {b:#x}")
@@ -113,7 +124,7 @@ def varlen_bits(q_side=0, k_side=0, lse_layout=VARLEN_LSE_LAYOUT_HT):
             raise ValueError(f"{name}={b:#04x}: POSITION=REUSE requires " f"LENGTH=CUMULATIVE (plan section 1, axis C)")
         if (b >> 1) & 3 == 3 or (b >> 3) & 3 == 3:
             raise ValueError(f"{name}={b:#04x} uses a reserved code")
-    return q_side | (k_side << 8) | lse_layout
+    return q_side | (k_side << 8) | lse_layout | principal_diagonal
 
 
 VARLEN_DENSE = 0  # noqa: F841  (ditto)

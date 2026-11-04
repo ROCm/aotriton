@@ -828,7 +828,22 @@ def build_bwd_dq_module_primary(meta, knobs):
             # Sentinels resolve per sequence, not on the host. Everything
             # derived from a window stays i32 from here down: bounds go
             # negative and `fx.Index` is unsigned.
-            _wl_i32, _wr_i32 = fmha.resolve_window(window_left, window_right, seqlen_q_i32, seqlen_k_i32)
+            #
+            # `varlen_bits` carries principal_diagonal_choice (bit 18): a
+            # numeric bound becomes `left - p*d`, `right + p*d` with this
+            # sequence's `d = seqlen_k - seqlen_q`. Nothing downstream assumes
+            # the band touches the diagonal or stays inside [0, seqlen_k):
+            # `decompose_causal_regions` clamps the visited range to the real
+            # tiles and inverts it when no key is live, and the masked body
+            # tests both band edges signed, so a row that sees no key gets
+            # dQ = 0 (its forward LSE is +inf, so P is exactly 0).
+            _wl_i32, _wr_i32 = fmha.resolve_window(
+                window_left,
+                window_right,
+                seqlen_q_i32,
+                seqlen_k_i32,
+                varlen_bits,
+            )
 
         # ---- Split the KV range into full and masked regions ----
         # Emitting the regions as separate loops means the masks exist only in
@@ -1455,7 +1470,8 @@ def build_bwd_dq_module_primary(meta, knobs):
 
     # ---- VarlenBits, sdpa-varlen-plan.md section 2 ----
     # One byte per side, decoded by the same kernel-side function twice, plus
-    # the LSE layout in byte 2. `0` is the dense case and the default. Spelled
+    # the LSE layout (bits 17:16) and principal_diagonal_choice (bit 18) in
+    # byte 2. `0` is the dense top-left case and the default. Spelled
     # out here rather than imported from the forward kernel module so that this
     # file states the wire encoding it implements.
 
@@ -1474,6 +1490,7 @@ def build_bwd_dq_module_primary(meta, knobs):
         scale,
         window,
         varlen,
+        principal_diagonal,
         dropout_p,
         seed,
         off1,
@@ -1481,6 +1498,16 @@ def build_bwd_dq_module_primary(meta, knobs):
         bias,
         dbias,
     ):
+        """Every kernel argument but the stream, in launch order.
+
+        `principal_diagonal` is `abi.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT` or
+        `_BOTTOM_RIGHT`, and sets VarlenBits bit 18: the diagonal a *numeric*
+        `window` bound is measured from. `None` keeps whatever `varlen["bits"]`
+        already carries, which for a dense call is top-left. It is a separate
+        argument because a dense call has no `varlen` dict to carry it, and the
+        bit means the same thing there (`d` is merely uniform). A forward and
+        its backward must agree on it.
+        """
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
         ptrs, meta_t, st = abi.prep_tensors(
             [("Q", Q), ("K", K), ("V", V), ("DO", DO), ("DQ", DQ)], q_heads=("DO", "DQ")
@@ -1491,6 +1518,11 @@ def build_bwd_dq_module_primary(meta, knobs):
         _vb, _sq0, _sq1, _sk0, _sk1, _mq, _mk = abi.varlen_args(
             False, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens
         )
+        if principal_diagonal is not None:
+            # Validated by `abi.varlen_bits`, which rejects anything but the
+            # two bit-18 constants.
+            _pd_mask = abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT
+            _vb = (_vb & ~_pd_mask) | abi.varlen_bits(principal_diagonal=principal_diagonal)
         _ps, _po1, _po2, _ip, _dsc, _hold = abi.dropout_args(ENABLE_DROPOUT, dropout_p, seed, off1, off2, Q.device)
         _bp, _dbp, _bs, _dbs = abi.bias_args(BIAS_TYPE, True, bias, dbias, Q)
         return (
@@ -1546,6 +1578,7 @@ def build_bwd_dq_module_primary(meta, knobs):
         stream=None,
         window=None,
         varlen=None,
+        principal_diagonal=None,
         dropout_p=None,
         philox_seed=0,
         philox_offset1=None,
@@ -1568,6 +1601,7 @@ def build_bwd_dq_module_primary(meta, knobs):
             scale,
             window,
             varlen,
+            principal_diagonal,
             dropout_p,
             philox_seed,
             philox_offset1,
@@ -1593,6 +1627,7 @@ def build_bwd_dq_module_primary(meta, knobs):
         stream=None,
         window=None,
         varlen=None,
+        principal_diagonal=None,
         dropout_p=None,
         philox_seed=0,
         philox_offset1=None,
@@ -1615,6 +1650,7 @@ def build_bwd_dq_module_primary(meta, knobs):
             scale,
             window,
             varlen,
+            principal_diagonal,
             dropout_p,
             philox_seed,
             philox_offset1,

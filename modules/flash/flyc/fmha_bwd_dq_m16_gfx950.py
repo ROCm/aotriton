@@ -531,6 +531,14 @@ class M16DqSoftmax:
         - a column can fall behind the left bound only if the **highest** row's
           edge is still above `kv_start`.
 
+        Neither term, nor the per-element `keep`, assumes the band touches the
+        diagonal: `delta_i32` and `window_left_i32` are whatever
+        `fmha.resolve_window` produced, which under `principal_diagonal_choice`
+        (VarlenBits bit 18) is shifted by this sequence's `seqlen_k - seqlen_q`
+        -- so the left bound may be negative and the right one past
+        `seqlen_k`. Both are plain signed i32 compares, and the KV tail mask
+        covers a right bound past the sequence.
+
         Both terms are wave-uniform (`wave_id_uni` is `readfirstlane`d), so the
         branch is scalar and **EXEC is untouched** -- which is what keeps the
         transpose read below it legal under CDNA4 11.4. A divergent condition
