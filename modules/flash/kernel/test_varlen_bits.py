@@ -43,6 +43,8 @@ from varlen_bits import (
     VARLEN_SIDE_SEQUSED_BHSD,
     VARLEN_SIDE_SEQUSED_PACKED,
     VarlenLseLayout,
+    VarlenPrincipalDiagonal,
+    VARLEN_PRINCIPAL_DIAGONAL_SHIFT,
     make_varlen_bits,
 )
 from _varlen_bits_layout import VarlenCase
@@ -271,15 +273,20 @@ def run_case(case, causal, backward=False, do_refs=None):
 
 
 def run_dense_one(qz, kz, vz, causal, num_head_q, num_head_k, hdim_qk, hdim_vo,
-                  backward=False, doz=None):
-    """One sequence, dense, through the same kernel with Varlen_bits == 0."""
+                  backward=False, doz=None, bits=VARLEN_BITS_DENSE):
+    """One sequence, dense, through the same kernel.
+
+    `bits` defaults to 0; only the principal diagonal gate passes anything
+    else, and then only bits outside the addressing bytes.
+    """
+    assert (bits & 0xFFFF) == 0, "run_dense_one is the dense oracle"
     device = qz.device
     sq, sk = qz.shape[2], kz.shape[2]
     nul = null_i32(device)
     out = torch.full((1, num_head_q, sq, hdim_vo), float('nan'),
                      device=device, dtype=qz.dtype)
     lse = torch.full((num_head_q, sq), float('nan'), device=device, dtype=torch.float32)
-    launch_fwd(VARLEN_BITS_DENSE, qz, kz, vz, out, lse,
+    launch_fwd(bits, qz, kz, vz, out, lse,
                nul, nul, nul, nul, sq, sk, 1,
                num_head_q, num_head_k, hdim_qk, hdim_vo, causal)
     if not backward:
@@ -288,7 +295,7 @@ def run_dense_one(qz, kz, vz, causal, num_head_q, num_head_k, hdim_qk, hdim_vo,
     dq = torch.zeros_like(qz)
     dk = torch.zeros_like(kz)
     dv = torch.zeros_like(vz)
-    launch_bwd(VARLEN_BITS_DENSE, qz, kz, vz, out, doz, lse, delta, dq, dk, dv,
+    launch_bwd(bits, qz, kz, vz, out, doz, lse, delta, dq, dk, dv,
                nul, nul, nul, nul, sq, sk, 1,
                num_head_q, num_head_k, hdim_qk, hdim_vo, causal)
     return Result(out, lse, delta, dq, dk, dv)
@@ -302,8 +309,12 @@ def dense_inputs(case, z):
     return qz, kz, vz
 
 
-def assert_matches_dense(case, causal, backward=False, seed=1234):
-    """The headline gate, for every sequence in `case`."""
+def assert_matches_dense(case, causal, backward=False, seed=1234, dense_causal=None):
+    """The headline gate, for every sequence in `case`.
+
+    `dense_causal(z, seqlen_q, seqlen_k)`, when given, supplies the window of
+    the dense oracle for sequence `z` instead of `causal` itself.
+    """
     do_refs = None
     if backward:
         gen = torch.Generator(device=case.device)
@@ -322,7 +333,10 @@ def assert_matches_dense(case, causal, backward=False, seed=1234):
             continue
         qz, kz, vz = dense_inputs(case, z)
         doz = do_refs[z].unsqueeze(0).contiguous() if backward else None
-        want = run_dense_one(qz, kz, vz, causal, case.num_head_q, case.num_head_k,
+        causal_z = causal
+        if dense_causal is not None:
+            causal_z = dense_causal(z, case.seqlens_q[z], case.seqlens_k[z])
+        want = run_dense_one(qz, kz, vz, causal_z, case.num_head_q, case.num_head_k,
                              case.hdim_qk, case.hdim_vo,
                              backward=backward, doz=doz)
         assert torch.equal(case.q_row_slice(got.out, z), want.out[0]), \
@@ -695,3 +709,147 @@ def test_lse_layout_th_analytic():
             torch.testing.assert_close(
                 sl, want[:, None].expand_as(sl), rtol=1e-3, atol=1e-3,
                 msg=f'{lse_layout=} sequence {z}')
+
+
+# ---------------------------------------------------------------------------
+# Gate 10 -- PRINCIPAL_DIAGONAL (bit 18)
+# ---------------------------------------------------------------------------
+#
+# The oracle is still a bitwise one. With p = 1, a numeric window (wl, wr) of a
+# sequence with d = seqlen_k - seqlen_q must resolve to exactly the integers a
+# p = 0 call gets from the host-shifted window (wl - d, wr + d). Same resolved
+# (L, R) means the same intervals, the same tiles and the same floating-point
+# operations, so `torch.equal` is again the right comparison. A sentinel side
+# is never shifted, so the host shift leaves it alone too.
+
+BIT_BOTTOM_RIGHT = VarlenPrincipalDiagonal.BOTTOM_RIGHT << VARLEN_PRINCIPAL_DIAGONAL_SHIFT
+assert BIT_BOTTOM_RIGHT == 1 << 18
+
+PRINCIPAL_WINDOWS = [
+    (WINDOW_BOTTOM_RIGHT, 0),   # flash-attention's (-1, 0): unbounded left
+    (WINDOW_TOP_LEFT, 0),
+    (8, 0),
+    (0, 8),
+    (4, 4),
+    (-1, 3),                    # gSWA only: a negative side is a literal bound
+    (3, -1),
+]
+
+# seqlen_q <, ==, > seqlen_k in one batch, including a decode row (1 query) and
+# a chunked-prefill row (a short Q chunk against a long cache).
+MIXED_Q = [16, 48, 64, 1, 33, 96]
+MIXED_K = [80, 48, 20, 129, 200, 7]
+
+
+def host_shift(window, sq, sk):
+    """The p = 0 window that a p = 1 window must reproduce, per sequence."""
+    d = sk - sq
+    left, right = window
+    if left not in (WINDOW_TOP_LEFT, WINDOW_BOTTOM_RIGHT):
+        left = left - d
+    if right not in (WINDOW_TOP_LEFT, WINDOW_BOTTOM_RIGHT):
+        right = right + d
+    return (left, right)
+
+
+@pytest.mark.parametrize('window', PRINCIPAL_WINDOWS, ids=str)
+@pytest.mark.parametrize('mode', ['compact_0x0B0B', 'padded_0x0202', 'strided_0x1313'])
+def test_principal_diagonal_varlen(mode, window):
+    """p = 1 under varlen equals per-sequence dense p = 0 with (wl-d, wr+d)."""
+    base_bits, _, _, slots_q, slots_k = SUITE_B[mode]
+    if slots_q is not None:
+        slots_q = [q + g for q, g in zip(MIXED_Q, [3, 0, 5, 1, 0, 17])]
+        slots_k = [k + g for k, g in zip(MIXED_K, [0, 9, 2, 0, 4, 1])]
+    case = VarlenCase(base_bits | BIT_BOTTOM_RIGHT, MIXED_Q, MIXED_K,
+                      num_head_q=2, num_head_k=2,
+                      hdim_qk=BLOCK_DMODEL, hdim_vo=BLOCK_DMODEL, dtype=DTYPE,
+                      slots_q=slots_q, slots_k=slots_k)
+    assert_matches_dense(case,
+                         window,
+                         backward=True,
+                         dense_causal=lambda z, sq, sk: host_shift(window, sq, sk))
+
+
+@pytest.mark.parametrize('window', PRINCIPAL_WINDOWS, ids=str)
+@pytest.mark.parametrize('lengths', [(37, 101), (64, 64), (101, 37), (1, 129)],
+                         ids=lambda x: f'q{x[0]}_k{x[1]}')
+def test_principal_diagonal_dense(lengths, window):
+    """Bit 18 is honored for dense calls too: d is just uniform there."""
+    sq, sk = lengths
+    case = VarlenCase(VARLEN_BITS_DENSE, [sq], [sk],
+                      num_head_q=2, num_head_k=2,
+                      hdim_qk=BLOCK_DMODEL, hdim_vo=BLOCK_DMODEL, dtype=DTYPE)
+    qz, kz, vz = dense_inputs(case, 0)
+    gen = torch.Generator(device=case.device)
+    gen.manual_seed(77)
+    doz = torch.rand((1, case.num_head_q, sq, case.hdim_vo),
+                     dtype=case.dtype, device=case.device, generator=gen)
+    common = (case.num_head_q, case.num_head_k, case.hdim_qk, case.hdim_vo)
+    got = run_dense_one(qz, kz, vz, window, *common,
+                        backward=True, doz=doz, bits=BIT_BOTTOM_RIGHT)
+    want = run_dense_one(qz, kz, vz, host_shift(window, sq, sk), *common,
+                         backward=True, doz=doz)
+    for name in ('out', 'lse', 'delta', 'dq', 'dk', 'dv'):
+        assert torch.equal(getattr(got, name), getattr(want, name)), \
+            f'{name} differs between p=1 and the host-shifted p=0 window'
+
+
+@pytest.mark.parametrize('window', [(WINDOW_BOTTOM_RIGHT, WINDOW_BOTTOM_RIGHT),
+                                    (WINDOW_TOP_LEFT, WINDOW_TOP_LEFT),
+                                    (WINDOW_BOTTOM_RIGHT, WINDOW_TOP_LEFT)],
+                         ids=str)
+def test_principal_diagonal_ignores_sentinels(window):
+    """Sentinels name their own diagonal; p must not shift them again.
+
+    Shifting BottomRightAligned would give R = 2d, which differs from R = d
+    whenever d != 0 -- and every sequence here has d != 0 except one.
+    """
+    kwargs = dict(num_head_q=2, num_head_k=2,
+                  hdim_qk=BLOCK_DMODEL, hdim_vo=BLOCK_DMODEL, dtype=DTYPE)
+    case0 = VarlenCase(VARLEN_BITS_COMPACT, MIXED_Q, MIXED_K, **kwargs)
+    case1 = VarlenCase(VARLEN_BITS_COMPACT | BIT_BOTTOM_RIGHT, MIXED_Q, MIXED_K, **kwargs)
+    do_refs = [torch.ones((2, s, BLOCK_DMODEL), dtype=DTYPE, device=case0.device)
+               for s in MIXED_Q]
+    got0 = run_case(case0, window, backward=True, do_refs=do_refs)
+    got1 = run_case(case1, window, backward=True, do_refs=do_refs)
+    for z in range(case0.n):
+        for name, slicer in (('out', case0.q_row_slice), ('dq', case0.q_row_slice),
+                             ('dk', case0.k_row_slice), ('dv', case0.k_row_slice),
+                             ('lse', case0.lse_slice), ('delta', case0.lse_slice)):
+            assert torch.equal(slicer(getattr(got0, name), z),
+                               slicer(getattr(got1, name), z)), \
+                f'{name} of sequence {z} changed with p; a sentinel was shifted'
+
+
+def test_principal_diagonal_is_read():
+    """p = 1 must differ from p = 0 for a numeric window wherever d != 0.
+
+    A kernel that ignores bit 18 would already fail the oracle tests above;
+    this one names the failure.
+    """
+    window = (8, 0)
+    kwargs = dict(num_head_q=2, num_head_k=2,
+                  hdim_qk=BLOCK_DMODEL, hdim_vo=BLOCK_DMODEL, dtype=DTYPE)
+    case0 = VarlenCase(VARLEN_BITS_COMPACT, MIXED_Q, MIXED_K, **kwargs)
+    case1 = VarlenCase(VARLEN_BITS_COMPACT | BIT_BOTTOM_RIGHT, MIXED_Q, MIXED_K, **kwargs)
+    got0 = run_case(case0, window)
+    got1 = run_case(case1, window)
+    for z, (sq, sk) in enumerate(zip(MIXED_Q, MIXED_K)):
+        same = torch.equal(case0.q_row_slice(got0.out, z), case1.q_row_slice(got1.out, z))
+        if sq == sk:
+            assert same, f'sequence {z} has d = 0 and must not change with p'
+        else:
+            assert not same, f'sequence {z} has d = {sk - sq} but p was ignored'
+
+
+def test_principal_diagonal_bit_layout():
+    """Bit 18, above the addressing mask, and reserved bits stay reserved."""
+    bits = make_varlen_bits(VARLEN_SIDE_COMPACT,
+                            VARLEN_SIDE_COMPACT,
+                            principal_diagonal=VarlenPrincipalDiagonal.BOTTOM_RIGHT)
+    assert bits == VARLEN_BITS_COMPACT | (1 << 18)
+    # The persistent predicate (`Varlen_bits & 0xFFFF`) must not see it.
+    assert (BIT_BOTTOM_RIGHT & 0xFFFF) == 0
+    assert make_varlen_bits(VARLEN_SIDE_COMPACT, VARLEN_SIDE_COMPACT) == VARLEN_BITS_COMPACT
+    with pytest.raises(AssertionError):
+        make_varlen_bits(VARLEN_SIDE_COMPACT, VARLEN_SIDE_COMPACT, principal_diagonal=2)

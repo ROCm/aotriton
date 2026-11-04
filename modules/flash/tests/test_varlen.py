@@ -20,6 +20,18 @@ from _common_test import (
     StridedVarlenSdpaContext,
     SdpaParams,
     fmt_hdim,
+    FA_WINDOWS,
+    FA_WINDOW_IDS,
+    PD_CHOICES,
+    PD_CHOICE_IDS,
+    PD_VARLEN_SEQLENS_K,
+    PD_VARLEN_SEQLENS_Q,
+    PD_WINDOW_IDS,
+    PD_WINDOW_VALUES,
+    fa_keep,
+    fa_window_to_aotriton,
+    pd_causal,
+    windowed_keep_mask,
 )
 # The dtype set, from the one place that decides it. This file used to spell the
 # list out and gate it on `BWD_IMPL == 'aiter'` alone, which is half the rule: fp32
@@ -309,6 +321,91 @@ def test_op_bwd(gpu_id, N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, 
         _do_test_varlen(N_HEADS, D_HEAD,
                         seqlens_q, seqlens_k,
                         causal, sm_scale, dropout_p, dtype, varlen_type, lse_layout)
+
+# VarlenBits::principal_diagonal_choice (p) under varlen. d = seqlen_k -
+# seqlen_q is PER SEQUENCE, so one batch can hold a q < k, a q == k, a q > k, a
+# decode (seqlen_q = 1) and a chunked prefill, each measured from its own
+# bottom-right diagonal when p = 1. That is the case no single host-side window
+# can express (pytorch/pytorch#201930). The window and p travel in the `causal`
+# slot as (left, right, p).
+#
+# The reference builds each sequence's mask from that sequence's own lengths
+# (_common_test.windowed_sdpa_math); a row that keeps no key must give O = 0.
+# Its LSE is a placeholder and is not compared.
+#
+# Select with `-k principal_diagonal`; `-k PD1` for p = 1, `-k FA_` for the
+# flash-attention windows, `-k chunked_prefill` for the #201930 scenario.
+PD_VARLEN_TYPES = ['compact', 'padded', 'strided']
+PD_VARLEN_PADLENS = np.array([0, 4, 7, 0, 4, 7])
+
+def _pd_varlen_lengths(varlen_type, seqlens_q, seqlens_k):
+    """seqlens as `_do_test_varlen` wants them for `varlen_type`."""
+    if varlen_type in SLOTTED_TYPES:
+        padlens = PD_VARLEN_PADLENS[:len(seqlens_q)]
+        return np.array([seqlens_q, padlens]), np.array([seqlens_k, padlens])
+    return seqlens_q, seqlens_k
+
+if BWD_IMPL != 'aiter':
+    @pytest.mark.parametrize('N_HEADS', [3])
+    @pytest.mark.parametrize('D_HEAD', [64], ids=fmt_hdim)
+    @pytest.mark.parametrize('window', PD_WINDOW_VALUES, ids=PD_WINDOW_IDS)
+    @pytest.mark.parametrize('principal_diagonal', PD_CHOICES, ids=PD_CHOICE_IDS)
+    @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
+    @pytest.mark.parametrize('varlen_type', PD_VARLEN_TYPES)
+    def test_varlen_principal_diagonal(gpu_id, N_HEADS, D_HEAD, window, principal_diagonal, dtype, varlen_type):
+        seqlens_q, seqlens_k = _pd_varlen_lengths(varlen_type, PD_VARLEN_SEQLENS_Q, PD_VARLEN_SEQLENS_K)
+        with torch.cuda.device(gpu_id):
+            _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k,
+                            pd_causal(window, principal_diagonal),
+                            'l1', 0.0, dtype, varlen_type)
+
+    # PyTorch's test_varlen_attention.py windows, translated per the "Matching
+    # flash-attention" table (p = 1), against a batch with seqlen_q != seqlen_k
+    # in every sequence but one.
+    @pytest.mark.parametrize('N_HEADS', [3])
+    @pytest.mark.parametrize('D_HEAD', [64], ids=fmt_hdim)
+    @pytest.mark.parametrize('fa_window', FA_WINDOWS, ids=FA_WINDOW_IDS)
+    @pytest.mark.parametrize('varlen_type', PD_VARLEN_TYPES)
+    def test_varlen_principal_diagonal_fa_windows(gpu_id, N_HEADS, D_HEAD, fa_window, varlen_type):
+        max_seqlen_q = int(np.max(PD_VARLEN_SEQLENS_Q))
+        window = fa_window_to_aotriton(fa_window[0], fa_window[1], max_seqlen_q)
+        assert window is not None
+        seqlens_q, seqlens_k = _pd_varlen_lengths(varlen_type, PD_VARLEN_SEQLENS_Q, PD_VARLEN_SEQLENS_K)
+        with torch.cuda.device(gpu_id):
+            _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k,
+                            pd_causal(window, 1),
+                            'l1', 0.0, torch.float16, varlen_type)
+
+    # The #201930 scenario: a serving batch of chunked prefills (new queries
+    # over a long cached context) and decodes, with a numeric sliding window.
+    # Every sequence has its own d, from 0 to 199, and p = 1 must anchor each
+    # window at its own diagonal.
+    @pytest.mark.parametrize('N_HEADS', [3])
+    @pytest.mark.parametrize('D_HEAD', [64], ids=fmt_hdim)
+    @pytest.mark.parametrize('window', [(8, 0), (4, 4), (0, 0)], ids=['8_0', '4_4', '0_0'])
+    @pytest.mark.parametrize('varlen_type', PD_VARLEN_TYPES)
+    def test_varlen_principal_diagonal_chunked_prefill(gpu_id, N_HEADS, D_HEAD, window, varlen_type):
+        seqlens_q = np.array([16, 16, 1, 1, 32, 5])
+        seqlens_k = np.array([100, 48, 57, 200, 32, 5])
+        seqlens_q, seqlens_k = _pd_varlen_lengths(varlen_type, seqlens_q, seqlens_k)
+        with torch.cuda.device(gpu_id):
+            _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k,
+                            pd_causal(window, 1),
+                            'l1', 0.0, torch.float16, varlen_type)
+
+# Pure Python, no GPU: the translation table against flash-attention's own
+# predicate, per sequence, for every sequence of the mixed batch.
+@pytest.mark.parametrize('fa_window', FA_WINDOWS + [(-1, 0), (3, -1)],
+                         ids=FA_WINDOW_IDS + ['FA_m1_0', 'FA_3_m1'])
+@pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
+def test_principal_diagonal_fa_translation(fa_window, causal):
+    max_seqlen_q = int(np.max(PD_VARLEN_SEQLENS_Q))
+    window = fa_window_to_aotriton(fa_window[0], fa_window[1], max_seqlen_q, causal)
+    for seqlen_q, seqlen_k in zip(PD_VARLEN_SEQLENS_Q, PD_VARLEN_SEQLENS_K):
+        seqlen_q, seqlen_k = int(seqlen_q), int(seqlen_k)
+        expected = fa_keep(seqlen_q, seqlen_k, fa_window[0], fa_window[1], causal)
+        got = windowed_keep_mask(seqlen_q, seqlen_k, window[0], window[1], 1, device='cpu').numpy()
+        assert (got == expected).all(), f'{seqlen_q=} {seqlen_k=} {window=}'
 
 # sm_scale <= 0 with varlen: each sequence's ragged tail (primes, 1, one past a
 # block edge) must stay masked. padded pads every sequence to the longest, so
