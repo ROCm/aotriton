@@ -356,7 +356,7 @@ python -m aotriton.perfmon.perfdb compare <tag A> <tag B> [--arch A] [--variant 
                                   [--perfdb DIR] [--top N] [--summary_only]
 python -m aotriton.perfmon.export --workdir <workdir> --module flash --arch gfx942
                                   [--variant V] [--subject S ...] [--output DIR]
-                                  [--entry_set prime llm] [--verify]
+                                  [--entry_set prime llm] [--verify] [--include_incomplete]
 python -m aotriton.perfmon.export --workdir <workdir> -l [--module M] [--arch A]
                                   [--variant V] [--subject S ...]
 ```
@@ -376,14 +376,63 @@ python -m aotriton.perfmon.export --workdir <workdir> -l [--module M] [--arch A]
   reads the files back and checks every exported line. `--entry_set` names the
   sets whose arch-rejected entries are written as excluded (default prime and
   llm). `--output` defaults to `modules/<module>/perfdb`.
+- A DEF task is marked `done` before all its result rows are written (by
+  design), so `done` alone is not trusted. For each task that owns rows of the
+  selection, `export` compares the (iface, backend) pairs recorded done in the
+  task's appcookie with the report rows present. A task that is not `done`, or
+  has recorded pairs without a report row, is incomplete: its rows are left out
+  with a warning naming the missing pairs, and the exit status is 3 after the
+  rest was exported. `--include_incomplete` exports them anyway. A done task
+  with no report row at all is warned about as "no results yet". Wait for the
+  result writes to finish (re-run `-l` until nothing is incomplete) before
+  exporting a campaign.
 - `export -l` writes nothing. It lists the (module, arch, variant, subject)
   combinations that exist in PostgreSQL for the options that were not given,
   with the number of measurements and how many are `OK`, `NotOK` and `crash`,
   the newest date, and whether `<tag>/data/<arch>/` already has a block for the
-  variant:
+  variant, and an `incomplete` column with the shortfall of the selection's
+  tasks (`-` when complete, else `<n> tasks, <m> results missing`; the details
+  go to stderr):
 
   ```
-  variant  subject                      measured    OK  NotOK  crash  newest      exported
-  any      aotriton-0.13b+rocm10.1.0        2816  2790     26      0  2026-11-20  yes
-  any      aotriton-0.14.2b+rocm10.1.0      2816  2801     15      0  2026-11-21  no
+  variant  subject                      measured    OK  NotOK  crash  newest      exported  incomplete
+  any      aotriton-0.13b+rocm10.1.0        2816  2790     26      0  2026-11-20  yes       -
+  any      aotriton-0.14.2b+rocm10.1.0      2816  2801     15      0  2026-11-21  no        2 tasks, 7 results missing
   ```
+
+### Live comparison of `head`
+
+`head` is never committed, so it is compared live, from PostgreSQL, by
+`python -m aotriton.perfmon.live`:
+
+```
+python -m aotriton.perfmon.live --workdir <workdir> --module flash --arch gfx942 gfx950
+                                --against 0.14.2b 0.13b [--against_subject S ...]
+                                [--subject aotriton-head+rocm...] [--variant V]
+                                [--noise 0.03] [--forced_check_baselines]
+                                [--format csv|markdown] [--output_file F] [--perfdb DIR]
+```
+
+It lists the flagged entries of the fault hunt: tuning-database cells tuned at
+tiny batch or heads lose at real sizes, and the flagged problem coordinates map
+to those cells. Two checks, both with the noise rule of `compare`
+(`--noise`, default 3% for the same GPU; use `--noise 0.06` across GPUs, and
+the tool warns when the committed `platform.csv` has another GPU device id than
+the live rows):
+
+- `regression`: a point of head slower than the same (variant, iface, backend,
+  entry) in a committed tag (`--against`) or another subject in the database
+  (`--against_subject`) by more than the noise.
+- `forced_beats_unforced`: within head (and, with `--forced_check_baselines`,
+  within each reference), a forced backend faster than the unforced operator by
+  more than the noise.
+
+Only points where both sides have a median are compared: a backend that fails
+or crashes (AITER-family backends often do) is not a flag; the summary on
+stderr counts the points without reference data. Files with a different timing
+method or L2 flush are refused. Without `--subject`, the only head subject in
+the database is used. The output is CSV (or markdown) with the columns
+`check, arch, variant, iface, backend, reference, <problem columns>,
+<size columns>, reference_us, measured_us, ratio`; `ratio` is
+`reference_us / measured_us` (below 1: head is slower; above 1: the forced
+backend is faster), worst first within each check.
