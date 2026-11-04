@@ -17,6 +17,9 @@
 #                               had failed to compile. The tuning build of one arch
 #                               compiles ~72k images, ~26k of them attn_fwd's. The
 #                               installed library cannot serve the other kernels.
+#   --triton_site <dir>         a site-packages directory with another Triton (the
+#                               shipped 0.14b wheel, say), put before the venv's:
+#                               the compiler is then that one, not the venv's.
 #   --jobs <n>                  ninja -j; the build runs under nice. A build host
 #                               shared with a measurement should not get all its
 #                               cores.
@@ -39,12 +42,14 @@ FLYDSL_WHEEL=""
 JOBS=""
 ONLY_KERNEL=""
 EXTERNAL_DB=""
+TRITON_SITE=""
 POSITIONAL=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --flydsl_wheel) FLYDSL_WHEEL="$2"; shift 2 ;;
         --external_tuning_database) EXTERNAL_DB="$2"; shift 2 ;;
         --only_kernel) ONLY_KERNEL="$2"; shift 2 ;;
+        --triton_site) TRITON_SITE="$2"; shift 2 ;;
         --jobs) JOBS="$2"; shift 2 ;;
         -*) echo "Error: unknown option: $1" >&2; exit 1 ;;
         *) POSITIONAL+=("$1"); shift ;;
@@ -71,9 +76,10 @@ for tool in cmake ninja python; do
     command -v "$tool" >/dev/null || { echo "Error: $tool is not on PATH" >&2; exit 1; }
 done
 VENV_SITE="$(python -c 'import site; print(site.getsitepackages()[0])')"
+[ -z "$TRITON_SITE" ] || export PYTHONPATH="$(realpath "$TRITON_SITE")${PYTHONPATH:+:$PYTHONPATH}"
 python -c 'import triton, triton.language' || { echo "Error: the active venv has no triton" >&2; exit 1; }
-echo "Triton: $(python -c 'import triton; print(triton.__version__)') from $VENV_SITE"
-export PYTHONPATH="$VENV_SITE${PYTHONPATH:+:$PYTHONPATH}"
+echo "Triton: $(python -c 'import triton; print(triton.__version__, triton.__file__)')"
+export PYTHONPATH="${TRITON_SITE:+$(realpath "$TRITON_SITE"):}$VENV_SITE${PYTHONPATH:+:$PYTHONPATH}"
 
 BUILD_DIR="$WORKDIR/build/$ARCH"
 INSTALL_DIR="$WORKDIR/installed/$ARCH"
