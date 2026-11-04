@@ -846,6 +846,56 @@ Local Broker (Unix socket /wkdir/run/broker.sock)
 7. CPU worker aggregates results, writes `pgdef.report` rows (view `tune.tuning_results`)
 8. PG reader marks task as "done" in `pgdef.task`
 
+## Flash Tuning Input Sizes: Accuracy Tests vs Benchmarks
+
+Each flash entry is tuned with two different `(BATCH, N_HEADS)` sets, defined
+in `modules/flash/tune/entry.py`:
+
+- **Accuracy tests** use `3 x 5`. Both are prime on purpose, so a wrong batch or
+  head stride cannot cancel against a power-of-two extent and shows up as a
+  wrong result.
+- **Timing** uses `benchmark_shape(seqlen_q)`, the `00_benchmark` test case.
+  It is timed only; its accuracy is not checked (`TIMING_TEST`), and
+  `06_regular` is the plain `3 x 5` accuracy case.
+
+`batch x heads` is chosen so that `batch x heads x seqlen_q` reaches 2**17
+query rows, clamped to `[15, 1024]`, with 8 heads. GQA keeps its head ratio
+and scales batch only. The memory clamp still applies on top.
+
+| seqlen_q          | 16..128 | 256  | 512  | 1024 | 2048 | 4096 | 8192 |
+|-------------------|---------|------|------|------|------|------|------|
+| batch x heads     | 1024    | 512  | 256  | 128  | 64   | 32   | 16   |
+| (batch, n_heads)  | 128x8   | 64x8 | 32x8 | 16x8 | 8x8  | 4x8  | 2x8  |
+
+### Why: launch overhead picks the wrong candidates
+
+At `3 x 5` and a short sequence the GPU is mostly idle and the measured time is
+dominated by launch overhead. The tuner then selects kernel configs and (at the
+op level) backends that win on an idle GPU and lose at real sizes. On gfx950 the
+crossover is around `batch x heads ~ 50`; real workloads (BERT family) run
+`batch x heads` of 864-8192 at seqlen 128-512.
+
+This showed up as perfmon regressions for fp16 hdim 64 dropout at large batch.
+They were fixed with gfx950 `.dbpatch` files (attn_fwd configs, split backward
+kernels, op-level backend precedence). Measured on mi355 over 150 entries, A/B
+against the unpatched database:
+
+- Entries at `batch x heads` of 384 and above got faster, by up to 65% (for
+  example bias seqlen 512 fwd at batch 384 x 12 heads: 4.85 ms to 1.67 ms; no
+  bias seqlen 128 bwd: 1.33 ms to 0.47 ms).
+- 23 of 150 entries at `batch x heads <= 96` got slower, by at most 0.08 ms
+  (for example causal seqlen 128 bwd at batch 3 x 5 heads: 0.013 ms to 0.031
+  ms). This trade-off is accepted: small batch with short sequences is
+  under-utilized by nature and is not what end users run.
+
+### Why the database is not keyed by batch and heads
+
+A `(batch, heads, seqlen_q, seqlen_k)` table adds a rank-4 block to the dense
+tuning tensor, which it cannot afford. A decision tree over `batch x heads`
+could work but is non-trivial, and it is not worth building because the Triton
+kernels are being retired. One benchmark size per `seqlen_q` stands for the
+large-batch regime instead.
+
 # SLURM Support
 
 **TODO: SLURM integration for Tuner v3.5**
