@@ -20,7 +20,9 @@ from flash import (
     bwd_kernel_fuse as bare_bwd_kernel_fuse,
 )
 from varlen_bits import (
-    VARLEN_BITS_DENSE,
+    VARLEN_SIDE_DENSE,
+    VarlenPrincipalDiagonal,
+    make_varlen_bits,
 )
 from tuned_bwd import (
     IS_RDNA,
@@ -65,10 +67,26 @@ class CausalType:
     BOTTOM_RIGHT = 2
     WINDOWED = 3
 
+# The principal diagonal (VarlenBits bit 18) rides in the `causal` argument as a
+# third element of a window tuple: `(window_left, window_right, p)`, p in
+# {VarlenPrincipalDiagonal.TOP_LEFT, .BOTTOM_RIGHT}. A 2-tuple, a bool and a
+# CausalType all mean p = 0. Same convention as ../tests/aotriton_flash.py and
+# the reference in _common_test.py, so one `causal` value drives the kernel and
+# the reference alike.
+def principal_diagonal_of(causal):
+    if isinstance(causal, tuple) and len(causal) == 3:
+        p = causal[2]
+        assert p in (VarlenPrincipalDiagonal.TOP_LEFT,
+                     VarlenPrincipalDiagonal.BOTTOM_RIGHT), \
+            f'principal diagonal must be 0 or 1, got {p}'
+        return p
+    return VarlenPrincipalDiagonal.TOP_LEFT
+
 def translate_causal(causal, seqlen_q, seqlen_k):
     window_left, window_right = 0, 0
     if isinstance(causal, tuple):
-        window_left, window_right = causal
+        assert len(causal) in (2, 3), f'{causal=}'
+        window_left, window_right = causal[:2]
         causal_type = CausalType.WINDOWED
     elif isinstance(causal, bool):
         # causal_type = CausalType.TOP_LEFT if causal else CausalType.NONE
@@ -230,6 +248,10 @@ class _attention(torch.autograd.Function):
         o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
 
         causal_type, window_left, window_right = translate_causal(causal, max_seqlen_q, max_seqlen_k)
+        # Dense addressing on both sides; only the principal diagonal may vary.
+        varlen_bits = make_varlen_bits(VARLEN_SIDE_DENSE,
+                                       VARLEN_SIDE_DENSE,
+                                       principal_diagonal=principal_diagonal_of(causal))
 
         persistent_type = attn_extra_args.persistent_type
         if persistent_type == PersistentType.AUTOSELECT:
@@ -350,7 +372,7 @@ class _attention(torch.autograd.Function):
             Num_head_q=num_head_q,
             Num_head_k=num_head_k,
             # Varlen
-            Varlen_bits=VARLEN_BITS_DENSE,
+            Varlen_bits=varlen_bits,
             seqinfo_q0=null_tensor,
             seqinfo_k0=null_tensor,
             Max_seqlen_q=q.shape[2],
@@ -437,6 +459,7 @@ class _attention(torch.autograd.Function):
         ctx.bias_type = BIAS_TYPE
         ctx.tuning_result = [('attn_fwd', tuning_result)] if tuning_result is not None else None
         ctx.attn_extra_args = attn_extra_args
+        ctx.varlen_bits = varlen_bits
         if ctx.tuning_result is not None:
             for kernel_name, best in ctx.tuning_result:
                 print(f'{kernel_name=} {best.kwargs=} {best.num_warps=} {best.num_stages=}')
@@ -491,7 +514,7 @@ class _attention(torch.autograd.Function):
             *o.stride(),
             *do.stride(),
             seqinfo_q0=null_tensor,
-            varlen_bits=VARLEN_BITS_DENSE,
+            varlen_bits=ctx.varlen_bits,
             max_seqlen_q=max_seqlen_q,
             seqinfo_q1=null_tensor,
             hdim_vo=Lv,
@@ -567,7 +590,7 @@ class _attention(torch.autograd.Function):
                 num_head_k=num_head_k,
                 seqinfo_q0=null_tensor,
                 seqinfo_k0=null_tensor,
-                varlen_bits=VARLEN_BITS_DENSE,
+                varlen_bits=ctx.varlen_bits,
                 max_seqlen_q=max_seqlen_q,
                 max_seqlen_k=max_seqlen_k,
                 seqinfo_q1=null_tensor,
@@ -645,7 +668,7 @@ class _attention(torch.autograd.Function):
                 num_head_k=num_head_k,
                 seqinfo_q0=null_tensor,
                 seqinfo_k0=null_tensor,
-                varlen_bits=VARLEN_BITS_DENSE,
+                varlen_bits=ctx.varlen_bits,
                 max_seqlen_q=max_seqlen_q,
                 max_seqlen_k=max_seqlen_k,
                 seqinfo_q1=null_tensor,
@@ -759,7 +782,7 @@ class _attention(torch.autograd.Function):
                         num_head_k=num_head_k,
                         seqinfo_q0=null_tensor,
                         seqinfo_k0=null_tensor,
-                        varlen_bits=VARLEN_BITS_DENSE,
+                        varlen_bits=ctx.varlen_bits,
                         max_seqlen_q=q.shape[2],
                         max_seqlen_k=k.shape[2],
                         seqinfo_q1=null_tensor,

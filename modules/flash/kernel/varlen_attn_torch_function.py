@@ -30,6 +30,8 @@ from varlen_bits import (
     VARLEN_BITS_COMPACT,
     VARLEN_BITS_PADDED,
     VARLEN_BITS_STRIDED,
+    VARLEN_PRINCIPAL_DIAGONAL_SHIFT,
+    VarlenPrincipalDiagonal,
 )
 from tuned_bwd import NUM_XCDS
 from attn_torch_function import (
@@ -40,6 +42,7 @@ from attn_torch_function import (
         PersistentType,
         AttentionExtraArgs,
         factor_head_dim,
+        principal_diagonal_of,
 )
 
 class CausalType:
@@ -63,7 +66,10 @@ VARLEN_TYPE_BITS = {
 def translate_causal_varlen(causal):
     window_left, window_right = 0, 0
     if isinstance(causal, tuple):
-        window_left, window_right = causal
+        # (window_left, window_right[, principal_diagonal]); see
+        # principal_diagonal_of in attn_torch_function.py.
+        assert len(causal) in (2, 3), f'{causal=}'
+        window_left, window_right = causal[:2]
         causal_type = CausalType.WINDOWED
     elif isinstance(causal, bool):
         # causal_type = CausalType.TOP_LEFT if causal else CausalType.NONE
@@ -86,8 +92,15 @@ def translate_causal_varlen(causal):
     return causal_type, window_left, window_right
 
 
-def build_seqinfo(seqlens_q, seqlens_k, varlen_type, device):
+def build_seqinfo(seqlens_q,
+                  seqlens_k,
+                  varlen_type,
+                  device,
+                  principal_diagonal=VarlenPrincipalDiagonal.TOP_LEFT):
     """`(bits, seqinfo_q0, seqinfo_k0, seqinfo_q1, seqinfo_k1)`.
+
+    `principal_diagonal` sets VarlenBits bit 18: the diagonal numeric windows
+    are measured from, resolved per sequence by the kernel.
 
     `seqinfo_?0` always carries the cumulative lengths; `seqinfo_?1` carries the
     cumulative *slot* positions and is only passed by `strided`, where the two
@@ -108,7 +121,10 @@ def build_seqinfo(seqlens_q, seqlens_k, varlen_type, device):
     else:
         seqinfo_q1 = null_tensor
         seqinfo_k1 = null_tensor
-    bits = VARLEN_TYPE_BITS[varlen_type]
+    assert principal_diagonal in (VarlenPrincipalDiagonal.TOP_LEFT,
+                                  VarlenPrincipalDiagonal.BOTTOM_RIGHT)
+    bits = (VARLEN_TYPE_BITS[varlen_type]
+            | (principal_diagonal << VARLEN_PRINCIPAL_DIAGONAL_SHIFT))
     return (bits, cumsum_i32(seqlens_q), cumsum_i32(seqlens_k),
             seqinfo_q1, seqinfo_k1, seqlens_q, seqlens_k)
 
@@ -138,8 +154,11 @@ class _varlen_attention(torch.autograd.Function):
         num_head_k = k.shape[1]
 
         (varlen_bits, seqinfo_q0, seqinfo_k0, seqinfo_q1, seqinfo_k1,
-         seqlens_q, seqlens_k) = build_seqinfo(seqlens_q, seqlens_k,
-                                               varlen_type, q.device)
+         seqlens_q, seqlens_k) = build_seqinfo(seqlens_q,
+                                               seqlens_k,
+                                               varlen_type,
+                                               q.device,
+                                               principal_diagonal=principal_diagonal_of(causal))
         batch = len(seqlens_q)
         max_seqlen_q = int(np.max(seqlens_q))
         max_seqlen_k = int(np.max(seqlens_k))

@@ -294,7 +294,8 @@ def attn_fwd(
                                                      Window_left,
                                                      Window_right,
                                                      seqlen_q,
-                                                     seqlen_k)
+                                                     seqlen_k,
+                                                     Varlen_bits)
             mask_on_seq_q = (start_M + BLOCK_M > seqlen_q)
             lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi = \
                     calculate_intervals(IS_CAUSAL,
@@ -583,6 +584,13 @@ def attn_fwd(
                 # then we have one block with a row of all NaNs which come from computing
                 # softmax over a row of all -infs (-inf - inf = NaN). We check for that here
                 # and store 0s where there are NaNs as these rows should've been zeroed out.
+                #
+                # Only CAUSAL_TYPE == 2 reaches the fix-up below; it ignores the
+                # windows, so principal_diagonal_choice has nothing to add here.
+                # Under WINDOWED (3) a row with no key in a live tile never
+                # produces NaN: m_i starts at -FLT_MAX (not -inf) and l_i at 1,
+                # so p = exp2(-inf) = 0, alpha = 1 and acc stays 0 / 1 = 0, for
+                # any resolved window, shifted or not.
                 end_M = start_M + BLOCK_M
                 causal_start_idx = seqlen_q - seqlen_k if IS_CAUSAL_BOTTOM_RIGHT else 0
                 acc0, acc1, acc2 = composed_to(acc0, acc1, acc2, Out.type.element_ty)

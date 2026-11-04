@@ -251,7 +251,8 @@ def bwd_kernel_dk_dv(
                                              Window_left,
                                              Window_right,
                                              seqlen_q,
-                                             seqlen_k)
+                                             seqlen_k,
+                                             varlen_bits)
     lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi = \
             calculate_intervals(IS_CAUSAL,
                                 CAUSAL_TYPE,

@@ -268,7 +268,8 @@ def bwd_kernel_dq(
                                              Window_left,
                                              Window_right,
                                              seqlen_q,
-                                             seqlen_k)
+                                             seqlen_k,
+                                             varlen_bits)
     mask_on_seq_q = (start_q + BLOCK_M > seqlen_q)
     lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi = \
             calculate_intervals(IS_CAUSAL,

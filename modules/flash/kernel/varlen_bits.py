@@ -15,7 +15,14 @@ independent choices, taken per side (Q and K):
     bits  7:0   Q side
     bits 15:8   K side
     bits 17:16  LSE_LAYOUT  0 = _HT (AOTriton's, and the default)  1 = _TH
-    bits 31:18  reserved (bits 31:24 for paged KV)
+    bit  18     PRINCIPAL_DIAGONAL  0 = TOP_LEFT (default)  1 = BOTTOM_RIGHT
+    bits 31:19  reserved (bits 31:24 for paged KV)
+
+PRINCIPAL_DIAGONAL is not about addressing: it selects the diagonal a NUMERIC
+window is measured from.  With d = seqlen_k - seqlen_q of each sequence, a
+numeric Window_left w resolves to w - p*d and a numeric Window_right w to
+w + p*d.  The TopLeftAligned/BottomRightAligned sentinels are never shifted.
+See `parse_window` in masked_load_store.py.
 
 `Varlen_bits == 0` is BHSD / MAX / IMPLIED on both sides -- the conventional
 dense case.
@@ -45,11 +52,12 @@ VARLEN_LENGTH_SHIFT = 1  # 0 MAX, 1 CUMULATIVE, 2 INDIVIDUAL
 VARLEN_POSITION_SHIFT = 3  # 0 IMPLIED, 1 REUSE, 2 ARRAY
 VARLEN_K_SIDE_SHIFT = 8
 VARLEN_LSE_LAYOUT_SHIFT = 16  # 0 _HT (AOTriton/default), 1 _TH (Transformer Engine)
+VARLEN_PRINCIPAL_DIAGONAL_SHIFT = 18  # 0 TOP_LEFT (default), 1 BOTTOM_RIGHT
 
 # Only the addressing bytes decide whether the persistent loop is usable.
-# LSE_LAYOUT lives above them and must not drag a dense call onto the varlen
-# fallback -- see the execution plan section 3.2.  The host copy of
-# `unsupported_by_persistent` must spell this identically.
+# LSE_LAYOUT and PRINCIPAL_DIAGONAL live above them and must not drag a dense
+# call onto the varlen fallback -- see the execution plan section 3.2.  The
+# host copy of `unsupported_by_persistent` must spell this identically.
 VARLEN_ADDRESSING_MASK = 0xFFFF
 
 
@@ -70,6 +78,11 @@ class VarlenLseLayout:
     TH = 1  # (T, H), H contiguous.  Transformer Engine's.
 
 
+class VarlenPrincipalDiagonal:
+    TOP_LEFT = 0      # j - i = 0.  gSWA's, and today's behaviour.
+    BOTTOM_RIGHT = 1  # j - i = seqlen_k[z] - seqlen_q[z].  flash-attention's.
+
+
 def make_varlen_side(stacked, length, position):
     """One side's byte from its three axis values.
 
@@ -86,8 +99,12 @@ def make_varlen_side(stacked, length, position):
             | (position << VARLEN_POSITION_SHIFT))
 
 
-def make_varlen_bits(q_side, k_side, lse_layout=VarlenLseLayout.HT):
-    """Assemble the wire word from two per-side bytes and the LSE layout.
+def make_varlen_bits(q_side,
+                     k_side,
+                     lse_layout=VarlenLseLayout.HT,
+                     principal_diagonal=VarlenPrincipalDiagonal.TOP_LEFT):
+    """Assemble the wire word from two per-side bytes, the LSE layout and
+    the principal diagonal numeric windows are measured from.
 
     Preconditions the kernel assumes and does not check (checking them means
     reading the arrays back to the host, i.e. a device sync on the hot path):
@@ -102,9 +119,12 @@ def make_varlen_bits(q_side, k_side, lse_layout=VarlenLseLayout.HT):
     """
     assert 0 <= q_side <= 0xFF and 0 <= k_side <= 0xFF
     assert lse_layout in (VarlenLseLayout.HT, VarlenLseLayout.TH)
+    assert principal_diagonal in (VarlenPrincipalDiagonal.TOP_LEFT,
+                                  VarlenPrincipalDiagonal.BOTTOM_RIGHT)
     return (q_side
             | (k_side << VARLEN_K_SIDE_SHIFT)
-            | (lse_layout << VARLEN_LSE_LAYOUT_SHIFT))
+            | (lse_layout << VARLEN_LSE_LAYOUT_SHIFT)
+            | (principal_diagonal << VARLEN_PRINCIPAL_DIAGONAL_SHIFT))
 
 
 # Named shorthands, so callers spell the mode rather than the hex.
@@ -127,6 +147,15 @@ assert VARLEN_BITS_STRIDED == make_varlen_bits(VARLEN_SIDE_STRIDED, VARLEN_SIDE_
 assert 0x150B == make_varlen_bits(VARLEN_SIDE_COMPACT, VARLEN_SIDE_SEQUSED_PACKED)
 assert 0x040B == make_varlen_bits(VARLEN_SIDE_COMPACT, VARLEN_SIDE_SEQUSED_BHSD)
 assert 0x000B == make_varlen_bits(VARLEN_SIDE_COMPACT, VARLEN_SIDE_DENSE)
+assert 0x40B0B == make_varlen_bits(VARLEN_SIDE_COMPACT,
+                                   VARLEN_SIDE_COMPACT,
+                                   principal_diagonal=VarlenPrincipalDiagonal.BOTTOM_RIGHT)
+# PRINCIPAL_DIAGONAL is outside the addressing mask: it must not push a dense
+# call off the persistent loop.
+assert (make_varlen_bits(VARLEN_SIDE_DENSE,
+                         VARLEN_SIDE_DENSE,
+                         principal_diagonal=VarlenPrincipalDiagonal.BOTTOM_RIGHT)
+        & VARLEN_ADDRESSING_MASK) == 0
 
 
 @triton.jit
