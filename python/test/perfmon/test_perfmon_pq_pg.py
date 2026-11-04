@@ -12,6 +12,7 @@ import time
 
 import pytest
 
+from aotriton.pgdef.pq import reports as pgreports
 from aotriton.pgdef.pq import tasks
 from aotriton.pgdef.pq.tasks import TaskSpec
 from aotriton.perfmon import pq
@@ -142,3 +143,35 @@ def test_subject_progress_counts_tasks(pg_conn):
     tasks.insert(pg_conn, ARCH, [TaskSpec({'module': 'flash', 'subject': S13, 'entry': _entry(16)}, CATEGORY)])
     (row,) = pq.subject_progress(pg_conn, arch=ARCH)
     assert (row['subject'], row['done'], row['pending'], row['total']) == (S13, 1, 1, 2)
+
+
+def test_tune_rows_in_the_shared_database_do_not_leak_into_perfmon_queries(pg_conn):
+    perfmon_task = _task(pg_conn)
+    pq.save_measurement(pg_conn, perfmon_task.ref, _report(), attempt=1)
+    tasks.insert(pg_conn, ARCH, [TaskSpec({'module': 'flash', 'subject': S13, 'entry': _entry(32)},
+                                          ('tune', 'kernel'))])
+    tune = tasks.claim(pg_conn, pool=ARCH, category=('tune', 'kernel'), subpool=None, worker='t0', limit=1)[0]
+    pgreports.insert(pg_conn,
+                     tune.ref,
+                     cat_level0='tune',
+                     attempt=1,
+                     rkey={'iface': 'op_attn_fwd', 'backend': 'triton'},
+                     status='OK',
+                     payload={'stats': {'median': 1.0}},
+                     error=None,
+                     worker='t-gpu',
+                     replace=True)
+    assert len(_all(pg_conn)) == 1
+    assert [r['subject'] for r in pq.list_selections(pg_conn)] == [S13]
+    assert pq.count_superseded(pg_conn, arch=ARCH) == 0
+    assert [t['task_id'] for t in pq.task_shortfalls(pg_conn)] == []     # nothing of tune's is listed
+    assert [(r['subject'], r['total']) for r in pq.subject_progress(pg_conn)] == [(S13, 1)]
+
+
+def test_a_done_task_with_a_recorded_result_without_a_row_is_a_shortfall(pg_conn):
+    task = _task(pg_conn)
+    pq.save_measurement(pg_conn, task.ref, _report(), attempt=1)
+    tasks.append_cookie(pg_conn, task.ref, 'done', [['op_attn_fwd', 'triton'], ['op_attn_fwd', 'aiter']])
+    tasks.complete(pg_conn, task.ref, owner='w0')
+    (short,) = pq.task_shortfalls(pg_conn, arch=ARCH)
+    assert short['missing'] == [['op_attn_fwd', 'aiter']] and short['status'] == 'done'

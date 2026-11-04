@@ -50,7 +50,7 @@ SELECT
     r.attempt,
     r.created_at
 FROM pgdef.report r
-JOIN pgdef.task t ON t.id = r.task_id AND t.pool = r.pool
+JOIN pgdef.task t ON t.id = r.task_id AND t.pool = r.pool AND t.cat_level0 = 'perfmon'
 WHERE r.cat_level0 = 'perfmon';
 
 -- The newest measurement of each point. When a point was dispatched twice the

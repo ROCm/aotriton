@@ -142,3 +142,74 @@ def subject_progress(conn, *, arch: str | None = None) -> list[dict]:
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(query, params)
         return cur.fetchall()
+
+
+def _task_where(*, module=None, arch=None, variant=None, subjects=None) -> tuple[str, list]:
+    clauses, params = ["t.cat_level0 = 'perfmon'"], []
+    if module is not None:
+        clauses.append("t.payload->>'module' = %s")
+        params.append(module)
+    if arch is not None:
+        clauses.append('t.pool = %s')
+        params.append(arch)
+    if variant is not None:
+        clauses.append("COALESCE(t.subpool, 'any') = %s")
+        params.append(variant)
+    if subjects:
+        clauses.append("t.payload->>'subject' = ANY(%s)")
+        params.append(list(subjects))
+    return ' AND '.join(clauses), params
+
+
+def _pairs(value) -> set[tuple]:
+    return {(iface, backend) for iface, backend in (value or [])}
+
+
+def task_shortfalls(conn, *, module: str | None = None, arch: str | None = None,
+                    variant: str | None = None, subjects=None) -> list[dict]:
+    """The perfmon tasks of the selection whose results may be incomplete.
+
+    A task is marked `done` before all its result rows are written (by design,
+    see "Completion does not wait for result writes" in docs/Distributed
+    Execution Framework.md). The (iface, backend) pairs recorded done in the
+    task's appcookie are compared with the report rows present. A task is
+    returned, as {task_id, arch, variant, subject, module, entry, status,
+    missing, reported, reason}, when its status is not `done`, when it
+    recorded pairs that have no report row (`missing`, sorted), or when it is
+    done with no report at all. `reported` counts the task's report rows. A
+    task whose every report a newer dispatch superseded is left out.
+    Only perfmon tasks are looked at; the tuner's tasks in the same database
+    never match.
+    """
+    where, params = _task_where(module=module, arch=arch, variant=variant, subjects=subjects)
+    query = ("SELECT t.id AS task_id, t.pool AS arch, COALESCE(t.subpool, 'any') AS variant, "
+             "t.payload->>'subject' AS subject, t.payload->>'module' AS module, "
+             "t.payload->'entry' AS entry, t.status, "
+             "COALESCE(t.appcookie->'done', '[]'::jsonb) AS done, "
+             "COALESCE((SELECT jsonb_agg(jsonb_build_array(r.rkey->>'iface', r.rkey->>'backend')) "
+             "FROM pgdef.report r WHERE r.task_id = t.id AND r.pool = t.pool "
+             "AND r.cat_level0 = 'perfmon'), '[]'::jsonb) AS reported, "
+             'EXISTS (SELECT 1 FROM perfmon.latest_measurement l '
+             'WHERE l.task_id = t.id AND l.arch = t.pool) AS current '
+             f'FROM pgdef.task t WHERE {where} ORDER BY t.pool, t.id')
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(query, params)
+        tasks = cur.fetchall()
+    out = []
+    for task in tasks:
+        done, reported = _pairs(task.pop('done')), _pairs(task.pop('reported'))
+        if reported and not task.pop('current'):
+            continue            # fully superseded by a newer dispatch: no export depends on it
+        task.pop('current', None)
+        missing = sorted(done - reported, key=lambda p: (p[0], p[1] or ''))
+        if task['status'] != 'done':
+            reason = f"task is {task['status']}"
+        elif missing:
+            reason = f'{len(missing)} of {len(done)} recorded results have no report row'
+        elif not reported:
+            reason = 'task is done but has no report row'
+        else:
+            continue
+        out.append({**task, 'missing': [list(p) for p in missing], 'reported': len(reported),
+                    'reason': reason})
+    return out

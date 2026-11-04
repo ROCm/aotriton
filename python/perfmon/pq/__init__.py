@@ -15,4 +15,4 @@ variant, subject, iface and backend.
 """
 
 from .measurements import (ANY_VARIANT, STATUSES, count_superseded, iter_latest,  # noqa: F401
-                           list_selections, save_measurement, subject_progress)
+                           list_selections, save_measurement, subject_progress, task_shortfalls)
