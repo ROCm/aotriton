@@ -49,6 +49,12 @@ tune_env_setup() {
     if command -v rocm-sdk >/dev/null 2>&1; then
         export ROCM_PATH="$(rocm-sdk path --root)"
         export PATH="$(rocm-sdk path --bin):$PATH"
+        # The amdsmi Python package is not in the venv, but ships with the ROCm
+        # wheels; the tuning image pip-installs it from the same directory
+        # (.def/image.scripts/02-install_amdsmi.sh). Here it is put on PYTHONPATH.
+        if [ -d "$ROCM_PATH/share/amd_smi/amdsmi" ]; then
+            export PYTHONPATH="$ROCM_PATH/share/amd_smi:$PYTHONPATH"
+        fi
     fi
     # worker_service.sh starts every process with $CELERY_WORKER_PYTHON, which
     # config.rc points into the tuning image. It honours AOTRITON_PYTHON over it.
