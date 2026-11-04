@@ -6,8 +6,9 @@
 // Iteration count. After the untimed first launch (the runner's), one warm
 // call is timed with the same event pair and L2 flush as an iteration; its
 // time is t_call. n = clamp(ceil(kIterationBudgetSeconds / t_call),
-// kMinIters, kMaxIters) = clamp(ceil(10 s / t_call), 20, 100): calls of 100 ms
-// or less keep 100 iterations, slower ones get fewer, down to 20. Large
+// kMinIters, kMaxIters) = clamp(ceil(10 s / t_call), 20, 400): calls of 25 ms
+// or less get 400 iterations (100 ms gets 100), slower ones get fewer, down to
+// 20 (500 ms and up). Large
 // workloads are stable (the phase-1 report found 20 samples enough at seqlen
 // 16384). PERFMON_ITERATIONS=<n> (1..kMaxIterationsOverride) fixes n and
 // bypasses the rule; it is rejected, not ignored, when malformed. In

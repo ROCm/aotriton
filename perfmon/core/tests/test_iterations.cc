@@ -10,14 +10,17 @@
 using namespace perfmon;
 
 int main() {
-  CHECK_EQ(kMaxIters, 100);
+  CHECK_EQ(kMaxIters, 400);
   CHECK_EQ(kMinIters, 20);
   CHECK_EQ(kIterationBudgetSeconds, 10.0);
 
-  // Calls of 100 ms or less keep every iteration.
-  CHECK_EQ(adaptive_iterations(10.0), 100);
+  // Calls of 25 ms or less keep every iteration.
+  CHECK_EQ(adaptive_iterations(10.0), 400);
+  CHECK_EQ(adaptive_iterations(25000.0), 400);
+  // Above 25 ms: ceil(10 s / 26 ms) = 385.
+  CHECK_EQ(adaptive_iterations(26000.0), 385);
   CHECK_EQ(adaptive_iterations(100000.0), 100);
-  // Above 100 ms: ceil(10 s / 102 ms) = 99.
+  CHECK_EQ(adaptive_iterations(102000.0), 99);
   CHECK_EQ(adaptive_iterations(102000.0), 99);
   CHECK_EQ(adaptive_iterations(136000.0), 74);   // 73.5 rounds up
   CHECK_EQ(adaptive_iterations(380000.0), 27);
@@ -25,10 +28,10 @@ int main() {
   CHECK_EQ(adaptive_iterations(3.2e6), 20);
   CHECK_EQ(adaptive_iterations(9.3e6), 20);
   // Not a usable reading: the default count.
-  CHECK_EQ(adaptive_iterations(0.0), 100);
-  CHECK_EQ(adaptive_iterations(-1.0), 100);
-  CHECK_EQ(adaptive_iterations(std::numeric_limits<double>::quiet_NaN()), 100);
-  CHECK_EQ(adaptive_iterations(std::numeric_limits<double>::infinity()), 100);
+  CHECK_EQ(adaptive_iterations(0.0), 400);
+  CHECK_EQ(adaptive_iterations(-1.0), 400);
+  CHECK_EQ(adaptive_iterations(std::numeric_limits<double>::quiet_NaN()), 400);
+  CHECK_EQ(adaptive_iterations(std::numeric_limits<double>::infinity()), 400);
 
   CHECK_EQ(parse_iterations_override(nullptr), 0);
   CHECK_EQ(parse_iterations_override(""), 0);

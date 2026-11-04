@@ -248,10 +248,11 @@ keys differ are never compared.
 
 `iterations` is how many timed iterations the lines of the file used: one
 number when they all used the same count, else the range `MIN-MAX` (for
-example `20-100`). The count is adaptive: the harness times one warm call and
-takes `clamp(ceil(10 s / call time), 20, 100)` iterations, so entries whose
-call takes 100 ms or less have 100 and long entries as few as 20. A report
-stored without a count counts as 100. The key only describes the file: it is not
+example `20-400`). The count is adaptive: the harness times one warm call and
+takes `clamp(ceil(10 s / call time), 20, 400)` iterations, so entries whose
+call takes 25 ms or less have 400 and long entries (500 ms and up) as few as 20.
+A report stored without a count was measured before the count became adaptive,
+with 100 iterations, and counts as 100. The key only describes the file: it is not
 a measurement key, and the export never refuses a measurement because its count differs.
 
 ### `#! results <variant>`

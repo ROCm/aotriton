@@ -10,8 +10,11 @@
 namespace perfmon {
 
 // Upper bound of the adaptive count, and the count of every call short enough
-// that kIterationBudgetSeconds / t_call reaches it (t_call <= 100 ms).
-constexpr int kMaxIters = 100;
+// that kIterationBudgetSeconds / t_call reaches it (t_call <= 25 ms). 400
+// iterations cut the spread of short entries from about 4 % to about 1 % on
+// CDNA (perfmon-noise-repeats experiment); repeated calls or fresh processes
+// did not help.
+constexpr int kMaxIters = 400;
 // Lower bound of the adaptive count. 20 samples gave stable medians at seqlen
 // 16384 (in-run spread < 1.3 % on gfx950, phase-1 report, noise section).
 constexpr int kMinIters = 20;
