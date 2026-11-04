@@ -99,7 +99,8 @@ worker, all connected through a Unix socket:
                         ↕  Unix socket
     ├── PG readers   (claim a task each; get its ack from the broker)
     ├── GPU workers  (one per GPU; run the subprocess runners, exaid)
-    └── CPU workers  (write results to PostgreSQL)
+    └── CPU workers  (write results to PostgreSQL, behind the GPU workers;
+                      see "Completion does not wait for result writes")
 ```
 
 The broker is the hub, and every connection is two-way. A handler on any
@@ -180,6 +181,39 @@ held in the broker until release, so keep them small.
 If the broker shuts down while a semaphore message is still parked, it calls
 the handler's `teardown_with_unmet_dependency()`. By default that gives the task
 back to the queue.
+
+### Completion does not wait for result writes
+
+This is intentional. The join releases when every result *message* has
+reached the broker, not when the CPU workers have written those results to
+PostgreSQL. Tune's `tune/postprocess` and perfmon's `perfmon/finalize`
+therefore mark a task `done` while some of its result rows can still be
+queued for writing.
+
+Why:
+
+* A GPU worker hands its result to the broker and starts the next message at
+  once. It never waits for PostgreSQL.
+* Completing the task releases its PG reader, so the next task is claimed
+  while the previous task's results are still being written. GPUs do not idle
+  between tasks.
+* Writing one result row takes milliseconds. Waiting for it would buy nothing
+  but idle GPU time.
+
+What it means:
+
+* `done` means "all results produced", not "all results stored". The writes
+  normally follow within seconds.
+* The lag grows only when the CPU workers write more slowly than the GPUs
+  produce results. Kernel tuning reports one row per kernel variant (hundreds
+  per task). Over a remote link, at a few tens of rows per second, a node can
+  fall behind for hours over a long run. That backlog is a throughput matter,
+  not a slow write.
+* Read results (`compute_best_results`, perfmon export) once the node's CPU
+  queue has drained, or check the expected row count. A task being `done` is
+  not enough.
+* Stop a node only after its CPU queue has drained. Queued writes live in the
+  broker's memory, and their task is already `done`, so nothing redoes them.
 
 ## Writing an application
 

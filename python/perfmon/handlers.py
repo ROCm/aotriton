@@ -299,6 +299,11 @@ class ResultHandler(MessageHandler):
 class FinalizeHandler(MessageHandler):
     """Completes the task once every pair has reported.
 
+    Completes the task without waiting for the perfmon/result rows to be
+    written: intentional, so the GPUs move on and the reader takes the next
+    task. See "Completion does not wait for result writes" in
+    docs/Distributed Execution Framework.md.
+
     Input: finalize message (released by the fan-in).
     Output: dag_ack, which releases the PG reader. If the broker shuts down
     first, the default teardown gives the task back.

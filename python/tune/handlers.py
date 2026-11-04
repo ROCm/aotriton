@@ -274,6 +274,11 @@ class PostprocessHandler(MessageHandler):
     """Completes the task and frees its prepared data, once every impl has
     reported.
 
+    Completes the task without waiting for the tune/impl_result rows to be
+    written: intentional, so the GPUs move on and the reader takes the next
+    task. See "Completion does not wait for result writes" in
+    docs/Distributed Execution Framework.md.
+
     Input: postprocess message (released by the fan-in).
     Output: dag_ack, which releases the PG reader.
     """
