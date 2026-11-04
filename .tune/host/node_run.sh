@@ -23,6 +23,16 @@ TN_ARCH="$6"
 shift 6
 export TN_WORKDIR TN_THERMAL_GATE TN_ARCH
 
+# The op level runs on the plain testing library (installed/test/<arch>), the
+# kernel level on the tuning library (installed/<arch>); the level is the
+# second part of --category.
+ARGS=("$@")
+for ((i = 0; i < ${#ARGS[@]} - 1; i++)); do
+    if [ "${ARGS[$i]}" = --category ] && [[ "${ARGS[$((i + 1))]}" == *,op ]]; then
+        export TN_INSTALL_SUBDIR="installed/test/$TN_ARCH"
+    fi
+done
+
 . "$(dirname "${BASH_SOURCE[0]}")/node_env.sh"
 tune_env_setup
 

@@ -6,7 +6,11 @@
 #   TN_WORKDIR    the host's workdir: config.rc and installed/<arch>/ (the tuning
 #                 build) live there
 #   TN_ARCH       the arch of the build to put on PYTHONPATH (installed/<arch>/lib)
-# set. It defines the environment a tune node needs outside the tuning image
+# set; and optionally
+#   TN_INSTALL_SUBDIR  the build to use, relative to the workdir, instead of
+#                 installed/<arch>: installed/test/<arch> for the op level
+#                 (the plain testing library, see python/tune/manifest.py)
+# It defines the environment a tune node needs outside the tuning image
 # (the path variables of .def/lib/paths.sh), and uses the venv that is already
 # active (a claudepak-managed one). The checkout is the one this file lives in,
 # which need not be the project checkout of the host: a worktree under the
@@ -37,7 +41,7 @@ tune_env_setup() {
     mkdir -p "$AOTRITON_TMPFS"
     # aotriton is used from the checkout, not installed; pyaotriton (the
     # tuning build) comes from the workdir, as it does in the tuning image.
-    export PYTHONPATH="$TN_CHECKOUT/.def/lib/pkgroot:$TN_WORKDIR/installed/$TN_ARCH/lib${PYTHONPATH:+:$PYTHONPATH}"
+    export PYTHONPATH="$TN_CHECKOUT/.def/lib/pkgroot:$TN_WORKDIR/${TN_INSTALL_SUBDIR:-installed/$TN_ARCH}/lib${PYTHONPATH:+:$PYTHONPATH}"
     export AOTRITON_MODULES_DIR="$TN_CHECKOUT/modules"
     export PYTHONPYCACHEPREFIX="$AOTRITON_RUNDIR/pycache"
     export PYTHONDONTWRITEBYTECODE=1
