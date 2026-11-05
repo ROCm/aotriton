@@ -19,6 +19,9 @@ from flydsl.expr.typing import Vector as Vec
 from flydsl.expr.utils.arith import _to_raw as raw
 from kernels.common import buffer_ops
 
+import fmha_abi_gfx1201 as abi
+import fmha_common_gfx1201 as fmha
+
 _LDS_DOMAIN = '#llvm.alias_scope_domain<id = "fmha_fwd_gfx942.lds">'
 LDS_SCOPES = ('k0', 'k1', 'vt0', 'vt1')
 LOG2E = 1.4426950408889634
@@ -83,18 +86,36 @@ class Traits:
 
 def build_fmha_fwd_gfx942(head_dim,
                           causal=False,
+                          causal_type=None,
                           dtype_str='bf16',
+                          bias=False,
+                          dropout=False,
                           num_waves=8,
                           block_n=None,
                           waves_per_eu=2,
-                          rescale_threshold=0.0):
-    """`rescale_threshold` > 0 enables the lazy running max (FA4's, off by default;
-    numerical lessons, #17): the max may lag that many log2 units."""
+                          rescale_threshold=0.0,
+                          grid_axis_order=None):
+    """A launcher with flash_attn_func_gfx1201_aiw's call interface and kernel ABI.
+
+    `causal_type` as gfx1201's: 1/2 are host sentinels, 3 is gSWA; all compile to 3.
+    `rescale_threshold` > 0 enables the lazy running max (FA4's, off by default;
+    numerical lessons, #17): the max may lag that many log2 units.
+    """
+    host_causal_type = (1 if causal else 0) if causal_type is None else causal_type
+    if host_causal_type not in (0, 1, 2, 3):
+        raise ValueError(f'causal_type must be 0-3, got {host_causal_type}')
+    causal_type = 0 if host_causal_type == 0 else 3
+    if bias or dropout:
+        raise NotImplementedError('bias and dropout are not implemented on gfx942 yet')
     if block_n is None:
         # Keep 32 MFMAs per KV tile: small heads take a longer tile.
         block_n = 64 if head_dim <= 64 else 32
-    tr = Traits(head_dim, causal, dtype_str, num_waves, block_n)
-    cache_tag = f'{tr.CACHE_TAG}_wpe{waves_per_eu}_dbg{int(DEBUG_NTILES)}_thr{rescale_threshold}'
+    tr = Traits(head_dim, causal_type != 0, dtype_str, num_waves, block_n)
+    # 0 HEAD_FASTEST, 1 TILE_FASTEST, as csrc/flyc_common.h's kFlycGridAxis*.
+    if grid_axis_order is None:
+        grid_axis_order = 0 if tr.CAUSAL else 1
+    tile_fastest = grid_axis_order == 1
+    cache_tag = f'{tr.CACHE_TAG}_wpe{waves_per_eu}_dbg{int(DEBUG_NTILES)}_thr{rescale_threshold}_g{grid_axis_order}'
     elem = fx.BFloat16 if dtype_str == 'bf16' else fx.Float16
 
     # MLIR types need a live context, so they are built at trace time.
@@ -159,16 +180,35 @@ def build_fmha_fwd_gfx942(head_dim,
                         has_side_effects=True)
 
     @flyc.kernel(known_block_size=[tr.BLOCK_SIZE, 1, 1])
+    # The kernel ABI is flash_attn_aiw_kernel's (gfx1201), so aot/flyc_attn_fwd.py can serve both.
     def fmha_fwd_gfx942_kernel(
         Q: fx.Pointer,
         K: fx.Pointer,
         V: fx.Pointer,
+        B: fx.Pointer,
         O: fx.Pointer,  # noqa: E741
         LSE: fx.Pointer,
-        seqlen_q: fx.Int32,
-        seqlen_k: fx.Int32,
+        seqinfo_q0: fx.Pointer,
+        seqinfo_q1: fx.Pointer,
+        seqinfo_k0: fx.Pointer,
+        seqinfo_k1: fx.Pointer,
+        varlen_bits: fx.Int32,
+        num_seqlens: fx.Int32,
+        max_seqlen_q: fx.Int32,
+        max_seqlen_k: fx.Int32,
+        window_left: fx.Int32,
+        window_right: fx.Int32,
+        philox_seed_ptr: fx.Pointer,
+        philox_offset1: fx.Pointer,
+        philox_offset2: fx.Int64,
+        philox_seed_output: fx.Pointer,
+        philox_offset_output: fx.Pointer,
+        idropout_p: fx.Int32,
+        dropout_scale: fx.Float32,
         num_head_q: fx.Int32,
         num_head_k: fx.Int32,
+        hdim_qk: fx.Int32,
+        hdim_vo: fx.Int32,
         sm_scale: fx.Float32,
         stride_q_batch: fx.Int64,
         stride_q_head: fx.Int64,
@@ -182,6 +222,9 @@ def build_fmha_fwd_gfx942(head_dim,
         stride_o_batch: fx.Int64,
         stride_o_head: fx.Int64,
         stride_o_seq: fx.Int64,
+        stride_b_batch: fx.Int64,
+        stride_b_head: fx.Int64,
+        stride_b_seq_q: fx.Int64,
     ):
         _ = cache_tag
         tid = fx.Index(gpu.thread_idx.x)
@@ -189,12 +232,18 @@ def build_fmha_fwd_gfx942(head_dim,
         lane = tid % WAVE
         lm = lane % 32
         lh = lane // 32
-        q_tile = fx.Index(gpu.block_idx.x)
-        head = fx.Index(gpu.block_idx.y)
-        batch = fx.Index(gpu.block_idx.z)
+        if const_expr(tile_fastest):
+            q_tile = fx.Index(gpu.block_idx.x)
+            head = fx.Index(gpu.block_idx.y)
+        else:
+            head = fx.Index(gpu.block_idx.x)
+            q_tile = fx.Index(gpu.block_idx.y)
+        z_i32 = fx.Int32(gpu.block_idx.z)
         head_k = head // (fx.Index(num_head_q) // fx.Index(num_head_k))
-        sq = fx.Index(seqlen_q)
-        sk = fx.Index(seqlen_k)
+        sq_i32, q_row_off, q_batch = fmha.decode_addressing(varlen_bits, 0, max_seqlen_q, seqinfo_q0, seqinfo_q1, z_i32)
+        sk_i32, k_row_off, k_batch = fmha.decode_addressing(varlen_bits, 8, max_seqlen_k, seqinfo_k0, seqinfo_k1, z_i32)
+        sq = fx.Index(sq_i32)
+        sk = fx.Index(sk_i32)
 
         lds = fx.SharedAllocator().allocate(Smem).peek()
         lds_p = lds.buf.ptr
@@ -204,15 +253,19 @@ def build_fmha_fwd_gfx942(head_dim,
             return fx.recast_iter(fx.PointerType.get(e.ir_type, fx.AddressSpace.Shared, align),
                                   lds_p + fx.Int64(off))
 
-        def rsrc_for(ptr, sb, sh, ss, h, rows):
-            base = fx.Int64(fx.ptrtoint(ptr)) + (fx.Int64(batch) * sb + fx.Int64(h) * sh) * fx.Int64(2)
+        def rsrc_for(ptr, batch, h, row_off, sb, sh, ss, rows):
+            # One sequence of one head: rows past it read as 0 and store nowhere.
+            elems = fx.Int64(batch) * sb + fx.Int64(h) * sh + fx.Int64(row_off) * ss
+            base = fx.Int64(fx.ptrtoint(ptr)) + elems * fx.Int64(2)
             nbytes = fx.Int64(rows) * ss * fx.Int64(2)
             return buffer_ops.create_buffer_resource_from_addr(base, num_records_bytes=nbytes)
 
-        q_rsrc = rsrc_for(Q, stride_q_batch, stride_q_head, stride_q_seq, head, sq)
-        o_rsrc = rsrc_for(O, stride_o_batch, stride_o_head, stride_o_seq, head, sq)
-        k_rsrc = rocdl.get_buffer_rsrc(rsrc_for(K, stride_k_batch, stride_k_head, stride_k_seq, head_k, sk))
-        v_rsrc_raw = rocdl.get_buffer_rsrc(rsrc_for(V, stride_v_batch, stride_v_head, stride_v_seq, head_k, sk))
+        q_rsrc = rsrc_for(Q, q_batch, head, q_row_off, stride_q_batch, stride_q_head, stride_q_seq, sq)
+        o_rsrc = rsrc_for(O, q_batch, head, q_row_off, stride_o_batch, stride_o_head, stride_o_seq, sq)
+        k_rsrc = rocdl.get_buffer_rsrc(
+            rsrc_for(K, k_batch, head_k, k_row_off, stride_k_batch, stride_k_head, stride_k_seq, sk))
+        v_rsrc_raw = rocdl.get_buffer_rsrc(
+            rsrc_for(V, k_batch, head_k, k_row_off, stride_v_batch, stride_v_head, stride_v_seq, sk))
         q_row_stride = fx.Index(fx.Int32(stride_q_seq))
         k_row_stride_b = fx.Int32(stride_k_seq) * fx.Int32(2)
         v_row_stride_b = fx.Int32(stride_v_seq) * fx.Int32(2)
@@ -353,14 +406,17 @@ def build_fmha_fwd_gfx942(head_dim,
 
         kv_lane = fx.Int32(lh * 4)
         if const_expr(tr.CAUSAL):
-            delta = fx.Int32(sk) - fx.Int32(sq)
+            # TODO: the left bound; only the right one masks for now.
+            _, delta = fmha.resolve_window(window_left, window_right, sq_i32, sk_i32, varlen_bits)
             kv_end_raw = fx.Int32(q_start + tr.BLOCK_M) + delta
             kv_end_raw = (kv_end_raw > fx.Int32(0)).select(kv_end_raw, fx.Int32(0))
             kv_end = fx.Index((kv_end_raw < fx.Int32(sk)).select(kv_end_raw, fx.Int32(sk)))
         else:
             delta = fx.Int32(0)
             kv_end = sk
-        n_tiles = (kv_end + tr.BLOCK_N - 1) // tr.BLOCK_N
+        # Under varlen the grid is sized by max_seqlen_q, so whole blocks can lie past this sequence.
+        alive = fx.Int32(q_start) < sq_i32
+        n_tiles = alive.select((kv_end + tr.BLOCK_N - 1) // tr.BLOCK_N, fx.Index(0))
 
         def mask_limits():
             seq_lim = fx.Int32(sk) - fx.Int32(1)
@@ -594,24 +650,49 @@ def build_fmha_fwd_gfx942(head_dim,
         lse = (l_fin > fx.Float32(0.0)).select(lse, fx.Float32(float('inf')))
         if const_expr(DEBUG_NTILES):
             lse = fx.Float32(fx.Int32(n_tiles))
+        lse_tokens = fmha.lse_token_pitch(varlen_bits, 0, max_seqlen_q, seqinfo_q0, seqinfo_q1, num_seqlens)
+        lse_row0, lse_pitch = fmha.lse_row_addressing(varlen_bits,
+                                                      fx.Index(q_batch),
+                                                      head,
+                                                      num_head_q,
+                                                      lse_tokens,
+                                                      fx.Index(q_row_off))
         lse_addr = fx.Int64(fx.ptrtoint(LSE))
-        lse_base = lse_addr + (fx.Int64(batch) * fx.Int64(num_head_q) + fx.Int64(head)) * fx.Int64(sq) * fx.Int64(4)
-        lse_bytes = (lse_addr == fx.Int64(0)).select(fx.Int64(0), fx.Int64(sq) * fx.Int64(4))
+        lse_base = lse_addr + fx.Int64(lse_row0) * fx.Int64(4)
+        lse_bytes = (lse_addr == fx.Int64(0)).select(fx.Int64(0), fx.Int64(sq * lse_pitch) * fx.Int64(4))
         lse_rsrc = buffer_ops.create_buffer_resource_from_addr(lse_base, num_records_bytes=lse_bytes)
-        buffer_ops.buffer_store(lse, lse_rsrc, q_row, mask=lh == fx.Index(0))
+        buffer_ops.buffer_store(lse, lse_rsrc, q_row * lse_pitch, mask=q_ok & (lh == fx.Index(0)))
 
     @flyc.jit
     def launch_fmha_fwd_gfx942(
         Q: fx.Pointer,
         K: fx.Pointer,
         V: fx.Pointer,
+        B: fx.Pointer,
         O: fx.Pointer,  # noqa: E741
         LSE: fx.Pointer,
-        batch: fx.Int32,
-        seqlen_q: fx.Int32,
-        seqlen_k: fx.Int32,
+        seqinfo_q0: fx.Pointer,
+        seqinfo_q1: fx.Pointer,
+        seqinfo_k0: fx.Pointer,
+        seqinfo_k1: fx.Pointer,
+        varlen_bits: fx.Int32,
+        batch_size: fx.Int32,
+        num_seqlens: fx.Int32,
+        max_seqlen_q: fx.Int32,
+        max_seqlen_k: fx.Int32,
+        window_left: fx.Int32,
+        window_right: fx.Int32,
+        philox_seed_ptr: fx.Pointer,
+        philox_offset1: fx.Pointer,
+        philox_offset2: fx.Int64,
+        philox_seed_output: fx.Pointer,
+        philox_offset_output: fx.Pointer,
+        idropout_p: fx.Int32,
+        dropout_scale: fx.Float32,
         num_head_q: fx.Int32,
         num_head_k: fx.Int32,
+        hdim_qk: fx.Int32,
+        hdim_vo: fx.Int32,
         sm_scale: fx.Float32,
         stride_q_batch: fx.Int64,
         stride_q_head: fx.Int64,
@@ -625,18 +706,40 @@ def build_fmha_fwd_gfx942(head_dim,
         stride_o_batch: fx.Int64,
         stride_o_head: fx.Int64,
         stride_o_seq: fx.Int64,
+        stride_b_batch: fx.Int64,
+        stride_b_head: fx.Int64,
+        stride_b_seq_q: fx.Int64,
         stream: fx.Stream = fx.Stream(None),
     ):
-        grid_x = (fx.Index(seqlen_q) + tr.BLOCK_M - 1) // tr.BLOCK_M
+        grid_y = (fx.Index(max_seqlen_q) + tr.BLOCK_M - 1) // tr.BLOCK_M
+        grid_z = (fx.Int32(num_seqlens) != fx.Int32(0)).select(fx.Index(num_seqlens), fx.Index(batch_size))
         fmha_fwd_gfx942_kernel(Q,
                                K,
                                V,
+                               B,
                                O,
                                LSE,
-                               seqlen_q,
-                               seqlen_k,
+                               seqinfo_q0,
+                               seqinfo_q1,
+                               seqinfo_k0,
+                               seqinfo_k1,
+                               varlen_bits,
+                               num_seqlens,
+                               max_seqlen_q,
+                               max_seqlen_k,
+                               window_left,
+                               window_right,
+                               philox_seed_ptr,
+                               philox_offset1,
+                               philox_offset2,
+                               philox_seed_output,
+                               philox_offset_output,
+                               idropout_p,
+                               dropout_scale,
                                num_head_q,
                                num_head_k,
+                               hdim_qk,
+                               hdim_vo,
                                sm_scale,
                                stride_q_batch,
                                stride_q_head,
@@ -650,9 +753,95 @@ def build_fmha_fwd_gfx942(head_dim,
                                stride_o_batch,
                                stride_o_head,
                                stride_o_seq,
+                               stride_b_batch,
+                               stride_b_head,
+                               stride_b_seq_q,
                                value_attrs={'rocdl.waves_per_eu': waves_per_eu,
-                                            'rocdl.flat_work_group_size': f'{tr.BLOCK_SIZE},{tr.BLOCK_SIZE}'}).launch(grid=(grid_x, fx.Index(num_head_q), fx.Index(batch)),
-                 block=(tr.BLOCK_SIZE, 1, 1),
-                 stream=stream)
+                                            'rocdl.flat_work_group_size': f'{tr.BLOCK_SIZE},{tr.BLOCK_SIZE}'}).launch(
+            grid=(grid_y, fx.Index(num_head_q), grid_z) if tile_fastest else (fx.Index(num_head_q), grid_y, grid_z),
+            block=(tr.BLOCK_SIZE, 1, 1),
+            stream=stream)
 
-    return launch_fmha_fwd_gfx942, tr
+    compiled = abi.new_compiled_cache()
+
+    def _args(Q,
+              K,
+              V,
+              O,  # noqa: E741
+              batch_size,
+              seqlen_q,
+              seqlen_k=None,
+              num_seqlens=0,
+              scale=None,
+              stream=None,
+              lse=None,
+              window=None,
+              varlen=None,
+              bias=None,
+              dropout_p=None,
+              philox_seed=0,
+              philox_offset1=None,
+              philox_offset2=0,
+              philox_seed_output=None,
+              philox_offset_output=None,
+              principal_diagonal=None):
+        """flash_attn_func_gfx1201_aiw's `_args`: every kernel argument but the stream."""
+        seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
+        ptrs, meta, st = abi.prep_tensors([("Q", Q), ("K", K), ("V", V), ("O", O)], q_heads=("O",))
+        if meta[2] != tr.D or meta[3] != tr.D:
+            raise NotImplementedError(f'head dims {meta[2:]} on a {tr.D} build: padded heads come later')
+        lse_p = abi.lse_args(lse, seqlen_q, varlen, meta[0])
+        wl, wr = abi.resolve_window(causal_type, host_causal_type, window, seqlen_q, seqlen_k)
+        vb, sq0, sq1, sk0, sk1, mq, mk = abi.varlen_args(False, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
+        vb = principal_diagonal_bits(vb, principal_diagonal)
+        if bias is not None or dropout_p:
+            raise NotImplementedError('bias and dropout are not implemented on gfx942 yet')
+        packed = (*ptrs[:3],
+                  abi.NULL_PTR,
+                  ptrs[3],
+                  lse_p,
+                  sq0,
+                  sq1,
+                  sk0,
+                  sk1,
+                  vb,
+                  batch_size,
+                  num_seqlens,
+                  mq,
+                  mk,
+                  wl,
+                  wr,
+                  abi.NULL_PTR,
+                  abi.NULL_PTR,
+                  0,
+                  abi.NULL_PTR,
+                  abi.NULL_PTR,
+                  0,
+                  1.0,
+                  *meta,
+                  abi.resolve_scale(Q, scale, False, tr.D ** -0.5),
+                  *st,
+                  0,
+                  0,
+                  0)
+        return packed, stream
+
+    def _launch(*args, **kwargs):
+        packed, stream = _args(*args, **kwargs)
+        abi.run_compiled(compiled, launch_fmha_fwd_gfx942, *packed, fx.Stream(stream))
+
+    _launch.traits = tr
+    return _launch
+
+
+def principal_diagonal_bits(bits, principal_diagonal):
+    """`bits` with VarlenBits bit 18 set from `principal_diagonal`, as gfx1201's launcher does."""
+    if principal_diagonal is None:
+        return bits
+    choices = (abi.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT, abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT)
+    if principal_diagonal not in choices:
+        raise ValueError(f"principal_diagonal must be VARLEN_PRINCIPAL_DIAGONAL_* or None: {principal_diagonal!r}")
+    bit = abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT
+    if bits & bit and principal_diagonal != bit:
+        raise ValueError("varlen['bits'] selects BOTTOM_RIGHT but principal_diagonal= selects TOP_LEFT")
+    return bits | principal_diagonal
