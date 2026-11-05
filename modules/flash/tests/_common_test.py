@@ -1004,7 +1004,16 @@ class SdpaContext(object):
             threshold = max(atol, ref_error * fudge_factor)
             valid = test_error <= threshold
         # tft = test_error / ref_error if ref_error * fudge_factor > atol else 1.0
-        tft = test_error / ref_error if not valid else 1.0
+        # tft is the fudge factor that would have let this tensor pass. When
+        # the low-precision reference is exact (ref_error == 0, e.g. a single
+        # visible key makes P == 1 and dV == dO), no factor can: report inf
+        # instead of dividing by zero, so the failure names the tensor.
+        if valid:
+            tft = 1.0
+        elif ref_error > 0:
+            tft = test_error / ref_error
+        else:
+            tft = math.inf
         if not valid:
             pass
             # print(f'For {tname}, Consider bump fudge_factor to {tft} = {test_error=} / {ref_error=}. So that {test_error=} < {threshold=} = max({atol=}, {ref_error=} * {tft=})')
