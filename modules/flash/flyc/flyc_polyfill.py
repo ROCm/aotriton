@@ -32,6 +32,7 @@ evaluated when the ``def`` executes.
 from dataclasses import dataclass, fields
 
 __all__ = [
+    "if_then",
     "ssel",
     "smin",
     "smax",
@@ -49,6 +50,27 @@ def _is_pow2(value: int) -> bool:
 def _pow2_shift(value: int) -> int:
     assert _is_pow2(value)
     return value.bit_length() - 1
+
+
+try:
+    # FlyDSL 0.3.1's kernels/common; gone from 0.4.2's.
+    from kernels.common.kernels_common import _if_then as if_then
+except ImportError:
+    from contextlib import contextmanager
+
+    @contextmanager
+    def if_then(if_op):
+        """The then-region of an `scf.IfOp`, ending in a YieldOp."""
+        from flydsl._mlir import ir
+        from flydsl._mlir.dialects import scf
+
+        with ir.InsertionPoint(if_op.then_block):
+            try:
+                yield if_op.then_block
+            finally:
+                blk = if_op.then_block
+                if (not blk.operations) or not isinstance(blk.operations[-1], scf.YieldOp):
+                    scf.YieldOp([])
 
 
 try:
