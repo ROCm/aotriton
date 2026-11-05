@@ -143,6 +143,8 @@ class _varlen_attention(torch.autograd.Function):
         autotune = attn_extra_args.autotune
         return_autotune = attn_extra_args.return_autotune
         assert not autotune, 'Autotuning the varlen JIT launcher is unsupported'
+        assert not attn_extra_args.bwd_fused, 'The varlen JIT launcher only has the split backward'
+        assert attn_extra_args.out_row_padding == 0, 'out_row_padding is a dense attention() option'
         dtype = q.dtype
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
@@ -254,6 +256,8 @@ class _varlen_attention(torch.autograd.Function):
             BLOCK_N = 64
         if dtype == torch.float32:
             BLOCK_M //= 2
+        if attn_extra_args.fwd_block is not None:
+            BLOCK_M, BLOCK_N = attn_extra_args.fwd_block
 
         cfg = triton.Config({'BLOCK_M': BLOCK_M,
                              'BLOCK_N': BLOCK_N,
@@ -402,6 +406,8 @@ class _varlen_attention(torch.autograd.Function):
         if q.dtype == torch.float32:
             BLOCK_M = max(16, BLOCK_M // 2)
             BLOCK_N = max(16, BLOCK_N // 2)
+        if attn_extra_args.bwd_block is not None:
+            BLOCK_M, BLOCK_N = attn_extra_args.bwd_block
 
         PREP_BLOCK = 16
         grid_prep = (triton.cdiv(max_seqlen_q, PREP_BLOCK), num_head_q, batch)

@@ -130,11 +130,11 @@ def calculate_intervals(IS_CAUSAL,
         # M = N - window_right = min(start_M + BLOCK_M, seqlen_q)
         isec_hi = min(start_M + BLOCK_M, seqlen_q) + window_right
         rsec_lob = div_rd(isec_lo, BLOCK_N)
-        # FIXME: we need to solve this
-        #  rsec_hib in Z
-        #  rsec_hib * BLOCK_N < isec_hi
-        #  maxmize rsec_hib
-        #  Example: isec_hi = 0, then rsec_hib = -1
+        # rsec_hib is the largest integer with rsec_hib * BLOCK_N < isec_hi,
+        # i.e. floor((isec_hi - 1) / BLOCK_N). div_rd floors for negative
+        # numerators as well (Triton's // truncates toward zero), so
+        # isec_hi = 0 gives rsec_hib = -1 as required, and lsec_hib above
+        # follows the same rule.
         rsec_hib = div_rd(isec_hi - 1, BLOCK_N)
         if DEBUG:
             tl.device_print('2 rb_lo isect', isec_lo)
