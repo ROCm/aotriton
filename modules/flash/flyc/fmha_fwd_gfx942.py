@@ -21,6 +21,7 @@ from kernels.common import buffer_ops
 
 import fmha_abi_gfx1201 as abi
 import fmha_common_gfx1201 as fmha
+from philox import Philox
 
 _LDS_DOMAIN = '#llvm.alias_scope_domain<id = "fmha_fwd_gfx942.lds">'
 LDS_SCOPES = ('k0', 'k1', 'vt0', 'vt1')
@@ -105,8 +106,6 @@ def build_fmha_fwd_gfx942(head_dim,
     if host_causal_type not in (0, 1, 2, 3):
         raise ValueError(f'causal_type must be 0-3, got {host_causal_type}')
     causal_type = 0 if host_causal_type == 0 else 3
-    if dropout:
-        raise NotImplementedError('dropout is not implemented on gfx942 yet')
     if bias and causal_type:
         raise ValueError('bias with a causal mask is not served (aot/_common.py flash_disabled)')
     if block_n is None:
@@ -117,7 +116,7 @@ def build_fmha_fwd_gfx942(head_dim,
     if grid_axis_order is None:
         grid_axis_order = 0 if tr.CAUSAL else 1
     tile_fastest = grid_axis_order == 1
-    cache_tag = f'{tr.CACHE_TAG}_wpe{waves_per_eu}_dbg{int(DEBUG_NTILES)}_thr{rescale_threshold}_g{grid_axis_order}_b{int(bias)}'
+    cache_tag = f'{tr.CACHE_TAG}_wpe{waves_per_eu}_dbg{int(DEBUG_NTILES)}_thr{rescale_threshold}_g{grid_axis_order}_b{int(bias)}_d{int(dropout)}'
     elem = fx.BFloat16 if dtype_str == 'bf16' else fx.Float16
 
     # MLIR types need a live context, so they are built at trace time.
@@ -553,12 +552,35 @@ def build_fmha_fwd_gfx942(head_dim,
                 out = [Vec(o) * corr_v for o in o_accs]
             return out
 
-        def softmax_tail(s_vals, m_new, corr, l_old, o_accs):
+        if const_expr(dropout):
+            # The Triton kernels' stream, element for element (philox.py, grid_plane):
+            # offset(row, col) = base + row * stride + col // 4, the element at slot col % 4.
+            rng = Philox.for_arch('gfx942')
+            ph_seed = fmha.philox_seed_value(philox_seed_ptr)
+            ph_off = fmha.philox_offset_base(philox_offset1, philox_offset2)
+            fmha.philox_report(philox_seed_output, philox_offset_output, ph_seed, ph_off)
+            ph_plane = z_i32 * fx.Int32(num_head_q) + fx.Int32(head)
+            ph_base, ph_stride = rng.grid_plane(ph_off, ph_plane, max_seqlen_q, max_seqlen_k)
+
+        def dropout_keep(kv_start):
+            """Keep flags in S^T order: each 4-key group is one Philox call."""
+            keep = []
+            for g in range_constexpr(tr.NS // 4):
+                col = fx.Int32(kv_start) + kv_lane + fx.Int32(32 * (g // 4) + 8 * (g % 4))
+                vals = rng.u32(ph_seed, rng.grid_offset(ph_base, ph_stride, fx.Int32(q_row), col))
+                keep.extend(fx.Int32(v) > fx.Int32(idropout_p) for v in vals)
+            return keep
+
+        def softmax_tail(s_vals, m_new, corr, l_old, o_accs, kv_start):
             p = [exp2(s_vals[r] - m_new) for r in range(tr.NS)]
             psum = p[0]
             for r in range_constexpr(1, tr.NS):
                 psum = psum + p[r]
             l_new = l_old * corr + psum
+            if const_expr(dropout):
+                # l sums P before the mask; 1/(1-p) joins 1/l at the end.
+                keep = dropout_keep(kv_start)
+                p = [keep[r].select(p[r], fx.Float32(0.0)) for r in range(tr.NS)]
             return [pack_p(p[4 * i:4 * i + 4]) for i in range(tr.PV_STEPS)], l_new, o_accs
 
         # Per tile: C0 mem, C1 QK(j+1)+exp(j), C2 mem, C3 PV(j)+max(j+1). Waves 4..7
@@ -625,7 +647,7 @@ def build_fmha_fwd_gfx942(head_dim,
             compute_begin()
             o_accs = rescale_o(o_accs, corr)
             s_next = qk(k_packs)
-            p_packs, l_new, o_accs = softmax_tail(s_cur, m_cur, corr, l_old, o_accs)
+            p_packs, l_new, o_accs = softmax_tail(s_cur, m_cur, corr, l_old, o_accs, kv_base + j * tr.BLOCK_N)
             compute_end(f'C1.{b}')
             # C2(j)
             k_dma(kv_next + 2 * tr.BLOCK_N, 1 - b)
@@ -640,7 +662,7 @@ def build_fmha_fwd_gfx942(head_dim,
             compute_end(f'C3.{b}')
             return [m_next, corr_next, l_new] + s_vals + o_accs + v_regs
 
-        def finish(carried, b):
+        def finish(carried, b, kv_last):
             """The last tile's PV."""
             o_last = list(carried[3 + n_s:3 + n_s + tr.D_TILES])
             # C0(n-1)
@@ -650,7 +672,12 @@ def build_fmha_fwd_gfx942(head_dim,
             # C1(n-1)
             compute_begin()
             o_last = rescale_o(o_last, carried[1])
-            p_packs, l_last, o_last = softmax_tail(carried[3:3 + n_s], carried[0], carried[1], carried[2], o_last)
+            p_packs, l_last, o_last = softmax_tail(carried[3:3 + n_s],
+                                                   carried[0],
+                                                   carried[1],
+                                                   carried[2],
+                                                   o_last,
+                                                   kv_last)
             compute_end()
             # C2(n-1)
             vts = v_read(b)
@@ -672,10 +699,11 @@ def build_fmha_fwd_gfx942(head_dim,
         @flyc.jit
         def epilogue(carried, n_loop):
             out = [carried[0], carried[2]] + list(carried[3 + n_s:3 + n_s + tr.D_TILES])
+            kv_last = kv_base + n_loop * tr.BLOCK_N
             if n_loop % 2 == fx.Index(0):
-                out = finish(carried, 0)
+                out = finish(carried, 0, kv_last)
             else:
-                out = finish(carried, 1)
+                out = finish(carried, 1, kv_last)
             return out
 
         init = [m0, corr0, fx.Float32(0.0)] + s0 + [fx.full(16, 0.0, fx.Float32) for _ in range(tr.D_TILES)] + v_regs
@@ -699,6 +727,8 @@ def build_fmha_fwd_gfx942(head_dim,
         l_fin = l_fin + peer(l_fin)
         inv_l = fx.Float32(1.0) / l_fin
         inv_l = (l_fin > fx.Float32(0.0)).select(inv_l, fx.Float32(0.0))
+        if const_expr(dropout):
+            inv_l = inv_l * fx.Float32(dropout_scale)
         q_ok = q_row < sq
         for dt in range_constexpr(tr.D_TILES):
             o = Vec(results[2 + dt]) * fx.full(16, fx.Float32(inv_l), fx.Float32)
@@ -857,9 +887,18 @@ def build_fmha_fwd_gfx942(head_dim,
         wl, wr = abi.resolve_window(causal_type, host_causal_type, window, seqlen_q, seqlen_k)
         vb, sq0, sq1, sk0, sk1, mq, mk = abi.varlen_args(False, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
         vb = principal_diagonal_bits(vb, principal_diagonal)
-        if dropout_p:
-            raise NotImplementedError('dropout is not implemented on gfx942 yet')
         bp, sb0, sb1, sb2 = bias_args(bias)
+        if dropout_p and not dropout:
+            raise ValueError('dropout_p= on a build without dropout')
+        # `hold` keeps a materialised philox scalar alive across the launch (abi.u64_scalar).
+        ps, po1, po2, ip, dsc, hold = abi.dropout_args(dropout,
+                                                      dropout_p,
+                                                      philox_seed,
+                                                      philox_offset1,
+                                                      philox_offset2,
+                                                      Q.device,
+                                                      stream)
+        so, oo = abi.dropout_outputs(dropout, philox_seed_output, philox_offset_output)
         packed = (*ptrs[:3],
                   bp,
                   ptrs[3],
@@ -875,20 +914,20 @@ def build_fmha_fwd_gfx942(head_dim,
                   mk,
                   wl,
                   wr,
-                  abi.NULL_PTR,
-                  abi.NULL_PTR,
-                  0,
-                  abi.NULL_PTR,
-                  abi.NULL_PTR,
-                  0,
-                  1.0,
+                  ps,
+                  po1,
+                  po2,
+                  so,
+                  oo,
+                  ip,
+                  dsc,
                   *meta,
                   abi.resolve_scale(Q, scale, False, tr.D ** -0.5),
                   *st,
                   sb0,
                   sb1,
                   sb2)
-        return packed, stream
+        return packed, hold, stream
 
     def bias_args(t):
         """(pointer, stride_b_batch, stride_b_head, stride_b_seq_q) of a (B, H, Sq, Sk) bias."""
@@ -903,7 +942,7 @@ def build_fmha_fwd_gfx942(head_dim,
         return abi.ptr_arg(t), t.stride(0), t.stride(1), t.stride(2)
 
     def _launch(*args, **kwargs):
-        packed, stream = _args(*args, **kwargs)
+        packed, _hold, stream = _args(*args, **kwargs)
         abi.run_compiled(compiled, launch_fmha_fwd_gfx942, *packed, fx.Stream(stream))
 
     _launch.traits = tr
