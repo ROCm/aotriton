@@ -78,6 +78,17 @@ VARLEN_FACTORY = {
     "seqused": StridedVarlenSdpaContext,
 }
 
+# The `causal` axis of the varlen matrix. Besides off and top-left causal it
+# carries a numeric sliding window measured from each sequence's bottom-right
+# diagonal (VarlenBits::principal_diagonal_choice = BOTTOM_RIGHT). That is a
+# property of the kernel's mask code, not of a feature combination, so it rides
+# the level-0 matrix: every head dim, dropout, dtype and layout, with
+# seqlen_q and seqlen_k drawn independently so d = seqlen_k - seqlen_q differs
+# per sequence and takes both signs. aiter accepts only sentinel windows.
+VARLEN_WINDOW_BR = pd_causal((16, 4), 1)
+VARLEN_CAUSAL_VALUES = [False, True] + ([] if BWD_IMPL == 'aiter' else [VARLEN_WINDOW_BR])
+VARLEN_CAUSAL_IDS = ['CausalOff', 'CausalOn'] + ([] if BWD_IMPL == 'aiter' else ['WindowBR'])
+
 # torch.nn.attention.varlen.varlen_attn(..., seqused_k=...): "Number of valid KV
 # tokens per batch element; shape (N,). When set, only the first seqused_k[i]
 # tokens in the key/value sequence for batch element i participate in attention."
@@ -93,13 +104,13 @@ VARLEN_FACTORY = {
 # read the same six scalars -- so the restriction is torch's, not ours, and a
 # limitation the code does not actually have is one that rots into a surprise.
 @pytest.mark.parametrize('n_seqlen', [3, 7])
-@pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
+@pytest.mark.parametrize('causal', VARLEN_CAUSAL_VALUES, ids=VARLEN_CAUSAL_IDS)
 def test_seqused_k(request, gpu_id, n_seqlen, causal):
     np.random.seed(4177)
     N_HEADS = 3
     D_HEAD = 64
     seqlens_q = rng_seqlens(n_seqlen)
-    if causal:
+    if causal is True:
         # Deliberately SHORTER than Q, not equal to it. Under top-left causal a
         # key past index seqlen_q is masked no matter what, so slack appended to
         # a full-length K is invisible and this half of the test would pass with
@@ -299,7 +310,7 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
 @pytest.mark.parametrize('N_HEADS', [3])
 @pytest.mark.parametrize('D_HEAD', [64, 128, 192] if BWD_IMPL == 'aiter' else [8, 64, 184, (24, 152), (120, 8)], ids=fmt_hdim)
 @pytest.mark.parametrize('n_seqlen', range(2, 24, 5))
-@pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
+@pytest.mark.parametrize('causal', VARLEN_CAUSAL_VALUES, ids=VARLEN_CAUSAL_IDS)
 @pytest.mark.parametrize('dropout_p', [0.0] if BWD_IMPL == 'aiter' else [0.0, 0.5])
 @pytest.mark.parametrize('dtype', DTYPES)
 @pytest.mark.parametrize('sm_scale', ['l1', 'l2'] if FOR_RELEASE > 0 else ['l1'])
@@ -309,10 +320,12 @@ def test_op_bwd(gpu_id, N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, 
                 varlen_type, lse_layout):
     np.random.seed(8139)
     seqlens_q = rng_seqlens(n_seqlen)
-    seqlens_k = seqlens_q if causal else rng_seqlens(n_seqlen)
+    # `causal is True`, not truthiness: a window tuple is truthy, and the
+    # windowed variant needs independent lengths to have a per-sequence d.
+    seqlens_k = seqlens_q if causal is True else rng_seqlens(n_seqlen)
     if varlen_type in SLOTTED_TYPES:
         padlens_q = rng_padlens(n_seqlen)
-        padlens_k = padlens_q if causal else rng_padlens(n_seqlen)
+        padlens_k = padlens_q if causal is True else rng_padlens(n_seqlen)
         seqlens_q = np.array([seqlens_q, padlens_q])
         seqlens_k = np.array([seqlens_k, padlens_k])
     # Sets the current CUDA device for this worker, which is what the bare 'cuda'
