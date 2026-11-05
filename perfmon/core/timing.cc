@@ -75,6 +75,9 @@ struct Scratch {
   }
 };
 
+// Iterations of the short graph that warms up the timed one.
+constexpr int kWarmGraphIters = 8;
+
 // Any failure, including a refused or failed stream capture, throws with the
 // step that failed. There is no fallback: stream_ev is a cross-check chosen
 // explicitly with PERFMON_TIMING_METHOD=stream_ev, never a silent substitute
@@ -87,10 +90,8 @@ struct Scratch {
 //  * Each iteration has its own start and end event. A shared event between
 //    two iterations is recorded twice and keeps the later timestamp, which
 //    folds the next iteration's 1 GiB flush into the sample.
-std::vector<double> run_hipgraph_ev100(Measurement& measurement, hipStream_t stream, int iters) {
+void capture_graph(Measurement& measurement, hipStream_t stream, Scratch& s, int iters) {
   void* flush_buf = flush_buffer();
-  Scratch s(iters);
-
   check(hipStreamBeginCapture(stream, hipStreamCaptureModeThreadLocal),
         "hipStreamBeginCapture (hipgraph_ev100)");
   hipError_t rec_err = hipSuccess;
@@ -140,10 +141,24 @@ std::vector<double> run_hipgraph_ev100(Measurement& measurement, hipStream_t str
   }
 
   check(hipGraphInstantiate(&s.graph_exec, s.graph, nullptr, nullptr, 0), "hipGraphInstantiate");
-  // One-time graph setup without running the kernels. The kernels' loading and
-  // first-use cost is paid by the runner's untimed first launch and the warm
-  // call, and the L2 is flushed before every sample anyway, so a full warm-up
-  // launch of the graph would only double the GPU time.
+}
+
+std::vector<double> run_hipgraph_ev100(Measurement& measurement, hipStream_t stream, int iters) {
+  Scratch s(iters);
+  capture_graph(measurement, stream, s, iters);
+
+  // Warm-up: a short graph of the same shape, run once, then the one-time
+  // setup (upload) of the timed graph. A full warm-up launch of the timed
+  // graph would double the GPU time, and hipGraphUpload alone left the first
+  // samples of the timed loop up to 9% high (2 warm iterations still left
+  // them 10% high at seqlen 2048; 8 did not). The L2 is flushed before every
+  // sample anyway.
+  {
+    Scratch warm(kWarmGraphIters);
+    capture_graph(measurement, stream, warm, kWarmGraphIters);
+    check(hipGraphLaunch(warm.graph_exec, stream), "hipGraphLaunch (warm-up)");
+    check(hipStreamSynchronize(stream), "hipStreamSynchronize (warm-up)");
+  }
   check(hipGraphUpload(s.graph_exec, stream), "hipGraphUpload");
   check(hipStreamSynchronize(stream), "hipStreamSynchronize (upload)");
   check(hipGraphLaunch(s.graph_exec, stream), "hipGraphLaunch (timed)");
