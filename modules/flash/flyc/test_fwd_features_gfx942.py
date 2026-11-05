@@ -6,7 +6,8 @@
 
 Windows and principal_diagonal_choice are test_fwd_principal_diagonal_gfx942.py.
 This covers varlen layouts and both LSE layouts, bias, dropout (against an
-independent host Philox), rows that see no key, and a null LSE.
+independent host Philox), padded head dims with NaN slack, rows that see no
+key, and a null LSE.
 
     AOTRITON_FLYDSL_KERNEL_ROOT=<flydsl-checkout> \\
         python -m pytest modules/flash/flyc/test_fwd_features_gfx942.py
@@ -43,10 +44,14 @@ LSE_ATOL = 1e-4
 
 
 @functools.cache
-def _build(head_dim, causal_type=0, bias=False, dropout=False):
+def _build(head_dim, causal_type=0, bias=False, dropout=False, padded_head=False):
     from fmha_fwd_gfx942 import build_fmha_fwd_gfx942
 
-    return build_fmha_fwd_gfx942(head_dim, causal_type=causal_type, bias=bias, dropout=dropout)
+    return build_fmha_fwd_gfx942(head_dim,
+                                 causal_type=causal_type,
+                                 bias=bias,
+                                 dropout=dropout,
+                                 padded_head=padded_head)
 
 
 def _reference(q, k, v, scale, bias=None, keep=None, p=0.0, bottom_right=False):
@@ -209,6 +214,40 @@ def test_dropout(head_dim, shape, causal):
     _check(f"hd={head_dim} dropout {shape} causal={causal}", out, lse.view(b, h, sq), ref, ref_lse)
     assert seed_out.item() == np.int64(np.uint64(seed)).item()
     assert off_out.item() == off1 + off2
+
+
+def _with_nan_slack(*shape):
+    """A (..., hdim) view of a (..., ceil8(hdim)) tensor whose slack is NaN: the 8xD contract."""
+    *lead, d = shape
+    full = torch.full((*lead, -(-d // 8) * 8), float("nan"), device="cuda", dtype=DTYPE)
+    view = full[..., :d]
+    view.copy_(torch.randn(*shape, device="cuda", dtype=DTYPE))
+    return view
+
+
+# (rung, hdim_qk, hdim_vo): primes, odd sizes, and QK != VO, each above the rung below.
+PADDED = [(32, 7, 7), (32, 23, 23), (64, 37, 37), (64, 53, 61), (96, 67, 67), (96, 83, 83),
+          (128, 113, 113), (128, 120, 72), (128, 97, 128)]
+
+
+@pytest.mark.parametrize("causal", [False, True])
+@pytest.mark.parametrize("rung,hqk,hvo", PADDED)
+def test_padded_head(rung, hqk, hvo, causal):
+    """Columns past hdim are NaN in Q, K and V; none may reach a stored O column."""
+    b, h, sq, sk = 2, 3, 257, 519
+    if causal:
+        sq, sk = sk, sq                 # bottom-right with dead rows
+    torch.manual_seed(hqk * 1000 + hvo)
+    q = _with_nan_slack(b, h, sq, hqk)
+    k = _with_nan_slack(b, h, sk, hqk)
+    v = _with_nan_slack(b, h, sk, hvo)
+    out = _with_nan_slack(b, h, sq, hvo)
+    out.fill_(float("nan"))
+    lse = torch.full((b * h, sq), float("nan"), device="cuda")
+    _build(rung, causal_type=2 if causal else 0, padded_head=True)(q, k, v, out, b, sq, seqlen_k=sk, lse=lse)
+    torch.cuda.synchronize()
+    ref, ref_lse = _reference(q, k, v, hqk ** -0.5, bottom_right=causal)
+    _check(f"rung={rung} hqk={hqk} hvo={hvo} causal={causal}", out, lse.view(b, h, sq), ref, ref_lse)
 
 
 @pytest.mark.parametrize("head_dim", HEAD_DIMS)

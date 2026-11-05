@@ -35,10 +35,14 @@ DEBUG_NTILES = False
 class Traits:
     """Compile-time shape of one kernel."""
 
-    def __init__(self, head_dim, causal, dtype_str, num_waves, block_n):
+    def __init__(self, head_dim, causal, dtype_str, num_waves, block_n, padded_head=False):
         assert head_dim % 32 == 0 and 32 <= head_dim <= 512, head_dim
         assert block_n in (32, 64), block_n
         self.D = head_dim
+        self.PADDED = padded_head
+        # Columns below PAD_FLOOR are real in every call this build serves. A padded
+        # build is chosen by max(hdim_qk, hdim_vo), so the other one can be anything.
+        self.PAD_FLOOR = 0 if padded_head else head_dim
         self.CAUSAL = causal
         self.DTYPE = dtype_str
         self.NUM_WAVES = num_waves
@@ -74,7 +78,7 @@ class Traits:
         self.LDS_BYTES = self.LDS_VT_BASE + self.NV * self.VT_TILE_BYTES
         assert self.LDS_BYTES <= 65536, self.LDS_BYTES
         # The JIT cache keys on scalar closure values; the kernel references this.
-        self.CACHE_TAG = f'D{head_dim}_c{int(causal)}_{dtype_str}_w{num_waves}_n{block_n}'
+        self.CACHE_TAG = f'D{head_dim}_c{int(causal)}_{dtype_str}_w{num_waves}_n{block_n}_p{int(padded_head)}'
 
 
 
@@ -88,7 +92,8 @@ def build_fmha_fwd_gfx942(head_dim,
                           block_n=None,
                           waves_per_eu=2,
                           rescale_threshold=0.0,
-                          grid_axis_order=None):
+                          grid_axis_order=None,
+                          padded_head=False):
     """A launcher with flash_attn_func_gfx1201_aiw's call interface and kernel ABI.
 
     `causal_type` as gfx1201's: 1/2 are host sentinels, 3 is gSWA; all compile to 3.
@@ -104,7 +109,7 @@ def build_fmha_fwd_gfx942(head_dim,
     if block_n is None:
         # Keep 32 MFMAs per KV tile: small heads take a longer tile.
         block_n = 64 if head_dim <= 64 else 32
-    tr = Traits(head_dim, causal_type != 0, dtype_str, num_waves, block_n)
+    tr = Traits(head_dim, causal_type != 0, dtype_str, num_waves, block_n, padded_head)
     # 0 HEAD_FASTEST, 1 TILE_FASTEST, as csrc/flyc_common.h's kFlycGridAxis*.
     if grid_axis_order is None:
         grid_axis_order = 0 if tr.CAUSAL else 1
@@ -247,19 +252,25 @@ def build_fmha_fwd_gfx942(head_dim,
             return fx.recast_iter(fx.PointerType.get(e.ir_type, fx.AddressSpace.Shared, align),
                                   lds_p + fx.Int64(off))
 
-        def rsrc_for(ptr, batch, h, row_off, sb, sh, ss, rows):
-            # One sequence of one head: rows past it read as 0 and store nowhere.
+        # The 8xD contract: a row owns ceil8(hdim) columns (numerical lessons, #11).
+        row_qk = (fx.Int32(hdim_qk) + fx.Int32(7)) & fx.Int32(-8)
+        row_vo = (fx.Int32(hdim_vo) + fx.Int32(7)) & fx.Int32(-8)
+
+        def rsrc_for(ptr, batch, h, row_off, sb, sh, ss, rows, row_elems):
+            # One sequence of one head, ending on its last row's last owned column
+            # (fmha_dualwave_gfx950._slab_span_elems): past it reads 0 and stores drop.
             elems = fx.Int64(batch) * sb + fx.Int64(h) * sh + fx.Int64(row_off) * ss
             base = fx.Int64(fx.ptrtoint(ptr)) + elems * fx.Int64(2)
-            nbytes = fx.Int64(rows) * ss * fx.Int64(2)
-            return buffer_ops.create_buffer_resource_from_addr(base, num_records_bytes=nbytes)
+            span = (fx.Int64(rows) - fx.Int64(1)) * ss + fx.Int64(row_elems)
+            span = (fx.Int32(rows) > fx.Int32(0)).select(span, fx.Int64(0))
+            return buffer_ops.create_buffer_resource_from_addr(base, num_records_bytes=span * fx.Int64(2))
 
-        q_rsrc = rsrc_for(Q, q_batch, head, q_row_off, stride_q_batch, stride_q_head, stride_q_seq, sq)
-        o_rsrc = rsrc_for(O, q_batch, head, q_row_off, stride_o_batch, stride_o_head, stride_o_seq, sq)
+        q_rsrc = rsrc_for(Q, q_batch, head, q_row_off, stride_q_batch, stride_q_head, stride_q_seq, sq, row_qk)
+        o_rsrc = rsrc_for(O, q_batch, head, q_row_off, stride_o_batch, stride_o_head, stride_o_seq, sq, row_vo)
         k_rsrc = rocdl.get_buffer_rsrc(
-            rsrc_for(K, k_batch, head_k, k_row_off, stride_k_batch, stride_k_head, stride_k_seq, sk))
+            rsrc_for(K, k_batch, head_k, k_row_off, stride_k_batch, stride_k_head, stride_k_seq, sk, row_qk))
         v_rsrc_raw = rocdl.get_buffer_rsrc(
-            rsrc_for(V, k_batch, head_k, k_row_off, stride_v_batch, stride_v_head, stride_v_seq, sk))
+            rsrc_for(V, k_batch, head_k, k_row_off, stride_v_batch, stride_v_head, stride_v_seq, sk, row_vo))
         q_row_stride = fx.Index(fx.Int32(stride_q_seq))
         k_row_stride_b = fx.Int32(stride_k_seq) * fx.Int32(2)
         v_row_stride_b = fx.Int32(stride_v_seq) * fx.Int32(2)
@@ -270,10 +281,24 @@ def build_fmha_fwd_gfx942(head_dim,
         q_row = q_wave + lm
 
         # Q^T packs: k-step 2t+e reads d = 16t + 8*lh + 4e + [0, 4).
+        def k_col_mask(t):
+            """Dword masks keeping this lane's columns 16t + 8lh + [0, 8) below hdim_qk."""
+            c0 = fx.Int32(16 * t) + fx.Int32(lh * 8)
+            words = []
+            for w in range_constexpr(4):
+                lo = (c0 + fx.Int32(2 * w) < fx.Int32(hdim_qk)).select(fx.Int32(0xFFFF), fx.Int32(0))
+                hi = (c0 + fx.Int32(2 * w + 1) < fx.Int32(hdim_qk)).select(fx.Int32(-65536), fx.Int32(0))
+                words.append(lo | hi)
+            return Vec.from_elements(words, fx.Int32)
+
         q_packs = []
         for t in range_constexpr(tr.QK_STEPS // 2):
             off = q_row * q_row_stride + fx.Index(16 * t) + lh * 8
             v8 = buffer_ops.buffer_load(q_rsrc, off, vec_width=8, dtype=elem)
+            if const_expr(16 * t + 16 > tr.PAD_FLOOR):
+                # Slack columns may hold NaN, and 0 * NaN is NaN: zero both Q and K there.
+                v8 = Vec(v8).bitcast(fx.Int32) & k_col_mask(t)
+                v8 = Vec(v8).bitcast(elem).ir_value()
             q_packs.append(Vec(v8).shuffle(Vec(v8), [0, 1, 2, 3]).ir_value())
             q_packs.append(Vec(v8).shuffle(Vec(v8), [4, 5, 6, 7]).ir_value())
 
@@ -357,10 +382,14 @@ def build_fmha_fwd_gfx942(head_dim,
             return [lds_load(off + buf * tr.K_TILE_BYTES + n * 32 * tr.K_STRIDE, v8e(), 16, f'k{buf}')
                     for n in range(tr.NSUB) for off in k_rd_off]
 
+        k_masks = {t: k_col_mask(t) for t in range(tr.QK_STEPS // 2) if 16 * t + 16 > tr.PAD_FLOOR}
+
         def qk(k8s):
             """S^T sub-tiles, one per 32 KV rows: [v16f32] * NSUB."""
             out = []
             nt = tr.QK_STEPS // 2
+            k8s = [Vec(Vec(k8).bitcast(fx.Int32) & k_masks[i % nt]).bitcast(elem).ir_value() if i % nt in k_masks
+                   else k8 for i, k8 in enumerate(k8s)]
             for n in range_constexpr(tr.NSUB):
                 s = fx.full(16, 0.0, fx.Float32)
                 for t in range_constexpr(nt):
@@ -723,7 +752,10 @@ def build_fmha_fwd_gfx942(head_dim,
                 packed = Vec.from_elements([fx.Float32(x).to(elem) for x in vals], elem)
                 d = fx.Index(32 * dt + 8 * i) + lh * 4
                 off = q_row * o_row_stride + d
-                buffer_ops.buffer_store(packed.ir_value(), o_rsrc, off, mask=q_ok)
+                ok = q_ok
+                if const_expr(32 * dt + 8 * i + 8 > tr.PAD_FLOOR):
+                    ok = ok & (fx.Int32(d) < row_vo)
+                buffer_ops.buffer_store(packed.ir_value(), o_rsrc, off, mask=ok)
         # LSE: natural base, +inf for fully masked rows; a null L gets an empty range.
         lse = (m_fin + fx.Float32(fx.math.log2(l_fin))) * fx.Float32(LN2)
         lse = (l_fin > fx.Float32(0.0)).select(lse, fx.Float32(float('inf')))
@@ -867,8 +899,11 @@ def build_fmha_fwd_gfx942(head_dim,
         """flash_attn_func_gfx1201_aiw's `_args`: every kernel argument but the stream."""
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
         ptrs, meta, st = abi.prep_tensors([("Q", Q), ("K", K), ("V", V), ("O", O)], q_heads=("O",))
-        if meta[2] != tr.D or meta[3] != tr.D:
-            raise NotImplementedError(f'head dims {meta[2:]} on a {tr.D} build: padded heads come later')
+        if tr.PADDED:
+            if not (0 < max(meta[2], meta[3]) <= tr.D):
+                raise ValueError(f'head dims {meta[2:]} do not fit a padded {tr.D} build')
+        elif meta[2] != tr.D or meta[3] != tr.D:
+            raise ValueError(f'head dims {meta[2:]} on an unpadded {tr.D} build; pass padded_head=True')
         lse_p = abi.lse_args(lse, seqlen_q, varlen, meta[0])
         wl, wr = abi.resolve_window(causal_type, host_causal_type, window, seqlen_q, seqlen_k)
         vb, sq0, sq1, sk0, sk1, mq, mk = abi.varlen_args(False, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
@@ -908,7 +943,7 @@ def build_fmha_fwd_gfx942(head_dim,
                   ip,
                   dsc,
                   *meta,
-                  abi.resolve_scale(Q, scale, False, tr.D ** -0.5),
+                  abi.resolve_scale(Q, scale, tr.PADDED, tr.D ** -0.5),
                   *st,
                   sb0,
                   sb1,
