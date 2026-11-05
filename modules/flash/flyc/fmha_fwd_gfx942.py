@@ -420,7 +420,8 @@ def build_fmha_fwd_gfx942(head_dim,
         if const_expr(tr.CAUSAL):
             win_l, win_r = fmha.resolve_window(window_left, window_right, sq_i32, sk_i32, varlen_bits)
         else:
-            win_l = sk_i32
+            # Unbounded: no row index exceeds seqlen_q, no column seqlen_k.
+            win_l = sq_i32
             win_r = sk_i32
         q_first = fx.Int32(q_start)
         q_last = smin(q_first + fx.Int32(tr.BLOCK_M), sq_i32) - fx.Int32(1)
