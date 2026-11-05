@@ -34,6 +34,7 @@ def main():
     p.add_argument('--block_n', type=int, default=None)
     p.add_argument('--rescale_threshold', type=float, default=0.0)
     p.add_argument('--grid_axis_order', type=int, default=None)
+    p.add_argument('--bias', action='store_true', help='(B, H, Sq, Sk) attention bias, N(0, 1)')
     p.add_argument('--iters', type=int, default=20)
     p.add_argument('--no_check', action='store_true')
     p.add_argument('--dist', default='normal', choices=['normal', 'uniform', 'sharp'],
@@ -64,8 +65,10 @@ def main():
                                    block_n=a.block_n,
                                    rescale_threshold=a.rescale_threshold,
                                    grid_axis_order=a.grid_axis_order,
+                                   bias=a.bias,
                                    waves_per_eu=a.waves_per_eu)
     lse_2d = lse.view(a.batch * a.heads, a.seqlen)
+    bias = torch.randn(a.batch, a.heads, a.seqlen, sk, dtype=dt, device='cuda') if a.bias else None
 
     def run():
         # BSHD storage, passed as BHSD-shaped views.
@@ -78,6 +81,7 @@ def main():
                seqlen_k=sk,
                scale=sm_scale,
                lse=lse_2d,
+               bias=bias,
                stream=torch.cuda.current_stream())
 
     run()
@@ -96,6 +100,8 @@ def main():
         for b0 in range(0, a.batch, nb):
             sl = slice(b0, b0 + nb)
             s = (qt[sl] @ kt[sl].transpose(-1, -2)) * sm_scale
+            if bias is not None:
+                s = s + bias[sl].double()
             if a.causal:
                 i = torch.arange(a.seqlen, device='cuda')[:, None]
                 j = torch.arange(sk, device='cuda')[None, :]

@@ -105,8 +105,10 @@ def build_fmha_fwd_gfx942(head_dim,
     if host_causal_type not in (0, 1, 2, 3):
         raise ValueError(f'causal_type must be 0-3, got {host_causal_type}')
     causal_type = 0 if host_causal_type == 0 else 3
-    if bias or dropout:
-        raise NotImplementedError('bias and dropout are not implemented on gfx942 yet')
+    if dropout:
+        raise NotImplementedError('dropout is not implemented on gfx942 yet')
+    if bias and causal_type:
+        raise ValueError('bias with a causal mask is not served (aot/_common.py flash_disabled)')
     if block_n is None:
         # Keep 32 MFMAs per KV tile: small heads take a longer tile.
         block_n = 64 if head_dim <= 64 else 32
@@ -115,7 +117,7 @@ def build_fmha_fwd_gfx942(head_dim,
     if grid_axis_order is None:
         grid_axis_order = 0 if tr.CAUSAL else 1
     tile_fastest = grid_axis_order == 1
-    cache_tag = f'{tr.CACHE_TAG}_wpe{waves_per_eu}_dbg{int(DEBUG_NTILES)}_thr{rescale_threshold}_g{grid_axis_order}'
+    cache_tag = f'{tr.CACHE_TAG}_wpe{waves_per_eu}_dbg{int(DEBUG_NTILES)}_thr{rescale_threshold}_g{grid_axis_order}_b{int(bias)}'
     elem = fx.BFloat16 if dtype_str == 'bf16' else fx.Float16
 
     # MLIR types need a live context, so they are built at trace time.
@@ -456,6 +458,9 @@ def build_fmha_fwd_gfx942(head_dim,
 
         lead = (n_rel(q_last - win_l - fx.Int32(kv_base)) + tr.BLOCK_N - 1) // tr.BLOCK_N
         clean_end = n_rel(smin(q_first + win_r, sk_i32 - fx.Int32(1)) + fx.Int32(1) - fx.Int32(kv_base)) // tr.BLOCK_N
+        if const_expr(bias):
+            # Only the last tile can hold the dword that straddles the bias slab's end.
+            clean_end = smin(clean_end, smax(n_tiles, fx.Index(1)) - fx.Index(1))
         n_loop = (n_tiles > fx.Index(1)).select(n_tiles - fx.Index(1), fx.Index(0))
         # Iteration j masks tile j+1. Masked iterations [0, j_clean) and [j_tail, n_loop)
         # bracket the clean ones; j_clean is even so the unrolled loop knows its buffers.
@@ -463,11 +468,56 @@ def build_fmha_fwd_gfx942(head_dim,
         j_clean = smin_i(j_clean + j_clean % 2, n_loop)
         j_clean_end = smax_i(smin_i(smax_i(clean_end, fx.Index(1)) - fx.Index(1), n_loop), j_clean)
 
-        def scale_and_mask(s_raw, kv_start, masked):
+        if const_expr(bias):
+            # (B, H, Sq, Sk), Sk contiguous; rows offset by Q's varlen offset, columns by K's.
+            b_elems = (fx.Int64(q_batch) * stride_b_batch + fx.Int64(head) * stride_b_head
+                       + fx.Int64(q_row_off) * stride_b_seq_q)
+            # Rows of an odd-pitch bias start mid-dword: the descriptor base is aligned
+            # down, and each lane funnel-shifts its 4 keys out of 3 aligned dwords.
+            b_addr = fx.Int64(fx.ptrtoint(B)) + b_elems * fx.Int64(2)
+            b_mis = fx.Int32(b_addr & fx.Int64(3))
+            # The range ends on the slab's last element and is never rounded up: the caller
+            # owns nothing past it (fmha_dualwave_gfx950._bias_slab_num_records_bytes).
+            b_span = smax(fx.Int64(sq_i32 - fx.Int32(1)) * stride_b_seq_q + fx.Int64(sk_i32), fx.Int64(0))
+            b_rsrc = rocdl.get_buffer_rsrc(buffer_ops.create_buffer_resource_from_addr(
+                b_addr - fx.Int64(b_mis),
+                num_records_bytes=b_span * fx.Int64(2) + fx.Int64(b_mis)))
+            b_byte = b_mis + (fx.Int32(q_row) * fx.Int32(stride_b_seq_q) + k_row_off + kv_lane) * fx.Int32(2)
+            b_lane = b_byte & fx.Int32(-4)
+            b_shift = (b_byte & fx.Int32(3)) * fx.Int32(8)
+
+        def bias_load(kv_start, exact):
+            """This lane's bias for one KV tile, in S^T order: 4 keys per 8-key group.
+
+            The hardware drops a dword not wholly in range, which can take the slab's
+            last element with it; `exact` tiles read 2 bytes at a time instead."""
+            if const_expr(not bias):
+                return None
+            soff = fx.Int32(kv_start) * fx.Int32(2)
+            out = []
+            for g in range_constexpr(tr.NS // 4):
+                if const_expr(exact):
+                    off = b_byte + fx.Int32((32 * (g // 4) + 8 * (g % 4)) * 2)
+                    hs = [rocdl.raw_ptr_buffer_load(T.i16, b_rsrc, off + fx.Int32(2 * e), soff, 0) for e in range(4)]
+                    out.append(Vec.from_elements([fx.Int16(h) for h in hs], fx.Int16).bitcast(elem).ir_value())
+                    continue
+                off = b_lane + fx.Int32((32 * (g // 4) + 8 * (g % 4)) * 2)
+                dw = Vec(rocdl.raw_ptr_buffer_load(Vec.make_type(3, fx.Int32), b_rsrc, off, soff, 0))
+                words = [fx.Int32(llvm.call_intrinsic(T.i32, 'llvm.fshr.i32',
+                                                      [raw(dw[w + 1]), raw(dw[w]), raw(b_shift)], [], []))
+                         for w in range(2)]
+                out.append(Vec.from_elements(words, fx.Int32).bitcast(elem).ir_value())
+            return out
+
+        def scale_and_mask(s_raw, kv_start, masked, bias_vals):
             # Scale once in fp32; the max and the exponent share that rounding.
             c_scale_v = fx.full(16, fx.Float32(c_scale), fx.Float32)
             scaled = [Vec(sr) * c_scale_v for sr in s_raw]
             s_vals = [scaled[r // 16][r % 16] for r in range(tr.NS)]
+            if const_expr(bias):
+                # Upcast first: log2(e) in the input dtype would differ from the backward's.
+                s_vals = [s_vals[r] + fx.Float32(Vec(bias_vals[r // 4])[r % 4].to(fx.Float32)) * fx.Float32(LOG2E)
+                          for r in range(tr.NS)]
             if const_expr(masked):
                 s_vals = mask_scores(s_vals, kv_start)
             return s_vals
@@ -475,9 +525,9 @@ def build_fmha_fwd_gfx942(head_dim,
         def wave_any(pred):
             return fx.Int64(rocdl.ballot(fx.Int64.ir_type, raw(pred))) != fx.Int64(0)
 
-        def softmax_head(s_raw, m_old, kv_start, masked):
+        def softmax_head(s_raw, m_old, kv_start, masked, bias_vals=None):
             """Scale, mask, and update the lazy running max; branch-free so it hides under PV."""
-            s_vals = scale_and_mask(s_raw, kv_start, masked)
+            s_vals = scale_and_mask(s_raw, kv_start, masked, bias_vals)
             local = s_vals[0]
             for r in range_constexpr(1, tr.NS):
                 local = fx.maxnumf(local, s_vals[r])
@@ -541,6 +591,7 @@ def build_fmha_fwd_gfx942(head_dim,
         cluster_barrier()
         # C1(-1)
         compute_begin()
+        b0 = bias_load(kv_base, True)
         s_raw = qk(k_packs)
         compute_end()
         # C2(-1)
@@ -549,7 +600,7 @@ def build_fmha_fwd_gfx942(head_dim,
         cluster_barrier()
         # C3(-1). A finite initial max keeps fully masked rows NaN-free.
         compute_begin()
-        s0, m0, corr0 = softmax_head(s_raw, c_neg_max, kv_base, True)
+        s0, m0, corr0 = softmax_head(s_raw, c_neg_max, kv_base, True, b0)
         compute_end()
 
         n_s = tr.NS
@@ -567,6 +618,7 @@ def build_fmha_fwd_gfx942(head_dim,
             v_store_lds(v_regs, b)
             v_regs = v_load(kv_next)
             k_packs = k_read(1 - b)
+            b_next = bias_load(kv_next, masked)
             rocdl.s_waitcnt(lgkmcnt=0)
             cluster_barrier(f'C0.{b}')
             # C1(j)
@@ -584,7 +636,7 @@ def build_fmha_fwd_gfx942(head_dim,
             # C3(j)
             compute_begin()
             o_accs = pv(o_accs, p_packs, vts)
-            s_vals, m_next, corr_next = softmax_head(s_next, m_cur, kv_next, masked)
+            s_vals, m_next, corr_next = softmax_head(s_next, m_cur, kv_next, masked, b_next)
             compute_end(f'C3.{b}')
             return [m_next, corr_next, l_new] + s_vals + o_accs + v_regs
 
@@ -805,10 +857,11 @@ def build_fmha_fwd_gfx942(head_dim,
         wl, wr = abi.resolve_window(causal_type, host_causal_type, window, seqlen_q, seqlen_k)
         vb, sq0, sq1, sk0, sk1, mq, mk = abi.varlen_args(False, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
         vb = principal_diagonal_bits(vb, principal_diagonal)
-        if bias is not None or dropout_p:
-            raise NotImplementedError('bias and dropout are not implemented on gfx942 yet')
+        if dropout_p:
+            raise NotImplementedError('dropout is not implemented on gfx942 yet')
+        bp, sb0, sb1, sb2 = bias_args(bias)
         packed = (*ptrs[:3],
-                  abi.NULL_PTR,
+                  bp,
                   ptrs[3],
                   lse_p,
                   sq0,
@@ -832,10 +885,22 @@ def build_fmha_fwd_gfx942(head_dim,
                   *meta,
                   abi.resolve_scale(Q, scale, False, tr.D ** -0.5),
                   *st,
-                  0,
-                  0,
-                  0)
+                  sb0,
+                  sb1,
+                  sb2)
         return packed, stream
+
+    def bias_args(t):
+        """(pointer, stride_b_batch, stride_b_head, stride_b_seq_q) of a (B, H, Sq, Sk) bias."""
+        if not bias:
+            if t is not None:
+                raise ValueError('bias= on a build without bias')
+            return abi.NULL_PTR, 0, 0, 0
+        if t is None:
+            raise ValueError('this build has bias and requires bias=')
+        if t.dim() != 4 or t.stride(3) != 1:
+            raise ValueError(f'bias must be (B, H, Sq, Sk) with a contiguous last axis, got {tuple(t.shape)}')
+        return abi.ptr_arg(t), t.stride(0), t.stride(1), t.stride(2)
 
     def _launch(*args, **kwargs):
         packed, stream = _args(*args, **kwargs)
