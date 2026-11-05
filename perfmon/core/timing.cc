@@ -140,8 +140,12 @@ std::vector<double> run_hipgraph_ev100(Measurement& measurement, hipStream_t str
   }
 
   check(hipGraphInstantiate(&s.graph_exec, s.graph, nullptr, nullptr, 0), "hipGraphInstantiate");
-  check(hipGraphLaunch(s.graph_exec, stream), "hipGraphLaunch (warm-up)");
-  check(hipStreamSynchronize(stream), "hipStreamSynchronize (warm-up)");
+  // One-time graph setup without running the kernels. The kernels' loading and
+  // first-use cost is paid by the runner's untimed first launch and the warm
+  // call, and the L2 is flushed before every sample anyway, so a full warm-up
+  // launch of the graph would only double the GPU time.
+  check(hipGraphUpload(s.graph_exec, stream), "hipGraphUpload");
+  check(hipStreamSynchronize(stream), "hipStreamSynchronize (upload)");
   check(hipGraphLaunch(s.graph_exec, stream), "hipGraphLaunch (timed)");
   check(hipStreamSynchronize(stream), "hipStreamSynchronize (timed)");
   return s.elapsed_us();

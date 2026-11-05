@@ -18,7 +18,8 @@
 //
 // hipgraph_ev100 (the default): one flat hipGraph capture of
 //   [1 GiB L2-flush memset, start event, launch, end event] x n
-// launched once to warm up and once timed; each sample is one iteration's
+// uploaded (hipGraphUpload: graph setup, no kernel runs) and then launched once,
+// timed; each sample is one iteration's
 // hipEventElapsedTime. Capturing removes host launch cost, which cannot
 // otherwise be separated from GPU time. Verified on gfx942 for every forward
 // and backward backend.
