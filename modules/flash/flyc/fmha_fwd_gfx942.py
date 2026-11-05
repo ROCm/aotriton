@@ -50,22 +50,22 @@ class Traits:
         self.QK_STEPS = head_dim // 8           # MFMA k-steps of QK
         self.D_TILES = head_dim // 32           # 32-row tiles of O^T
         self.PV_STEPS = block_n // 8            # MFMA k-steps of PV per tile
-        # K rows of whole 256B DMA lines are padded 16B apart; shorter rows XOR-swizzle.
+        # K rows sit an odd number of 16B chunks apart, so 8 lanes reading 8 rows hit
+        # 8 bank groups and every read is one base plus an immediate. DMA fills the
+        # tile in whole 256B lines; lanes that land in the padding load a duplicate.
         self.K_ROW_BYTES = head_dim * 2
-        self.K_CHUNKS = head_dim // 8           # 16B chunks per row
-        self.K_PAD = self.K_ROW_BYTES % 256 == 0
-        self.K_STRIDE = self.K_ROW_BYTES + (16 if self.K_PAD else 0)
-        self.K_TILE_BYTES = block_n * self.K_STRIDE
+        chunks = head_dim // 8
+        self.K_STRIDE = (chunks + 1 - chunks % 2) * 16
         self.DMA_ROUND_BYTES = self.BLOCK_SIZE * 4
-        assert (block_n * self.K_ROW_BYTES) % self.DMA_ROUND_BYTES == 0
-        self.K_DMA_ROUNDS = block_n * self.K_ROW_BYTES // self.DMA_ROUND_BYTES
+        self.K_DMA_ROUNDS = -(-block_n * self.K_STRIDE // self.DMA_ROUND_BYTES)
+        self.K_TILE_BYTES = self.K_DMA_ROUNDS * self.DMA_ROUND_BYTES
         # V^T tile: [D][BLOCK_N + 4]; the 8B pad spreads 16 lanes over all banks.
         self.VT_STRIDE = block_n + 4
         self.VT_TILE_BYTES = head_dim * self.VT_STRIDE * 2
-        # V global load: one unit = 4 kv rows x 2 d columns.
+        # V global load: one unit = 4 kv rows x 2 d columns. Threads past the last
+        # unit redo an earlier one: the same bytes to the same place.
         self.V_UNITS = (block_n // 4) * (head_dim // 2)
-        assert self.V_UNITS % self.BLOCK_SIZE == 0, 'V tile does not split over the block'
-        self.V_UNITS_PER_THREAD = self.V_UNITS // self.BLOCK_SIZE
+        self.V_UNITS_PER_THREAD = -(-self.V_UNITS // self.BLOCK_SIZE)
         # Double buffers suffice for the pipeline's two-cluster safety distance.
         self.NK = 2
         self.NV = 2
@@ -76,13 +76,6 @@ class Traits:
         # The JIT cache keys on scalar closure values; the kernel references this.
         self.CACHE_TAG = f'D{head_dim}_c{int(causal)}_{dtype_str}_w{num_waves}_n{block_n}'
 
-    def k_swizzle(self, row):
-        """XOR mask for the 16B chunk index of K row `row` (an fx.Index)."""
-        if self.K_PAD:
-            return 0
-        if self.K_CHUNKS >= 8:
-            return row % 8
-        return (row // 2) % 4
 
 
 def build_fmha_fwd_gfx942(head_dim,
@@ -288,20 +281,12 @@ def build_fmha_fwd_gfx942(head_dim,
         k_voff = []
         k_m0 = []
         for i in range_constexpr(tr.K_DMA_ROUNDS):
-            if const_expr(tr.K_PAD):
-                line = fx.Index(i * tr.NUM_WAVES) + wave
-                lines_per_row = tr.K_ROW_BYTES // 256
-                r = line // lines_per_row
-                c = line % lines_per_row
-                k_voff.append(fx.Int32(r) * k_row_stride_b + fx.Int32(c * 256 + lane * 4))
-                lds_line = r * tr.K_STRIDE + c * 256
-            else:
-                lds_line = fx.Index(i * tr.DMA_ROUND_BYTES) + wave * (WAVE * 4)
-                p = lds_line + lane * 4
-                r = p // tr.K_ROW_BYTES
-                b = p % tr.K_ROW_BYTES
-                c = (b // 16) ^ tr.k_swizzle(r)
-                k_voff.append(fx.Int32(r) * k_row_stride_b + fx.Int32(c * 16 + b % 16))
+            lds_line = fx.Index(i * tr.DMA_ROUND_BYTES) + wave * (WAVE * 4)
+            p = lds_line + lane * 4
+            r = p // tr.K_STRIDE
+            c = p % tr.K_STRIDE
+            pad = (c >= fx.Index(tr.K_ROW_BYTES)) | (r >= fx.Index(tr.BLOCK_N))
+            k_voff.append(pad.select(fx.Int32(0), fx.Int32(r) * k_row_stride_b + fx.Int32(c)))
             k_m0.append(fx.Int32(rocdl.readfirstlane(fx.Int32.ir_type,
                                                      fx.Int32(lds_base + fx.Index(tr.LDS_K_BASE) + lds_line))))
 
@@ -326,7 +311,7 @@ def build_fmha_fwd_gfx942(head_dim,
         v_rows = []
         v_vt_off = []
         for u in range_constexpr(tr.V_UNITS_PER_THREAD):
-            unit = tid + fx.Index(u * tr.BLOCK_SIZE)
+            unit = (tid + fx.Index(u * tr.BLOCK_SIZE)) % tr.V_UNITS
             g = unit // (tr.D // 2)
             cp = unit % (tr.D // 2)
             for r in range_constexpr(4):
@@ -364,7 +349,7 @@ def build_fmha_fwd_gfx942(head_dim,
 
         k_rd_off = []
         for t in range_constexpr(tr.QK_STEPS // 2):
-            c = (fx.Index(2 * t) + lh) ^ tr.k_swizzle(lm)
+            c = fx.Index(2 * t) + lh
             k_rd_off.append(fx.Index(tr.LDS_K_BASE) + lm * tr.K_STRIDE + c * 16)
         vt_rd_off = fx.Index(tr.LDS_VT_BASE) + (lm * tr.VT_STRIDE + lh * 4) * 2
 
