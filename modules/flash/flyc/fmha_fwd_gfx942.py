@@ -405,47 +405,63 @@ def build_fmha_fwd_gfx942(head_dim,
             return fx.Int32(rocdl.ds_bpermute(fx.Int32.ir_type, swap_addr, xi)).bitcast(fx.Float32)
 
         kv_lane = fx.Int32(lh * 4)
-        if const_expr(tr.CAUSAL):
-            # TODO: the left bound; only the right one masks for now.
-            _, delta = fmha.resolve_window(window_left, window_right, sq_i32, sk_i32, varlen_bits)
-            kv_end_raw = fx.Int32(q_start + tr.BLOCK_M) + delta
-            kv_end_raw = (kv_end_raw > fx.Int32(0)).select(kv_end_raw, fx.Int32(0))
-            kv_end = fx.Index((kv_end_raw < fx.Int32(sk)).select(kv_end_raw, fx.Int32(sk)))
-        else:
-            delta = fx.Int32(0)
-            kv_end = sk
-        # Under varlen the grid is sized by max_seqlen_q, so whole blocks can lie past this sequence.
-        alive = fx.Int32(q_start) < sq_i32
-        n_tiles = alive.select((kv_end + tr.BLOCK_N - 1) // tr.BLOCK_N, fx.Index(0))
 
-        def mask_limits():
-            seq_lim = fx.Int32(sk) - fx.Int32(1)
-            lim = seq_lim
-            wave_lim = seq_lim
-            if const_expr(tr.CAUSAL):
-                diag = fx.Int32(q_row) + delta
-                wave_diag = fx.Int32(q_wave) + delta
-                lim = (diag < seq_lim).select(diag, seq_lim)
-                wave_lim = (wave_diag < seq_lim).select(wave_diag, seq_lim)
-            return lim, wave_lim
+        def smin(x, y):
+            return (x < y).select(x, y)
+
+        def smax(x, y):
+            return (x > y).select(x, y)
+
+        smin_i = smin
+        smax_i = smax
+        # Row i keeps key j iff 0 <= j < sk and i - win_l <= j <= i + win_r (gSWA,
+        # docs/Generalized Sliding Window Attention.md, A-2), resolved per sequence.
+        if const_expr(tr.CAUSAL):
+            win_l, win_r = fmha.resolve_window(window_left, window_right, sq_i32, sk_i32, varlen_bits)
+        else:
+            win_l = sk_i32
+            win_r = sk_i32
+        q_first = fx.Int32(q_start)
+        q_last = smin(q_first + fx.Int32(tr.BLOCK_M), sq_i32) - fx.Int32(1)
+        kv_lo = smax(q_first - win_l, fx.Int32(0))
+        kv_hi = smin(q_last + win_r + fx.Int32(1), sk_i32)
+        # Blocks past a short sequence (varlen), or whose band misses every key, do no tiles.
+        alive = (q_first < sq_i32) & (kv_hi > kv_lo)
+        t0 = fx.Index(alive.select(kv_lo, fx.Int32(0))) // tr.BLOCK_N
+        kv_base = t0 * tr.BLOCK_N
+        n_tiles = alive.select((fx.Index(kv_hi) + tr.BLOCK_N - 1) // tr.BLOCK_N - t0, fx.Index(0))
+
+        # This lane's row keeps keys [band_lo, band_lo + band_span]: one unsigned compare
+        # per key. An empty band moves band_lo out of reach of any key, so all fail.
+        _row = fx.Int32(q_row)
+        _hi = smin(_row + win_r, sk_i32 - fx.Int32(1))
+        _lo = smax(_row - win_l, fx.Int32(0))
+        _empty = _hi < _lo
+        band_lo = _empty.select(fx.Int32(-(1 << 30)), _lo)
+        band_span = _empty.select(fx.Int32(0), _hi - _lo)
 
         def mask_scores(s_vals, kv_start):
             # Lane value r is KV row 32*(r//16) + 8*((r%16)//4) + 4*lh + r%4.
-            kv0 = fx.Int32(kv_start) + kv_lane
-            lim, _ = mask_limits()
-            return [(kv0 + fx.Int32(32 * (r // 16) + 8 * ((r % 16) // 4) + r % 4) > lim).select(c_neg_inf, s_vals[r])
-                    for r in range(tr.NS)]
+            rel0 = fx.Int32(kv_start) + kv_lane - band_lo
+            out = []
+            for r in range_constexpr(tr.NS):
+                rel = rel0 + fx.Int32(32 * (r // 16) + 8 * ((r % 16) // 4) + r % 4)
+                out.append((fx.Uint32(rel) > fx.Uint32(band_span)).select(c_neg_inf, s_vals[r]))
+            return out
 
-        # Tiles [0, n_clean) need no mask in any wave of this block.
-        lim0 = fx.Int32(sk) - fx.Int32(1)
-        if const_expr(tr.CAUSAL):
-            diag0 = fx.Int32(q_start) + delta
-            lim0 = (diag0 < lim0).select(diag0, lim0)
-        n_clean = fx.Index(((lim0 + fx.Int32(1)) > fx.Int32(0)).select(lim0 + fx.Int32(1), fx.Int32(0))) // tr.BLOCK_N
+        # Tile r (from t0) is clean, i.e. unmasked for every row of the block,
+        # iff lead <= r < clean_end.
+        def n_rel(kv):
+            return fx.Index(smax(smin(kv, sk_i32), fx.Int32(0)))
+
+        lead = (n_rel(q_last - win_l - fx.Int32(kv_base)) + tr.BLOCK_N - 1) // tr.BLOCK_N
+        clean_end = n_rel(smin(q_first + win_r, sk_i32 - fx.Int32(1)) + fx.Int32(1) - fx.Int32(kv_base)) // tr.BLOCK_N
         n_loop = (n_tiles > fx.Index(1)).select(n_tiles - fx.Index(1), fx.Index(0))
-        # Iteration j masks tile j+1, so the clean iterations are j < n_clean - 1.
-        n_loop_clean = (n_clean > fx.Index(0)).select(n_clean - fx.Index(1), fx.Index(0))
-        n_loop_clean = (n_loop_clean < n_loop).select(n_loop_clean, n_loop)
+        # Iteration j masks tile j+1. Masked iterations [0, j_clean) and [j_tail, n_loop)
+        # bracket the clean ones; j_clean is even so the unrolled loop knows its buffers.
+        j_clean = smin_i(smax_i(lead, fx.Index(1)) - fx.Index(1), n_loop)
+        j_clean = smin_i(j_clean + j_clean % 2, n_loop)
+        j_clean_end = smax_i(smin_i(smax_i(clean_end, fx.Index(1)) - fx.Index(1), n_loop), j_clean)
 
         def scale_and_mask(s_raw, kv_start, masked):
             # Scale once in fp32; the max and the exponent share that rounding.
@@ -513,14 +529,14 @@ def build_fmha_fwd_gfx942(head_dim,
             cluster_barrier(name)
 
         # Prologue: iteration -1.
-        k_dma(fx.Index(0), 0)
-        k_dma(fx.Index(tr.BLOCK_N), 1)
+        k_dma(kv_base, 0)
+        k_dma(kv_base + tr.BLOCK_N, 1)
         rocdl.s_waitcnt(vmcnt=n_kdma)
         cluster_barrier()
         barrier_if(group_b)                       # open the skew
         # C0(-1)
         k_packs = k_read(0)
-        v_regs = v_load(fx.Index(0))
+        v_regs = v_load(kv_base)
         rocdl.s_waitcnt(lgkmcnt=0)
         cluster_barrier()
         # C1(-1)
@@ -528,12 +544,12 @@ def build_fmha_fwd_gfx942(head_dim,
         s_raw = qk(k_packs)
         compute_end()
         # C2(-1)
-        k_dma(fx.Index(2 * tr.BLOCK_N), 0)
+        k_dma(kv_base + 2 * tr.BLOCK_N, 0)
         rocdl.s_waitcnt(vmcnt=n_v + n_kdma)
         cluster_barrier()
         # C3(-1). A finite initial max keeps fully masked rows NaN-free.
         compute_begin()
-        s0, m0, corr0 = softmax_head(s_raw, c_neg_max, fx.Index(0), True)
+        s0, m0, corr0 = softmax_head(s_raw, c_neg_max, kv_base, True)
         compute_end()
 
         n_s = tr.NS
@@ -546,7 +562,7 @@ def build_fmha_fwd_gfx942(head_dim,
             s_cur = carried[3:3 + n_s]
             o_accs = list(carried[3 + n_s:3 + n_s + tr.D_TILES])
             v_regs = list(carried[3 + n_s + tr.D_TILES:])
-            kv_next = (j + 1) * tr.BLOCK_N
+            kv_next = kv_base + (j + 1) * tr.BLOCK_N
             # C0(j)
             v_store_lds(v_regs, b)
             v_regs = v_load(kv_next)
@@ -593,13 +609,6 @@ def build_fmha_fwd_gfx942(head_dim,
             return [carried[0], l_last] + o_last
 
         @flyc.jit
-        def clean_tail(carried, j_odd, n_clean_loop):
-            out = list(carried)
-            if j_odd < n_clean_loop:
-                out = iteration(j_odd, carried, 0, False)
-            return out
-
-        @flyc.jit
         def masked_iteration(j, carried):
             out = list(carried)
             if j % 2 == fx.Index(0):
@@ -618,14 +627,16 @@ def build_fmha_fwd_gfx942(head_dim,
             return out
 
         init = [m0, corr0, fx.Float32(0.0)] + s0 + [fx.full(16, 0.0, fx.Float32) for _ in range(tr.D_TILES)] + v_regs
-        n_pairs = n_loop_clean // 2
-        results = init
-        for jp, carried in range(0, n_pairs, 1, init=init):
-            mid = iteration(jp * 2, carried, 0, False)
-            results = yield iteration(jp * 2 + 1, mid, 1, False)
-        results = clean_tail(results, n_pairs * 2, n_loop_clean)
-        results2 = results
-        for j, carried in range(n_loop_clean, n_loop, 1, init=results):
+        results0 = init
+        for j, carried in range(0, j_clean, 1, init=init):
+            results0 = yield masked_iteration(j, carried)
+        n_pairs = (j_clean_end - j_clean) // 2
+        results1 = results0
+        for jp, carried in range(0, n_pairs, 1, init=results0):
+            mid = iteration(j_clean + jp * 2, carried, 0, False)
+            results1 = yield iteration(j_clean + jp * 2 + 1, mid, 1, False)
+        results2 = results1
+        for j, carried in range(j_clean + n_pairs * 2, n_loop, 1, init=results1):
             results2 = yield masked_iteration(j, carried)
         results = epilogue(results2, n_loop)
         barrier_if(fx.Int32(1) - group_b)         # close the skew
