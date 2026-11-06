@@ -85,12 +85,6 @@ class Traits:
         self.CACHE_TAG = f'X{head_dim}_c{int(causal)}_{dtype_str}_w{num_waves}_p{int(padded_head)}'
 
 
-def default_grid_axis_order(causal):
-    """Tile-fastest in both modes: a head's K/V (16 MB at hd512, S8k) is shared in
-    L2 only by its q tiles. B2 H16 S32k d512 causal: 421 vs 310 TFLOPS head-fastest."""
-    return tuning.GRID_AXIS_TILE_FASTEST
-
-
 def build_fmha_fwd_gfx942_xwide(head_dim,
                                 causal=False,
                                 causal_type=None,
@@ -107,7 +101,7 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
     head dims up to `head_dim`).
 
     `block_n` must be None or 16; `num_waves` must be 8. The rest as
-    build_fmha_fwd_gfx942, except the default grid order (default_grid_axis_order).
+    build_fmha_fwd_gfx942. A causal build runs q tiles longest first.
     """
     host_causal_type = (1 if causal else 0) if causal_type is None else causal_type
     if host_causal_type not in (0, 1, 2, 3):
@@ -119,7 +113,10 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
         raise ValueError(f'the xwide forward runs {BLOCK_N}-key tiles, got block_n={block_n}')
     tr = Traits(head_dim, causal_type != 0, dtype_str, num_waves, padded_head)
     if grid_axis_order is None:
-        grid_axis_order = default_grid_axis_order(tr.CAUSAL)
+        # As the narrow body: tile-fastest non-causal (B4 H32 S8k d512: 510 vs 499
+        # TFLOPS), head-fastest causal, which with longest-first tiles is globally LPT
+        # (414 vs 387).
+        grid_axis_order = tuning.default_grid_axis_order(tr.CAUSAL)
     tile_fastest = grid_axis_order == tuning.GRID_AXIS_TILE_FASTEST
     cache_tag = f'{tr.CACHE_TAG}_wpe{waves_per_eu}_thr{rescale_threshold}_g{grid_axis_order}_b{int(bias)}_d{int(dropout)}'
     elem = fx.BFloat16 if dtype_str == 'bf16' else fx.Float16
@@ -227,12 +224,14 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
         if const_expr(tile_fastest):
             q_tile = fx.Index(gpu.block_idx.x)
             if const_expr(tr.CAUSAL):
-                # Longest tiles first (bottom-right or not, later rows see more keys).
+                # Longest tiles first: under any causal window later rows see more keys.
                 q_tile = fx.Index(gpu.grid_dim.x) - fx.Index(1) - q_tile
             head = fx.Index(gpu.block_idx.y)
         else:
             head = fx.Index(gpu.block_idx.x)
             q_tile = fx.Index(gpu.block_idx.y)
+            if const_expr(tr.CAUSAL):
+                q_tile = fx.Index(gpu.grid_dim.y) - fx.Index(1) - q_tile
         z_i32 = fx.Int32(gpu.block_idx.z)
         head_k = head // (fx.Index(num_head_q) // fx.Index(num_head_k))
         sq_i32, q_row_off, q_batch = fmha.decode_addressing(varlen_bits, 0, max_seqlen_q, seqinfo_q0, seqinfo_q1, z_i32)

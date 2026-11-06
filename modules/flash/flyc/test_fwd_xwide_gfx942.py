@@ -49,14 +49,15 @@ BR = fmha.WINDOW_BOTRIGHT
 
 
 @functools.cache
-def _build(head_dim, causal_type=0, bias=False, dropout=False, padded_head=False):
+def _build(head_dim, causal_type=0, bias=False, dropout=False, padded_head=False, grid_axis_order=None):
     from fmha_fwd_gfx942_xwide import build_fmha_fwd_gfx942_xwide
 
     return build_fmha_fwd_gfx942_xwide(head_dim,
                                        causal_type=causal_type,
                                        bias=bias,
                                        dropout=dropout,
-                                       padded_head=padded_head)
+                                       padded_head=padded_head,
+                                       grid_axis_order=grid_axis_order)
 
 
 def _reference(q, k, v, scale, bias=None, keep=None, p=0.0, allow=None):
@@ -234,11 +235,13 @@ def test_varlen(head_dim, layout, lse_layout):
         _check(f"hd={head_dim} {layout} {lse_layout} seq{z}=({sq},{sk})", oz, lz, ref, ref_lse)
 
 
+@pytest.mark.parametrize("grid", [0, 1])
 @pytest.mark.parametrize("p", sorted(PRINCIPAL_DIAGONAL))
 @pytest.mark.parametrize("window_name", ["8_0", "neg1_3", "100_20", "sentinel_br"])
 @pytest.mark.parametrize("head_dim", HEAD_DIMS)
-def test_varlen_window(head_dim, window_name, p):
-    """One `d = sk - sq` per sequence; `p` travels in `varlen["bits"]`."""
+def test_varlen_window(head_dim, window_name, p, grid):
+    """One `d = sk - sq` per sequence; `p` travels in `varlen["bits"]`. Both grid
+    orders, since a causal build runs q tiles in reverse."""
     h = hk = 2
     tensors = _varlen_tensors(head_dim, "compact", "ht", h, hk, head_dim + p)
     q, k, v, out, lse, varlen, batch, nseq, _, _ = tensors
@@ -246,22 +249,22 @@ def test_varlen_window(head_dim, window_name, p):
     window = WINDOWS[window_name]
     lq = [a for a, _ in VARLEN_SEQS]
     lk = [c for _, c in VARLEN_SEQS]
-    _build(head_dim, causal_type=3)(q,
-                                    k,
-                                    v,
-                                    out,
-                                    batch,
-                                    max(lq),
-                                    seqlen_k=max(lk),
-                                    num_seqlens=nseq,
-                                    lse=lse,
-                                    window=window,
-                                    varlen=varlen)
+    _build(head_dim, causal_type=3, grid_axis_order=grid)(q,
+                                                          k,
+                                                          v,
+                                                          out,
+                                                          batch,
+                                                          max(lq),
+                                                          seqlen_k=max(lk),
+                                                          num_seqlens=nseq,
+                                                          lse=lse,
+                                                          window=window,
+                                                          varlen=varlen)
     torch.cuda.synchronize()
     for z, (sq, sk) in enumerate(VARLEN_SEQS):
         qz, kz, vz, oz, lz = _varlen_slices(z, "compact", "ht", tensors, h)
         ref, ref_lse = _reference(qz, kz, vz, head_dim ** -0.5, allow=_allow(window, p, sq, sk, q.device))
-        _check(f"hd={head_dim} varlen seq{z}=({sq},{sk}) {window_name} p={p}", oz, lz, ref, ref_lse)
+        _check(f"hd={head_dim} varlen seq{z}=({sq},{sk}) {window_name} p={p} grid={grid}", oz, lz, ref, ref_lse)
 
 
 @pytest.mark.parametrize("shape", [(300, 777), (301, 1001), (1, 1001), (129, 33)])
