@@ -828,7 +828,22 @@ def build_bwd_dq_module_primary(meta, knobs):
             # Sentinels resolve per sequence, not on the host. Everything
             # derived from a window stays i32 from here down: bounds go
             # negative and `fx.Index` is unsigned.
-            _wl_i32, _wr_i32 = fmha.resolve_window(window_left, window_right, seqlen_q_i32, seqlen_k_i32)
+            #
+            # `varlen_bits` carries principal_diagonal_choice (bit 18): a
+            # numeric bound becomes `left - p*d`, `right + p*d` with this
+            # sequence's `d = seqlen_k - seqlen_q`. Nothing downstream assumes
+            # the band touches the diagonal or stays inside [0, seqlen_k):
+            # `decompose_causal_regions` clamps the visited range to the real
+            # tiles and inverts it when no key is live, and the masked body
+            # tests both band edges signed, so a row that sees no key gets
+            # dQ = 0 (its forward LSE is +inf, so P is exactly 0).
+            _wl_i32, _wr_i32 = fmha.resolve_window(
+                window_left,
+                window_right,
+                seqlen_q_i32,
+                seqlen_k_i32,
+                varlen_bits,
+            )
 
         # ---- Split the KV range into full and masked regions ----
         # Emitting the regions as separate loops means the masks exist only in
@@ -1455,7 +1470,8 @@ def build_bwd_dq_module_primary(meta, knobs):
 
     # ---- VarlenBits, sdpa-varlen-plan.md section 2 ----
     # One byte per side, decoded by the same kernel-side function twice, plus
-    # the LSE layout in byte 2. `0` is the dense case and the default. Spelled
+    # the LSE layout (bits 17:16) and principal_diagonal_choice (bit 18) in
+    # byte 2. `0` is the dense top-left case and the default. Spelled
     # out here rather than imported from the forward kernel module so that this
     # file states the wire encoding it implements.
 
@@ -1481,6 +1497,15 @@ def build_bwd_dq_module_primary(meta, knobs):
         bias,
         dbias,
     ):
+        """Every kernel argument but the stream, in launch order.
+
+        The diagonal a *numeric* `window` bound is measured from is VarlenBits
+        bit 18 (`principal_diagonal_choice`), and `varlen["bits"]` is its only
+        source. A dense call carries it with
+        `varlen=abi.varlen_dense(principal_diagonal=...)`; `varlen=None` is
+        word 0, i.e. top-left. The bit means the same thing dense or varlen
+        (`d` is merely uniform). A forward and its backward must agree on it.
+        """
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
         ptrs, meta_t, st = abi.prep_tensors(
             [("Q", Q), ("K", K), ("V", V), ("DO", DO), ("DQ", DQ)], q_heads=("DO", "DQ")
@@ -1626,6 +1651,7 @@ def build_bwd_dq_module_primary(meta, knobs):
 
     _launch.compile = _compile
     _launch.varlen_bits = abi.varlen_bits
+    _launch.varlen_dense = abi.varlen_dense
     _launch.varlen_compact = abi.varlen_compact
     _launch.varlen_padded = abi.varlen_padded
     _launch.varlen_strided = abi.varlen_strided

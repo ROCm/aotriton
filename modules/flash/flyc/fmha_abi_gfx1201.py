@@ -50,10 +50,15 @@ __all__ = [
     "VARLEN_POSITION_ARRAY",
     "VARLEN_LSE_LAYOUT_HT",
     "VARLEN_LSE_LAYOUT_TH",
+    "VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT",
+    "VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT",
     "VARLEN_DENSE",
     "VARLEN_COMPACT_SIDE",
     "CAUSAL_SENTINEL",
     "varlen_bits",
+    "varlen_dense",
+    "varlen_is_dense",
+    "dense_row_shape",
     "varlen_compact",
     "varlen_padded",
     "varlen_strided",
@@ -100,10 +105,19 @@ VARLEN_POSITION_ARRAY = 2 << 3
 # contiguous. `_TH` is Transformer Engine's (T, H).
 VARLEN_LSE_LAYOUT_HT = 0 << 16
 VARLEN_LSE_LAYOUT_TH = 1 << 16  # noqa: F841  (ditto)
+# Bit 18, principal_diagonal_choice: which diagonal a NUMERIC window is
+# measured from. Sentinel windows ignore it. See `fmha.resolve_window`.
+VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT = 0 << fmha.VARLEN_PRINCIPAL_DIAGONAL_SHIFT
+VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT = 1 << fmha.VARLEN_PRINCIPAL_DIAGONAL_SHIFT
 
 
-def varlen_bits(q_side=0, k_side=0, lse_layout=VARLEN_LSE_LAYOUT_HT):
-    """Assemble VarlenBits from per-side bytes."""
+def varlen_bits(q_side=0,
+                k_side=0,
+                lse_layout=VARLEN_LSE_LAYOUT_HT,
+                principal_diagonal=VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT):
+    """Assemble VarlenBits from per-side bytes, the LSE layout and the principal diagonal."""
+    if principal_diagonal not in (VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT, VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT):
+        raise ValueError(f"principal_diagonal must be VARLEN_PRINCIPAL_DIAGONAL_*, got {principal_diagonal:#x}")
     for name, b in (("q_side", q_side), ("k_side", k_side)):
         if not 0 <= b <= 0xFF:
             raise ValueError(f"{name} must fit in a byte, got {b:#x}")
@@ -113,10 +127,13 @@ def varlen_bits(q_side=0, k_side=0, lse_layout=VARLEN_LSE_LAYOUT_HT):
             raise ValueError(f"{name}={b:#04x}: POSITION=REUSE requires " f"LENGTH=CUMULATIVE (plan section 1, axis C)")
         if (b >> 1) & 3 == 3 or (b >> 3) & 3 == 3:
             raise ValueError(f"{name}={b:#04x} uses a reserved code")
-    return q_side | (k_side << 8) | lse_layout
+    return q_side | (k_side << 8) | lse_layout | principal_diagonal
 
 
 VARLEN_DENSE = 0  # noqa: F841  (ditto)
+# Mask of the two side bytes. A word whose side bytes are both `VARLEN_DENSE`
+# describes a dense call; it still carries bits 18:16.
+VARLEN_SIDES_MASK = 0xFFFF
 VARLEN_COMPACT_SIDE = VARLEN_STACKED | VARLEN_LENGTH_CUMULATIVE | VARLEN_POSITION_REUSE  # 0x0B
 VARLEN_PADDED_SIDE = VARLEN_LENGTH_CUMULATIVE | VARLEN_POSITION_IMPLIED
 # 0x02
@@ -124,6 +141,46 @@ VARLEN_PADDED_SIDE = VARLEN_LENGTH_CUMULATIVE | VARLEN_POSITION_IMPLIED
 VARLEN_STRIDED_SIDE = VARLEN_STACKED | VARLEN_LENGTH_CUMULATIVE | VARLEN_POSITION_ARRAY  # 0x13
 VARLEN_SEQUSED_PACKED_SIDE = VARLEN_STACKED | VARLEN_LENGTH_INDIVIDUAL | VARLEN_POSITION_ARRAY  # 0x15
 VARLEN_SEQUSED_CACHE_SIDE = VARLEN_LENGTH_INDIVIDUAL | VARLEN_POSITION_IMPLIED  # 0x04
+
+
+def varlen_dense(principal_diagonal=VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT,
+                 lse_layout=VARLEN_LSE_LAYOUT_HT):
+    """A dense call's VarlenBits word: dense Q and K sides, nothing else read.
+
+    The C++ ABI sends a VarlenBits word on dense calls too, and this is that
+    word. It exists for the fields that are not layout facts and so apply to
+    dense calls as well: `principal_diagonal_choice` (bit 18) and the LSE
+    layout (bits 17:16). The word is the only place either is carried;
+    `varlen=None` is the same as `varlen_dense()`, i.e. word 0.
+
+    It has no `seqinfo_*` tensors and no `max_seqlen_*`: the max lengths are
+    the call's `seqlen_q` / `seqlen_k` (see `varlen_args`).
+    """
+    return dict(bits=varlen_bits(VARLEN_DENSE,
+                                 VARLEN_DENSE,
+                                 lse_layout=lse_layout,
+                                 principal_diagonal=principal_diagonal))
+
+
+def varlen_is_dense(varlen):
+    """True for `varlen=None` and for a dense word (`varlen_dense`).
+
+    Both describe a dense call: a real batch axis, uniform `seqlen_q` /
+    `seqlen_k`, no sequence-info tensors.
+    """
+    return varlen is None or int(varlen["bits"]) & VARLEN_SIDES_MASK == 0
+
+
+def dense_row_shape(varlen, batch_size, num_head_q, seqlen_q):
+    """The (rows, cols) a dense call's LSE/Delta must have, per the LSE layout.
+
+    HT is `(batch * num_head_q, seqlen_q)`, TH is `(batch * seqlen_q,
+    num_head_q)`. Only meaningful when `varlen_is_dense(varlen)`.
+    """
+    layout = 0 if varlen is None else int(varlen["bits"]) & (3 << 16)
+    if layout == VARLEN_LSE_LAYOUT_TH:
+        return (int(batch_size) * int(seqlen_q), int(num_head_q))
+    return (int(batch_size) * int(num_head_q), int(seqlen_q))
 
 
 def varlen_compact(
@@ -375,7 +432,7 @@ def row_tensor_arg(t, name, num_head_q, seq_len, varlen):
         raise ValueError(f"{name} must be contiguous: the kernel derives its pitches from VarlenBits")
     layout = 0 if varlen is None else (int(varlen["bits"]) >> 16) & 3
     if layout == 0:
-        want_last = int(seq_len) if varlen is None else varlen.get("lse_tokens")
+        want_last = int(seq_len) if varlen_is_dense(varlen) else varlen.get("lse_tokens")
         if want_last is not None and t.shape[1] != int(want_last):
             raise ValueError(f"{name} with LSE_LAYOUT_HT wants (*, {int(want_last)}), got {tuple(t.shape)}")
     elif t.shape[1] != num_head_q:
@@ -413,7 +470,7 @@ def lse_args(lse, seq_len, varlen, num_head_q):
         # caller supplies it: under a stacked layout it lives in
         # `seqinfo[N]` on the device, and reading that back would cost a
         # sync for a validation.
-        want_last = int(seq_len) if varlen is None else varlen.get("lse_tokens")
+        want_last = int(seq_len) if varlen_is_dense(varlen) else varlen.get("lse_tokens")
         if want_last is not None and lse.shape[1] != int(want_last):
             raise ValueError(f"VARLEN_LSE_LAYOUT_HT wants (*, {int(want_last)}), got " f"{tuple(lse.shape)}")
     else:
@@ -616,10 +673,13 @@ def dropout_args(enable_dropout, dropout_p, seed, offset1, offset2, device=None,
 def varlen_args(strides_constexpr, varlen, seqlen_q, seqlen_k, q, batch_size, num_seqlens):
     """(bits, q0, q1, k0, k1, max_q, max_k) in launch order, plus two checks.
 
-    `varlen` is None for the dense case, else a dict with `bits` and
-    whichever `seqinfo_*` tensors that configuration reads. Unread slots
-    stay **null**, which is safe because the kernel's decode branches
-    rather than selects -- see the prologue.
+    `varlen` is None for the dense case (word 0), else a dict with `bits`
+    and whichever `seqinfo_*` tensors that configuration reads. A dict whose
+    side bytes are both dense (`varlen_dense`) is a dense call that carries
+    bits 18:16: it takes no `seqinfo_*` and no `max_seqlen_*`, and its max
+    lengths are `seqlen_q` / `seqlen_k`. Unread slots stay **null**, which
+    is safe because the kernel's decode branches rather than selects -- see
+    the prologue.
 
     **`batch_size` and `num_seqlens` are different quantities and never share
     a variable on the host.** `batch_size` is `q.size(0)`, always, whatever the
@@ -641,10 +701,21 @@ def varlen_args(strides_constexpr, varlen, seqlen_q, seqlen_k, q, batch_size, nu
             f"tensor's batch extent whatever the layout; a packed 1HTD tensor has 1, and its "
             f"sequence count goes in num_seqlens."
         )
-    if varlen is None:
+    if varlen_is_dense(varlen):
+        # `varlen=None`, or a dense word (`varlen_dense`) carrying only bits
+        # 18:16. Handled before the `strides_constexpr` check, which is about
+        # real varlen: a dense word changes no layout.
         if int(num_seqlens):
-            raise ValueError(f"num_seqlens={int(num_seqlens)} without varlen=; a dense call packs no sequences")
-        return (0, NULL_PTR, NULL_PTR, NULL_PTR, NULL_PTR, int(seqlen_q), int(seqlen_k))
+            raise ValueError(f"num_seqlens={int(num_seqlens)} on a dense call; a dense call packs no sequences")
+        if varlen is None:
+            return (0, NULL_PTR, NULL_PTR, NULL_PTR, NULL_PTR, int(seqlen_q), int(seqlen_k))
+        given = [k for k in ("seqinfo_q0", "seqinfo_q1", "seqinfo_k0", "seqinfo_k1") if varlen.get(k) is not None]
+        if given:
+            raise ValueError(
+                f"a dense VarlenBits word (both side bytes 0) reads no sequence info, but {given} "
+                f"were given; set the side bytes, or drop the tensors"
+            )
+        return (int(varlen["bits"]), NULL_PTR, NULL_PTR, NULL_PTR, NULL_PTR, int(seqlen_q), int(seqlen_k))
     if strides_constexpr:
         raise ValueError(
             "strides_constexpr derives the layout from the shape, which "

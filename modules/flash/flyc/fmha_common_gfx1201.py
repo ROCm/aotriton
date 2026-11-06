@@ -1491,7 +1491,10 @@ WINDOW_TOPLEFT = -2147483647  # 0x80000001
 WINDOW_BOTRIGHT = -2147483646  # 0x80000002
 
 
-def resolve_window(window_left, window_right, seqlen_q, seqlen_k):
+VARLEN_PRINCIPAL_DIAGONAL_SHIFT = 18  # VarlenBits bit 18: principal_diagonal_choice
+
+
+def resolve_window(window_left, window_right, seqlen_q, seqlen_k, varlen_bits):
     """`(window_left, window_right)` with the causal sentinels resolved.
 
     `Window_left` / `Window_right` may carry `WINDOW_TOPLEFT` or
@@ -1501,6 +1504,11 @@ def resolve_window(window_left, window_right, seqlen_q, seqlen_k):
     one length to resolve against, and under varlen bottom-right needs
     `seqlen_k[z] - seqlen_q[z]`, which differs per sequence. Matches
     AOTriton's `parse_window`.
+
+    `varlen_bits` carries `principal_diagonal_choice` (bit 18): 0 measures a
+    numeric bound from the top-left diagonal, 1 from this sequence's
+    bottom-right one (`left - d`, `right + d` with `d = seqlen_k - seqlen_q`).
+    See docs/Generalized Sliding Window Attention.md, A-2.
 
     Both sentinels give an unbounded left edge -- no row reaches further back
     than the start of its own sequence -- so they differ only in the right one.
@@ -1514,12 +1522,28 @@ def resolve_window(window_left, window_right, seqlen_q, seqlen_k):
     left = fx.Int32(window_left)
     right = fx.Int32(window_right)
     left_is_sentinel = (left == fx.Int32(WINDOW_TOPLEFT)) | (left == fx.Int32(WINDOW_BOTRIGHT))
-    left = common_utils.ssel(left_is_sentinel, seqlen_q, left)
-    right = common_utils.ssel(right == fx.Int32(WINDOW_TOPLEFT), fx.Int32(0), right)
+    right_is_sentinel = (right == fx.Int32(WINDOW_TOPLEFT)) | (right == fx.Int32(WINDOW_BOTRIGHT))
+    # Principal diagonal (VarlenBits bit 18). A NUMERIC bound is measured from
+    # the top-left diagonal j = i when the bit is 0, and from this sequence's
+    # bottom-right diagonal j = i + (seqlen_k - seqlen_q) when it is 1, which is
+    # flash-attention's convention. Sentinels already name their diagonal and
+    # are never shifted (shifting BOTRIGHT would give 2 * (seqlen_k - seqlen_q)).
+    # Arithmetic rather than a select on the bit: shift is 0 or d.
+    # Known limitation, by design: the shifted bounds are i32 with no overflow
+    # guard, so a numeric window near INT32_MIN/MAX wraps when p = 1.
+    p = (fx.Int32(varlen_bits) >> fx.Int32(VARLEN_PRINCIPAL_DIAGONAL_SHIFT)) & fx.Int32(1)
+    shift = p * (seqlen_k - seqlen_q)
+    left = common_utils.ssel(left_is_sentinel, seqlen_q, left - shift)
+    # Every comparison below is against the caller's raw value, never a
+    # shifted one, so a shifted bound can never be mistaken for a sentinel.
     right = common_utils.ssel(
-        fx.Int32(window_right) == fx.Int32(WINDOW_BOTRIGHT),
-        seqlen_k - seqlen_q,
-        right,
+        right_is_sentinel,
+        common_utils.ssel(
+            fx.Int32(window_right) == fx.Int32(WINDOW_BOTRIGHT),
+            seqlen_k - seqlen_q,
+            fx.Int32(0),
+        ),
+        right + shift,
     )
     return left, right
 

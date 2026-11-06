@@ -130,6 +130,36 @@ def test_op_bwd(N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype):
     seqlens_k = seqlens_q if causal else rng_seqlens(n_seqlen)
     _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype)
 
+# principal_diagonal_choice (VarlenBits bit 18): causal is (left, right, p) and
+# d = seqlen_k - seqlen_q is resolved PER SEQUENCE, in the kernel and in the
+# reference alike. Every batch mixes seqlen_q <, ==, > seqlen_k, with d not
+# equal to the batch-wide difference for most sequences.
+WINDOW_BOTTOM_RIGHT_ALIGNED = -2147483646
+PD_WINDOWS = [
+    (WINDOW_BOTTOM_RIGHT_ALIGNED, 0),  # flash-attention's (-1, 0)
+    (8, 0),
+    (0, 8),
+    (4, 4),
+    (-1, 3),
+]
+PD_BATCHES = {
+    'mixed': ([16, 64, 143, 8], [64, 64, 63, 128]),
+    'decode': ([1, 1, 1], [1, 37, 300]),
+    'chunked_prefill': ([64, 33, 1], [576, 97, 200]),
+}
+
+def _fmt_window(w):
+    left = 'BR' if w[0] == WINDOW_BOTTOM_RIGHT_ALIGNED else str(w[0])
+    return f'w{left}_{w[1]}'
+
+@pytest.mark.parametrize('p', [0, 1], ids=['TL', 'BR'])
+@pytest.mark.parametrize('window', PD_WINDOWS, ids=_fmt_window)
+@pytest.mark.parametrize('batch', list(PD_BATCHES))
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
+def test_principal_diagonal(dtype, batch, window, p):
+    seqlens_q, seqlens_k = PD_BATCHES[batch]
+    _do_test_varlen(2, 64, np.array(seqlens_q), np.array(seqlens_k), (*window, p), 0.125, 0.0, dtype)
+
 def main():
     N_HEADS = 1
     D_HEAD = 16

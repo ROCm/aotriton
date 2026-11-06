@@ -924,8 +924,21 @@ class BwdDkDvKernelContext(ParityKernelContext):
             # A non-window build forwards `WINDOW_BOTRIGHT` for both, so the
             # left bound comes back as `seqlen_q` -- unbounded -- and every
             # left-bound comparison below is `const_expr`-ed away regardless.
+            #
+            # `VarlenBits` carries `principal_diagonal_choice` (bit 18), which
+            # moves a *numeric* bound to this sequence's bottom-right diagonal:
+            # `left - d`, `right + d`, `d = seqlen_k - seqlen_q`. Nothing below
+            # assumes the band touches the diagonal, or that either bound is
+            # non-negative or inside the sequence: `decompose_causal_regions`
+            # and `mask_if_clipped` work on whatever `(left, right)` comes back,
+            # and a KV block whose rows no q row sees walks zero tiles and
+            # stores the zero accumulators as its dK and dV.
             left, right = fmha.resolve_window(
-                self.window_left_arg, self.window_right_arg, fx.Int32(self.seqlen_q_v), self.seqlen_kv_i32
+                self.window_left_arg,
+                self.window_right_arg,
+                fx.Int32(self.seqlen_q_v),
+                self.seqlen_kv_i32,
+                self.varlen_bits_arg,
             )
             self.window_left_i32 = fx.Int32(left)
             # A (q, kv) element is live iff `kv - right <= q <= kv + left`, so
@@ -2418,6 +2431,14 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         One place that turns tensors into the wire format, so `_launch` and
         `_compile` cannot drift apart -- the same shape, and the same reason,
         as the forward's `_args`.
+
+        The diagonal a *numeric* `window` bound is measured from is VarlenBits
+        bit 18 (`principal_diagonal_choice`), and `varlen["bits"]` is its only
+        source. A dense call carries it with
+        `varlen=abi.varlen_dense(principal_diagonal=...)`; `varlen=None` is
+        word 0, i.e. top-left. Same contract as the gfx950 forward's launcher,
+        so a forward and its backward given the same `varlen` measure from the
+        same diagonal.
         """
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
         _ptrs, shape_meta, st = abi.prep_tensors(
@@ -2493,8 +2514,11 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         abi.row_tensor_arg(Delta, "delta", num_head_q, seqlen_q, varlen)
         if Delta.shape != LSE.shape:
             raise ValueError(f"delta must have logsumexp's shape {tuple(LSE.shape)}, got {tuple(Delta.shape)}")
-        if varlen is None and LSE.shape[0] != int(batch_size) * num_head_q:
-            raise ValueError(f"logsumexp must be ({int(batch_size) * num_head_q}, {seqlen_q}); got {tuple(LSE.shape)}")
+        if abi.varlen_is_dense(varlen):
+            # Per the word's LSE layout: a dense word may select TH.
+            want = abi.dense_row_shape(varlen, batch_size, num_head_q, seqlen_q)
+            if tuple(LSE.shape) != want:
+                raise ValueError(f"logsumexp must be {want}; got {tuple(LSE.shape)}")
         # Upstream also rejects a varlen descriptor on a build compiled without
         # the decode. There is no such build here -- `make_traits` pins
         # `VARLEN=True` because the decode is unconditional (71ba6511) -- so
@@ -2514,7 +2538,8 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         # descriptor probably thought a ragged batch was being honoured. That
         # reasoning inverts once `varlen` defaults on: the caller who passes
         # nothing is now the ordinary *dense* caller, and they must be served.
-        # They are, exactly: `varlen_args` gives `bits == 0`, and at zero bits
+        # They are, exactly: `varlen_args` gives dense side bytes (`bits == 0`,
+        # or only bits 18:16 for `abi.varlen_dense`), and at dense side bytes
         # `decode_addressing` returns `(max_seqlen, 0, z)` -- dense addressing
         # -- with every array read behind a real branch, so the null `seqinfo`
         # pointers are never dereferenced. The cost of a dense call on a varlen
@@ -2613,7 +2638,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
             _vl[2],
             _vl[3],
             _vl[4],
-            _vl[0],
+            _vl[0],  # varlen_bits
             int(num_seqlens),
             *_vl[5:],  # max_seqlen_q, max_seqlen_k -- the decode's MAX fallback
             *_resolve_window_args(window),
@@ -2651,6 +2676,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
     _launch.compile = _compile
     _launch.traits = traits
     _launch.knobs = knobs
+    _launch.varlen_dense = abi.varlen_dense
     return _launch
 
 

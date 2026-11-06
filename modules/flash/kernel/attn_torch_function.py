@@ -20,7 +20,9 @@ from flash import (
     bwd_kernel_fuse as bare_bwd_kernel_fuse,
 )
 from varlen_bits import (
-    VARLEN_BITS_DENSE,
+    VARLEN_SIDE_DENSE,
+    VarlenPrincipalDiagonal,
+    make_varlen_bits,
 )
 from tuned_bwd import (
     IS_RDNA,
@@ -65,10 +67,26 @@ class CausalType:
     BOTTOM_RIGHT = 2
     WINDOWED = 3
 
+# The principal diagonal (VarlenBits bit 18) rides in the `causal` argument as a
+# third element of a window tuple: `(window_left, window_right, p)`, p in
+# {VarlenPrincipalDiagonal.TOP_LEFT, .BOTTOM_RIGHT}. A 2-tuple, a bool and a
+# CausalType all mean p = 0. Same convention as ../tests/aotriton_flash.py and
+# the reference in _common_test.py, so one `causal` value drives the kernel and
+# the reference alike.
+def principal_diagonal_of(causal):
+    if isinstance(causal, tuple) and len(causal) == 3:
+        p = causal[2]
+        assert p in (VarlenPrincipalDiagonal.TOP_LEFT,
+                     VarlenPrincipalDiagonal.BOTTOM_RIGHT), \
+            f'principal diagonal must be 0 or 1, got {p}'
+        return p
+    return VarlenPrincipalDiagonal.TOP_LEFT
+
 def translate_causal(causal, seqlen_q, seqlen_k):
     window_left, window_right = 0, 0
     if isinstance(causal, tuple):
-        window_left, window_right = causal
+        assert len(causal) in (2, 3), f'{causal=}'
+        window_left, window_right = causal[:2]
         causal_type = CausalType.WINDOWED
     elif isinstance(causal, bool):
         # causal_type = CausalType.TOP_LEFT if causal else CausalType.NONE
@@ -141,6 +159,19 @@ class AttentionExtraArgs:
     # Return the logsumexp tensor as the third value in place of the tuning
     # result, as modules/flash/tests/attn_torch_function.py does.
     return_logsumexp : bool = False
+    # (BLOCK_M, BLOCK_N) for attn_fwd and for the backward kernels, in place
+    # of the launcher's defaults. None keeps the defaults. Ignored when
+    # autotune is on. Block-interval logic depends on the tile, so tests that
+    # target it must pin several tiles rather than rely on one default.
+    fwd_block : tuple[int, int] | None = None
+    bwd_block : tuple[int, int] | None = None
+    # Fused (True) or split (False) backward; None follows BWD_FUSED.
+    bwd_fused : bool | None = None
+    # Dense attention() only: allocate Out with this many extra elements at
+    # the end of every row and fill them with NaN. Out is still returned as a
+    # (B, H, S, Hdim_vo) view, so a caller can read the padding back through
+    # out.stride() and prove the forward never stored past Hdim_vo.
+    out_row_padding : int = 0
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -220,16 +251,31 @@ class _attention(torch.autograd.Function):
         assert Lq == Lk
         head_dim_factors = factor_head_dim(Lk)
         head_dim_rounded = sum(head_dim_factors)
-        padded_head = head_dim_rounded != Lk
+        # Against min(Lk, Lv), as in the backward: comparing against Lk alone
+        # leaves PADDED_HEAD off for Lv < Lk == head_dim_rounded, and V is
+        # then loaded BLOCK_DMODEL columns wide with no Hdim_vo mask.
+        padded_head = head_dim_rounded != min(Lk, Lv)
         # assert not padded_head, f"sum({head_dim_factors=}) = {sum(head_dim_factors)} != {Lk=}"
         batch = q.shape[0]
         num_head_q = q.shape[1]
         num_head_k = k.shape[1]
         max_seqlen_q = q.shape[2]
         max_seqlen_k = k.shape[2]
-        o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
+        out_row_padding = attn_extra_args.out_row_padding
+        if out_row_padding > 0:
+            o_storage = torch.full((q.shape[0], q.shape[1], q.shape[2], v.shape[3] + out_row_padding),
+                                   float('nan'),
+                                   device=q.device,
+                                   dtype=q.dtype)
+            o = o_storage[..., :v.shape[3]]
+        else:
+            o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
 
         causal_type, window_left, window_right = translate_causal(causal, max_seqlen_q, max_seqlen_k)
+        # Dense addressing on both sides; only the principal diagonal may vary.
+        varlen_bits = make_varlen_bits(VARLEN_SIDE_DENSE,
+                                       VARLEN_SIDE_DENSE,
+                                       principal_diagonal=principal_diagonal_of(causal))
 
         persistent_type = attn_extra_args.persistent_type
         if persistent_type == PersistentType.AUTOSELECT:
@@ -319,6 +365,8 @@ class _attention(torch.autograd.Function):
             BLOCK_N = 64
         if dtype == torch.float32:
             BLOCK_M //= 2
+        if attn_extra_args.fwd_block is not None:
+            BLOCK_M, BLOCK_N = attn_extra_args.fwd_block
         # Default values
         PRE_LOAD_V = False
         WAVES_PER_EU = 2
@@ -350,7 +398,7 @@ class _attention(torch.autograd.Function):
             Num_head_q=num_head_q,
             Num_head_k=num_head_k,
             # Varlen
-            Varlen_bits=VARLEN_BITS_DENSE,
+            Varlen_bits=varlen_bits,
             seqinfo_q0=null_tensor,
             seqinfo_k0=null_tensor,
             Max_seqlen_q=q.shape[2],
@@ -437,6 +485,7 @@ class _attention(torch.autograd.Function):
         ctx.bias_type = BIAS_TYPE
         ctx.tuning_result = [('attn_fwd', tuning_result)] if tuning_result is not None else None
         ctx.attn_extra_args = attn_extra_args
+        ctx.varlen_bits = varlen_bits
         if ctx.tuning_result is not None:
             for kernel_name, best in ctx.tuning_result:
                 print(f'{kernel_name=} {best.kwargs=} {best.num_warps=} {best.num_stages=}')
@@ -491,7 +540,7 @@ class _attention(torch.autograd.Function):
             *o.stride(),
             *do.stride(),
             seqinfo_q0=null_tensor,
-            varlen_bits=VARLEN_BITS_DENSE,
+            varlen_bits=ctx.varlen_bits,
             max_seqlen_q=max_seqlen_q,
             seqinfo_q1=null_tensor,
             hdim_vo=Lv,
@@ -516,6 +565,8 @@ class _attention(torch.autograd.Function):
         # Profiling shows (16, 16) is optimal solution for most bwd configurations
         BLOCK_M = 32
         BLOCK_N = 32
+        if attn_extra_args.bwd_block is not None:
+            BLOCK_M, BLOCK_N = attn_extra_args.bwd_block
         # if use_small_block:
         #     # DQ_BLOCK_M = min(max_seqlen_q, BLOCK)
         #     BLOCK_M = 32
@@ -567,7 +618,7 @@ class _attention(torch.autograd.Function):
                 num_head_k=num_head_k,
                 seqinfo_q0=null_tensor,
                 seqinfo_k0=null_tensor,
-                varlen_bits=VARLEN_BITS_DENSE,
+                varlen_bits=ctx.varlen_bits,
                 max_seqlen_q=max_seqlen_q,
                 max_seqlen_k=max_seqlen_k,
                 seqinfo_q1=null_tensor,
@@ -645,7 +696,7 @@ class _attention(torch.autograd.Function):
                 num_head_k=num_head_k,
                 seqinfo_q0=null_tensor,
                 seqinfo_k0=null_tensor,
-                varlen_bits=VARLEN_BITS_DENSE,
+                varlen_bits=ctx.varlen_bits,
                 max_seqlen_q=max_seqlen_q,
                 max_seqlen_k=max_seqlen_k,
                 seqinfo_q1=null_tensor,
@@ -683,7 +734,10 @@ class _attention(torch.autograd.Function):
         assert Lq == Lk
         head_dim_factors = factor_head_dim(ctx.head_dim)
         head_dim_rounded = sum(head_dim_factors)
-        padded_head = head_dim_rounded != ctx.head_dim
+        # Same rule as backward_split: ctx.head_dim is max(Lk, Lv), so
+        # comparing against it alone missed Lv < Lk == head_dim_rounded and
+        # loaded V/DO columns past Hdim_vo unmasked.
+        padded_head = head_dim_rounded != min(Lk, Lv)
         attn_extra_args = ctx.attn_extra_args
         philox_seed = ctx.philox_seed
         philox_offset = ctx.philox_offset
@@ -728,6 +782,8 @@ class _attention(torch.autograd.Function):
         # Profiling shows (16, 16) is optimal solution for most bwd configurations
         BLOCK_M = int(os.getenv('BWD_FUSE_BLOCK_M', default='16'))
         BLOCK_N = int(os.getenv('BWD_FUSE_BLOCK_N', default='16'))
+        if attn_extra_args.bwd_block is not None:
+            BLOCK_M, BLOCK_N = attn_extra_args.bwd_block
         stride_dbz, stride_dbh, stride_dbm, stride_dbn = db.stride()
         if db.numel() == 0 or not b.requires_grad:
             # Passing all zeros to indicate no elements
@@ -759,7 +815,7 @@ class _attention(torch.autograd.Function):
                         num_head_k=num_head_k,
                         seqinfo_q0=null_tensor,
                         seqinfo_k0=null_tensor,
-                        varlen_bits=VARLEN_BITS_DENSE,
+                        varlen_bits=ctx.varlen_bits,
                         max_seqlen_q=q.shape[2],
                         max_seqlen_k=k.shape[2],
                         seqinfo_q1=null_tensor,
@@ -786,7 +842,14 @@ class _attention(torch.autograd.Function):
                 print('bare_bwd_kernel_fuse Done')
         return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
 
-    backward = backward_fused if BWD_FUSED else backward_split
+    @staticmethod
+    def backward(ctx, do, _, fwd_tuning_result):
+        fused = ctx.attn_extra_args.bwd_fused
+        if fused is None:
+            fused = BWD_FUSED
+        if fused:
+            return _attention.backward_fused(ctx, do, _, fwd_tuning_result)
+        return _attention.backward_split(ctx, do, _, fwd_tuning_result)
 
 attention = _attention.apply
 

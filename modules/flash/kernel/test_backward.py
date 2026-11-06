@@ -375,6 +375,100 @@ def core_test_common_mistakes(case, dtype, device_str='cuda'):
 def test_common_mistakes(case, dtype):
     core_test_common_mistakes(case, dtype)
 
+# ---------------------------------------------------------------------------
+# principal_diagonal_choice (VarlenBits bit 18)
+# ---------------------------------------------------------------------------
+# A window tuple may carry p as a third element: (window_left, window_right, p).
+# The same tuple drives the kernel (attn_torch_function.principal_diagonal_of)
+# and the float32 reference in _common_test.py, which resolves
+#   numeric w -> L = w - p*d, R = w + p*d   (d = seqlen_k - seqlen_q)
+# and leaves sentinels alone. Rows that see no key are compared on O only
+# (it must be 0); their LSE is a placeholder and is not checked.
+
+WINDOW_BOTTOM_RIGHT_ALIGNED = -2147483646
+
+PD_WINDOWS = [
+    (WINDOW_BOTTOM_RIGHT_ALIGNED, 0),  # flash-attention's (-1, 0): unbounded left
+    (8, 0),
+    (0, 8),
+    (4, 4),
+    (-1, 3),                           # negative side: a literal bound in gSWA
+]
+PD_LENGTHS = [(37, 211), (128, 128), (211, 37)]
+
+def _fmt_window(w):
+    left = 'BR' if w[0] == WINDOW_BOTTOM_RIGHT_ALIGNED else str(w[0])
+    right = 'BR' if w[1] == WINDOW_BOTTOM_RIGHT_ALIGNED else str(w[1])
+    return f'w{left}_{right}'
+
+def _fmt_lengths(x):
+    return f'q{x[0]}_k{x[1]}'
+
+@pytest.mark.parametrize('p', [0, 1], ids=['TL', 'BR'])
+@pytest.mark.parametrize('window', PD_WINDOWS, ids=_fmt_window)
+@pytest.mark.parametrize('lengths', PD_LENGTHS, ids=_fmt_lengths)
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize('BWDOP', BWDOP_ids)
+def test_principal_diagonal(BWDOP, dtype, lengths, window, p):
+    seqlen_q, seqlen_k = lengths
+    _do_test_op_bwd(2, 2, 64, seqlen_q, seqlen_k, (*window, p), 'l2', 0.0, dtype, False, None)
+
+# pytorch/pytorch#201930: one query against N cached keys must see the LAST
+# keys, not key 0, for a numeric window under p = 1.
+@pytest.mark.parametrize('seqlen_k', [1, 37, 1024])
+@pytest.mark.parametrize('window', [(WINDOW_BOTTOM_RIGHT_ALIGNED, 0), (8, 0), (0, 0)], ids=_fmt_window)
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize('BWDOP', BWDOP_ids)
+def test_principal_diagonal_decode(BWDOP, dtype, window, seqlen_k):
+    _do_test_op_bwd(2, 2, 64, 1, seqlen_k, (*window, 1), 'l2', 0.0, dtype, False, None)
+
+# Chunked prefill: a Q chunk against the cache it extends.
+@pytest.mark.parametrize('lengths', [(64, 576), (100, 1124)], ids=_fmt_lengths)
+@pytest.mark.parametrize('window', [(WINDOW_BOTTOM_RIGHT_ALIGNED, 0), (128, 0), (8, 0)], ids=_fmt_window)
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize('BWDOP', BWDOP_ids)
+def test_principal_diagonal_chunked_prefill(BWDOP, dtype, window, lengths):
+    seqlen_q, seqlen_k = lengths
+    _do_test_op_bwd(2, 2, 64, seqlen_q, seqlen_k, (*window, 1), 'l2', 0.0, dtype, False, None)
+
+def _pd_live_rows(seqlen_q, seqlen_k, window, p):
+    '''Rows that keep at least one key, written out from the spec (A-2).'''
+    d = seqlen_k - seqlen_q
+    wl, wr = window
+    L = seqlen_q if wl in (WINDOW_BOTTOM_RIGHT_ALIGNED, -2147483647) else wl - p * d
+    if wr == -2147483647:
+        R = 0
+    elif wr == WINDOW_BOTTOM_RIGHT_ALIGNED:
+        R = d
+    else:
+        R = wr + p * d
+    i = torch.arange(seqlen_q)
+    lo = torch.clamp(i - L, min=0)
+    hi = torch.clamp(i + R, max=seqlen_k - 1)
+    return lo <= hi
+
+@pytest.mark.parametrize('p', [0, 1], ids=['TL', 'BR'])
+@pytest.mark.parametrize('window', PD_WINDOWS + [(3, -1)], ids=_fmt_window)
+@pytest.mark.parametrize('lengths', [(211, 37), (37, 211), (300, 129)], ids=_fmt_lengths)
+def test_principal_diagonal_dead_rows(lengths, window, p):
+    '''O of a row that sees no key is exactly 0, through the persistent path.'''
+    seqlen_q, seqlen_k = lengths
+    torch.manual_seed(3)
+    q = torch.randn((2, 2, seqlen_q, 64), device='cuda', dtype=torch.float16)
+    k = torch.randn((2, 2, seqlen_k, 64), device='cuda', dtype=torch.float16)
+    v = torch.randn((2, 2, seqlen_k, 64), device='cuda', dtype=torch.float16)
+    ext = AttentionExtraArgs(return_encoded_softmax=False,
+                             autotune=False,
+                             return_autotune=False,
+                             fillnan=True)
+    out, _, _ = attention(q, k, v, None, (*window, p), 0.125, 0.0, ext)
+    live = _pd_live_rows(seqlen_q, seqlen_k, window, p).to(out.device)
+    assert not torch.isnan(out).any()
+    dead = out[:, :, ~live, :]
+    assert torch.equal(dead, torch.zeros_like(dead)), f'{int((~live).sum())} dead rows not zero'
+    if live.any():
+        assert out[:, :, live, :].abs().sum() > 0
+
 def main_npz():
     SKIP_DK_DV = False
     SKIP_DQ = False

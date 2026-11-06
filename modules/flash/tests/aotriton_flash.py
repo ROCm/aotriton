@@ -70,6 +70,34 @@ def set_varlen_bits(params, varlen_type, lse_layout):
         mode.position = position
     params.varlen_bits.lse_layout = ILSE_LAYOUT[lse_layout]
 
+# The principal diagonal rides in the `causal` argument of every call below, as a
+# third element of a window tuple: `(window_left, window_right, p)`, p in {0, 1}
+# (VarlenPrincipalDiagonal.TOP_LEFT / .BOTTOM_RIGHT). A 2-tuple, a bool and a
+# CausalType all mean p = 0, so no existing caller changes.
+#
+# Carried there rather than as a new argument because `causal` is already the
+# one value that every layer between the test and this file forwards untouched
+# (SdpaParams.causal, the autograd Function's ctx.causal, the reference mask
+# builder), and p only has a meaning together with a numeric window.
+def split_principal_diagonal(causal):
+    """(causal without p, p)."""
+    if isinstance(causal, tuple) and len(causal) == 3:
+        window_left, window_right, p = causal
+        assert p in (0, 1), f'principal diagonal must be 0 or 1, got {p}'
+        return (window_left, window_right), p
+    return causal, 0
+
+def set_principal_diagonal(params, p):
+    """Fill params.varlen_bits.principal_diagonal_choice in place.
+
+    p = 0 leaves the bit alone (zero-initialised = TOP_LEFT), so a library
+    without the binding still runs every p = 0 test.
+    """
+    if not p:
+        return
+    from pyaotriton.v3.flash import VarlenPrincipalDiagonal
+    params.varlen_bits.principal_diagonal_choice = VarlenPrincipalDiagonal.BOTTOM_RIGHT
+
 def translate_causal(causal, v3_api):
     window_left, window_right = 0, 0
     if isinstance(causal, tuple):
@@ -191,6 +219,7 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
     offsetoutview, offsetoutdevm = mk_aotensor(philox_offset_output)
     esmview, esmdevm = mk_aotensor(encoded_softmax, if_empty_then_like=q)
     atomicview, atomicdevm = mk_aotensor(atomic)
+    causal, principal_diagonal = split_principal_diagonal(causal)
     causal_type, window_left, window_right = translate_causal(causal, v3_api=True)
     if AOTRITON_TORCH_ONLY_USE_CPU:
         hipDeviceSynchronize()
@@ -217,6 +246,7 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
     params.causal_type = causal_type
     params.window_left = window_left
     params.window_right = window_right
+    set_principal_diagonal(params, principal_diagonal)
     err = fa_forward_op(params,
                         fa_forward_op_params.kVersion,
                         Stream(),
@@ -248,6 +278,7 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
     offset1view, offset1devm = mk_aotensor(philox_offset1)
     if AOTRITON_TORCH_ONLY_USE_CPU:
         hipDeviceSynchronize()
+    causal, principal_diagonal = split_principal_diagonal(causal)
     causal_type, window_left, window_right = translate_causal(causal, v3_api=True)
     params = fa_backward_op_params()
     params.Q = qview;
@@ -275,6 +306,7 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
     params.causal_type = causal_type
     params.window_left = window_left
     params.window_right = window_right
+    set_principal_diagonal(params, principal_diagonal)
     err = fa_backward_op(params,
                          fa_backward_op_params.kVersion,
                          Stream(),
@@ -329,6 +361,7 @@ def attn_fwd_varlen(q, k, v,
     offsetoutview, offsetoutdevm = mk_aotensor(philox_offset_output)
     esmview, esmdevm = mk_aotensor(encoded_softmax, if_empty_then_like=q)
     atomicview, atomicdevm = mk_aotensor(atomic)
+    causal, principal_diagonal = split_principal_diagonal(causal)
     causal_type, window_left, window_right = translate_causal(causal, v3_api=True)
     params = fa_forward_op_params()
     params.Q = qview
@@ -355,6 +388,7 @@ def attn_fwd_varlen(q, k, v,
     params.causal_type = causal_type
     params.window_left = window_left
     params.window_right = window_right
+    set_principal_diagonal(params, principal_diagonal)
     set_varlen_bits(params, varlen_type, lse_layout)
     err = fa_forward_op(params,
                         fa_forward_op_params.kVersion,
@@ -389,6 +423,7 @@ def attn_bwd_varlen(q, k, v,
     deltaview = delta
     seedview, seeddevm = mk_aotensor(philox_seed)
     offset1view, offset1devm = mk_aotensor(philox_offset1)
+    causal, principal_diagonal = split_principal_diagonal(causal)
     causal_type, window_left, window_right = translate_causal(causal, v3_api=True)
     # print(f'{b=}')
     params = fa_backward_op_params()
@@ -419,6 +454,7 @@ def attn_bwd_varlen(q, k, v,
     params.causal_type = causal_type
     params.window_left = window_left
     params.window_right = window_right
+    set_principal_diagonal(params, principal_diagonal)
     # lse_layout must match the forward's: bwd_preprocess WRITES Delta and the two
     # key kernels READ both L and Delta through the same lse_row_addressing(), so a
     # backward that disagrees with the forward reads rows the forward never wrote.

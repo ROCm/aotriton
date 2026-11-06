@@ -556,6 +556,14 @@ class BwdDqKernelContext(ParityKernelContext):
             # `delta_i32` is the resolved *right* bound under a window -- which
             # is why re-pointing it generalises the tile count as well as the
             # mask.
+            #
+            # **No assumption that the band touches the diagonal.** Under
+            # `principal_diagonal_choice` (VarlenBits bit 18) the resolved
+            # right bound is `window_right + (seqlen_k - seqlen_q)`, so it may
+            # be negative enough that the whole block's band ends before
+            # column 0 (the clamp below gives zero tiles, and the zero-seeded
+            # accumulator stores dQ = 0 -- see `compute_active_guard`), or
+            # past `seqlen_k` (the `num_kv_tiles` cap, then the tail mask).
             end_i32 = fx.Int32((self.causal_end_raw_i32 > fx.Int32(0)).select(self.causal_end_raw_i32, fx.Int32(0)))
             n = (fx.Index(end_i32) + fx.Index(traits.BLOCK_N - 1)) // fx.Index(traits.BLOCK_N)
             n = fx.Index((n < self.num_kv_tiles).select(n, self.num_kv_tiles))
@@ -584,6 +592,11 @@ class BwdDqKernelContext(ParityKernelContext):
         `q_start - window_left`, since `q_start` is the smallest row. Clamped
         before the divide rather than after: `fx.Index` is unsigned, so a
         negative would come out enormous and skip the whole range.
+
+        The left bound may be negative (a band strictly right of the
+        diagonal, or one shifted by `principal_diagonal_choice`), which puts
+        the first column past `q_start` and possibly past `split_t_end`; the
+        cap then leaves an empty walk, and the block stores zeros.
         """
         traits = self.traits
         first_col_i32 = fx.Int32(self.q_start) - self.window_left_i32
@@ -1673,6 +1686,12 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         kernel resolves it against each sequence's own lengths -- the only
         correct thing to do once varlen means there is more than one pair of
         lengths to resolve against.
+
+        A *numeric* pair goes on the wire unshifted. Which diagonal it is
+        measured from is VarlenBits bit 18 (`principal_diagonal_choice`,
+        carried by `varlen["bits"]`), and the kernel applies that shift per
+        sequence in `fmha.resolve_window`, because `seqlen_k - seqlen_q`
+        differs per sequence. Sentinels are never shifted.
         """
         if not traits.CAUSAL:
             if window is not None:
@@ -1723,6 +1742,14 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         One place that turns tensors into the wire format, so `_launch` and
         `_compile` cannot drift apart -- the same shape, and the same reason,
         as the forward's `_args`.
+
+        The diagonal a *numeric* `window` bound is measured from is VarlenBits
+        bit 18 (`principal_diagonal_choice`), and `varlen["bits"]` is its only
+        source. A dense call carries it with
+        `varlen=abi.varlen_dense(principal_diagonal=...)`; `varlen=None` is
+        word 0, i.e. top-left. The kernel's addressing decode reads only the
+        side bytes, so the bit does not move a dense call onto the varlen
+        path.
         """
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
         _ptrs, shape_meta, st = abi.prep_tensors(
@@ -1757,7 +1784,8 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         # count where the batch extent belongs launches N programs over a
         # 1-batch tensor and every one of them addresses a plausible row.
         # `varlen=None` is not an error and never was a separate build: it is
-        # `bits == 0`, which the decode answers with dense addressing.
+        # `bits == 0`, which the decode answers with dense addressing; a dense
+        # word (`abi.varlen_dense`) differs only in bits 18:16.
         _vl = abi.varlen_args(bool(knobs.strides_constexpr), varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
 
         # **`(batch * heads, tokens)`, and the shape is shared with dK/dV.**
@@ -1778,13 +1806,15 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         # declared layout against the bits, which is the only place that can
         # be done. The forward's P4 got this wrong in a way only `_TH`
         # exposed.
-        rows_expected = int(num_seqlens or batch_size) * num_head_q
         for name, t in (("logsumexp", LSE), ("delta", Delta)):
             if t is None:
                 raise ValueError(f"{name} is required: the backward reads it, it is not recomputed")
             abi.row_tensor_arg(t, name, num_head_q, seqlen_q, varlen)
-            if varlen is None and t.shape[0] != rows_expected:
-                raise ValueError(f"{name} must be ({rows_expected}, {seqlen_q}); got {tuple(t.shape)}")
+            if abi.varlen_is_dense(varlen):
+                # Per the word's LSE layout: a dense word may select TH.
+                want = abi.dense_row_shape(varlen, batch_size, num_head_q, seqlen_q)
+                if tuple(t.shape) != want:
+                    raise ValueError(f"{name} must be {want}; got {tuple(t.shape)}")
 
         # A dB build must be handed a tensor and a build without dB must not
         # be: silently ignoring one returns gradients that are the right shape
@@ -1919,6 +1949,7 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
     _launch.compile = _compile
     _launch.traits = traits
     _launch.knobs = knobs
+    _launch.varlen_dense = abi.varlen_dense
     return _launch
 
 

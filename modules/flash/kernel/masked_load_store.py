@@ -38,6 +38,20 @@ code, we transpose inputs for calculate_intervals when handling col major proces
 
 However, window_left and window_right parsing is invariant row/col major
 processing, and need to split otherwise dkdv kernel's window_left/right will be incorrect.
+
+Varlen_bits bit 18 (principal_diagonal_choice, p) selects the diagonal a
+NUMERIC window is measured from.  With d = seqlen_k - seqlen_q of the sequence
+being processed:
+
+    numeric Window_left  w  ->  window_left  = w - p * d
+    numeric Window_right w  ->  window_right = w + p * d
+
+so p = 0 is the top-left diagonal (j = i, unchanged) and p = 1 the
+bottom-right one (j = i + d).  Sentinels and CAUSAL_TYPE 1/2 already name
+their diagonal and are never shifted; the sentinel tests read the caller's raw
+Window_left/Window_right.  The shift is applied here, before
+calculate_intervals, for the same reason the parsing is split out: the dkdv
+kernel transposes intervals, not windows.
 '''
 @triton.jit
 def parse_window(IS_CAUSAL,
@@ -45,7 +59,13 @@ def parse_window(IS_CAUSAL,
                  Window_left,
                  Window_right,
                  seqlen_q,
-                 seqlen_k):
+                 seqlen_k,
+                 Varlen_bits):
+    # VARLEN_PRINCIPAL_DIAGONAL_SHIFT = 18, spelled as a literal because
+    # Triton cannot read a module global (see varlen_bits.decode_addressing).
+    # Known limitation, by design: the shifted bounds are i32 with no overflow
+    # guard, so a numeric window near INT32_MIN/MAX wraps when p = 1.
+    principal_shift = ((Varlen_bits >> 18) & 1) * (seqlen_k - seqlen_q)
     # 0x80000001i32 = -2147483647
     if CAUSAL_TYPE == 1 or Window_left == -2147483647:
         window_left = seqlen_q
@@ -53,13 +73,13 @@ def parse_window(IS_CAUSAL,
     elif CAUSAL_TYPE == 2 or Window_left == -2147483646:
         window_left = seqlen_q
     else:
-        window_left = Window_left
+        window_left = Window_left - principal_shift
     if CAUSAL_TYPE == 1 or Window_right == -2147483647:
         window_right = 0
     elif CAUSAL_TYPE == 2 or Window_right == -2147483646:
         window_right = seqlen_k - seqlen_q
     else:
-        window_right = Window_right
+        window_right = Window_right + principal_shift
     return window_left, window_right
 
 
@@ -112,11 +132,11 @@ def calculate_intervals(IS_CAUSAL,
         # M = N - window_right = min(start_M + BLOCK_M, seqlen_q)
         isec_hi = min(start_M + BLOCK_M, seqlen_q) + window_right
         rsec_lob = div_rd(isec_lo, BLOCK_N)
-        # FIXME: we need to solve this
-        #  rsec_hib in Z
-        #  rsec_hib * BLOCK_N < isec_hi
-        #  maxmize rsec_hib
-        #  Example: isec_hi = 0, then rsec_hib = -1
+        # rsec_hib is the largest integer with rsec_hib * BLOCK_N < isec_hi,
+        # i.e. floor((isec_hi - 1) / BLOCK_N). div_rd floors for negative
+        # numerators as well (Triton's // truncates toward zero), so
+        # isec_hi = 0 gives rsec_hib = -1 as required, and lsec_hib above
+        # follows the same rule.
         rsec_hib = div_rd(isec_hi - 1, BLOCK_N)
         if DEBUG:
             tl.device_print('2 rb_lo isect', isec_lo)

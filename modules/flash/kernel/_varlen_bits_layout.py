@@ -49,6 +49,7 @@ from varlen_bits import (
     VARLEN_POSITION_SHIFT,
     VARLEN_K_SIDE_SHIFT,
     VARLEN_LSE_LAYOUT_SHIFT,
+    VARLEN_PRINCIPAL_DIAGONAL_SHIFT,
     VarlenLength,
     VarlenPosition,
     VarlenLseLayout,
@@ -70,7 +71,13 @@ def split_side(side_bits):
 
 
 def split_bits(bits):
-    """(q_side, k_side, lse_layout)."""
+    """(q_side, k_side, lse_layout).
+
+    Bit 18 (PRINCIPAL_DIAGONAL) is accepted and not returned: it changes which
+    keys a row sees, never where anything lives, so no builder here reads it.
+    Bits 31:19 are reserved and must be zero.
+    """
+    assert (bits >> (VARLEN_PRINCIPAL_DIAGONAL_SHIFT + 1)) == 0, f'reserved bits set in {bits:#x}'
     return (bits & 0xFF,
             (bits >> VARLEN_K_SIDE_SHIFT) & 0xFF,
             (bits >> VARLEN_LSE_LAYOUT_SHIFT) & 3)

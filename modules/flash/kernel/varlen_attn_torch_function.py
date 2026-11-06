@@ -30,6 +30,8 @@ from varlen_bits import (
     VARLEN_BITS_COMPACT,
     VARLEN_BITS_PADDED,
     VARLEN_BITS_STRIDED,
+    VARLEN_PRINCIPAL_DIAGONAL_SHIFT,
+    VarlenPrincipalDiagonal,
 )
 from tuned_bwd import NUM_XCDS
 from attn_torch_function import (
@@ -40,6 +42,7 @@ from attn_torch_function import (
         PersistentType,
         AttentionExtraArgs,
         factor_head_dim,
+        principal_diagonal_of,
 )
 
 class CausalType:
@@ -63,7 +66,10 @@ VARLEN_TYPE_BITS = {
 def translate_causal_varlen(causal):
     window_left, window_right = 0, 0
     if isinstance(causal, tuple):
-        window_left, window_right = causal
+        # (window_left, window_right[, principal_diagonal]); see
+        # principal_diagonal_of in attn_torch_function.py.
+        assert len(causal) in (2, 3), f'{causal=}'
+        window_left, window_right = causal[:2]
         causal_type = CausalType.WINDOWED
     elif isinstance(causal, bool):
         # causal_type = CausalType.TOP_LEFT if causal else CausalType.NONE
@@ -86,8 +92,15 @@ def translate_causal_varlen(causal):
     return causal_type, window_left, window_right
 
 
-def build_seqinfo(seqlens_q, seqlens_k, varlen_type, device):
+def build_seqinfo(seqlens_q,
+                  seqlens_k,
+                  varlen_type,
+                  device,
+                  principal_diagonal=VarlenPrincipalDiagonal.TOP_LEFT):
     """`(bits, seqinfo_q0, seqinfo_k0, seqinfo_q1, seqinfo_k1)`.
+
+    `principal_diagonal` sets VarlenBits bit 18: the diagonal numeric windows
+    are measured from, resolved per sequence by the kernel.
 
     `seqinfo_?0` always carries the cumulative lengths; `seqinfo_?1` carries the
     cumulative *slot* positions and is only passed by `strided`, where the two
@@ -108,7 +121,10 @@ def build_seqinfo(seqlens_q, seqlens_k, varlen_type, device):
     else:
         seqinfo_q1 = null_tensor
         seqinfo_k1 = null_tensor
-    bits = VARLEN_TYPE_BITS[varlen_type]
+    assert principal_diagonal in (VarlenPrincipalDiagonal.TOP_LEFT,
+                                  VarlenPrincipalDiagonal.BOTTOM_RIGHT)
+    bits = (VARLEN_TYPE_BITS[varlen_type]
+            | (principal_diagonal << VARLEN_PRINCIPAL_DIAGONAL_SHIFT))
     return (bits, cumsum_i32(seqlens_q), cumsum_i32(seqlens_k),
             seqinfo_q1, seqinfo_k1, seqlens_q, seqlens_k)
 
@@ -127,19 +143,27 @@ class _varlen_attention(torch.autograd.Function):
         autotune = attn_extra_args.autotune
         return_autotune = attn_extra_args.return_autotune
         assert not autotune, 'Autotuning the varlen JIT launcher is unsupported'
+        assert not attn_extra_args.bwd_fused, 'The varlen JIT launcher only has the split backward'
+        assert attn_extra_args.out_row_padding == 0, 'out_row_padding is a dense attention() option'
         dtype = q.dtype
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk
         head_dim_factors = factor_head_dim(Lk)
         head_dim_rounded = sum(head_dim_factors)
-        padded_head = head_dim_rounded != Lk
+        # Against min(Lk, Lv), as in the backward: comparing against Lk alone
+        # leaves PADDED_HEAD off for Lv < Lk == head_dim_rounded, and V is
+        # then loaded BLOCK_DMODEL columns wide with no Hdim_vo mask.
+        padded_head = head_dim_rounded != min(Lk, Lv)
         num_head_q = q.shape[1]
         num_head_k = k.shape[1]
 
         (varlen_bits, seqinfo_q0, seqinfo_k0, seqinfo_q1, seqinfo_k1,
-         seqlens_q, seqlens_k) = build_seqinfo(seqlens_q, seqlens_k,
-                                               varlen_type, q.device)
+         seqlens_q, seqlens_k) = build_seqinfo(seqlens_q,
+                                               seqlens_k,
+                                               varlen_type,
+                                               q.device,
+                                               principal_diagonal=principal_diagonal_of(causal))
         batch = len(seqlens_q)
         max_seqlen_q = int(np.max(seqlens_q))
         max_seqlen_k = int(np.max(seqlens_k))
@@ -235,6 +259,8 @@ class _varlen_attention(torch.autograd.Function):
             BLOCK_N = 64
         if dtype == torch.float32:
             BLOCK_M //= 2
+        if attn_extra_args.fwd_block is not None:
+            BLOCK_M, BLOCK_N = attn_extra_args.fwd_block
 
         cfg = triton.Config({'BLOCK_M': BLOCK_M,
                              'BLOCK_N': BLOCK_N,
@@ -383,6 +409,8 @@ class _varlen_attention(torch.autograd.Function):
         if q.dtype == torch.float32:
             BLOCK_M = max(16, BLOCK_M // 2)
             BLOCK_N = max(16, BLOCK_N // 2)
+        if attn_extra_args.bwd_block is not None:
+            BLOCK_M, BLOCK_N = attn_extra_args.bwd_block
 
         PREP_BLOCK = 16
         grid_prep = (triton.cdiv(max_seqlen_q, PREP_BLOCK), num_head_q, batch)

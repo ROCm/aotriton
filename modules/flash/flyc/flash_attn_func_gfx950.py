@@ -1313,6 +1313,13 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         One place that turns tensors into the wire format, so `_launch` and
         `_compile` cannot drift apart -- which is the bug this shape exists to
         prevent, and the reason the gfx1201 kernel grew the same helper.
+
+        The diagonal a *numeric* `window` bound is measured from is VarlenBits
+        bit 18 (`principal_diagonal_choice`), and `varlen["bits"]` is its only
+        source. A dense call carries it with
+        `varlen=abi.varlen_dense(principal_diagonal=...)`; `varlen=None` is
+        word 0, i.e. top-left. The bit means the same thing dense or varlen
+        (`d` is merely uniform).
         """
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
         ptrs, shape_meta, st = abi.prep_tensors(
@@ -1559,6 +1566,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
     _launch.compile = _compile
     _launch.traits = traits
     _launch.knobs = knobs
+    _launch.varlen_dense = abi.varlen_dense
     return _launch
 
 

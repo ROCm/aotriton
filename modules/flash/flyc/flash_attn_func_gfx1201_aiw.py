@@ -1291,7 +1291,17 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
             # `fmha.resolve_window`. Everything derived from a window stays
             # i32 from here down: bounds go negative, and `fx.Index` is
             # unsigned.
-            _wl_i32, _wr_i32 = fmha.resolve_window(window_left, window_right, seqlen_q_i32, seqlen_k_i32)
+            #
+            # `varlen_bits` rides along for `principal_diagonal_choice` (bit
+            # 18): with it set, a *numeric* bound is measured from this
+            # sequence's bottom-right diagonal, `L = w_left - d` and
+            # `R = w_right + d` with `d = seqlen_k - seqlen_q`. Nothing
+            # downstream needs to know: `decompose_causal_regions` and the
+            # per-element mask below already take arbitrary signed bounds --
+            # L negative, R past seqlen_k, a band clear of the diagonal, a
+            # band that misses every key (O = 0, LSE = +inf). With the bit
+            # clear the shift is 0 and both bounds are the caller's values.
+            _wl_i32, _wr_i32 = fmha.resolve_window(window_left, window_right, seqlen_q_i32, seqlen_k_i32, varlen_bits)
 
         # ---- Split the KV range into full and masked regions ----
         #
@@ -2259,6 +2269,10 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     # an (H, T) logsumexp -- the conventional dense case, and the default.
     # `_HT` is AOTriton's and this kernel's default: shape (H, T), T
     # contiguous. `_TH` is Transformer Engine's (T, H).
+    #
+    # Bit 18 is `principal_diagonal_choice`, which is not a layout fact and
+    # applies to dense calls too. It travels in the word like every other
+    # field: a dense call that wants it passes `varlen=abi.varlen_dense(...)`.
 
     # 0x02
 
@@ -2304,6 +2318,10 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         philox_offset_output=None,
     ):  # noqa: E741
         """Every kernel argument but the stream, in launch order.
+
+        The diagonal a numeric `window=` is measured from is VarlenBits bit 18
+        (`principal_diagonal_choice`), carried by `varlen["bits"]`; a dense
+        call sets it with `varlen=abi.varlen_dense(principal_diagonal=...)`.
 
         `_launch` and `_compile` were 62 identical lines out of 66, differing
         only in whether the tail is `run_compiled` or `flyc.compile` and how
@@ -2378,6 +2396,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     # STRIDES_CONSTEXPR; only `varlen_args` does, and it takes it as an
     # argument now.
     _launch.varlen_bits = abi.varlen_bits
+    _launch.varlen_dense = abi.varlen_dense
     _launch.varlen_compact = abi.varlen_compact
     _launch.varlen_padded = abi.varlen_padded
     _launch.varlen_strided = abi.varlen_strided

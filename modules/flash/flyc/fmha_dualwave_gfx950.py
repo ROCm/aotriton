@@ -1288,11 +1288,21 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
             # Resolution is on the device, not the host: a sentinel resolves
             # against *this sequence's* lengths, and under varlen those differ
             # per sequence. `fmha.resolve_window` is gfx1201's, reused unedited.
+            #
+            # `varlen_bits` carries `principal_diagonal_choice` (bit 18), which
+            # shifts a *numeric* bound by this sequence's `seqlen_k - seqlen_q`.
+            # Nothing below assumes the resolved pair touches the diagonal, or
+            # even the sequence: `left` may be negative and `right` may exceed
+            # `seqlen_k`. The left skip clamps at 0 and at the last four tiles,
+            # the tile count clamps at 0 and at `num_kv_tiles`, and a block
+            # whose band ends before column 0 takes the early exit through
+            # `causal_end_raw_i32 <= 0`.
             left, right = fmha.resolve_window(
                 self.window_left_arg,
                 self.window_right_arg,
                 fx.Int32(self.seqlen_q_v),
                 self.seqlen_kv_i32,
+                self.varlen_bits_arg,
             )
             self.window_left_i32 = fx.Int32(left)
             self.delta_i32 = fx.Int32(right)

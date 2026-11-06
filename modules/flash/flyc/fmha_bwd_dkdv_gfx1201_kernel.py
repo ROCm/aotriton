@@ -781,8 +781,24 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
         # ---- The window, and the visited Q-block range ----
         if const_expr(CAUSAL):
             # Sentinels resolve per sequence, not on the host -- under varlen
-            # bottom-right needs `seqlen_k[z] - seqlen_q[z]`.
-            _wl_i32, _wr_i32 = fmha.resolve_window(window_left, window_right, seqlen_q_i32, seqlen_k_i32)
+            # bottom-right needs `seqlen_k[z] - seqlen_q[z]`. So does a numeric
+            # bound under `principal_diagonal_choice` (VarlenBits bit 18), which
+            # shifts it by that same per-sequence `d`. The resolved bounds are
+            # arbitrary signed i32 -- `L` may be negative, `R` may run past
+            # seqlen_k, the band need not touch any diagonal -- and everything
+            # below consumes them as such: the transposed decomposition clamps
+            # the visited Q range to `[0, seqlen_q)` and collapses to zero
+            # blocks when no row sees this KV block, and the per-element test
+            # is the predicate itself. A KV column no row sees therefore
+            # leaves its accumulators at zero, and the epilogue stores
+            # dK = dV = 0 for it.
+            _wl_i32, _wr_i32 = fmha.resolve_window(
+                window_left,
+                window_right,
+                seqlen_q_i32,
+                seqlen_k_i32,
+                varlen_bits,
+            )
         else:
             # A window wide enough to admit everything, so the same
             # decomposition serves both arms. `smax` of the two lengths bounds
@@ -1355,6 +1371,16 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
         philox_offset2=0,
         bias=None,
     ):
+        """Launch dK/dV.
+
+        The diagonal a *numeric* `window` bound is measured from is VarlenBits
+        bit 18 (`principal_diagonal_choice`), and `varlen["bits"]` is its only
+        source. A dense call carries it with
+        `varlen=abi.varlen_dense(principal_diagonal=...)`; `varlen=None` is
+        word 0, i.e. top-left. The bit means the same thing dense or varlen
+        (`d` is merely uniform). Same contract as the gfx950 forward's
+        launcher.
+        """
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
         ptrs, meta_t, st = abi.prep_tensors(
             [("Q", Q), ("K", K), ("V", V), ("DO", DO), ("DK", DK), ("DV", DV)],
@@ -1409,6 +1435,7 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
         )
 
     _launch.varlen_bits = abi.varlen_bits
+    _launch.varlen_dense = abi.varlen_dense
     _launch.varlen_compact = abi.varlen_compact
     _launch.varlen_padded = abi.varlen_padded
     _launch.varlen_strided = abi.varlen_strided
