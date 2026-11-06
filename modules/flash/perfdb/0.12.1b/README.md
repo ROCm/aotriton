@@ -6,5 +6,6 @@ Ratios are geometric means of old over new median time of the unforced operator,
 
 | arch | variant | previous | op_attn_fwd | op_attn_bwd | LLM cases |
 |---|---|---|---|---|---|
+| [gfx1201](gfx1201.md) | any |  |  |  |  |
 | [gfx90a](gfx90a.md) | any |  |  |  |  |
 | [gfx942](gfx942.md) | any |  |  |  |  |

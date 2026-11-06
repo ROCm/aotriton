@@ -6,10 +6,36 @@ Ratios are geometric means of old over new median time of the unforced operator,
 
 | arch | variant | previous | op_attn_fwd | op_attn_bwd | LLM cases |
 |---|---|---|---|---|---|
+| [gfx1201](gfx1201.md) | any | 0.13b | 1.403 | 1.245 | 1.085 |
 | [gfx90a](gfx90a.md) | any | 0.13b | 0.9681 | 0.9797 | 0.9877 |
 | [gfx942](gfx942.md) | any | 0.13b | 0.9721 | 0.9989 | 0.9778 |
 
 ## LLM cases
+
+### gfx1201, variant `any`, against 0.13b
+
+| model | dtype | hdim | causal | window | dropout_p | bias | heads q/kv | batch | seqlen_q | seqlen_k | iface | old µs | new µs | old/new |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| roberta-large | fp16 | 64 | 0 | - | 0.1 | b1qk | 16/16 | 512 | 384 | 384 | op_attn_fwd | 10850 | 10440 | 1.039 |
+| roberta-large | fp16 | 64 | 0 | - | 0.1 | b1qk | 16/16 | 512 | 384 | 384 | op_attn_bwd | 48670 | 52810 | 0.9216 |
+| bert-large-uncased | fp16 | 64 | 0 | - | 0.1 | - | 16/16 | 192 | 512 | 512 | op_attn_fwd | 5845 | 5380 | 1.086 |
+| bert-large-uncased | fp16 | 64 | 0 | - | 0.1 | - | 16/16 | 192 | 512 | 512 | op_attn_bwd | 20110 | 19450 | 1.034 |
+| distilbert-base-uncased | fp16 | 64 | 0 | - | 0.1 | - | 12/12 | 384 | 512 | 512 | op_attn_fwd | 8637 | 7952 | 1.086 |
+| distilbert-base-uncased | fp16 | 64 | 0 | - | 0.1 | - | 12/12 | 384 | 512 | 512 | op_attn_bwd | 30190 | 29260 | 1.032 |
+| gpt2 | fp16 | 64 | 1 | - | 0.1 | - | 12/12 | 72 | 1024 | 1024 | op_attn_fwd | 4120 | 4219 | 0.9765 (noise) |
+| gpt2 | fp16 | 64 | 1 | - | 0.1 | - | 12/12 | 72 | 1024 | 1024 | op_attn_bwd | 11010 | 10740 | 1.025 (noise) |
+| roberta-large | fp16 | 64 | 0 | - | 0.1 | b1qk | 16/16 | 1536 | 128 | 128 | op_attn_fwd | 7437 | 7715 | 0.964 |
+| roberta-large | fp16 | 64 | 0 | - | 0.1 | b1qk | 16/16 | 1536 | 128 | 128 | op_attn_bwd | 30210 | 29910 | 1.01 (noise) |
+| roberta-large | fp16 | 64 | 0 | - | 0.1 | b1qk | 16/16 | 768 | 256 | 256 | op_attn_fwd | 13260 | 5830 | 2.274 |
+| roberta-large | fp16 | 64 | 0 | - | 0.1 | b1qk | 16/16 | 768 | 256 | 256 | op_attn_bwd | 35170 | 32080 | 1.096 |
+| roberta-large | fp16 | 64 | 0 | - | 0.1 | b1qk | 16/16 | 384 | 512 | 512 | op_attn_fwd | 13930 | 13230 | 1.053 |
+| roberta-large | fp16 | 64 | 0 | - | 0.1 | b1qk | 16/16 | 384 | 512 | 512 | op_attn_bwd | 62000 | 67930 | 0.9127 |
+| roberta-large | fp16 | 64 | 0 | - | 0.1 | b1qk | 16/16 | 192 | 1024 | 1024 | op_attn_fwd | 26940 | 22340 | 1.206 |
+| roberta-large | fp16 | 64 | 0 | - | 0.1 | b1qk | 16/16 | 192 | 1024 | 1024 | op_attn_bwd | 101200 | 100200 | 1.01 (noise) |
+| roberta-large | fp16 | 64 | 0 | - | 0.1 | b1qk | 16/16 | 96 | 2048 | 2048 | op_attn_fwd | 92380 | 90940 | 1.016 (noise) |
+| roberta-large | fp16 | 64 | 0 | - | 0.1 | b1qk | 16/16 | 96 | 2048 | 2048 | op_attn_bwd | 182900 | 148600 | 1.231 |
+| roberta-large | fp16 | 64 | 0 | - | 0.1 | b1qk | 16/16 | 48 | 4096 | 4096 | op_attn_fwd | 105300 | 88860 | 1.185 |
+| roberta-large | fp16 | 64 | 0 | - | 0.1 | b1qk | 16/16 | 48 | 4096 | 4096 | op_attn_bwd | 361000 | 358900 | 1.006 (noise) |
 
 ### gfx90a, variant `any`, against 0.13b
 
