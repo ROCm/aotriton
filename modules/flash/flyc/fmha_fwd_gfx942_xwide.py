@@ -471,10 +471,11 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
             clean_end = smin(clean_end, smax(n_tiles, fx.Index(1)) - fx.Index(1))
         n_loop = (n_tiles > fx.Index(1)).select(n_tiles - fx.Index(1), fx.Index(0))
         # Iteration j masks tile j+1. Masked iterations [0, j_clean) and [j_tail, n_loop)
-        # bracket the clean ones; j_clean is even so the unrolled loop knows its buffers.
-        j_clean = smin(smax(lead, fx.Index(1)) - fx.Index(1), n_loop)
-        j_clean = smin(j_clean + j_clean % 2, n_loop)
-        j_clean_end = smax(smin(smax(clean_end, fx.Index(1)) - fx.Index(1), n_loop), j_clean)
+        # bracket the clean ones; every loop runs pairs, so j_clean is even.
+        j_mask = smin(smax(lead, fx.Index(1)) - fx.Index(1), n_loop)
+        j_mask = j_mask + j_mask % 2            # may pass an odd n_loop by one
+        j_clean = smin(j_mask, n_loop - n_loop % 2)
+        j_clean_end = smax(smin(smax(clean_end, fx.Index(1)) - fx.Index(1), n_loop), j_mask)
 
         if const_expr(bias):
             b_elems = (fx.Int64(q_batch) * stride_b_batch + fx.Int64(head) * stride_b_head
@@ -660,7 +661,7 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
         for jp, carried in range(0, j_clean // 2, 1, init=init):
             mid = iteration(jp * 2, carried, 0, True)
             results0 = yield iteration(jp * 2 + 1, mid, 1, True)
-        n_pairs = (j_clean_end - j_clean) // 2
+        n_pairs = (j_clean_end - j_mask) // 2       # 0 when j_mask passed n_loop
         results1 = results0
         for jp, carried in range(0, n_pairs, 1, init=results0):
             mid = iteration(j_clean + jp * 2, carried, 0, False)
