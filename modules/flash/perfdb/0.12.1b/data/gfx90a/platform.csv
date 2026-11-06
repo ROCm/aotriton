@@ -1,0 +1,2 @@
+variant,gpu_device_id,vram_gib,power_cap_w,power_cap_default_w,gpus_per_node,thermal_gate,cpu,ram_speed,os,kernel,amdgpu,rocm,harness,measured
+any,0x740c,64,,,8,off,AMD EPYC 7713 64-Core Processor,,Debian GNU/Linux 13 (trixie),5.19.0-42-generic,,10.1.0,a95d699d9a7b7324c2f768da89afdc4087a53924,2026-11-05
