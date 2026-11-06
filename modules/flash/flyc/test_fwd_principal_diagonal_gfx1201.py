@@ -56,12 +56,15 @@ if _KERNEL_ROOT and _KERNEL_ROOT not in sys.path:
 
 torch = pytest.importorskip("torch")
 
-pytestmark = pytest.mark.skipif(
-    not _KERNEL_ROOT
-    or not torch.cuda.is_available()
-    or not torch.cuda.get_device_properties(0).gcnArchName.startswith("gfx1201"),
-    reason="needs a gfx1201 device and AOTRITON_FLYDSL_KERNEL_ROOT",
-)
+_SKIP = (not _KERNEL_ROOT
+         or not torch.cuda.is_available()
+         or not torch.cuda.get_device_properties(0).gcnArchName.startswith("gfx1201"))
+_SKIP_REASON = "needs a gfx1201 device and AOTRITON_FLYDSL_KERNEL_ROOT"
+# Skip the module *before* the imports below: a skipif mark does not stop
+# module-level imports, and these pull in FlyDSL and the kernel root's
+# `kernels.common`, so a host without them would fail collection instead.
+if _SKIP:
+    pytest.skip(_SKIP_REASON, allow_module_level=True)
 
 import fmha_abi_gfx1201 as abi  # noqa: E402
 import fmha_common_gfx1201 as fmha  # noqa: E402

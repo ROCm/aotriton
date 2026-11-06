@@ -1806,13 +1806,15 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         # declared layout against the bits, which is the only place that can
         # be done. The forward's P4 got this wrong in a way only `_TH`
         # exposed.
-        rows_expected = int(num_seqlens or batch_size) * num_head_q
         for name, t in (("logsumexp", LSE), ("delta", Delta)):
             if t is None:
                 raise ValueError(f"{name} is required: the backward reads it, it is not recomputed")
             abi.row_tensor_arg(t, name, num_head_q, seqlen_q, varlen)
-            if abi.varlen_is_dense(varlen) and t.shape[0] != rows_expected:
-                raise ValueError(f"{name} must be ({rows_expected}, {seqlen_q}); got {tuple(t.shape)}")
+            if abi.varlen_is_dense(varlen):
+                # Per the word's LSE layout: a dense word may select TH.
+                want = abi.dense_row_shape(varlen, batch_size, num_head_q, seqlen_q)
+                if tuple(t.shape) != want:
+                    raise ValueError(f"{name} must be {want}; got {tuple(t.shape)}")
 
         # A dB build must be handed a tensor and a build without dB must not
         # be: silently ignoring one returns gradients that are the right shape

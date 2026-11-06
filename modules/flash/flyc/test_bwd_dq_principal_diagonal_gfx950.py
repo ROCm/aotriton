@@ -319,6 +319,53 @@ def test_sentinels_ignore_the_bit(mfma_rows, window):
     assert torch.equal(outs[0], outs[1])
 
 
+@pytest.mark.parametrize("mfma_rows", MFMA_ROWS)
+def test_dense_word_th_layout(mfma_rows):
+    """A dense word may select the TH LSE layout: (B*S, H) rows, same dQ as HT.
+
+    `seqlen_q != NUM_HEADS`, so a row check that assumed HT would reject it.
+    """
+    abi = _abi()
+    fn = _build(mfma_rows)
+    window = WINDOWS["4_4"]
+    seqlen_q, seqlen_k = DENSE_SHAPES["chunked_prefill"]
+    batch = 2
+    sm_scale = 1.0 / math.sqrt(HEAD_DIM)
+    gen = torch.Generator(device="cuda").manual_seed(1234)
+    q, k, v, do = _inputs(seqlen_q, seqlen_k, batch, gen)
+    refs = [_reference(q[b], k[b], v[b], do[b], window, 1, sm_scale) for b in range(batch)]
+    lse_bhs = torch.stack([r[1] for r in refs])
+    delta_bhs = torch.stack([r[2] for r in refs])
+    outs = []
+    for layout in (abi.VARLEN_LSE_LAYOUT_HT, abi.VARLEN_LSE_LAYOUT_TH):
+        if layout == abi.VARLEN_LSE_LAYOUT_TH:
+            lse = lse_bhs.transpose(1, 2).reshape(batch * seqlen_q, NUM_HEADS).contiguous()
+            delta = delta_bhs.transpose(1, 2).reshape(batch * seqlen_q, NUM_HEADS).contiguous()
+        else:
+            lse = lse_bhs.reshape(batch * NUM_HEADS, seqlen_q).contiguous()
+            delta = delta_bhs.reshape(batch * NUM_HEADS, seqlen_q).contiguous()
+        dq = torch.full_like(q, float("nan"))
+        fn(q,
+           k,
+           v,
+           do,
+           dq,
+           lse,
+           delta,
+           batch,
+           seqlen_q,
+           seqlen_k=seqlen_k,
+           scale=sm_scale,
+           window=window,
+           varlen=abi.varlen_dense(principal_diagonal=abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT,
+                                   lse_layout=layout))
+        torch.cuda.synchronize()
+        outs.append(dq)
+    assert torch.equal(outs[0], outs[1])
+    for b in range(batch):
+        _check(outs[1][b], refs[b][0], refs[b][3], f"dense TH m{mfma_rows} batch {b}")
+
+
 def test_dense_word_rejects_seqinfo():
     """A dense word reads no sequence info; handing it some is a caller error."""
     abi = _abi()

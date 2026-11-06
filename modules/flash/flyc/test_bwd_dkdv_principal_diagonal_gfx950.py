@@ -230,6 +230,62 @@ def test_dense(head_dim, mfma_rows, p, window, shape):
 
 
 @pytest.mark.parametrize("head_dim, mfma_rows", BUILDS, ids=lambda b: f"{b}")
+def test_dense_word_th_layout(head_dim, mfma_rows):
+    """A dense word may select the TH LSE layout: (B*S, H) rows, same dK/dV as HT.
+
+    `seqlen_q != NUM_HEADS`, so a row check that assumed HT would reject it.
+    """
+    import fmha_abi_gfx1201 as abi
+
+    fn = _build(head_dim, mfma_rows)
+    seqlen_q, seqlen_k = 48, 160
+    window, p = (4, 4), 1
+    batch = 2
+    sm_scale = 1.0 / math.sqrt(head_dim)
+    torch.manual_seed(zlib.crc32(repr((head_dim, "th")).encode()))
+    q = _rand(batch, NUM_HEADS, seqlen_q, head_dim)
+    k = _rand(batch, NUM_HEADS, seqlen_k, head_dim)
+    v = _rand(batch, NUM_HEADS, seqlen_k, head_dim)
+    do = _rand(batch, NUM_HEADS, seqlen_q, head_dim)
+    live = _band(window, p, seqlen_q, seqlen_k, q.device)
+    refs = [_reference(q[b], k[b], v[b], do[b], live, sm_scale) for b in range(batch)]
+    ref_dk = torch.stack([r[0] for r in refs])
+    ref_dv = torch.stack([r[1] for r in refs])
+    lse_bhs = torch.cat([r[2] for r in refs]).reshape(batch, NUM_HEADS, seqlen_q)
+    delta_bhs = torch.cat([r[3] for r in refs]).reshape(batch, NUM_HEADS, seqlen_q)
+    outs = []
+    for layout in (abi.VARLEN_LSE_LAYOUT_HT, abi.VARLEN_LSE_LAYOUT_TH):
+        if layout == abi.VARLEN_LSE_LAYOUT_TH:
+            lse = lse_bhs.transpose(1, 2).reshape(batch * seqlen_q, NUM_HEADS).contiguous()
+            delta = delta_bhs.transpose(1, 2).reshape(batch * seqlen_q, NUM_HEADS).contiguous()
+        else:
+            lse = lse_bhs.reshape(batch * NUM_HEADS, seqlen_q).contiguous()
+            delta = delta_bhs.reshape(batch * NUM_HEADS, seqlen_q).contiguous()
+        dk = torch.full_like(k, float("nan"))
+        dv = torch.full_like(v, float("nan"))
+        fn(q,
+           k,
+           v,
+           do,
+           dk,
+           dv,
+           lse,
+           delta,
+           batch,
+           seqlen_q,
+           seqlen_k=seqlen_k,
+           scale=sm_scale,
+           window=_wire_window(window),
+           varlen=abi.varlen_dense(principal_diagonal=abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT,
+                                   lse_layout=layout))
+        torch.cuda.synchronize()
+        outs.append((dk, dv))
+    assert torch.equal(outs[0][0], outs[1][0]) and torch.equal(outs[0][1], outs[1][1])
+    _check("dV", outs[1][1], ref_dv, live)
+    _check("dK", outs[1][0], ref_dk, live)
+
+
+@pytest.mark.parametrize("head_dim, mfma_rows", BUILDS, ids=lambda b: f"{b}")
 @pytest.mark.parametrize("p", (0, 1), ids=lambda p: f"p{p}")
 @pytest.mark.parametrize("window", WINDOWS, ids=lambda w: f"w{w[0]}_{w[1]}")
 def test_varlen(head_dim, mfma_rows, p, window):

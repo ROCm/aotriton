@@ -2514,8 +2514,11 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         abi.row_tensor_arg(Delta, "delta", num_head_q, seqlen_q, varlen)
         if Delta.shape != LSE.shape:
             raise ValueError(f"delta must have logsumexp's shape {tuple(LSE.shape)}, got {tuple(Delta.shape)}")
-        if abi.varlen_is_dense(varlen) and LSE.shape[0] != int(batch_size) * num_head_q:
-            raise ValueError(f"logsumexp must be ({int(batch_size) * num_head_q}, {seqlen_q}); got {tuple(LSE.shape)}")
+        if abi.varlen_is_dense(varlen):
+            # Per the word's LSE layout: a dense word may select TH.
+            want = abi.dense_row_shape(varlen, batch_size, num_head_q, seqlen_q)
+            if tuple(LSE.shape) != want:
+                raise ValueError(f"logsumexp must be {want}; got {tuple(LSE.shape)}")
         # Upstream also rejects a varlen descriptor on a build compiled without
         # the decode. There is no such build here -- `make_traits` pins
         # `VARLEN=True` because the decode is unconditional (71ba6511) -- so

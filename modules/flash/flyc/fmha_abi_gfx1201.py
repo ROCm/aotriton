@@ -58,6 +58,7 @@ __all__ = [
     "varlen_bits",
     "varlen_dense",
     "varlen_is_dense",
+    "dense_row_shape",
     "varlen_compact",
     "varlen_padded",
     "varlen_strided",
@@ -168,6 +169,18 @@ def varlen_is_dense(varlen):
     `seqlen_k`, no sequence-info tensors.
     """
     return varlen is None or int(varlen["bits"]) & VARLEN_SIDES_MASK == 0
+
+
+def dense_row_shape(varlen, batch_size, num_head_q, seqlen_q):
+    """The (rows, cols) a dense call's LSE/Delta must have, per the LSE layout.
+
+    HT is `(batch * num_head_q, seqlen_q)`, TH is `(batch * seqlen_q,
+    num_head_q)`. Only meaningful when `varlen_is_dense(varlen)`.
+    """
+    layout = 0 if varlen is None else int(varlen["bits"]) & (3 << 16)
+    if layout == VARLEN_LSE_LAYOUT_TH:
+        return (int(batch_size) * int(seqlen_q), int(num_head_q))
+    return (int(batch_size) * int(num_head_q), int(seqlen_q))
 
 
 def varlen_compact(
