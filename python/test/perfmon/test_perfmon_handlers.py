@@ -476,3 +476,18 @@ def test_the_node_gives_the_runner_the_module_only(monkeypatch):
                       runner_types={'perfmon': ScriptedRunner})
     a, b = ctx.runner('perfmon', 'flash'), ctx.runner('perfmon', 'flash')
     assert a is b and (a.module, a.gpu_id) == ('flash', 2)
+
+
+def test_gpu_facts_read_the_power_caps_of_the_gpu_by_its_pci_address(tmp_path, monkeypatch):
+    from aotriton.perfmon import exaid_perfmon
+    hwmon = tmp_path / '0000:05:00.0' / 'hwmon' / 'hwmon14'
+    hwmon.mkdir(parents=True)
+    (hwmon / 'power1_cap').write_text('700000000\n')
+    (hwmon / 'power1_cap_default').write_text('750000000\n')
+    monkeypatch.setattr(exaid_perfmon, '_PCI_DEVICES', tmp_path)
+    exaid_perfmon.gpu_facts.cache_clear()
+    assert exaid_perfmon.gpu_facts('0000:05:00.0') == {'power_cap_w': 700, 'power_cap_default_w': 750}
+    assert exaid_perfmon.gpu_facts('0000:06:00.0') == {}            # no such device
+    assert exaid_perfmon.gpu_facts('../../etc') == {}               # not an address
+    assert exaid_perfmon.gpu_facts(None) == {}
+    exaid_perfmon.gpu_facts.cache_clear()

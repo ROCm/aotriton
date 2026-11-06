@@ -25,6 +25,7 @@ runner by the environment (AOTRITON_THERMAL_GATE), which the process inherits.
 import json
 import logging
 import platform as _platform
+import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from functools import lru_cache
@@ -94,8 +95,14 @@ def launcher() -> Path:
 @lru_cache(maxsize=1)
 def host_facts() -> dict:
     """Facts about the host that the container can see. Host names are not
-    recorded; RAM speed and the driver version come from the host inventory."""
-    facts: dict = {'kernel': _platform.release(), 'cpu': None, 'os': None, 'gpus_per_node': None}
+    recorded. The RAM speed is not here: it is only in the DMI tables, which a
+    container without root does not see (`/sys/firmware/dmi` is absent)."""
+    facts: dict = {'kernel': _platform.release(), 'cpu': None, 'os': None, 'gpus_per_node': None,
+                   'amdgpu': None}
+    try:
+        facts['amdgpu'] = Path('/sys/module/amdgpu/version').read_text().strip() or None
+    except OSError:
+        pass        # an in-tree driver without MODULE_VERSION has no such file
     try:
         for line in Path('/proc/cpuinfo').read_text().splitlines():
             if line.startswith('model name'):
@@ -116,6 +123,36 @@ def host_facts() -> dict:
         facts['gpus_per_node'] = sum(1 for p in nodes if p.read_text().strip() not in ('', '0'))
     except OSError:
         pass
+    return facts
+
+
+_BDF_RE = re.compile(r'^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$')
+_PCI_DEVICES = Path('/sys/bus/pci/devices')
+
+
+def _watts(path: Path) -> int | float | None:
+    """A hwmon power file (microwatts) in watts."""
+    try:
+        watts = int(path.read_text().strip()) / 1e6
+    except (OSError, ValueError):
+        return None
+    return int(watts) if watts == int(watts) else round(watts, 1)
+
+
+@lru_cache(maxsize=None)
+def gpu_facts(pci_bdf: str | None) -> dict:
+    """The power cap and its default of the GPU at `pci_bdf` (the runner's
+    `platform` reply names it), from the amdgpu hwmon the PCI device exposes,
+    in watts. Missing values are left out."""
+    if not isinstance(pci_bdf, str) or not _BDF_RE.match(pci_bdf):
+        return {}
+    facts = {}
+    for key, name in (('power_cap_w', 'power1_cap'), ('power_cap_default_w', 'power1_cap_default')):
+        for path in sorted((_PCI_DEVICES / pci_bdf / 'hwmon').glob(f'hwmon*/{name}')):
+            watts = _watts(path)
+            if watts is not None:
+                facts[key] = watts
+                break
     return facts
 
 

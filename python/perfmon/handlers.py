@@ -37,7 +37,7 @@ from aotriton.pgdef.localq.handlers import (DAG_ACK, MessageHandler, Permanent, 
                                             child, owner_of, task_ref)
 from aotriton.pgdef.pq import tasks as pgtasks
 
-from .exaid_perfmon import BackendUnavailable, host_facts
+from .exaid_perfmon import BackendUnavailable, gpu_facts, host_facts
 from .pq.measurements import ANY_VARIANT, save_measurement
 from .registry import make_perf_desc
 
@@ -115,6 +115,7 @@ def make_report(msg, ctx, iface: str, backend: str | None, status: str, platform
         'platform': {
             **{k: v for k, v in platform.items() if k not in ('harness', 'core_arches')},
             **host_facts(),
+            **gpu_facts(platform.get('pci_bdf')),
             'arch': msg['pool'],
             'variant': msg.get('subpool') or ANY_VARIANT,
             'node_subpool': msg.get('node_subpool'),
