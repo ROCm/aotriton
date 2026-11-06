@@ -529,12 +529,14 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
         if const_expr(bias):
             clean_end = smin(clean_end, smax(n_tiles, fx.Index(1)) - fx.Index(1))
         n_loop = (n_tiles > fx.Index(1)).select(n_tiles - fx.Index(1), fx.Index(0))
-        # Iteration j masks tile j+1. Masked iterations [0, j_clean) and [j_tail, n_loop)
-        # bracket the clean ones; every loop runs pairs, so j_clean is even.
-        j_mask = smin(smax(lead, fx.Index(1)) - fx.Index(1), n_loop)
-        j_mask = j_mask + j_mask % 2            # may pass an odd n_loop by one
-        j_clean = smin(j_mask, n_loop - n_loop % 2)
-        j_clean_end = smax(smin(smax(clean_end, fx.Index(1)) - fx.Index(1), n_loop), j_mask)
+        # Iteration j masks tile j+1. Masked iterations [0, j_clean) and [j_tail, n_iter)
+        # bracket the clean ones. Every loop runs pairs, so an odd n_loop gets one more
+        # iteration, whose tile n_tiles lies past kv_hi: all masked, P = 0. A parity
+        # branch instead made LLVM spill O around it.
+        n_iter = n_loop + n_loop % 2
+        j_clean = smin(smax(lead, fx.Index(1)) - fx.Index(1), n_loop)
+        j_clean = j_clean + j_clean % 2
+        j_clean_end = smax(smin(smax(clean_end, fx.Index(1)) - fx.Index(1), n_loop), j_clean)
 
         if const_expr(bias):
             b_elems = (fx.Int64(q_batch) * stride_b_batch + fx.Int64(head) * stride_b_head
@@ -680,22 +682,11 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
             return [m_next, corr_next, l_new] + s_vals + o_accs + v_regs
 
         def finish(carried, b, kv_last):
-            """The last tile's exp and PV; V^T(n-1) is already in vt[b]."""
+            """The last tile's exp and PV; its V^T is already in vt[b]."""
             o_last = rescale_o(list(carried[7:7 + n_o]), carried[1])
             p_pack, l_last = softmax_tail(carried[3:7], carried[0], carried[1], carried[2], kv_last)
             o_last = pv(o_last, p_pack, b)
             return [carried[0], l_last] + o_last
-
-        @flyc.jit
-        def epilogue(carried, j_tail):
-            """The odd masked iteration, if any, and the last tile. A parity branch
-            around a mid-loop iteration would make LLVM copy O, so only this one exists."""
-            out = [carried[0], carried[2]] + list(carried[7:7 + n_o])
-            if (n_loop - j_tail) % 2 == fx.Index(0):
-                out = finish(carried, 0, kv_base + n_loop * tr.BLOCK_N)
-            else:
-                out = finish(iteration(n_loop - fx.Index(1), carried, 0, True), 1, kv_base + n_loop * tr.BLOCK_N)
-            return out
 
         # Every loop runs pairs (even, odd), so buffer indices are trace-time constants.
         init = [m0, corr0, fx.Float32(0.0)] + s0 + [fx.full(4, 0.0, fx.Float32) for _ in range(n_o)] + v_regs
@@ -703,17 +694,17 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
         for jp, carried in range(0, j_clean // 2, 1, init=init):
             mid = iteration(jp * 2, carried, 0, True)
             results0 = yield iteration(jp * 2 + 1, mid, 1, True)
-        n_pairs = (j_clean_end - j_mask) // 2       # 0 when j_mask passed n_loop
+        n_pairs = (j_clean_end - j_clean) // 2
         results1 = results0
         for jp, carried in range(0, n_pairs, 1, init=results0):
             mid = iteration(j_clean + jp * 2, carried, 0, False)
             results1 = yield iteration(j_clean + jp * 2 + 1, mid, 1, False)
         j_tail = j_clean + n_pairs * 2
         results2 = results1
-        for jp, carried in range(0, (n_loop - j_tail) // 2, 1, init=results1):
+        for jp, carried in range(0, (n_iter - j_tail) // 2, 1, init=results1):
             mid = iteration(j_tail + jp * 2, carried, 0, True)
             results2 = yield iteration(j_tail + jp * 2 + 1, mid, 1, True)
-        results = epilogue(results2, j_tail)
+        results = finish(results2, 0, kv_base + n_iter * tr.BLOCK_N)
 
         rocdl.s_waitcnt(0)
         m_fin = results[0]
