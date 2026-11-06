@@ -648,6 +648,8 @@ def build_fmha_fwd_gfx942_wide(head_dim,
             # Prologue: K(0), K(1) land; X(-1) = QK(0); Y(-1) = softmax head(0).
             k_dma(kv_base, 0)
             k_dma(kv_base + tr.BLOCK_N, 1)
+            # The vmcnt below counts V and bias as the newest loads: keep them after the DMAs.
+            rocdl.sched_barrier(0)
             v_regs = v_load(kv_base)
             b0 = bias_load(kv_base, True)
             rocdl.s_waitcnt(vmcnt=n_v + (tr.NS if bias else 0))
@@ -713,6 +715,9 @@ def build_fmha_fwd_gfx942_wide(head_dim,
                       0 if k_early else tr.VT_LEAD)
                 if const_expr(k_early):
                     rocdl.s_waitcnt(vmcnt=n_v + n_kdma)
+                if const_expr(vt_early):
+                    # Y(j) overwrites V^T; s_barrier does not wait for these reads.
+                    rocdl.s_waitcnt(lgkmcnt=0)
                 cluster_barrier(f'X{b}')
                 # Y(j)
                 o_accs = rescale_o(o_accs, corr)
