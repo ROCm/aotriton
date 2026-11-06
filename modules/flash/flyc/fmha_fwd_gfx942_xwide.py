@@ -1,7 +1,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Flash attention forward for gfx942 at head dims 320..512, FlyDSL.
+"""Flash attention forward for gfx942 at head dims 384 and 512, FlyDSL.
 
 fmha_fwd_gfx942.py's algorithm (S^T = K.Q^T, O^T += V^T.P^T, V transposed
 through VGPRs) cannot hold hd512: at 32 query rows a wave, O^T alone is 256
@@ -42,7 +42,10 @@ LN2 = 0.6931471805599453
 WAVE = 64
 WAVE_M = 16             # query rows per wave: the N of the 16x16x16 MFMA
 BLOCK_N = 16            # keys per KV tile: the M of the QK MFMA
-DMA_ROUND = 2048        # bytes one K DMA instruction moves for 8 waves
+# LDS operand reads issued ahead of their MFMAs.
+PREFETCH = 2
+# sched_barrier mask: VALU, SALU, VMEM and DS writes may cross; DS reads and MFMAs may not.
+PIN_MASK = 0x002 | 0x004 | 0x010 | 0x020 | 0x040 | 0x200 | 0x400
 # voffset of a K dword past hdim_qk: out of range, so the DMA writes 0.
 OOB_VOFF = 0x7FFFFFF0
 
@@ -51,7 +54,8 @@ class Traits:
     """Compile-time shape of one kernel."""
 
     def __init__(self, head_dim, causal, dtype_str, num_waves, padded_head=False):
-        assert head_dim % 64 == 0 and 256 <= head_dim <= 512, head_dim
+        assert head_dim % 128 == 0 and 256 <= head_dim <= 512, head_dim
+        assert num_waves == 8, num_waves
         self.D = head_dim
         self.PADDED = padded_head
         self.PAD_FLOOR = 0 if padded_head else head_dim
@@ -65,15 +69,10 @@ class Traits:
         self.NP = head_dim // 32                # 16B V^T reads per tile, two MFMAs each
         self.K_ROW_BYTES = head_dim * 2
         self.K_TILE_BYTES = BLOCK_N * self.K_ROW_BYTES
-        assert self.K_TILE_BYTES % (num_waves * 256) == 0
-        self.DMA_ROUND = num_waves * 256
-        self.K_DMA_ROUNDS = self.K_TILE_BYTES // self.DMA_ROUND
-        # Rounds repeat their lane pattern every K_PERIOD; the next period is 8 rows on.
-        period = 1
-        while (period * self.DMA_ROUND) % (8 * self.K_ROW_BYTES):
-            period += 1
-        self.K_PERIOD = min(period, self.K_DMA_ROUNDS)
-        self.K_PERIOD_ROWS = period * self.DMA_ROUND // self.K_ROW_BYTES
+        # K DMA: wave w fills rows w and w + 8, 256B a round, so its XOR key is
+        # always w and one voffset serves every round.
+        self.K_QUARTERS = self.K_ROW_BYTES // 256
+        self.K_DMA_ROUNDS = 2 * self.K_QUARTERS
         self.VT_TILE_BYTES = BLOCK_N * head_dim * 2
         # V global load: one unit = 4 keys x 2 columns. Threads past the last unit
         # redo an earlier one: the same bytes to the same place.
@@ -84,6 +83,12 @@ class Traits:
         self.LDS_BYTES = self.LDS_VT_BASE + 2 * self.VT_TILE_BYTES
         assert self.LDS_BYTES <= 65536, self.LDS_BYTES
         self.CACHE_TAG = f'X{head_dim}_c{int(causal)}_{dtype_str}_w{num_waves}_p{int(padded_head)}'
+
+
+def default_grid_axis_order(causal):
+    """Tile-fastest in both modes: a head's K/V (16 MB at hd512, S8k) is shared in
+    L2 only by its q tiles. B2 H16 S32k d512 causal: 421 vs 310 TFLOPS head-fastest."""
+    return tuning.GRID_AXIS_TILE_FASTEST
 
 
 def build_fmha_fwd_gfx942_xwide(head_dim,
@@ -98,9 +103,11 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
                                 rescale_threshold=0.0,
                                 grid_axis_order=None,
                                 padded_head=False):
-    """build_fmha_fwd_gfx942's interface for head dims 320..512.
+    """build_fmha_fwd_gfx942's interface for head dims 384 and 512 (padded: any
+    head dims up to `head_dim`).
 
-    `block_n` must be None or 16; the rest as build_fmha_fwd_gfx942.
+    `block_n` must be None or 16; `num_waves` must be 8. The rest as
+    build_fmha_fwd_gfx942, except the default grid order (default_grid_axis_order).
     """
     host_causal_type = (1 if causal else 0) if causal_type is None else causal_type
     if host_causal_type not in (0, 1, 2, 3):
@@ -112,7 +119,7 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
         raise ValueError(f'the xwide forward runs {BLOCK_N}-key tiles, got block_n={block_n}')
     tr = Traits(head_dim, causal_type != 0, dtype_str, num_waves, padded_head)
     if grid_axis_order is None:
-        grid_axis_order = tuning.default_grid_axis_order(tr.CAUSAL)
+        grid_axis_order = default_grid_axis_order(tr.CAUSAL)
     tile_fastest = grid_axis_order == tuning.GRID_AXIS_TILE_FASTEST
     cache_tag = f'{tr.CACHE_TAG}_wpe{waves_per_eu}_thr{rescale_threshold}_g{grid_axis_order}_b{int(bias)}_d{int(dropout)}'
     elem = fx.BFloat16 if dtype_str == 'bf16' else fx.Float16
@@ -219,6 +226,9 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
         lg = lane // 16             # 4-element group of the MFMA's k axis
         if const_expr(tile_fastest):
             q_tile = fx.Index(gpu.block_idx.x)
+            if const_expr(tr.CAUSAL):
+                # Longest tiles first (bottom-right or not, later rows see more keys).
+                q_tile = fx.Index(gpu.grid_dim.x) - fx.Index(1) - q_tile
             head = fx.Index(gpu.block_idx.y)
         else:
             head = fx.Index(gpu.block_idx.x)
@@ -283,51 +293,46 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
             q_packs.append(Vec(v8).shuffle(Vec(v8), [0, 1, 2, 3]).ir_value())
             q_packs.append(Vec(v8).shuffle(Vec(v8), [4, 5, 6, 7]).ir_value())
 
-        # K DMA. Round i's lane pattern repeats every K_PERIOD rounds, 8 rows on,
-        # so the row offset rides in soffset, which the range check includes.
-        k_voff = []
-        for i in range_constexpr(tr.K_PERIOD):
-            pos = fx.Index(i * tr.DMA_ROUND) + wave * 256 + lane * 4
-            r = pos // tr.K_ROW_BYTES
-            cb = pos % tr.K_ROW_BYTES
-            c = (cb // 16) ^ (r % 8)
-            voff = fx.Int32(r) * k_row_stride_b + fx.Int32(c * 16 + cb % 16)
-            if const_expr(tr.PADDED):
-                # Dwords wholly past hdim_qk read 0; the one it splits is fixed in LDS.
-                col = fx.Int32(c * 8 + (cb % 16) // 2)
-                voff = (col < fx.Int32(hdim_qk)).select(voff, fx.Int32(OOB_VOFF))
-            k_voff.append(voff)
-        k_m0 = [fx.Int32(rocdl.readfirstlane(fx.Int32.ir_type,
-                                             fx.Int32(lds_base + fx.Index(tr.LDS_K_BASE + i * tr.DMA_ROUND)
-                                                      + wave * 256)))
-                for i in range(tr.K_DMA_ROUNDS)]
+        # K DMA: wave w fills rows w and w + 8; 16B chunk c of row r sits at c ^ (r % 8).
+        # Round (k, q) moves row w + 8k, bytes 256q..256q+255; both ride in soffset,
+        # which the range check includes.
+        wave_s = fx.Int32(rocdl.readfirstlane(fx.Int32.ir_type, fx.Int32(wave)))
+        k_lane_chunk = (fx.Int32(lane // 4) ^ wave_s)
+        k_voff = k_lane_chunk * fx.Int32(16) + fx.Int32(lane % 4) * fx.Int32(4)
+        k_lane_col = k_lane_chunk * fx.Int32(8) + fx.Int32(lane % 4) * fx.Int32(2)
+        k_m0 = fx.Int32(rocdl.readfirstlane(fx.Int32.ir_type, fx.Int32(lds_base + fx.Index(tr.LDS_K_BASE))))
+        k_m0 = k_m0 + wave_s * fx.Int32(tr.K_ROW_BYTES)
 
         def k_dma(kv_start, buf):
             al, noal = scope_attrs(f'k{buf}')
-            for i in range_constexpr(tr.K_DMA_ROUNDS):
-                soff = (fx.Int32(kv_start) + fx.Int32((i // tr.K_PERIOD) * tr.K_PERIOD_ROWS)) * k_row_stride_b
-                m0 = fx.Int64(k_m0[i] + fx.Int32(buf * tr.K_TILE_BYTES))
-                op = rocdl.raw_ptr_buffer_load_lds(k_rsrc,
-                                                   lds_ptr_at(m0),
-                                                   fx.Int32(4),
-                                                   k_voff[i % tr.K_PERIOD],
-                                                   soff,
-                                                   fx.Int32(0),
-                                                   fx.Int32(0))
-                op = getattr(op, 'owner', op)
-                op = getattr(op, 'operation', op)
-                op.attributes['alias_scopes'] = al
-                op.attributes['noalias_scopes'] = noal
+            for k in range_constexpr(2):
+                soff = (fx.Int32(kv_start) + wave_s + fx.Int32(8 * k)) * k_row_stride_b
+                for q in range_constexpr(tr.K_QUARTERS):
+                    voff = k_voff
+                    if const_expr(tr.PADDED):
+                        # Dwords wholly past hdim_qk read 0; the one it splits is fixed in LDS.
+                        voff = (k_lane_col < fx.Int32(hdim_qk) - fx.Int32(128 * q)).select(voff, fx.Int32(OOB_VOFF))
+                    m0 = k_m0 + fx.Int32(buf * tr.K_TILE_BYTES + 8 * k * tr.K_ROW_BYTES + 256 * q)
+                    op = rocdl.raw_ptr_buffer_load_lds(k_rsrc,
+                                                       lds_ptr_at(fx.Int64(m0)),
+                                                       fx.Int32(4),
+                                                       voff,
+                                                       soff + fx.Int32(256 * q),
+                                                       fx.Int32(0),
+                                                       fx.Int32(0))
+                    op = getattr(op, 'owner', op)
+                    op = getattr(op, 'operation', op)
+                    op.attributes['alias_scopes'] = al
+                    op.attributes['noalias_scopes'] = noal
 
         if const_expr(tr.PADDED):
-            # An odd hdim_qk leaves its slack column in a dword with a real one: the
-            # wave that DMA'd row lr's such dword zeroes the column after its vmcnt.
+            # An odd hdim_qk leaves its slack column in a dword with a real one: wave
+            # lr % 8, which DMA'd row lr, zeroes that column after its vmcnt.
             h = fx.Int32(hdim_qk)
             fix_pos = (fx.Int32(lr) * fx.Int32(tr.K_ROW_BYTES)
                        + (((h >> fx.Int32(3)) ^ fx.Int32(lr % 8)) << fx.Int32(4))
                        + (h & fx.Int32(7)) * fx.Int32(2))
-            fix_ok = (((h & fx.Int32(1)) == fx.Int32(1)) & (lane < fx.Index(16))
-                      & (fx.Index((fix_pos % fx.Int32(tr.DMA_ROUND)) // fx.Int32(256)) == wave))
+            fix_ok = (((h & fx.Int32(1)) == fx.Int32(1)) & (lane < fx.Index(16)) & (lr % 8 == wave))
             fix_off = fx.Index(fix_pos) + fx.Index(tr.LDS_K_BASE)
 
         def make_k_fix(buf):
@@ -348,22 +353,35 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
                 make_k_fix(buf)()
 
         # V: each unit is 4 keys x 2 columns, transposed by v_perm into one V^T chunk.
+        # When a thread's units are whole key groups apart, one base serves them all.
+        v_affine = tr.V_UNITS % tr.BLOCK_SIZE == 0 and tr.BLOCK_SIZE % (tr.D // 2) == 0
         v_base = []
         vt_wr_off = []
-        for u in range_constexpr(tr.V_UNITS_PER_THREAD):
+        for u in range_constexpr(1 if v_affine else tr.V_UNITS_PER_THREAD):
             unit = (tid + fx.Index(u * tr.BLOCK_SIZE)) % tr.V_UNITS
             g = unit // (tr.D // 2)
             cp = unit % (tr.D // 2)
             v_base.append(fx.Int32(g * 4) * v_row_stride_b + fx.Int32(cp * 4))
             vt_wr_off.append(fx.Index(tr.LDS_VT_BASE) + (cp // 16) * 1024 + g * 256 + (cp % 16) * 16)
+        g_step = tr.BLOCK_SIZE // (tr.D // 2)   # key groups between a thread's units, if affine
 
         def v_load(kv_start):
             out = []
             for u in range_constexpr(tr.V_UNITS_PER_THREAD):
                 for kk in range_constexpr(4):
-                    soff = (fx.Int32(kv_start) + fx.Int32(kk)) * v_row_stride_b
-                    out.append(fx.Int32(rocdl.raw_ptr_buffer_load(fx.Int32.ir_type, v_rsrc, v_base[u], soff, 0)))
+                    if const_expr(v_affine):
+                        soff = (fx.Int32(kv_start) + fx.Int32(4 * g_step * u + kk)) * v_row_stride_b
+                        base = v_base[0]
+                    else:
+                        soff = (fx.Int32(kv_start) + fx.Int32(kk)) * v_row_stride_b
+                        base = v_base[u]
+                    out.append(fx.Int32(rocdl.raw_ptr_buffer_load(fx.Int32.ir_type, v_rsrc, base, soff, 0)))
             return out
+
+        def vt_wr_at(u):
+            if const_expr(v_affine):
+                return vt_wr_off[0] + g_step * 256 * u
+            return vt_wr_off[u]
 
         def v_store_lds(regs, buf):
             sel_lo = fx.Int32(0x05040100)
@@ -376,7 +394,7 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
                       fx.Int32(rocdl.perm_b32(w[1], w[0], sel_hi)),
                       fx.Int32(rocdl.perm_b32(w[3], w[2], sel_hi))]
                 llvm.StoreOp(raw(Vec.from_elements(dw, fx.Int32)),
-                             lds_view(vt_wr_off[u] + buf * tr.VT_TILE_BYTES, fx.Int32, 16).llvm_ptr,
+                             lds_view(vt_wr_at(u) + buf * tr.VT_TILE_BYTES, fx.Int32, 16).llvm_ptr,
                              alignment=16,
                              alias_scopes=al,
                              noalias_scopes=noal)
@@ -389,41 +407,82 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
                                alias_scopes=al,
                                noalias_scopes=noal).result
 
+        def opaque(x):
+            """x through a v_mov LLVM cannot see into, so constant offsets fold into the
+            ds_read immediate instead of a v_or per read."""
+            return fx.Index(fx.Int32(llvm.inline_asm(T.i32, [raw(fx.Int32(x))], 'v_mov_b32 $0, $1', '=v,v')))
+
         # K read t: row lr, chunk 4t + lg, at chunk (4t + lg) ^ (lr % 8).
-        k_rd = [fx.Index(tr.LDS_K_BASE) + lr * tr.K_ROW_BYTES + ((fx.Index(4 * e) + lg) ^ (lr % 8)) * 16
+        k_rd = [opaque(fx.Index(tr.LDS_K_BASE) + lr * tr.K_ROW_BYTES + ((fx.Index(4 * e) + lg) ^ (lr % 8)) * 16)
                 for e in range(2)]
-        vt_rd = fx.Index(tr.LDS_VT_BASE) + lane * 16
+        vt_rd = opaque(fx.Index(tr.LDS_VT_BASE) + lane * 16)
+
+        def pinned():
+            """Fix the order of LDS reads and MFMAs; everything else may cross."""
+            rocdl.sched_barrier(PIN_MASK)
+
+        def stream(reads, use):
+            """Software-pipelined LDS operands: read t + PREFETCH, then use t."""
+            ahead = [reads(t) for t in range(min(PREFETCH, len(reads.range)))]
+            for t in reads.range:
+                if const_expr(t + PREFETCH < len(reads.range)):
+                    ahead.append(reads(t + PREFETCH))
+                pinned()
+                use(t, ahead[t])
+                pinned()
+
+        class Reads:
+            def __init__(self, n, fn):
+                self.range = range(n)
+                self.fn = fn
+
+            def __call__(self, t):
+                return Vec(self.fn(t))
 
         def qk(buf):
             """S^T of one tile: v4f32, keys 4*lg + i of query row lr."""
-            s = fx.full(4, 0.0, fx.Float32)
-            for t in range_constexpr(tr.NT):
-                k8 = Vec(lds_load(k_rd[t % 2] + (buf * tr.K_TILE_BYTES + 128 * (t // 2)), v8e(), 16, f'k{buf}'))
-                s = mfma(k8.shuffle(k8, [0, 1, 2, 3]).ir_value(), q_packs[2 * t], s)
-                s = mfma(k8.shuffle(k8, [4, 5, 6, 7]).ir_value(), q_packs[2 * t + 1], s)
-            return s
+            acc = [fx.full(4, 0.0, fx.Float32)]
+
+            def use(t, k8):
+                acc[0] = mfma(k8.shuffle(k8, [0, 1, 2, 3]).ir_value(), q_packs[2 * t], acc[0])
+                acc[0] = mfma(k8.shuffle(k8, [4, 5, 6, 7]).ir_value(), q_packs[2 * t + 1], acc[0])
+
+            stream(Reads(tr.NT,
+                         lambda t: lds_load(k_rd[t % 2] + (buf * tr.K_TILE_BYTES + 128 * (t // 2)), v8e(), 16, f'k{buf}')),
+                   use)
+            return acc[0]
 
         def pv(o_accs, p_pack, buf):
             o_accs = list(o_accs)
-            for p in range_constexpr(tr.NP):
-                vt = Vec(lds_load(vt_rd + (buf * tr.VT_TILE_BYTES + 1024 * p), v8e(), 16, f'vt{buf}'))
+
+            def use(p, vt):
                 o_accs[2 * p] = mfma(vt.shuffle(vt, [0, 1, 2, 3]).ir_value(), p_pack, o_accs[2 * p])
                 o_accs[2 * p + 1] = mfma(vt.shuffle(vt, [4, 5, 6, 7]).ir_value(), p_pack, o_accs[2 * p + 1])
+
+            stream(Reads(tr.NP,
+                         lambda p: lds_load(vt_rd + (buf * tr.VT_TILE_BYTES + 1024 * p), v8e(), 16, f'vt{buf}')),
+                   use)
             return o_accs
 
         c_scale = fx.Float32(sm_scale) * fx.Float32(LOG2E)
         c_neg_inf = fx.Float32(float('-inf'))
         c_neg_max = fx.Float32(-3.4028234663852886e38)
-        swap16 = fx.Int32(lane ^ fx.Index(16)) * fx.Int32(4)
-        swap32 = fx.Int32(lane ^ fx.Index(32)) * fx.Int32(4)
+        assert tr.LDS_VT_BASE % 1024 == 0
 
-        def peer(x, addr):
+        def peer(x, mask):
+            """x of lane ^ mask. The address comes from vt_rd (lane in bits 4..9) in
+            asm, so it is not hoisted into a register live across the loop."""
+            addr = llvm.inline_asm(T.i32,
+                                   [raw(fx.Int32(vt_rd))],
+                                   f'v_lshrrev_b32 $0, 2, $1\n\tv_xor_b32 $0, {mask * 4}, $0',
+                                   '=&v,v',
+                                   has_side_effects=True)
             xi = fx.Float32(x).bitcast(fx.Int32)
-            return fx.Int32(rocdl.ds_bpermute(fx.Int32.ir_type, addr, xi)).bitcast(fx.Float32)
+            return fx.Int32(rocdl.ds_bpermute(fx.Int32.ir_type, fx.Int32(addr), xi)).bitcast(fx.Float32)
 
         def row_max(x):
-            x = fx.maxnumf(x, peer(x, swap16))
-            return fx.maxnumf(x, peer(x, swap32))
+            x = fx.maxnumf(x, peer(x, 16))
+            return fx.maxnumf(x, peer(x, 32))
 
         kv_lane = fx.Int32(lg * 4)
 
@@ -566,21 +625,14 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
                 p = [(fx.Int32(vals[i]) > fx.Int32(idropout_p)).select(p[i], fx.Float32(0.0)) for i in range(4)]
             return pack_p(p), l_new
 
-        # Per tile two clusters. P1(j): V^T(j+1) -> vt[(j+1)%2], load V(j+2),
-        # QK(j+1) from k[(j+1)%2], exp(j). P2(j): DMA K(j+3) -> k[(j+1)%2],
+        # One cluster and one barrier per tile; iteration j: DMA K(j+2) -> k[j%2],
+        # V^T(j+1) -> vt[(j+1)%2], load V(j+2), exp(j), QK(j+1) from k[(j+1)%2],
         # PV(j) from vt[j%2], max(j+1), wait K(j+2). Unrolled by two so buffer
         # indices (and alias scopes) are constants.
         n_kdma = tr.K_DMA_ROUNDS
         n_v = tr.V_UNITS_PER_THREAD * 4
 
-        def compute_begin():
-            rocdl.s_setprio(1)
-
-        def compute_end():
-            rocdl.s_setprio(0)
-            cluster_barrier()
-
-        # Prologue: K(0), K(1), V(0); then P1(-1) and P2(-1).
+        # Prologue: K(0), K(1), V(0); then iteration -1's half.
         k_dma(kv_base, 0)
         b0 = bias_load(kv_base, True)
         v_regs = v_load(kv_base)
@@ -589,20 +641,15 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
         k_fix(0)
         rocdl.s_waitcnt(lgkmcnt=0)
         cluster_barrier()
-        compute_begin()
         v_store_lds(v_regs, 0)
         v_regs = v_load(kv_base + tr.BLOCK_N)
         s_raw = qk(0)
-        rocdl.s_waitcnt(lgkmcnt=0)
-        compute_end()
-        compute_begin()
-        k_dma(kv_base + 2 * tr.BLOCK_N, 0)
         # A finite initial max keeps fully masked rows NaN-free.
         s0, m0, corr0 = softmax_head(s_raw, c_neg_max, kv_base, True, b0)
-        rocdl.s_waitcnt(vmcnt=n_v + n_kdma)
+        rocdl.s_waitcnt(vmcnt=n_v)
         k_fix(1)
         rocdl.s_waitcnt(lgkmcnt=0)
-        compute_end()
+        cluster_barrier()
 
         n_o = tr.D // 16
 
@@ -616,25 +663,20 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
             v_regs = list(carried[7 + n_o:])
             kv_cur = kv_base + j * tr.BLOCK_N
             kv_next = kv_cur + tr.BLOCK_N
-            # P1(j)
-            compute_begin()
             b_next = bias_load(kv_next, masked)
+            k_dma(kv_next + tr.BLOCK_N, b)
             v_store_lds(v_regs, 1 - b)
             v_regs = v_load(kv_next + tr.BLOCK_N)
             o_accs = rescale_o(o_accs, corr)
-            s_next = qk(1 - b)
             p_pack, l_new = softmax_tail(s_cur, m_cur, corr, l_old, kv_cur)
-            rocdl.s_waitcnt(lgkmcnt=0)
-            compute_end()
-            # P2(j)
-            compute_begin()
-            k_dma(kv_next + 2 * tr.BLOCK_N, 1 - b)
+            s_next = qk(1 - b)
             o_accs = pv(o_accs, p_pack, b)
             s_vals, m_next, corr_next = softmax_head(s_next, m_cur, kv_next, masked, b_next)
-            rocdl.s_waitcnt(vmcnt=n_bias_loads(masked) + n_v + n_kdma)
+            # K(j+2) has only V(j+2) after it.
+            rocdl.s_waitcnt(vmcnt=n_v)
             k_fix(b)
             rocdl.s_waitcnt(lgkmcnt=0)
-            compute_end()
+            cluster_barrier()
             return [m_next, corr_next, l_new] + s_vals + o_accs + v_regs
 
         def finish(carried, b, kv_last):
@@ -676,8 +718,8 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
         rocdl.s_waitcnt(0)
         m_fin = results[0]
         l_fin = results[1]
-        l_fin = l_fin + peer(l_fin, swap16)
-        l_fin = l_fin + peer(l_fin, swap32)
+        l_fin = l_fin + peer(l_fin, 16)
+        l_fin = l_fin + peer(l_fin, 32)
         inv_l = fx.Float32(1.0) / l_fin
         inv_l = (l_fin > fx.Float32(0.0)).select(inv_l, fx.Float32(0.0))
         if const_expr(dropout):

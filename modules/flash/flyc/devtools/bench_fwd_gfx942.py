@@ -1,7 +1,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Correctness and TFLOPS of fmha_fwd_gfx942 (fmha_fwd_gfx942_xwide from hd320) against fp64.
+"""Correctness and TFLOPS of fmha_fwd_gfx942 (fmha_fwd_gfx942_xwide above hd256) against fp64.
 
     AOTRITON_FLYDSL_KERNEL_ROOT=<FlyDSL tree> python bench_fwd_gfx942.py \
         --batch 4 --heads 32 --seqlen 8192 --head_dim 128 --causal
@@ -19,7 +19,7 @@ import torch  # noqa: E402
 from fmha_fwd_gfx942 import build_fmha_fwd_gfx942  # noqa: E402
 from fmha_fwd_gfx942_xwide import build_fmha_fwd_gfx942_xwide  # noqa: E402
 
-XWIDE_MIN_HEAD_DIM = 320
+XWIDE_MIN_HEAD_DIM = 257
 
 
 def main():
