@@ -128,12 +128,11 @@ def platform_config(row: dict, rocm: str) -> dict:
     """The `platform.csv` columns (but `measured`) of one measurement row."""
     platform = row.get('platform') or {}
     harness = row.get('harness') or {}
-    # TODO(perfmon): the power caps, RAM speed and amdgpu version are still not
-    # in the report: the runner's `platform` reply (perfmon/core/runner.cc) has
-    # no amd-smi data (the image has no amd-smi), and host_facts() reads only
-    # the CPU, OS, kernel and GPU count the container can see. The columns stay
-    # empty until the fleet work (the host inventory) provides them; the keys
-    # read below are the names to fill.
+    # The power caps and the amdgpu version come from the node's sysfs
+    # (exaid_perfmon.gpu_facts / host_facts), so rows measured before that was
+    # added have them empty. The RAM speed is not available in the container
+    # (only the DMI tables have it, and they need root), so `ram_speed` stays
+    # empty until a host inventory provides it.
     return {
         'variant': row['variant'],
         'gpu_device_id': _device_id_text(platform.get('pci_device_id')),
@@ -375,11 +374,13 @@ def describe_shortfall(task: dict) -> str:
 
 def format_listing(selections: list[dict], *, given: dict, exported, shortfalls=None) -> list[str]:
     """The `-l` table. Levels (module, arch, variant, subject) that were given
-    as options are not printed; `exported(selection)` says whether the
+    as options are not printed. `measured` counts the points that were timed
+    (OK, NotOK and crash); `excluded` points were never run and are not part
+    of it. `exported(selection)` says whether the
     perfdb already has a block for it. `shortfalls` (pq.task_shortfalls rows)
     adds the `incomplete` column."""
     levels = [lv for lv in ('module', 'arch', 'variant', 'subject') if not given.get(lv)]
-    header = levels + ['measured', 'OK', 'NotOK', 'crash', 'newest', 'exported']
+    header = levels + ['measured', 'OK', 'NotOK', 'crash', 'excluded', 'newest', 'exported']
     by_selection = None if shortfalls is None else shortfalls_by_selection(shortfalls)
     if by_selection is not None:
         header.append('incomplete')
@@ -387,10 +388,10 @@ def format_listing(selections: list[dict], *, given: dict, exported, shortfalls=
     for s in selections:
         table.append([str(s[lv]) for lv in levels]
                      + [str(s['measured']), str(s['ok']), str(s['notok']), str(s['crash']),
-                        _day(s['newest']) or '-', 'yes' if exported(s) else 'no']
+                        str(s.get('excluded', 0)), _day(s['newest']) or '-', 'yes' if exported(s) else 'no']
                      + ([] if by_selection is None else [shortfall_text(by_selection.get(selection_key(s)))]))
     widths = [max(len(r[i]) for r in table) for i in range(len(header))]
-    numeric = {header.index(c) for c in ('measured', 'OK', 'NotOK', 'crash')}
+    numeric = {header.index(c) for c in ('measured', 'OK', 'NotOK', 'crash', 'excluded')}
     lines = []
     for r in table:
         cells = [c.rjust(widths[i]) if i in numeric else c.ljust(widths[i]) for i, c in enumerate(r)]
@@ -524,8 +525,10 @@ def _cmd_export(args) -> int:
         print(f'warning: no results yet: {describe_shortfall(task)}', file=sys.stderr)
     if not rows:
         sys.exit('every selected measurement belongs to an incomplete task; see -l or --include_incomplete')
-    failed = sum(1 for r in rows if r['status'] in ('NotOK', 'crash'))
-    print(f'{len(rows)} measurements, {superseded} superseded by newer ones, {failed} NotOK or crash')
+    by_status = {st: sum(1 for r in rows if r['status'] == st) for st in ('OK', 'NotOK', 'crash', 'excluded')}
+    measured = len(rows) - by_status['excluded']
+    print(f'{measured} measured ({by_status["OK"]} OK, {by_status["NotOK"]} NotOK, {by_status["crash"]} crash) '
+          f'and {by_status["excluded"]} excluded; {superseded} superseded by newer ones')
     try:
         result = export_rows(root, desc, args.arch, rows, excluded_for_sets(desc, args.arch, args.entry_set))
     except PerfdbError as e:

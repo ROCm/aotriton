@@ -103,10 +103,13 @@ def list_selections(conn, *, module: str | None = None, arch: str | None = None,
                     variant: str | None = None, subjects=None) -> list[dict]:
     """The (module, arch, variant, subject) combinations that have
     measurements, filtered by whatever is given: per combination the number
-    of latest measurements, the count of each status, and the newest date.
+    of latest measurements that were timed (`measured`: OK, NotOK and crash;
+    `excluded` rows were never run), the count of each status, and the newest
+    date.
     Rows are dicts ordered module, arch, variant, subject."""
     where, params = _where(module=module, arch=arch, variant=variant, subjects=subjects)
-    query = ('SELECT module, arch, variant, subject, count(*) AS measured, '
+    query = ('SELECT module, arch, variant, subject, '
+             "count(*) FILTER (WHERE status <> 'excluded') AS measured, "
              "count(*) FILTER (WHERE status = 'OK') AS ok, "
              "count(*) FILTER (WHERE status = 'NotOK') AS notok, "
              "count(*) FILTER (WHERE status = 'crash') AS crash, "
