@@ -94,7 +94,8 @@ A subject missing on the server is an error at dispatch, not on a worker.
 - Task status counts per subject: webui progress, or `pgdef.pq.progress.queue_progress`, or `perfmon.pq.measurements.subject_progress` (pending/running/done/failed/cancelled).
 - `.perfmon/bin/export -l [--module M] [--arch A] [--variant V] [--subject S...]` lists, per selection, measured/OK/NotOK/crash/excluded counts and per-task shortfalls (stderr `incomplete: ...`).
 - **A task is marked `done` before all its result rows are written** (docs: "Completion does not wait for result writes"). Do not export until the CPU queue has drained and the counts have stopped changing.
-- `failed` tasks are real failures (not measurement failures). Look at the node logs under `<wkdir>/run` (and the host's log directory) before re-dispatching.
+- `failed` tasks are real failures (not measurement failures). Look at the node logs on the host, under the node-local run directory
+  (`AOTRITON_RUNDIR`, by default `${XDG_RUNTIME_DIR:-/tmp}/aotriton-perfmon`, in `logs/`), before re-dispatching.
 
 ### 7. Export, verify, commit (one commit per arch)
 
