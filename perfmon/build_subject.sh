@@ -48,6 +48,18 @@
 #   --build_prefix <d>  build trees go to <d>/<arch>/<tag>/; never under
 #                     <prefix>, which holds products only
 #   --cache_dir <d>   downloaded release tarballs, shared by tags and arches
+#   --triton_wheel <whl>  head only: the local Triton wheel (absolute path) the
+#                     build compiles kernels with, as -DAOTRITON_USE_LOCAL_TRITON_WHEEL
+#                     (.ci/build_triton_wheels.sh builds one; .ci/build-test.sh's
+#                     optional wheel argument)
+#   --flydsl_wheel <whl>  head only: the local FlyDSL wheel (absolute path), as
+#                     -DAOTRITON_USE_LOCAL_FLYDSL_WHEEL. Required while
+#                     third_party/flydsl-llvm.txt pins an LLVM (CMake refuses
+#                     otherwise): build one against that LLVM with
+#                     .ci/build_flydsl_wheel.sh --wheel_output_dir <dir> --flydsl_commit <sha>
+#                     Releases ship images, so neither wheel applies to them.
+#                     PERFMON_HEAD_CMAKE_ARGS (more -D options for head) is
+#                     still honored, after these.
 #
 # Each tag builds in its own subshell, so one failure does not stop the rest;
 # the exit status is nonzero if any failed. build_core.sh must have run for the
@@ -65,6 +77,8 @@ BUILD_PREFIX="${TMPDIR:-/tmp}/perfmon-build"
 CACHE_DIR="${TMPDIR:-/tmp}/perfmon-cache"
 ROCM=""
 HEAD_SRC="${AOTRITON_WORKDIR:+${AOTRITON_WORKDIR}/aotriton.src}"
+TRITON_WHEEL=""
+FLYDSL_WHEEL=""
 
 usage() {
   sed -n "/^# Usage:/,/^# same ROCm\./p" "${BASH_SOURCE[0]}" | sed "s/^# \{0,1\}//" >&2
@@ -79,6 +93,8 @@ while [ "$#" -gt 0 ]; do
     --src_prefix)   SRC_PREFIX="$2"; shift 2 ;;
     --build_prefix) BUILD_PREFIX="$2"; shift 2 ;;
     --cache_dir)    CACHE_DIR="$2"; shift 2 ;;
+    --triton_wheel) TRITON_WHEEL="$2"; shift 2 ;;
+    --flydsl_wheel) FLYDSL_WHEEL="$2"; shift 2 ;;
     --) shift; break ;;
     -*) echo "Error: unknown option: $1" >&2; usage ;;
     *) break ;;
@@ -164,6 +180,32 @@ build_one_subject() {
     fi
   fi
 
+  # The wheels head's kernels are compiled with (releases ship images instead).
+  local HEAD_ARGS=""
+  if [ "${TAG}" = "head" ]; then
+    local W
+    for W in "${TRITON_WHEEL}" "${FLYDSL_WHEEL}"; do
+      if [ -n "${W}" ] && { [ "${W#/}" = "${W}" ] || [ ! -f "${W}" ]; }; then
+        echo "[build_subject] ERROR: wheel '${W}' is not an existing file with an absolute path." >&2
+        exit 1
+      fi
+    done
+    [ -z "${TRITON_WHEEL}" ] || HEAD_ARGS+=" -DAOTRITON_USE_LOCAL_TRITON_WHEEL=${TRITON_WHEEL}"
+    [ -z "${FLYDSL_WHEEL}" ] || HEAD_ARGS+=" -DAOTRITON_USE_LOCAL_FLYDSL_WHEEL=${FLYDSL_WHEEL}"
+    HEAD_ARGS+=" ${PERFMON_HEAD_CMAKE_ARGS:-}"
+    # Fail before a long configure, as CMakeLists.txt would after it.
+    if [ -f "${SRC_DIR}/third_party/flydsl-llvm.txt" ] && \
+       grep -qvE '^[[:space:]]*(#|$)' "${SRC_DIR}/third_party/flydsl-llvm.txt" && \
+       [[ "${HEAD_ARGS}" != *AOTRITON_USE_LOCAL_FLYDSL_WHEEL=* ]]; then
+      echo "[build_subject] ERROR: third_party/flydsl-llvm.txt pins an LLVM, so head needs a FlyDSL" \
+           "wheel built against it: pass --flydsl_wheel <abs .whl> (build one with" \
+           ".ci/build_flydsl_wheel.sh --wheel_output_dir <dir> --flydsl_commit <sha>)." \
+           "A local Triton wheel (--triton_wheel; .ci/build_triton_wheels.sh) is needed too" \
+           "unless the build can fetch one." >&2
+      exit 1
+    fi
+  fi
+
   # --- AOTriton ---------------------------------------------------------------
   # Into a clean subject directory: a leftover library of an earlier build would
   # leave two libaotriton*_v2.so, and the adapter build refuses that.
@@ -177,6 +219,7 @@ build_one_subject() {
   local AOTRITON_BUILD="${WORK}/aotriton"
   echo "[build_subject] ${TAG_BUILD} ${SRC_DIR} ${SUBJECT_DIR} ${ARCH}" >&2
   AOTRITON_BUILD_PATH="${AOTRITON_BUILD}" PERFMON_CACHE_DIR="${CACHE_DIR}" \
+    PERFMON_HEAD_CMAKE_ARGS="${HEAD_ARGS# }" \
     "${TAG_BUILD}" "${SRC_DIR}" "${SUBJECT_DIR}" "${ARCH}"
 
   # --- Backend table ----------------------------------------------------------

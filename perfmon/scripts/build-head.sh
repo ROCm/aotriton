@@ -6,8 +6,9 @@
 # lib/shim.sh for the contract. HEAD has no published kernel images, so unlike
 # the release scripts this compiles the kernels itself (the normal build, with
 # AOTRITON_NAME_SUFFIX=_pmon) and installs lib/aotriton.images from it. That
-# needs Triton: pass what the build needs through PERFMON_HEAD_CMAKE_ARGS,
-# e.g. "-DAOTRITON_USE_LOCAL_TRITON_WHEEL=/path/to.whl
+# needs Triton and FlyDSL wheels: build_subject.sh --triton_wheel/--flydsl_wheel
+# turn into PERFMON_HEAD_CMAKE_ARGS, a list of -D options such as
+# "-DAOTRITON_USE_LOCAL_TRITON_WHEEL=/path/to.whl
 # -DAOTRITON_USE_LOCAL_FLYDSL_WHEEL=/path/to.whl". The install holds
 # include/aotriton/flash/backends.h, which the adapter build turns into its
 # backend table.

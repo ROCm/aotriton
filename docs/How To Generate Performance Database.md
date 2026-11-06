@@ -422,7 +422,8 @@ git commit ...                                           # head is the committed
 .def/bin/prepwkdir <wkdir>
 git -C <wkdir>/aotriton.src rev-parse HEAD               # must be the commit you meant
 .def/libexec/sync_workdir.sh <wkdir> <buildnode> --buildnode
-.perfmon/bin/build_subjects --workdir <wkdir> --host <buildnode> --rocm <ver> head
+.perfmon/bin/build_subjects --workdir <wkdir> --host <buildnode> --rocm <ver> head \
+        -- --triton_wheel <abs .whl> --flydsl_wheel <abs .whl>
 .def/bin/fetchbuild <wkdir> --category perfmon
 .def/bin/deploy <wkdir> --category perfmon
 cat <wkdir>/installed/perfmon/<pool>/aotriton-head+rocm<ver>/source.txt   # clean, and names that commit
@@ -432,6 +433,13 @@ cat <wkdir>/installed/perfmon/<pool>/aotriton-head+rocm<ver>/source.txt   # clea
 python -m aotriton.perfmon.live --workdir <wkdir> --module flash --arch <arch> \
         --against <tag> --check regression forced_beats_unforced
 ```
+
+Unlike a release, head compiles its kernels, so the build needs a local Triton
+wheel and a FlyDSL wheel built against the LLVM pinned in
+`third_party/flydsl-llvm.txt` (CMake refuses otherwise; `build_subject.sh` stops
+early). Give the paths on the build host after `--`. Build the wheels with
+`.ci/build_triton_wheels.sh` and
+`.ci/build_flydsl_wheel.sh --wheel_output_dir <dir> --flydsl_commit <sha>`.
 
 Rebuilding head after new commits means repeating the sequence; to measure
 the new build from scratch, clean the old head tasks first (next section).

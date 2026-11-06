@@ -4,9 +4,9 @@
 
 # Builds the core for each ROCm, then subjects for each target, into
 # <workdir>/installed/perfmon. The host that builds must have that ROCm
-# toolchain: the perfmon image, or a fleet peer with a ROCm venv (the
-# managed venv of its session, else the shared one; setup_session). Thin on purpose: perfmon/build_core.sh and
-# perfmon/build_subject.sh do the work.
+# toolchain: the perfmon image, or a host with a ROCm Python venv (a venv
+# provided for the session, else a shared one; see setup_session). Thin on
+# purpose: perfmon/build_core.sh and perfmon/build_subject.sh do the work.
 #
 # Tune and perfmon share one way to build on the remote build node (prepwkdir -> <workdir>/aotriton.src -> sync_workdir.sh --buildnode), so
 # an operator who knows one app's build flow knows the other's.
@@ -20,8 +20,8 @@
 #                     (workers.db buildnode::workdir_override, else default_workdir;
 #                     as sync_workdir.sh --buildnode) and the scripts in its
 #                     aotriton.src; run sync_workdir.sh --buildnode first. The venv is
-#                     that of each ROCm (the active managed one, else the shared
-#                     one). Products go to the node's <workdir>/installed/perfmon
+#                     that of each ROCm (the one provided for the session, else the
+#                     shared one). Products go to the node's <workdir>/installed/perfmon
 #                     (unless --prefix). Without --host, run here, with the
 #                     toolchain already in the environment.
 #   --rocm <ver>      repeatable; default workers.db perfmon::rocm, else 10.1.0
@@ -43,7 +43,10 @@
 #                     (this script does not). Subject aotriton-head+rocm<ver>, for
 #                     live comparison; <subject>/source.txt records the commit built.
 #                     The committed perfdb is release-only. Default workers.db perfmon::tags
-# Options after `--` go to build_subject.sh, e.g. --cache_dir <dir>.
+# Options after `--` go to build_subject.sh (also with --host, on the remote), e.g.
+# --cache_dir <dir>. head needs the wheels it compiles kernels with:
+#   head -- --triton_wheel <abs .whl> --flydsl_wheel <abs .whl>
+# (paths on the build host; see build_subject.sh).
 
 set -euo pipefail
 
