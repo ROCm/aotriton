@@ -185,6 +185,13 @@ build_one_subject() {
   cmake --build "${FLASH_BUILD}"
   cmake --install "${FLASH_BUILD}"
 
+  # What was built: the commit of the source (dirty = uncommitted changes).
+  {
+    echo "describe: $(git -C "${SRC_DIR}" describe --always --dirty 2>/dev/null || echo unknown)"
+    echo "commit: $(git -C "${SRC_DIR}" rev-parse HEAD 2>/dev/null || echo unknown)"
+    echo "changed_files: $(git -C "${SRC_DIR}" status --porcelain 2>/dev/null | wc -l)"
+  } > "${SUBJECT_DIR}/source.txt"
+
   echo "[build_subject] done: ${SUBJECT_DIR}/bin/runner" >&2
 }
 

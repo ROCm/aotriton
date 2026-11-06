@@ -247,12 +247,23 @@ class ExaidPerfmonRunner:
         self._subject = subject
         self._arch = arch
 
+    def _source_text(self) -> str | None:
+        """<subject>/source.txt, written by build_subject.sh: what the subject was built from."""
+        try:
+            text = (subject_dir(self._arch, self._subject) / 'source.txt').read_text()
+        except (OSError, TypeError):
+            return None
+        return ' '.join(text.split('\n')).strip() or None
+
     def platform(self) -> dict:
         """The runner's platform facts, asked once per live runner."""
         live = self._current()
         if live.platform is None:
             self.proxy.write('platform')
             live.platform = json.loads(self.proxy.readinfo(timeout=self.PLATFORM_TIMEOUT))
+            source = self._source_text()
+            if source is not None:
+                live.platform['source'] = source
         return live.platform
 
     def enumerate(self, entry_pon: str, iface: str) -> list[str]:

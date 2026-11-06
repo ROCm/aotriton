@@ -343,3 +343,15 @@ def test_phase_ifaces(desc):
     assert desc.phase_ifaces('fwd_bwd') == ('op_attn_fwd', 'op_attn_bwd')
     with pytest.raises(ValueError):
         desc.phase_ifaces('bwd')
+
+
+def test_subject_source_text(tmp_path, monkeypatch):
+    from aotriton.perfmon import exaid_perfmon as ep
+    monkeypatch.setattr(ep, 'subject_dir', lambda arch, subject: tmp_path / subject)
+    runner = ep.ExaidPerfmonRunner('flash', 0)
+    runner._subject, runner._arch = 'aotriton-head+rocm1', 'gfx942'
+    assert runner._source_text() is None
+    (tmp_path / 'aotriton-head+rocm1').mkdir()
+    (tmp_path / 'aotriton-head+rocm1' / 'source.txt').write_text(
+        'describe: abc-dirty\ncommit: abc\nchanged_files: 2\n')
+    assert runner._source_text() == 'describe: abc-dirty commit: abc changed_files: 2'
