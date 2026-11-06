@@ -137,6 +137,18 @@ How to read results:
 - `regression`: a point slower than the same point in a reference by more than noise (`ratio` below 1, `reference_us / measured_us`). Cross-release regressions are **candidate faulty cells**, not proven faults: confirm on the same GPU, with repeats, before filing.
 - A backend that fails or crashes at a point is not a flag (it is counted in the summary). AITER-family backends often fail or crash on some entries: that is an expected result, not a harness error.
 
+## Measuring `head`
+
+`head` is a full build of the committed tip of the operator's branch (committed work only, no uncommitted edits), cloned by `prepwkdir` into `<wkdir>/aotriton.src` and synced to the build node, as the tuner builds from source: tune and perfmon share one build flow on the remote build node (prepwkdir, `aotriton.src`, `sync_workdir.sh --buildnode`), so knowing one app's flow covers the other's. Subject `aotriton-head+rocm<ver>`, tag `head`. It is for live comparison and development checks, not for committed data:
+0. Prepare and sync the source (commit what you want measured first; a WIP commit is fine): `.def/bin/prepwkdir <wkdir>`, then `.def/libexec/sync_workdir.sh <wkdir> <buildnode> --buildnode`. Check `git -C <wkdir>/aotriton.src rev-parse HEAD` is the commit you meant.
+1. Build on the build node: `.perfmon/bin/build_subjects --workdir <wkdir> ... head`. Then check what was built: `<wkdir>/installed/perfmon/<pool>/aotriton-head+rocm<ver>/source.txt` (describe, commit, changed_files; it should be clean and name the commit of step 0), also in each report's `platform.source`.
+2. Relay it (`.def/bin/fetchbuild <wkdir> --category perfmon`).
+3. Dispatch it: `--subject aotriton-head+rocm<ver>` (a subject is a release or head).
+4. Run nodes and monitor as for a release campaign.
+5. Compare: `python -m aotriton.perfmon.live ... --check regression|forced_beats_unforced`.
+
+The committed perfdb stays release-only: `export` refuses head, and a release's perfdb is generated after it ships.
+
 ## Rules and pitfalls
 
 - Never run the `-m pg` tests (`pytest -m pg`) against a database holding real data: their fixture drops and recreates the pgdef/perfmon/tune schemas. Use a dedicated disposable PostgreSQL (`AOTRITON_PG_TEST_DISPOSABLE=1` and `PG*` variables).

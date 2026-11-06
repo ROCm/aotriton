@@ -4,7 +4,9 @@
 """
 Live comparison: the `head` subject in PostgreSQL against committed releases.
 
-HEAD is never committed to the perfdb (export refuses it); it is compared live
+`head` (the committed tip of the operator's branch, as prepwkdir clones it
+into <workdir>/aotriton.src; see <subject>/source.txt for what was built) is
+never committed to the perfdb (export refuses it); it is compared live
 instead, and the output is a list of flagged entries for the tuning-database
 fault hunt of the next cycle. Two checks, both with the noise rule of
 `perfdb compare` (a change of the median time above NOISE_FRACTION, 3%, for
@@ -282,7 +284,10 @@ def build_parser() -> argparse.ArgumentParser:
                                      description='Compare the head subject in PostgreSQL against committed '
                                                  'release tags and other subjects, and check that no forced '
                                                  'backend beats the unforced operator. Lists the flagged '
-                                                 'entries with their full problem coordinates.')
+                                                 'entries with their full problem coordinates. To get head '
+                                                 'measured: build_subjects ... head (the build node\'s checkout, '
+                                                 'working tree included: sync it first), dispatch the '
+                                                 'aotriton-head+rocm<ver> subject, run nodes, then this.')
     parser.add_argument('--workdir',
                         type=Path,
                         default=None,

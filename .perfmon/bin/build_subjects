@@ -8,14 +8,21 @@
 # managed venv of its session, else the shared one; setup_session). Thin on purpose: perfmon/build_core.sh and
 # perfmon/build_subject.sh do the work.
 #
+# Tune and perfmon share one way to build on the remote build node (prepwkdir -> <workdir>/aotriton.src -> sync_workdir.sh --buildnode), so
+# an operator who knows one app's build flow knows the other's.
+#
 # Usage: build_subjects --workdir <wkdir> [--host <build host>] [--rocm <ver>]...
 #                       [--arch <target>...] [--prefix <dir>] [--scratch <dir>]
 #                       [--without_amdsmi] [<tag>...] [-- <build_subject.sh options>]
 #   --workdir <wkdir> the perfmon workdir; default $AOTRITON_WORKDIR
 #                     (.def/lib/paths.sh)
-#   --host <h>        run on <h> over ssh (the checkout, the workdir and the
-#                     scratch are visible there at the same paths), with the venv of
-#                     each ROCm (the active managed one, else the shared one). Without it, run here, with the
+#   --host <h>        run on <h> over ssh, from the build node's copy of the workdir
+#                     (workers.db buildnode::workdir_override, else default_workdir;
+#                     as sync_workdir.sh --buildnode) and the scripts in its
+#                     aotriton.src; run sync_workdir.sh --buildnode first. The venv is
+#                     that of each ROCm (the active managed one, else the shared
+#                     one). Products go to the node's <workdir>/installed/perfmon
+#                     (unless --prefix). Without --host, run here, with the
 #                     toolchain already in the environment.
 #   --rocm <ver>      repeatable; default workers.db perfmon::rocm, else 10.1.0
 #   --arch <target>...  what to build; default MAJOR. A target is
@@ -26,9 +33,16 @@
 #                               arch of AOTRITON_SUPPORTED_GPUS
 #                       <arch>  a subject of that arch, in <prefix>/<arch>, for
 #                               external users; a major arch means MAJOR
-#   --prefix <dir>    default <wkdir>/installed/perfmon
+#   --prefix <dir>    default <wkdir>/installed/perfmon (with --host: the node's wkdir)
 #   --scratch <dir>   default: the parent of the workdir (locates the venv)
-#   <tag>...          release tags, or head; default workers.db perfmon::tags
+#   <tag>...          release tags, or head: the committed tip of your branch, as
+#                     .def/bin/prepwkdir clones it into <wkdir>/aotriton.src (uncommitted
+#                     work is not in it). With --host, sync it to the build node
+#                     first: .def/bin/prepwkdir <wkdir>, then
+#                     .def/libexec/sync_workdir.sh <wkdir> <host> --buildnode
+#                     (this script does not). Subject aotriton-head+rocm<ver>, for
+#                     live comparison; <subject>/source.txt records the commit built.
+#                     The committed perfdb is release-only. Default workers.db perfmon::tags
 # Options after `--` go to build_subject.sh, e.g. --cache_dir <dir>.
 
 set -euo pipefail
@@ -133,9 +147,14 @@ if [ -n "$HOST" ]; then
     # One ssh per ROCm: each has its own venv. build_run.sh activates it and
     # calls this script again, without --host.
     SCRATCH="$(perfmon_scratch_root "$WORKDIR" "$SCRATCH")"
+    RWORKDIR="$(get_buildnode_workdir "$WORKDIR")"
+    [ -n "$RWORKDIR" ] || { echo "Error: no build node workdir in $WORKDIR/workers.db" >&2; exit 1; }
+    # Without --prefix, the product tree is the build node's.
+    RPREFIX="$PREFIX"
+    [ "$PREFIX" != "$WORKDIR/installed/perfmon" ] || RPREFIX="$RWORKDIR/installed/perfmon"
     for ROCM in "${ROCMS[@]}"; do
-        REMOTE=(bash "$ROOT/.perfmon/host/build_run.sh" "$WORKDIR" "$SCRATCH" "$ROCM"
-                --workdir "$WORKDIR" --rocm "$ROCM" --prefix "$PREFIX"
+        REMOTE=(bash "$RWORKDIR/aotriton.src/.perfmon/host/build_run.sh" "$RWORKDIR" "$SCRATCH" "$ROCM"
+                --workdir "$RWORKDIR" --rocm "$ROCM" --prefix "$RPREFIX"
                 --arch "${ARCHES[@]}" ${CORE_OPTS[@]+"${CORE_OPTS[@]}"}
                 "${TAGS[@]}")
         [ "${#SUBJECT_OPTS[@]}" -eq 0 ] || REMOTE+=(-- "${SUBJECT_OPTS[@]}")

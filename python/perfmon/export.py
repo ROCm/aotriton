@@ -429,7 +429,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--subject',
                         nargs='+',
                         default=None,
-                        help='Only these subjects')
+                        help='Only these subjects (releases; a head subject is refused, '
+                             'compare it with aotriton.perfmon.live)')
     parser.add_argument('--output',
                         type=Path,
                         default=None,

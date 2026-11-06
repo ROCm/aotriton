@@ -420,7 +420,7 @@ python -m aotriton.perfmon.export --workdir <workdir> -l [--module M] [--arch A]
 
 ### Live comparison of `head`
 
-`head` is never committed, so it is compared live, from PostgreSQL, by
+`head` is the committed tip of the operator's branch, as `.def/bin/prepwkdir` clones it into `<workdir>/aotriton.src` and `sync_workdir.sh --buildnode` copies it to the build node (uncommitted work is not in it; `<subject>/source.txt` records the commit built). It is never committed, so it is compared live, from PostgreSQL, by
 `python -m aotriton.perfmon.live`:
 
 ```

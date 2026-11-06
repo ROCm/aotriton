@@ -25,14 +25,24 @@
 # a non-major arch. At run time a device arch is served by the pool
 # perfmon_subject_pool (scripts/lib/arches.sh) names, MAJOR for a major arch.
 #
+# Tune and perfmon share one way to build on the remote build node (prepwkdir -> <workdir>/aotriton.src -> sync_workdir.sh --buildnode), so
+# an operator who knows one app's build flow knows the other's.
+#
 # Usage: build_subject.sh [options] --rocm <ver> <arch> <prefix> <tag>...
 #   --rocm <ver>      the ROCm the toolchain must be, e.g. 10.1.0; it is part of
 #                     every name, so a different toolchain is refused
 #   <arch>            MAJOR, or one AOTriton target arch, e.g. gfx1101; a major
 #                     arch (e.g. gfx942) is refused: it is served by MAJOR
 #   <prefix>          e.g. ${AOTRITON_WORKDIR}/installed/perfmon
-#   <tag>...          release tags, e.g. 0.13b 0.14.2b, or head (a full build of
-#                     this checkout: HEAD has no published images)
+#   <tag>...          release tags, e.g. 0.13b 0.14.2b, or head: the committed
+#                     tip of the operator's branch, as .def/bin/prepwkdir clones
+#                     it into <workdir>/aotriton.src and
+#                     .def/libexec/sync_workdir.sh <workdir> <buildnode>
+#                     --buildnode copies it to the build node (uncommitted work
+#                     is not in it). Subject aotriton-head+rocm<ver>, for live
+#                     comparison only; <subject>/source.txt says which commit
+#                     was built
+#   --head_src <d>    the source of head; default $AOTRITON_WORKDIR/aotriton.src
 #   --origin <url>    where release tags are cloned from
 #   --src_prefix <d>  clones go to <d>/<tag>
 #   --build_prefix <d>  build trees go to <d>/<arch>/<tag>/; never under
@@ -54,6 +64,7 @@ SRC_PREFIX="${TMPDIR:-/tmp}/perfmon-src"
 BUILD_PREFIX="${TMPDIR:-/tmp}/perfmon-build"
 CACHE_DIR="${TMPDIR:-/tmp}/perfmon-cache"
 ROCM=""
+HEAD_SRC="${AOTRITON_WORKDIR:+${AOTRITON_WORKDIR}/aotriton.src}"
 
 usage() {
   sed -n "/^# Usage:/,/^# same ROCm\./p" "${BASH_SOURCE[0]}" | sed "s/^# \{0,1\}//" >&2
@@ -63,6 +74,7 @@ usage() {
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --rocm)         ROCM="$2"; shift 2 ;;
+    --head_src)     HEAD_SRC="$2"; shift 2 ;;
     --origin)       ORIGIN="$2"; shift 2 ;;
     --src_prefix)   SRC_PREFIX="$2"; shift 2 ;;
     --build_prefix) BUILD_PREFIX="$2"; shift 2 ;;
@@ -129,11 +141,17 @@ build_one_subject() {
   fi
 
   # --- Source ---------------------------------------------------------------
-  # Releases are cloned from upstream, not taken from this checkout, which has
-  # no release tags. head is this checkout.
+  # Releases are cloned from upstream, which this checkout has no tags of. head
+  # is the workdir's aotriton.src (prepwkdir), as the tuner builds from.
   local SRC_DIR
   if [ "${TAG}" = "head" ]; then
-    SRC_DIR="${REPO_ROOT}"
+    SRC_DIR="${HEAD_SRC}"
+    if [ -z "${SRC_DIR}" ] || [ ! -d "${SRC_DIR}/.git" ]; then
+      echo "[build_subject] ERROR: no source for head: '${SRC_DIR:-<unset>}' is not a git clone." \
+           "Run .def/bin/prepwkdir <workdir> and .def/libexec/sync_workdir.sh" \
+           "<workdir> <buildnode> --buildnode first (or pass --head_src <dir>)." >&2
+      exit 1
+    fi
   else
     SRC_DIR="${SRC_PREFIX}/${TAG}"
     if [ ! -e "${SRC_DIR}/.git" ]; then
@@ -185,7 +203,8 @@ build_one_subject() {
   cmake --build "${FLASH_BUILD}"
   cmake --install "${FLASH_BUILD}"
 
-  # What was built: the commit of the source (dirty = uncommitted changes).
+  # What was built: the commit of the source (head: the aotriton.src clone, which
+  # is clean unless someone edited it; dirty = uncommitted changes).
   {
     echo "describe: $(git -C "${SRC_DIR}" describe --always --dirty 2>/dev/null || echo unknown)"
     echo "commit: $(git -C "${SRC_DIR}" rev-parse HEAD 2>/dev/null || echo unknown)"

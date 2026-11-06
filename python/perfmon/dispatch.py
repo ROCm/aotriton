@@ -106,7 +106,8 @@ class PerfmonTaskSource:
                             type=str,
                             nargs='+',
                             default=None,
-                            help='Subjects to measure (default: every one installed for the arch)')
+                            help='Subjects to measure, e.g. aotriton-0.13b+rocm10.1.0, or aotriton-head+rocm<ver> '
+                                 'for HEAD (default: every one installed for the arch)')
         parser.add_argument('--phase',
                             choices=('fwd', 'fwd_bwd'),
                             nargs='+',
