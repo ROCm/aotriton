@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-ATI description of the flash attn_fwd FlyDSL backend (gfx1201 and gfx950).
+ATI description of the flash attn_fwd FlyDSL backend (gfx1201, gfx950 and gfx942).
 
 Registered as backend 2 of `op_attn_fwd`, through `metro_fwd_flyc`.
 `python -m aotriton.flyc_compile` on this file also produces an hsaco for
@@ -114,12 +114,16 @@ FLYC_HEAD_DIMS = frozenset({16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 384
 # already superseded.
 FLYC_GFX950_HEAD_DIMS = frozenset({32, 64, 96, 128, 160, 192, 224, 256, 384, 512})
 
+# gfx942's ladder, from fmha_tuning_gfx942.LADDER, a literal for the same reason.
+FLYC_GFX942_HEAD_DIMS = frozenset({32, 64, 96, 128})
+
 # Per-arch ladder lookup, keyed the same way the disable predicate and the
 # builder branch below are. Also what `_flyc_fwd_disabled` uses to decide which
 # arches this backend serves at all -- `f.arch in _FLYC_FWD_LADDERS`.
 _FLYC_FWD_LADDERS = {
     'gfx1201': FLYC_HEAD_DIMS,
     'gfx950': FLYC_GFX950_HEAD_DIMS,
+    'gfx942': FLYC_GFX942_HEAD_DIMS,
 }
 
 
@@ -612,8 +616,40 @@ def flyc_attn_fwd(arch, choices, hints):
         # gfx1201 branch above.
         return build, asdict(knobs)
 
+    elif arch == 'gfx942':
+        # Same flydsl-free-at-call-time rule as the gfx1201 branch above. The
+        # kernel ABI is gfx1201's, so the declarations above serve it unchanged.
+        import fmha_tuning_gfx942
+
+        tile = choices.BLOCK_DMODEL
+        causal_type = choices.CAUSAL_TYPE
+        dtype_str = 'bf16' if '*bf16' in choices.arg('Q') else 'f16'
+        bias = bool(choices.BIAS_TYPE)
+        dropout = bool(choices.ENABLE_DROPOUT)
+        padded_head = bool(choices.PADDED_HEAD)
+        knobs = fmha_tuning_gfx942.knobs(tile, causal_type != 0)
+
+        def build():
+            """Deferred: imports flydsl, so only `aotriton.flyc_compile` calls it."""
+            from fmha_fwd_gfx942 import build_fmha_fwd_gfx942
+            return build_fmha_fwd_gfx942(tile,
+                                         causal_type=causal_type,
+                                         dtype_str=dtype_str,
+                                         bias=bias,
+                                         dropout=dropout,
+                                         num_waves=knobs['num_waves'],
+                                         block_n=knobs['block_n'],
+                                         waves_per_eu=knobs['waves_per_eu'],
+                                         rescale_threshold=knobs['rescale_threshold'],
+                                         grid_axis_order=knobs['GRID_AXIS_ORDER'],
+                                         padded_head=padded_head)
+
+        build.flyc_source = 'fmha_fwd_gfx942.py'
+        build.flyc_kernel_name = 'fmha_fwd_gfx942_kernel'
+        return build, knobs
+
     else:
-        # Unreachable: _flyc_fwd_disabled only lets gfx1201/gfx950 functionals
+        # Unreachable: _flyc_fwd_disabled only lets gfx1201/gfx950/gfx942 functionals
         # through _FLYC_FWD_LADDERS. Fail loudly rather than silently building
         # nothing if that ever stops being true.
         assert False, f'flyc_attn_fwd: no builder branch for arch {arch!r}'

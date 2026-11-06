@@ -21,6 +21,7 @@ from kernels.common import buffer_ops
 
 import fmha_abi_gfx1201 as abi
 import fmha_common_gfx1201 as fmha
+import fmha_tuning_gfx942 as tuning
 from philox import Philox
 
 _LDS_DOMAIN = '#llvm.alias_scope_domain<id = "fmha_fwd_gfx942.lds">'
@@ -107,13 +108,11 @@ def build_fmha_fwd_gfx942(head_dim,
     if bias and causal_type:
         raise ValueError('bias with a causal mask is not served (aot/_common.py flash_disabled)')
     if block_n is None:
-        # Keep 32 MFMAs per KV tile: small heads take a longer tile.
-        block_n = 64 if head_dim <= 64 else 32
+        block_n = tuning.default_block_n(head_dim)
     tr = Traits(head_dim, causal_type != 0, dtype_str, num_waves, block_n, padded_head)
-    # 0 HEAD_FASTEST, 1 TILE_FASTEST, as csrc/flyc_common.h's kFlycGridAxis*.
     if grid_axis_order is None:
-        grid_axis_order = 0 if tr.CAUSAL else 1
-    tile_fastest = grid_axis_order == 1
+        grid_axis_order = tuning.default_grid_axis_order(tr.CAUSAL)
+    tile_fastest = grid_axis_order == tuning.GRID_AXIS_TILE_FASTEST
     cache_tag = f'{tr.CACHE_TAG}_wpe{waves_per_eu}_dbg{int(DEBUG_NTILES)}_thr{rescale_threshold}_g{grid_axis_order}_b{int(bias)}_d{int(dropout)}'
     elem = fx.BFloat16 if dtype_str == 'bf16' else fx.Float16
 
