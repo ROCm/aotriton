@@ -7,12 +7,18 @@ flydsl-free: aot/flyc_attn_fwd.py calls it from the code generator, which has
 no flydsl. The builder takes its defaults from here, so the two cannot drift.
 """
 
-# The compiled head dims. Wider heads need a different register plan.
-LADDER = (32, 64, 96, 128)
+# The compiled head dims, served by three bodies with different register plans:
+#   narrow (fmha_fwd_gfx942.py)        <= 128: 8 waves x 32 rows, 2 waves/SIMD
+#   wide   (fmha_fwd_gfx942_wide.py)   <= 256: 4 waves x 32 rows, 1 wave/SIMD
+#   xwide  (fmha_fwd_gfx942_xwide.py)  > 256:  8 waves x 16 rows, 16x16x16 MFMA
+LADDER = (32, 64, 96, 128, 160, 192, 224, 256, 384, 512)
 
-NUM_WAVES = 8
-WAVE_M = 32          # query rows per wave
-BLOCK_M = NUM_WAVES * WAVE_M
+# (source file, @flyc.kernel name, builder) per body.
+BODIES = {
+    'narrow': ('fmha_fwd_gfx942.py', 'fmha_fwd_gfx942_kernel', 'build_fmha_fwd_gfx942'),
+    'wide': ('fmha_fwd_gfx942_wide.py', 'fmha_fwd_gfx942_wide_kernel', 'build_fmha_fwd_gfx942_wide'),
+    'xwide': ('fmha_fwd_gfx942_xwide.py', 'fmha_fwd_gfx942_xwide_kernel', 'build_fmha_fwd_gfx942_xwide'),
+}
 
 # csrc/flyc_common.h's kFlycGridAxis*.
 GRID_AXIS_HEAD_FASTEST = 0
@@ -31,13 +37,50 @@ def default_grid_axis_order(causal):
     return GRID_AXIS_HEAD_FASTEST if causal else GRID_AXIS_TILE_FASTEST
 
 
+def body(head_dim):
+    """Which body serves a compiled head dim."""
+    if head_dim <= 128:
+        return 'narrow'
+    return 'wide' if head_dim <= 256 else 'xwide'
+
+
+def rung(hdim_qk, hdim_vo):
+    """The compiled head dim serving a call, or None past the ladder."""
+    h = max(hdim_qk, hdim_vo)
+    return next((r for r in LADDER if r >= h), None)
+
+
+def build(head_dim, **kwargs):
+    """The body's builder; flydsl is imported only here, never at module scope."""
+    import importlib
+
+    src, _, name = BODIES[body(head_dim)]
+    return getattr(importlib.import_module(src[:-3]), name)(head_dim, **kwargs)
+
+
 def knobs(head_dim, causal):
-    """The build of one functional, as a JSON-able dict. `block_m` and
-    `GRID_AXIS_ORDER` are what the C++ grid_calculator reads."""
+    """The build of one functional, as a JSON-able dict. `block_m` (rows per grid
+    block) and `GRID_AXIS_ORDER` are what the C++ grid_calculator reads."""
     if head_dim not in LADDER:
         raise ValueError(f'head_dim {head_dim} is not on the gfx942 ladder {LADDER}')
-    return dict(block_m=BLOCK_M,
-                num_waves=NUM_WAVES,
+    if body(head_dim) == 'wide':
+        # A causal block runs q tiles g and T-1-g, so it covers 2 * 128 rows; the
+        # tile-fastest grid keeps K/V in L2 and the pairing evens out block lengths.
+        return dict(block_m=256 if causal else 128,
+                    num_waves=4,
+                    block_n=32,
+                    waves_per_eu=1,
+                    rescale_threshold=0.0,
+                    GRID_AXIS_ORDER=GRID_AXIS_TILE_FASTEST)
+    if body(head_dim) == 'xwide':
+        return dict(block_m=128,
+                    num_waves=8,
+                    block_n=16,
+                    waves_per_eu=2,
+                    rescale_threshold=0.0,
+                    GRID_AXIS_ORDER=default_grid_axis_order(causal))
+    return dict(block_m=256,
+                num_waves=8,
                 block_n=default_block_n(head_dim),
                 waves_per_eu=2,
                 rescale_threshold=0.0,

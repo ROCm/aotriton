@@ -115,7 +115,7 @@ FLYC_HEAD_DIMS = frozenset({16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 384
 FLYC_GFX950_HEAD_DIMS = frozenset({32, 64, 96, 128, 160, 192, 224, 256, 384, 512})
 
 # gfx942's ladder, from fmha_tuning_gfx942.LADDER, a literal for the same reason.
-FLYC_GFX942_HEAD_DIMS = frozenset({32, 64, 96, 128})
+FLYC_GFX942_HEAD_DIMS = frozenset({32, 64, 96, 128, 160, 192, 224, 256, 384, 512})
 
 # Per-arch ladder lookup, keyed the same way the disable predicate and the
 # builder branch below are. Also what `_flyc_fwd_disabled` uses to decide which
@@ -631,21 +631,22 @@ def flyc_attn_fwd(arch, choices, hints):
 
         def build():
             """Deferred: imports flydsl, so only `aotriton.flyc_compile` calls it."""
-            from fmha_fwd_gfx942 import build_fmha_fwd_gfx942
-            return build_fmha_fwd_gfx942(tile,
-                                         causal_type=causal_type,
-                                         dtype_str=dtype_str,
-                                         bias=bias,
-                                         dropout=dropout,
-                                         num_waves=knobs['num_waves'],
-                                         block_n=knobs['block_n'],
-                                         waves_per_eu=knobs['waves_per_eu'],
-                                         rescale_threshold=knobs['rescale_threshold'],
-                                         grid_axis_order=knobs['GRID_AXIS_ORDER'],
-                                         padded_head=padded_head)
+            return fmha_tuning_gfx942.build(tile,
+                                            causal_type=causal_type,
+                                            dtype_str=dtype_str,
+                                            bias=bias,
+                                            dropout=dropout,
+                                            num_waves=knobs['num_waves'],
+                                            block_n=knobs['block_n'],
+                                            waves_per_eu=knobs['waves_per_eu'],
+                                            rescale_threshold=knobs['rescale_threshold'],
+                                            grid_axis_order=knobs['GRID_AXIS_ORDER'],
+                                            padded_head=padded_head)
 
-        build.flyc_source = 'fmha_fwd_gfx942.py'
-        build.flyc_kernel_name = 'fmha_fwd_gfx942_kernel'
+        # Three bodies by head dim; see fmha_tuning_gfx942.LADDER.
+        source, kernel_name, _ = fmha_tuning_gfx942.BODIES[fmha_tuning_gfx942.body(tile)]
+        build.flyc_source = source
+        build.flyc_kernel_name = kernel_name
         return build, knobs
 
     else:
