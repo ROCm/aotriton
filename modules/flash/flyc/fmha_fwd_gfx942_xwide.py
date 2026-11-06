@@ -12,11 +12,22 @@ and two share a SIMD. KV tiles are 16 keys: double-buffered K and V^T then take
 64 KB at hd512, exactly the LDS. Neither tile fits in registers, so the MFMAs
 stream their A operands from LDS, one 16B read per two MFMAs.
 
-LDS layouts, chosen so every read is conflict-free:
+Why not the alternatives: 1 wave/SIMD with O in AGPRs serializes softmax and
+MFMA in one wave, and rescaling AGPRs costs three ops an element; splitting D
+across waves (gfx950's VO_SHARDS) duplicates QK; QK shards need an S exchange
+through an LDS that is already full. The price of 16 rows is LDS traffic: each
+wave reads all of K and V^T, 256 KB a tile per CU, but that streams in the
+shadow of the MFMAs (removing every read measured +0%).
+
+LDS layouts, chosen so every read is conflict-free (SQ_LDS_BANK_CONFLICT = 0):
 - K: row-major, 16B chunk c of row r at chunk c ^ (r % 8).
 - V^T: chunk (p, g, r) at p * 1024 + g * 256 + r * 16 holds rows 32p + 2r and
   32p + 2r + 1, keys 4g..4g+3; a read of p is one contiguous 1 KB. MFMA 2p + e
   computes O^T rows d = 32p + 2r + e.
+
+hd512 fits 256 VGPRs only because nothing else lives across the loop: V is
+loaded and stored within a tile, the masks rebuild their lane values, and a
+lone spill would cost a vmcnt(0) that drains the K DMA every tile.
 """
 
 import flydsl.compiler as flyc
@@ -428,49 +439,42 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
             """Fix the order of LDS reads and MFMAs; everything else may cross."""
             rocdl.sched_barrier(PIN_MASK)
 
-        def stream(reads, use, depth):
-            """Software-pipelined LDS operands: read t + depth, then use t."""
-            ahead = [reads(t) for t in range(min(depth, len(reads.range)))]
-            for t in reads.range:
-                if const_expr(t + depth < len(reads.range)):
-                    ahead.append(reads(t + depth))
+        def stream(n, read, use):
+            """Software-pipelined LDS operands: read t + PREFETCH, then use t. LLVM
+            alone keeps one buffer and waits on every read."""
+            ahead = [Vec(read(t)) for t in range(min(PREFETCH, n))]
+            for t in range_constexpr(n):
+                if const_expr(t + PREFETCH < n):
+                    ahead.append(Vec(read(t + PREFETCH)))
                 pinned()
                 use(t, ahead[t])
                 pinned()
-
-        class Reads:
-            def __init__(self, n, fn):
-                self.range = range(n)
-                self.fn = fn
-
-            def __call__(self, t):
-                return Vec(self.fn(t))
 
         def qk(buf):
             """S^T of one tile: v4f32, keys 4*lg + i of query row lr."""
             acc = [fx.full(4, 0.0, fx.Float32)]
 
+            def read(t):
+                return lds_load(k_rd[t % 2] + (buf * tr.K_TILE_BYTES + 128 * (t // 2)), v8e(), 16, f'k{buf}')
+
             def use(t, k8):
                 acc[0] = mfma(k8.shuffle(k8, [0, 1, 2, 3]).ir_value(), q_packs[2 * t], acc[0])
                 acc[0] = mfma(k8.shuffle(k8, [4, 5, 6, 7]).ir_value(), q_packs[2 * t + 1], acc[0])
 
-            stream(Reads(tr.NT,
-                         lambda t: lds_load(k_rd[t % 2] + (buf * tr.K_TILE_BYTES + 128 * (t // 2)), v8e(), 16, f'k{buf}')),
-                   use,
-                   PREFETCH)
+            stream(tr.NT, read, use)
             return acc[0]
 
         def pv(o_accs, p_pack, buf):
             o_accs = list(o_accs)
 
+            def read(p):
+                return lds_load(vt_rd + (buf * tr.VT_TILE_BYTES + 1024 * p), v8e(), 16, f'vt{buf}')
+
             def use(p, vt):
                 o_accs[2 * p] = mfma(vt.shuffle(vt, [0, 1, 2, 3]).ir_value(), p_pack, o_accs[2 * p])
                 o_accs[2 * p + 1] = mfma(vt.shuffle(vt, [4, 5, 6, 7]).ir_value(), p_pack, o_accs[2 * p + 1])
 
-            stream(Reads(tr.NP,
-                         lambda p: lds_load(vt_rd + (buf * tr.VT_TILE_BYTES + 1024 * p), v8e(), 16, f'vt{buf}')),
-                   use,
-                   PREFETCH)
+            stream(tr.NP, read, use)
             return o_accs
 
         c_scale = fx.Float32(sm_scale) * fx.Float32(LOG2E)
