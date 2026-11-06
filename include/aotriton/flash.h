@@ -156,6 +156,10 @@ struct AOTRITON_API VarlenLseLayout {
 //     L = Window_left  - p * d
 //     R = Window_right + p * d
 //
+// computed in int32 without an overflow check: a numeric window near
+// INT32_MIN/MAX wraps when p = 1. Use a sentinel or a bound within the
+// sequence lengths instead.
+//
 // TOP_LEFT (p = 0) measures from j - i = 0 and is the default; zero is also
 // what every caller older than kVersion 5 (fwd) / 8 (bwd) sends.
 // BOTTOM_RIGHT (p = 1) measures from j - i = d, flash-attention's convention.

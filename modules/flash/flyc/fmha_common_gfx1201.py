@@ -1529,6 +1529,8 @@ def resolve_window(window_left, window_right, seqlen_q, seqlen_k, varlen_bits):
     # flash-attention's convention. Sentinels already name their diagonal and
     # are never shifted (shifting BOTRIGHT would give 2 * (seqlen_k - seqlen_q)).
     # Arithmetic rather than a select on the bit: shift is 0 or d.
+    # Known limitation, by design: the shifted bounds are i32 with no overflow
+    # guard, so a numeric window near INT32_MIN/MAX wraps when p = 1.
     p = (fx.Int32(varlen_bits) >> fx.Int32(VARLEN_PRINCIPAL_DIAGONAL_SHIFT)) & fx.Int32(1)
     shift = p * (seqlen_k - seqlen_q)
     left = common_utils.ssel(left_is_sentinel, seqlen_q, left - shift)

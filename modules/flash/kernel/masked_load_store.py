@@ -63,6 +63,8 @@ def parse_window(IS_CAUSAL,
                  Varlen_bits):
     # VARLEN_PRINCIPAL_DIAGONAL_SHIFT = 18, spelled as a literal because
     # Triton cannot read a module global (see varlen_bits.decode_addressing).
+    # Known limitation, by design: the shifted bounds are i32 with no overflow
+    # guard, so a numeric window near INT32_MIN/MAX wraps when p = 1.
     principal_shift = ((Varlen_bits >> 18) & 1) * (seqlen_k - seqlen_q)
     # 0x80000001i32 = -2147483647
     if CAUSAL_TYPE == 1 or Window_left == -2147483647:
