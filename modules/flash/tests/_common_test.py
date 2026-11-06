@@ -475,8 +475,12 @@ def windowed_attn_mask(seqlen_q, seqlen_k, window_left, window_right, principal_
     A row that keeps no key comes out all -inf. See `windowed_sdpa_math` for
     the reference that has to cope with it.
     """
-    keep = windowed_keep_mask(seqlen_q, seqlen_k, window_left, window_right,
-                              principal_diagonal, device=device)
+    keep = windowed_keep_mask(seqlen_q,
+                              seqlen_k,
+                              window_left,
+                              window_right,
+                              principal_diagonal,
+                              device=device)
     mask = torch.zeros((seqlen_q, seqlen_k), dtype=dtype, device=device)
     return mask.masked_fill_(keep.logical_not(), float('-inf'))
 
@@ -494,13 +498,19 @@ def windowed_sdpa_math(query, key, value, window, *, dropout_p=0.0, dropout_mask
     window_left, window_right = window[0], window[1]
     principal_diagonal = window[2] if len(window) > 2 else 0
     seqlen_q, seqlen_k = query.shape[-2], key.shape[-2]
-    keep = windowed_keep_mask(seqlen_q, seqlen_k, window_left, window_right,
-                              principal_diagonal, device=query.device)
+    keep = windowed_keep_mask(seqlen_q,
+                              seqlen_k,
+                              window_left,
+                              window_right,
+                              principal_diagonal,
+                              device=query.device)
     live = keep.any(dim=-1)
     keep = keep | (~live)[:, None] & (torch.arange(seqlen_k, device=query.device)[None, :] == 0)
     mask = torch.zeros((seqlen_q, seqlen_k), dtype=query.dtype, device=query.device)
     mask.masked_fill_(keep.logical_not(), float('-inf'))
-    out, attn = sdpa_math(query, key, value,
+    out, attn = sdpa_math(query,
+                          key,
+                          value,
                           attn_mask=mask,
                           dropout_p=dropout_p,
                           dropout_mask=dropout_mask,
@@ -930,7 +940,10 @@ class SdpaContext(object):
         assert not (p.causal and ref_b is not None), \
             'causal/window with an explicit bias is undefined'
         if isinstance(p.causal, tuple):
-            return windowed_sdpa_math(ref_q, ref_k, ref_v, p.causal,
+            return windowed_sdpa_math(ref_q,
+                                      ref_k,
+                                      ref_v,
+                                      p.causal,
                                       dropout_p=p.dropout_p,
                                       dropout_mask=dropout_mask,
                                       scale=p.sm_scale,
@@ -938,7 +951,7 @@ class SdpaContext(object):
         # _scaled_dot_product_attention_math seems also working for nested tensor
         ref_out, ref_mask = sdpa_math(ref_q, ref_k, ref_v,
                                       dropout_p=p.dropout_p,
-                                      is_causal=p.causal if not isinstance(p.causal, tuple) else False,
+                                      is_causal=p.causal,
                                       attn_mask=ref_b,
                                       scale=p.sm_scale,
                                       dropout_mask=dropout_mask,
@@ -1289,7 +1302,10 @@ class VarlenSdpaContext(SdpaContext):
                 # print(f'REF {dropout_mask=}')
             if isinstance(p.causal, tuple):
                 # Per sequence, so d = seqlen_k - seqlen_q is this sequence's own.
-                ref_out, ref_mask = windowed_sdpa_math(ref_q, ref_k, ref_v, p.causal,
+                ref_out, ref_mask = windowed_sdpa_math(ref_q,
+                                                       ref_k,
+                                                       ref_v,
+                                                       p.causal,
                                                        dropout_p=p.dropout_p,
                                                        dropout_mask=dropout_mask,
                                                        scale=p.sm_scale)
@@ -1347,7 +1363,10 @@ class PaddedVarlenSdpaContext(VarlenSdpaContext):
                 dropout_mask = dropout_mask[:, :seqlen_q, :seqlen_k]  # Trim to actual seqlen
                 # print(f'REF {dropout_mask=}')
             if isinstance(p.causal, tuple):
-                ref_out, ref_mask = windowed_sdpa_math(ref_q, ref_k, ref_v, p.causal,
+                ref_out, ref_mask = windowed_sdpa_math(ref_q,
+                                                       ref_k,
+                                                       ref_v,
+                                                       p.causal,
                                                        dropout_p=p.dropout_p,
                                                        dropout_mask=dropout_mask,
                                                        scale=p.sm_scale,

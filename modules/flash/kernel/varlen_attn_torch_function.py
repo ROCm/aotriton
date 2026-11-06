@@ -151,7 +151,10 @@ class _varlen_attention(torch.autograd.Function):
         assert Lq == Lk
         head_dim_factors = factor_head_dim(Lk)
         head_dim_rounded = sum(head_dim_factors)
-        padded_head = head_dim_rounded != Lk
+        # Against min(Lk, Lv), as in the backward: comparing against Lk alone
+        # leaves PADDED_HEAD off for Lv < Lk == head_dim_rounded, and V is
+        # then loaded BLOCK_DMODEL columns wide with no Hdim_vo mask.
+        padded_head = head_dim_rounded != min(Lk, Lv)
         num_head_q = q.shape[1]
         num_head_k = k.shape[1]
 

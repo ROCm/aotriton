@@ -251,7 +251,10 @@ class _attention(torch.autograd.Function):
         assert Lq == Lk
         head_dim_factors = factor_head_dim(Lk)
         head_dim_rounded = sum(head_dim_factors)
-        padded_head = head_dim_rounded != Lk
+        # Against min(Lk, Lv), as in the backward: comparing against Lk alone
+        # leaves PADDED_HEAD off for Lv < Lk == head_dim_rounded, and V is
+        # then loaded BLOCK_DMODEL columns wide with no Hdim_vo mask.
+        padded_head = head_dim_rounded != min(Lk, Lv)
         # assert not padded_head, f"sum({head_dim_factors=}) = {sum(head_dim_factors)} != {Lk=}"
         batch = q.shape[0]
         num_head_q = q.shape[1]
