@@ -189,7 +189,7 @@ def _inputs(seqlen_q, seqlen_k, batch, generator):
 @pytest.mark.parametrize("window_name", tuple(WINDOWS))
 @pytest.mark.parametrize("shape_name", tuple(DENSE_SHAPES))
 def test_dense(mfma_rows, p, window_name, shape_name):
-    """Dense: the bit arrives through the launcher's `principal_diagonal=`."""
+    """Dense: the bit arrives in a dense word, `varlen_dense(principal_diagonal=...)`."""
     abi = _abi()
     fn = _build(mfma_rows)
     window = WINDOWS[window_name]
@@ -218,7 +218,7 @@ def test_dense(mfma_rows, p, window_name, shape_name):
        seqlen_k=seqlen_k,
        scale=sm_scale,
        window=window,
-       principal_diagonal=principal_diagonal)
+       varlen=abi.varlen_dense(principal_diagonal=principal_diagonal))
     torch.cuda.synchronize()
     for b in range(batch):
         _check(dq[b], refs[b][0], refs[b][3], f"dense {shape_name} {window_name} p={p} m{mfma_rows} batch {b}")
@@ -313,26 +313,21 @@ def test_sentinels_ignore_the_bit(mfma_rows, window):
            seqlen_k=seqlen_k,
            scale=sm_scale,
            window=window,
-           principal_diagonal=pd)
+           varlen=abi.varlen_dense(principal_diagonal=pd))
         torch.cuda.synchronize()
         outs.append(dq)
     assert torch.equal(outs[0], outs[1])
 
 
-def test_launcher_rejects_a_conflicting_bit():
-    """`principal_diagonal=` and `varlen['bits']` must agree when both are given."""
+def test_dense_word_rejects_seqinfo():
+    """A dense word reads no sequence info; handing it some is a caller error."""
     abi = _abi()
     fn = _build(32)
-    lens = (5, 7)
-    q = torch.zeros((1, NUM_HEADS, sum(lens), HEAD_DIM), dtype=DTYPE, device="cuda")
-    rows = torch.zeros((NUM_HEADS, sum(lens)), dtype=torch.float32, device="cuda")
-    cu = torch.tensor([0, lens[0], sum(lens)], dtype=torch.int32, device="cuda")
-    varlen = abi.varlen_compact(cu,
-                                cu,
-                                max(lens),
-                                max(lens),
-                                lse_tokens=sum(lens))
-    with pytest.raises(ValueError, match="disagrees"):
+    q = torch.zeros((1, NUM_HEADS, 8, HEAD_DIM), dtype=DTYPE, device="cuda")
+    rows = torch.zeros((NUM_HEADS, 8), dtype=torch.float32, device="cuda")
+    varlen = abi.varlen_dense(principal_diagonal=abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT)
+    varlen["seqinfo_q0"] = torch.tensor([0, 8], dtype=torch.int32, device="cuda")
+    with pytest.raises(ValueError, match="dense VarlenBits word"):
         fn(q,
            q,
            q,
@@ -341,11 +336,9 @@ def test_launcher_rejects_a_conflicting_bit():
            rows,
            rows,
            1,
-           max(lens),
+           8,
            window=(4, 4),
-           varlen=varlen,
-           num_seqlens=len(lens),
-           principal_diagonal=abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT)
+           varlen=varlen)
 
 
 def _cumsum(values):

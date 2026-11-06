@@ -10,6 +10,10 @@ sentinels resolve as they always have and are never shifted. The predicate
 `i - L <= j <= i + R` is unchanged. See `causal-principle-axis-plan0.md`
 section 3.2 and `docs/Generalized Sliding Window Attention.md` A-2.
 
+The bit travels in the VarlenBits word and nowhere else: a dense call passes
+`varlen=abi.varlen_dense(principal_diagonal=...)`, a varlen call sets it in
+`varlen["bits"]`.
+
 dK/dV walk column-major -- each KV block cuts its own Q range out of the
 window -- so a shifted band is exactly what stresses it: `L` negative, `R`
 past `seqlen_k`, a band clear of the diagonal, and KV columns no row sees
@@ -219,7 +223,7 @@ def test_dense(head_dim, mfma_rows, p, window, shape):
        seqlen_k=seqlen_k,
        scale=sm_scale,
        window=_wire_window(window),
-       principal_diagonal=bit)
+       varlen=abi.varlen_dense(principal_diagonal=bit))
     torch.cuda.synchronize()
     _check("dV", dv, ref_dv, live)
     _check("dK", dk, ref_dk, live)
@@ -292,12 +296,16 @@ def test_varlen(head_dim, mfma_rows, p, window):
         _check(f"dK {tag}", dk[0, :, ks], ref_dk[:, ks], live)
 
 
-def test_principal_diagonal_rejects_garbage():
-    """The host refuses a value that is not one of the two bit patterns."""
+def test_dense_word_rejects_seqinfo():
+    """A dense word reads no sequence info; handing it some is a caller error."""
+    import fmha_abi_gfx1201 as abi
+
     fn = _build(*BUILDS[0])
     t = _rand(1, NUM_HEADS, 8, BUILDS[0][0])
     lse = torch.zeros(NUM_HEADS, 8, device="cuda", dtype=torch.float32)
-    with pytest.raises(ValueError, match="principal_diagonal"):
+    varlen = abi.varlen_dense(principal_diagonal=abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT)
+    varlen["seqinfo_k0"] = torch.tensor([0, 8], device="cuda", dtype=torch.int32)
+    with pytest.raises(ValueError, match="dense VarlenBits word"):
         fn(t,
            t,
            t,
@@ -309,7 +317,7 @@ def test_principal_diagonal_rejects_garbage():
            1,
            8,
            window=(0, 0),
-           principal_diagonal=1)
+           varlen=varlen)
 
 
 def _cumsum(xs):

@@ -2424,7 +2424,6 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         philox_seed=None,
         philox_offset1=None,
         philox_offset2=0,
-        principal_diagonal=abi.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT,
         stream=None,
     ):
         """Every kernel argument but the stream, in launch order.
@@ -2433,19 +2432,14 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         `_compile` cannot drift apart -- the same shape, and the same reason,
         as the forward's `_args`.
 
-        `principal_diagonal` is one of `abi.VARLEN_PRINCIPAL_DIAGONAL_*` and is
-        ORed into the `VarlenBits` on the wire, so a **dense** call can set it
-        too -- `varlen=None` would otherwise put 0 there. A varlen caller may
-        equally carry it in `varlen["bits"]` (`abi.varlen_bits(...,
-        principal_diagonal=...)`); either way the kernel reads one bit.
+        The diagonal a *numeric* `window` bound is measured from is VarlenBits
+        bit 18 (`principal_diagonal_choice`), and `varlen["bits"]` is its only
+        source. A dense call carries it with
+        `varlen=abi.varlen_dense(principal_diagonal=...)`; `varlen=None` is
+        word 0, i.e. top-left. Same contract as the gfx950 forward's launcher,
+        so a forward and its backward given the same `varlen` measure from the
+        same diagonal.
         """
-        if principal_diagonal not in (
-            abi.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT,
-            abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT,
-        ):
-            raise ValueError(
-                f"principal_diagonal must be abi.VARLEN_PRINCIPAL_DIAGONAL_*, got {principal_diagonal:#x}"
-            )
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
         _ptrs, shape_meta, st = abi.prep_tensors(
             [("Q", Q), ("K", K), ("V", V), ("DO", DO), ("DK", DK), ("DV", DV)],
@@ -2520,7 +2514,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         abi.row_tensor_arg(Delta, "delta", num_head_q, seqlen_q, varlen)
         if Delta.shape != LSE.shape:
             raise ValueError(f"delta must have logsumexp's shape {tuple(LSE.shape)}, got {tuple(Delta.shape)}")
-        if varlen is None and LSE.shape[0] != int(batch_size) * num_head_q:
+        if abi.varlen_is_dense(varlen) and LSE.shape[0] != int(batch_size) * num_head_q:
             raise ValueError(f"logsumexp must be ({int(batch_size) * num_head_q}, {seqlen_q}); got {tuple(LSE.shape)}")
         # Upstream also rejects a varlen descriptor on a build compiled without
         # the decode. There is no such build here -- `make_traits` pins
@@ -2541,7 +2535,8 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         # descriptor probably thought a ragged batch was being honoured. That
         # reasoning inverts once `varlen` defaults on: the caller who passes
         # nothing is now the ordinary *dense* caller, and they must be served.
-        # They are, exactly: `varlen_args` gives `bits == 0`, and at zero bits
+        # They are, exactly: `varlen_args` gives dense side bytes (`bits == 0`,
+        # or only bits 18:16 for `abi.varlen_dense`), and at dense side bytes
         # `decode_addressing` returns `(max_seqlen, 0, z)` -- dense addressing
         # -- with every array read behind a real branch, so the null `seqinfo`
         # pointers are never dereferenced. The cost of a dense call on a varlen
@@ -2640,7 +2635,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
             _vl[2],
             _vl[3],
             _vl[4],
-            _vl[0] | principal_diagonal,
+            _vl[0],  # varlen_bits
             int(num_seqlens),
             *_vl[5:],  # max_seqlen_q, max_seqlen_k -- the decode's MAX fallback
             *_resolve_window_args(window),
@@ -2678,6 +2673,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
     _launch.compile = _compile
     _launch.traits = traits
     _launch.knobs = knobs
+    _launch.varlen_dense = abi.varlen_dense
     return _launch
 
 

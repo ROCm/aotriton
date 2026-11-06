@@ -1490,7 +1490,6 @@ def build_bwd_dq_module_primary(meta, knobs):
         scale,
         window,
         varlen,
-        principal_diagonal,
         dropout_p,
         seed,
         off1,
@@ -1500,13 +1499,12 @@ def build_bwd_dq_module_primary(meta, knobs):
     ):
         """Every kernel argument but the stream, in launch order.
 
-        `principal_diagonal` is `abi.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT` or
-        `_BOTTOM_RIGHT`, and sets VarlenBits bit 18: the diagonal a *numeric*
-        `window` bound is measured from. `None` keeps whatever `varlen["bits"]`
-        already carries, which for a dense call is top-left. It is a separate
-        argument because a dense call has no `varlen` dict to carry it, and the
-        bit means the same thing there (`d` is merely uniform). A forward and
-        its backward must agree on it.
+        The diagonal a *numeric* `window` bound is measured from is VarlenBits
+        bit 18 (`principal_diagonal_choice`), and `varlen["bits"]` is its only
+        source. A dense call carries it with
+        `varlen=abi.varlen_dense(principal_diagonal=...)`; `varlen=None` is
+        word 0, i.e. top-left. The bit means the same thing dense or varlen
+        (`d` is merely uniform). A forward and its backward must agree on it.
         """
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
         ptrs, meta_t, st = abi.prep_tensors(
@@ -1518,11 +1516,6 @@ def build_bwd_dq_module_primary(meta, knobs):
         _vb, _sq0, _sq1, _sk0, _sk1, _mq, _mk = abi.varlen_args(
             False, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens
         )
-        if principal_diagonal is not None:
-            # Validated by `abi.varlen_bits`, which rejects anything but the
-            # two bit-18 constants.
-            _pd_mask = abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT
-            _vb = (_vb & ~_pd_mask) | abi.varlen_bits(principal_diagonal=principal_diagonal)
         _ps, _po1, _po2, _ip, _dsc, _hold = abi.dropout_args(ENABLE_DROPOUT, dropout_p, seed, off1, off2, Q.device)
         _bp, _dbp, _bs, _dbs = abi.bias_args(BIAS_TYPE, True, bias, dbias, Q)
         return (
@@ -1578,7 +1571,6 @@ def build_bwd_dq_module_primary(meta, knobs):
         stream=None,
         window=None,
         varlen=None,
-        principal_diagonal=None,
         dropout_p=None,
         philox_seed=0,
         philox_offset1=None,
@@ -1601,7 +1593,6 @@ def build_bwd_dq_module_primary(meta, knobs):
             scale,
             window,
             varlen,
-            principal_diagonal,
             dropout_p,
             philox_seed,
             philox_offset1,
@@ -1627,7 +1618,6 @@ def build_bwd_dq_module_primary(meta, knobs):
         stream=None,
         window=None,
         varlen=None,
-        principal_diagonal=None,
         dropout_p=None,
         philox_seed=0,
         philox_offset1=None,
@@ -1650,7 +1640,6 @@ def build_bwd_dq_module_primary(meta, knobs):
             scale,
             window,
             varlen,
-            principal_diagonal,
             dropout_p,
             philox_seed,
             philox_offset1,
@@ -1662,6 +1651,7 @@ def build_bwd_dq_module_primary(meta, knobs):
 
     _launch.compile = _compile
     _launch.varlen_bits = abi.varlen_bits
+    _launch.varlen_dense = abi.varlen_dense
     _launch.varlen_compact = abi.varlen_compact
     _launch.varlen_padded = abi.varlen_padded
     _launch.varlen_strided = abi.varlen_strided

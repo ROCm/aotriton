@@ -10,6 +10,10 @@ sequence, a **numeric** window bound `w` resolves to `L = w_left - p*d` and
 keeps column `j` iff `i - L <= j <= i + R`. See
 `docs/Generalized Sliding Window Attention.md`, A-2.
 
+The bit travels in the VarlenBits word and nowhere else: a dense call passes
+`varlen=abi.varlen_dense(principal_diagonal=...)`, a varlen call sets it in
+`varlen["bits"]`.
+
 dK/dV is the kernel where a shifted bound is most likely to go wrong, because
 it walks the *transpose*: for each KV block it derives the first and last live
 Q row from the window, and a shifted band can sit anywhere -- `L` negative,
@@ -154,10 +158,17 @@ def _exe():
 
 
 def _pd(p):
-    """The `principal_diagonal` argument for bit value `p`."""
+    """The `abi.VARLEN_PRINCIPAL_DIAGONAL_*` value for bit value `p`."""
     import fmha_abi_gfx1201 as abi
 
     return abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT if p else abi.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT
+
+
+def _dense_word(p):
+    """A dense VarlenBits word carrying bit value `p`."""
+    import fmha_abi_gfx1201 as abi
+
+    return abi.varlen_dense(principal_diagonal=_pd(p))
 
 
 def _rand(shape, gen):
@@ -184,8 +195,9 @@ def _assert_close(dk, dv, ref_k, ref_v, dead_k, label):
     assert (dv.masked_select(dead_k) == 0).all(), f"{label}: dv non-zero on a column no row sees"
 
 
-def _dense_run(seqlen_q, seqlen_k, window, p, principal_diagonal, batch=2, seed=0):
-    """One dense call. `principal_diagonal` is what the launcher is passed."""
+def _dense_run(seqlen_q, seqlen_k, window, p, varlen, batch=2, seed=0):
+    """One dense call. `varlen` (None or a dense word) is what the launcher is passed;
+    `p` is the bit value the reference is built for."""
     gen = torch.Generator(device="cuda").manual_seed(seed)
     q = _rand((batch, NUM_HEADS_Q, seqlen_q, HEAD_DIM), gen)
     k = _rand((batch, NUM_HEADS_K, seqlen_k, HEAD_DIM), gen)
@@ -218,7 +230,7 @@ def _dense_run(seqlen_q, seqlen_k, window, p, principal_diagonal, batch=2, seed=
         seqlen_q,
         seqlen_k=seqlen_k,
         window=window,
-        principal_diagonal=principal_diagonal,
+        varlen=varlen,
     )
     torch.cuda.synchronize()
     dead_k = (~col_live).view(1, 1, seqlen_k, 1)
@@ -229,16 +241,16 @@ def _dense_run(seqlen_q, seqlen_k, window, p, principal_diagonal, batch=2, seed=
 @pytest.mark.parametrize("window", WINDOWS)
 @pytest.mark.parametrize("seqlen_q,seqlen_k", DENSE_SHAPES)
 def test_dense(seqlen_q, seqlen_k, window, p):
-    dk, dv, ref_k, ref_v, dead_k = _dense_run(seqlen_q, seqlen_k, window, p, _pd(p))
+    dk, dv, ref_k, ref_v, dead_k = _dense_run(seqlen_q, seqlen_k, window, p, _dense_word(p))
     _assert_close(dk, dv, ref_k, ref_v, dead_k, f"dense sq={seqlen_q} sk={seqlen_k} w={window} p={p}")
 
 
 @pytest.mark.parametrize("window", WINDOWS)
 @pytest.mark.parametrize("seqlen_q,seqlen_k", DENSE_SHAPES)
-def test_dense_p0_is_the_default(seqlen_q, seqlen_k, window):
-    """`p = 0` must be bit-identical to not passing the bit at all."""
+def test_dense_varlen_none_is_word_0(seqlen_q, seqlen_k, window):
+    """`varlen=None` is the dense top-left word: bit-identical to `varlen_dense()`."""
     a = _dense_run(seqlen_q, seqlen_k, window, 0, None)
-    b = _dense_run(seqlen_q, seqlen_k, window, 0, _pd(0))
+    b = _dense_run(seqlen_q, seqlen_k, window, 0, _dense_word(0))
     assert torch.equal(a[0], b[0]) and torch.equal(a[1], b[1])
 
 
@@ -248,8 +260,8 @@ def test_dense_p1_equals_host_shift(seqlen_q, seqlen_k, window):
     """Dense `p = 1` is `p = 0` with `(wl - d, wr + d)`: bitwise, same binary."""
     d = seqlen_k - seqlen_q
     shifted = (window[0] - d, window[1] + d)
-    a = _dense_run(seqlen_q, seqlen_k, window, 1, _pd(1))
-    b = _dense_run(seqlen_q, seqlen_k, shifted, 0, _pd(0))
+    a = _dense_run(seqlen_q, seqlen_k, window, 1, _dense_word(1))
+    b = _dense_run(seqlen_q, seqlen_k, shifted, 0, _dense_word(0))
     assert torch.equal(a[0], b[0]) and torch.equal(a[1], b[1])
 
 
@@ -260,16 +272,11 @@ def _cu(lens):
     return torch.tensor(out, dtype=torch.int32, device="cuda")
 
 
-@pytest.mark.parametrize("bit_source", ["varlen_bits", "launcher_arg"])
 @pytest.mark.parametrize("p", [0, 1])
 @pytest.mark.parametrize("window", WINDOWS)
 @pytest.mark.parametrize("lens_q,lens_k", VARLEN_BATCHES)
-def test_varlen_compact(lens_q, lens_k, window, p, bit_source):
-    """Packed 1THD, `d` differing per sequence.
-
-    `bit_source` sets the bit either in the `varlen` dict's word or through the
-    launcher's `principal_diagonal=`, which must override the word.
-    """
+def test_varlen_compact(lens_q, lens_k, window, p):
+    """Packed 1THD, `d` differing per sequence, the bit in `varlen["bits"]`."""
     import fmha_abi_gfx1201 as abi
 
     cq, ck = _cu(lens_q), _cu(lens_k)
@@ -296,22 +303,9 @@ def test_varlen_compact(lens_q, lens_k, window, p, bit_source):
         col_live[sk] = _live
 
     varlen = abi.varlen_compact(cq, ck, mq, mk, lse_tokens=total_q)
-    if bit_source == "varlen_bits":
-        varlen["bits"] = abi.varlen_bits(
-            abi.VARLEN_COMPACT_SIDE,
-            abi.VARLEN_COMPACT_SIDE,
-            principal_diagonal=_pd(p),
-        )
-        principal_diagonal = None
-    else:
-        # The word carries the *opposite* choice, so the test fails unless the
-        # launcher argument wins.
-        varlen["bits"] = abi.varlen_bits(
-            abi.VARLEN_COMPACT_SIDE,
-            abi.VARLEN_COMPACT_SIDE,
-            principal_diagonal=_pd(1 - p),
-        )
-        principal_diagonal = _pd(p)
+    varlen["bits"] = abi.varlen_bits(abi.VARLEN_COMPACT_SIDE,
+                                     abi.VARLEN_COMPACT_SIDE,
+                                     principal_diagonal=_pd(p))
 
     dk = torch.full_like(k, float("nan"))
     dv = torch.full_like(v, float("nan"))
@@ -330,8 +324,29 @@ def test_varlen_compact(lens_q, lens_k, window, p, bit_source):
         num_seqlens=n,
         window=window,
         varlen=varlen,
-        principal_diagonal=principal_diagonal,
     )
     torch.cuda.synchronize()
     dead_k = (~col_live).view(1, 1, total_k, 1)
-    _assert_close(dk, dv, ref_k, ref_v, dead_k, f"varlen q={lens_q} k={lens_k} w={window} p={p} via {bit_source}")
+    _assert_close(dk, dv, ref_k, ref_v, dead_k, f"varlen q={lens_q} k={lens_k} w={window} p={p}")
+
+
+def test_dense_word_rejects_seqinfo():
+    """A dense word reads no sequence info; handing it some is a caller error."""
+    t = torch.zeros((1, NUM_HEADS_Q, 8, HEAD_DIM), dtype=DTYPE, device="cuda")
+    tk = torch.zeros((1, NUM_HEADS_K, 8, HEAD_DIM), dtype=DTYPE, device="cuda")
+    rows = torch.zeros((NUM_HEADS_Q, 8), dtype=torch.float32, device="cuda")
+    varlen = _dense_word(1)
+    varlen["seqinfo_q0"] = torch.tensor([0, 8], dtype=torch.int32, device="cuda")
+    with pytest.raises(ValueError, match="dense VarlenBits word"):
+        _exe()(t,
+               tk,
+               tk,
+               t,
+               tk.clone(),
+               tk.clone(),
+               rows,
+               rows.clone(),
+               1,
+               8,
+               window=(4, 4),
+               varlen=varlen)

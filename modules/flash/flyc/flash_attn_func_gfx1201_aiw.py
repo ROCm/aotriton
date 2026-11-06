@@ -2271,35 +2271,10 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     # contiguous. `_TH` is Transformer Engine's (T, H).
     #
     # Bit 18 is `principal_diagonal_choice`, which is not a layout fact and
-    # applies to dense calls too: `_principal_diagonal_bits` below folds the
-    # launcher's `principal_diagonal=` into whatever word the layout produced.
+    # applies to dense calls too. It travels in the word like every other
+    # field: a dense call that wants it passes `varlen=abi.varlen_dense(...)`.
 
     # 0x02
-
-    def _principal_diagonal_bits(bits, principal_diagonal):
-        """`bits` with `principal_diagonal_choice` (VarlenBits bit 18) applied.
-
-        `principal_diagonal` is `abi.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT`,
-        `abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT`, or None to keep whatever
-        `bits` already carries -- 0 for a dense call, or what the caller passed
-        to `abi.varlen_bits(..., principal_diagonal=)` under varlen. It is a
-        separate argument because the dense word is built here, not by the
-        caller, and the `varlen_*` helpers do not take it.
-
-        Only a *numeric* window is shifted; sentinels (causal_type 1/2) and the
-        non-causal build ignore the bit, so it is accepted everywhere.
-        """
-        if principal_diagonal is None:
-            return bits
-        _choices = (abi.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT, abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT)
-        if principal_diagonal not in _choices:
-            raise ValueError(f"principal_diagonal must be VARLEN_PRINCIPAL_DIAGONAL_* or None: {principal_diagonal!r}")
-        _bit = abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT
-        if bits & _bit and principal_diagonal != _bit:
-            # Zero in `bits` is indistinguishable from "not set", so the only
-            # detectable contradiction is this one.
-            raise ValueError("varlen['bits'] selects BOTTOM_RIGHT but principal_diagonal= selects TOP_LEFT")
-        return bits | principal_diagonal
 
     def _bias_args(bias):
         """(pointer, stride_b_batch, stride_b_head, stride_b_seq_q) for a (B, H, Sq, Sk) bias.
@@ -2341,12 +2316,12 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         philox_offset2=0,
         philox_seed_output=None,
         philox_offset_output=None,
-        principal_diagonal=None,
     ):  # noqa: E741
         """Every kernel argument but the stream, in launch order.
 
-        `principal_diagonal` selects the diagonal a numeric `window=` is
-        measured from; see `_principal_diagonal_bits`.
+        The diagonal a numeric `window=` is measured from is VarlenBits bit 18
+        (`principal_diagonal_choice`), carried by `varlen["bits"]`; a dense
+        call sets it with `varlen=abi.varlen_dense(principal_diagonal=...)`.
 
         `_launch` and `_compile` were 62 identical lines out of 66, differing
         only in whether the tail is `run_compiled` or `flyc.compile` and how
@@ -2359,7 +2334,6 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         _vb, _sq0, _sq1, _sk0, _sk1, _mq, _mk = abi.varlen_args(
             STRIDES_CONSTEXPR, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens
         )
-        _vb = _principal_diagonal_bits(_vb, principal_diagonal)
         _bp, _sb0, _sb1, _sb2 = _bias_args(bias)
         # `_hold` keeps a materialised philox scalar alive across the launch;
         # see `abi.u64_scalar`. Returned so the caller's frame owns it.
@@ -2422,6 +2396,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     # STRIDES_CONSTEXPR; only `varlen_args` does, and it takes it as an
     # argument now.
     _launch.varlen_bits = abi.varlen_bits
+    _launch.varlen_dense = abi.varlen_dense
     _launch.varlen_compact = abi.varlen_compact
     _launch.varlen_padded = abi.varlen_padded
     _launch.varlen_strided = abi.varlen_strided

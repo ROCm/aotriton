@@ -1299,7 +1299,6 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         window=None,
         varlen=None,
         num_seqlens=0,
-        principal_diagonal=None,
         bias=None,
         dropout_p=None,
         philox_seed=None,
@@ -1315,12 +1314,12 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         `_compile` cannot drift apart -- which is the bug this shape exists to
         prevent, and the reason the gfx1201 kernel grew the same helper.
 
-        `principal_diagonal` is `abi.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT` or
-        `_BOTTOM_RIGHT`, and sets VarlenBits bit 18: the diagonal a *numeric*
-        `window` bound is measured from. `None` keeps whatever `varlen["bits"]`
-        already carries, which for a dense call is top-left. It is a separate
-        argument because a dense call has no `varlen` dict to carry it, and the
-        bit means the same thing there (`d` is merely uniform).
+        The diagonal a *numeric* `window` bound is measured from is VarlenBits
+        bit 18 (`principal_diagonal_choice`), and `varlen["bits"]` is its only
+        source. A dense call carries it with
+        `varlen=abi.varlen_dense(principal_diagonal=...)`; `varlen=None` is
+        word 0, i.e. top-left. The bit means the same thing dense or varlen
+        (`d` is merely uniform).
         """
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
         ptrs, shape_meta, st = abi.prep_tensors(
@@ -1503,12 +1502,6 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         # belongs launches N programs over a 1-batch tensor and every one of
         # them addresses a plausible row.
         _vl = abi.varlen_args(STRIDES_CONSTEXPR, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
-        if principal_diagonal is not None:
-            # Validated by `abi.varlen_bits`, which is also what rejects
-            # anything but the two bit-18 constants.
-            _pd_bits = abi.varlen_bits(principal_diagonal=principal_diagonal)
-            _pd_mask = abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT
-            _vl = ((_vl[0] & ~_pd_mask) | _pd_bits,) + _vl[1:]
 
         return (
             # Six pointers, not six tensors. `wire_ptr` types each one from the
@@ -1573,6 +1566,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
     _launch.compile = _compile
     _launch.traits = traits
     _launch.knobs = knobs
+    _launch.varlen_dense = abi.varlen_dense
     return _launch
 
 

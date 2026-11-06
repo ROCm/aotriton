@@ -14,6 +14,10 @@ and row `i` keeps column `j` iff `0 <= j < seqlen_k` and `i - L <= j <= i + R`
 (docs/Generalized Sliding Window Attention.md, A-2). Sentinels are never
 shifted. `p = 0` is the behavior before the bit existed.
 
+The bit travels in the VarlenBits word and nowhere else: a dense call passes
+`varlen=abi.varlen_dense(principal_diagonal=...)`, a varlen call sets it in
+`varlen["bits"]`.
+
 The reference is a float32 masked softmax built straight from that predicate,
 per sequence, so a varlen batch whose sequences have different `d` checks that
 the shift is resolved per sequence rather than once per call.
@@ -179,7 +183,7 @@ def test_dense(head_dim, shape_name, window_name, p):
        scale=sm_scale,
        lse=lse,
        window=window,
-       principal_diagonal=PRINCIPAL_DIAGONAL[p])
+       varlen=abi.varlen_dense(principal_diagonal=PRINCIPAL_DIAGONAL[p]))
     torch.cuda.synchronize()
 
     keep = _keep_mask(window, p, sq, sk, q.device)
@@ -194,8 +198,7 @@ def test_dense(head_dim, shape_name, window_name, p):
 def test_varlen_mixed(head_dim, window_name, p):
     """Packed (1, H, T, D), compact on both sides, one `d` per sequence.
 
-    `p` travels in `varlen["bits"]` here, the way a varlen caller sets it,
-    rather than through `principal_diagonal=`.
+    `p` travels in `varlen["bits"]`, next to the compact side bytes.
     """
     fn = _build(head_dim)
     window = WINDOWS[window_name]
@@ -249,10 +252,42 @@ def test_varlen_mixed(head_dim, window_name, p):
         _check(f"hd={head_dim} varlen seq{z}=({sq},{sk}) {window_name} p={p}", out[0, :, qs], ref, live)
 
 
-def test_principal_diagonal_rejects_other_values():
+def test_varlen_none_is_the_dense_top_left_word():
+    """`varlen=None` and `varlen_dense()` are the same word (0): bit-identical O and LSE."""
+    fn = _build(HEAD_DIMS[0])
+    sq, sk = DENSE_SHAPES["q_lt_k"]
+    torch.manual_seed(7)
+    q = torch.randn((2, NUM_HEADS, sq, HEAD_DIMS[0]), device="cuda", dtype=DTYPE)
+    k = torch.randn((2, NUM_HEADS, sk, HEAD_DIMS[0]), device="cuda", dtype=DTYPE)
+    v = torch.randn_like(k)
+    assert abi.varlen_dense()["bits"] == 0
+    outs = []
+    for varlen in (None, abi.varlen_dense()):
+        out = torch.full_like(q, float("nan"))
+        lse = torch.full((2 * NUM_HEADS, sq), float("nan"), device="cuda", dtype=torch.float32)
+        fn(q,
+           k,
+           v,
+           out,
+           2,
+           sq,
+           seqlen_k=sk,
+           lse=lse,
+           window=(4, 4),
+           varlen=varlen)
+        torch.cuda.synchronize()
+        outs.append((out, lse))
+    assert torch.equal(outs[0][0], outs[1][0])
+    assert torch.equal(outs[0][1], outs[1][1])
+
+
+def test_dense_word_rejects_seqinfo():
+    """A dense word reads no sequence info; handing it some is a caller error."""
     fn = _build(HEAD_DIMS[0])
     q = torch.zeros((1, NUM_HEADS, 8, HEAD_DIMS[0]), device="cuda", dtype=DTYPE)
-    with pytest.raises(ValueError, match="principal_diagonal"):
+    varlen = abi.varlen_dense(principal_diagonal=abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT)
+    varlen["seqinfo_q0"] = torch.tensor([0, 8], device="cuda", dtype=torch.int32)
+    with pytest.raises(ValueError, match="dense VarlenBits word"):
         fn(q,
            q,
            q,
@@ -261,7 +296,13 @@ def test_principal_diagonal_rejects_other_values():
            8,
            lse=torch.empty((NUM_HEADS, 8), device="cuda", dtype=torch.float32),
            window=(0, 0),
-           principal_diagonal=1)
+           varlen=varlen)
+
+
+def test_varlen_dense_rejects_other_values():
+    """Only the two `VARLEN_PRINCIPAL_DIAGONAL_*` words; a bare 1 is not bit 18."""
+    with pytest.raises(ValueError, match="principal_diagonal"):
+        abi.varlen_dense(principal_diagonal=1)
 
 
 if __name__ == "__main__":

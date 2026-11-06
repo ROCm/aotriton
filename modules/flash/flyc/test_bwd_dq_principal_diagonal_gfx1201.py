@@ -10,13 +10,18 @@ sentinel side resolves as it always has and is never shifted. Row `i` keeps
 column `j` iff `0 <= j < seqlen_k` and `i - L <= j <= i + R`. See
 `docs/Generalized Sliding Window Attention.md`, A-1 / A-2.
 
+The bit travels in the VarlenBits word and nowhere else: a dense call passes
+`varlen=abi.varlen_dense(principal_diagonal=...)`, a varlen call sets it in
+`varlen["bits"]`.
+
 Two groups of tests:
 
 * **Host plumbing** (`test_launcher_*`). Builds the launcher and intercepts
   `abi.run_compiled`, so nothing is compiled or launched: it checks only that
-  `principal_diagonal=` reaches the `varlen_bits` kernel argument, for dense
-  calls too, and that `None` keeps what a varlen dict already carries. Needs
-  FlyDSL and `AOTRITON_FLYDSL_KERNEL_ROOT`, not a GPU.
+  the word's bit 18 reaches the `varlen_bits` kernel argument unchanged, for
+  a dense word and a varlen dict alike, and that a dense word carrying
+  sequence info is rejected. Needs FlyDSL and `AOTRITON_FLYDSL_KERNEL_ROOT`,
+  not a GPU.
 * **Numerics** (`test_dq_*`). Runs the kernel on a gfx1201 device against a
   float32 autograd reference over `p in {0, 1}`, dense and varlen, with
   `seqlen_q <`, `==` and `> seqlen_k`, decode and chunked prefill. LSE and
@@ -178,16 +183,14 @@ def _bits(abi, p):
 _VARLEN_BITS_ARG = 13
 
 
-def _captured_varlen_bits(abi, dq_fn, monkeypatch, *, varlen=None, principal_diagonal=None):
+def _captured_varlen_bits(abi, dq_fn, monkeypatch, *, varlen=None):
     captured = []
     monkeypatch.setattr(abi, "run_compiled", lambda cache, exe, *args: captured.append(args))
     sq = 64
-    if varlen is None:
-        batch, num_seqlens = 1, 0
-    else:
-        batch, num_seqlens = 1, int(varlen["seqinfo_q0"].numel()) - 1
+    dense = varlen is None or varlen.get("seqinfo_q0") is None
+    batch, num_seqlens = (1, 0) if dense else (1, int(varlen["seqinfo_q0"].numel()) - 1)
     q = torch.zeros(batch, NUM_HEADS, sq, HEAD_DIM, dtype=DTYPE)
-    rows = torch.zeros(batch * NUM_HEADS if varlen is None else NUM_HEADS, sq)
+    rows = torch.zeros(batch * NUM_HEADS if dense else NUM_HEADS, sq)
     dq_fn(q,
           q,
           q,
@@ -200,40 +203,48 @@ def _captured_varlen_bits(abi, dq_fn, monkeypatch, *, varlen=None, principal_dia
           seqlen_k=sq,
           num_seqlens=num_seqlens,
           window=(8, 0),
-          varlen=varlen,
-          principal_diagonal=principal_diagonal)
+          varlen=varlen)
     (args,) = captured
     return int(args[_VARLEN_BITS_ARG])
 
 
 @_needs_flydsl
 @pytest.mark.parametrize("p", (None, 0, 1))
-def test_launcher_dense_sets_bit(abi, dq_fn, monkeypatch, p):
-    pd = None if p is None else _bits(abi, p)
-    got = _captured_varlen_bits(abi, dq_fn, monkeypatch, principal_diagonal=pd)
+def test_launcher_dense_word_bit(abi, dq_fn, monkeypatch, p):
+    """`varlen=None` is word 0; a dense word reaches the kernel as built."""
+    varlen = None if p is None else abi.varlen_dense(principal_diagonal=_bits(abi, p))
+    got = _captured_varlen_bits(abi, dq_fn, monkeypatch, varlen=varlen)
     assert got == (abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT if p else 0)
 
 
 @_needs_flydsl
 @pytest.mark.parametrize("carried", (0, 1))
-@pytest.mark.parametrize("p", (None, 0, 1))
-def test_launcher_varlen_bit(abi, dq_fn, monkeypatch, carried, p):
-    """`None` keeps the dict's bit 18; an explicit value replaces it. The
-    layout bits are never disturbed."""
+def test_launcher_varlen_bit(abi, dq_fn, monkeypatch, carried):
+    """A varlen dict's bit 18 reaches the kernel, and the layout bits with it."""
     cu = torch.tensor([0, 32, 64], dtype=torch.int32)
     varlen = abi.varlen_compact(cu, cu, 32, 32, lse_tokens=64)
     layout = varlen["bits"]
-    varlen["bits"] |= _bits(abi, carried)
-    pd = None if p is None else _bits(abi, p)
-    got = _captured_varlen_bits(abi, dq_fn, monkeypatch, varlen=varlen, principal_diagonal=pd)
-    want = carried if p is None else p
-    assert got == layout | _bits(abi, want)
+    varlen["bits"] = abi.varlen_bits(abi.VARLEN_COMPACT_SIDE,
+                                     abi.VARLEN_COMPACT_SIDE,
+                                     principal_diagonal=_bits(abi, carried))
+    got = _captured_varlen_bits(abi, dq_fn, monkeypatch, varlen=varlen)
+    assert got == layout | _bits(abi, carried)
 
 
 @_needs_flydsl
-def test_launcher_rejects_bad_choice(abi, dq_fn, monkeypatch):
+def test_launcher_dense_word_rejects_seqinfo(abi, dq_fn, monkeypatch):
+    """A dense word reads no sequence info; handing it some is a caller error."""
+    varlen = abi.varlen_dense(principal_diagonal=abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT)
+    varlen["seqinfo_k1"] = torch.tensor([0, 64], dtype=torch.int32)
+    with pytest.raises(ValueError, match="dense VarlenBits word"):
+        _captured_varlen_bits(abi, dq_fn, monkeypatch, varlen=varlen)
+
+
+@_needs_flydsl
+def test_varlen_dense_rejects_bad_choice(abi):
+    """Only the two `VARLEN_PRINCIPAL_DIAGONAL_*` words; a bare 1 is not bit 18."""
     with pytest.raises(ValueError, match="principal_diagonal"):
-        _captured_varlen_bits(abi, dq_fn, monkeypatch, principal_diagonal=1)
+        abi.varlen_dense(principal_diagonal=1)
 
 
 def test_reference_shift_is_not_vacuous():
@@ -294,7 +305,7 @@ def test_dq_dense(abi, dq_fn, shape, window, p):
           seqlen_k=sk,
           scale=sm_scale,
           window=window,
-          principal_diagonal=_bits(abi, p))
+          varlen=abi.varlen_dense(principal_diagonal=_bits(abi, p)))
     torch.cuda.synchronize()
 
     for b, (ref, _, _, empty) in enumerate(refs):
@@ -328,6 +339,9 @@ def test_dq_varlen(abi, dq_fn, window, p):
         refs.append((rq, ref, empty, sq, sk))
 
     varlen = abi.varlen_compact(cu_q, cu_k, max(lens_q), max(lens_k), lse_tokens=tq)
+    varlen["bits"] = abi.varlen_bits(abi.VARLEN_COMPACT_SIDE,
+                                     abi.VARLEN_COMPACT_SIDE,
+                                     principal_diagonal=_bits(abi, p))
     dq = torch.full_like(q, float("nan"))
     dq_fn(q,
           k,
@@ -342,8 +356,7 @@ def test_dq_varlen(abi, dq_fn, window, p):
           num_seqlens=len(VARLEN_SEQLENS),
           scale=sm_scale,
           window=window,
-          varlen=varlen,
-          principal_diagonal=_bits(abi, p))
+          varlen=varlen)
     torch.cuda.synchronize()
 
     for rq, ref, empty, sq, sk in refs:
