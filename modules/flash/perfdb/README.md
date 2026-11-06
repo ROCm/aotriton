@@ -10,6 +10,16 @@ End-to-end performance of AOTriton's public APIs, one directory per release tag.
 - [0.13b](0.13b/README.md)
 - [0.14.2b](0.14.2b/README.md)
 
+## gfx1100
+
+Geometric mean of old over new median time against the previous tag; above 1 is faster.
+
+| tag | variant | previous | op_attn_fwd | op_attn_bwd | LLM cases |
+|---|---|---|---|---|---|
+| [0.12.1b](0.12.1b/gfx1100.md) | any |  |  |  |  |
+| [0.13b](0.13b/gfx1100.md) | any | 0.12.1b | 0.9933 | 0.9973 | 0.9998 |
+| [0.14.2b](0.14.2b/gfx1100.md) | any | 0.13b | 0.9666 | 0.8401 | 0.9952 |
+
 ## gfx1201
 
 Geometric mean of old over new median time against the previous tag; above 1 is faster.
