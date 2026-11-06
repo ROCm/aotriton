@@ -12,6 +12,8 @@ that document first for the common conventions; this one only restates what
 perfdb relies on. The writer, reader, renderer and comparison tool are one
 module, `aotriton.perfmon.perfdb`. The tool that fills the database from
 PostgreSQL is `aotriton.perfmon.export`.
+How the data is produced, step by step, is in
+[How To Generate Performance Database](How%20To%20Generate%20Performance%20Database.md).
 
 All examples are small and made up; real files have the same shape.
 
