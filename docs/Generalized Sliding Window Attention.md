@@ -423,9 +423,18 @@ window.
 
 ### A-3. Dense calls
 
-`principal_diagonal_choice` is honored for dense calls too (`d` is just
-uniform). Dense callers may instead leave `p = 0` and convert on the host:
-`window_left = wl - d`, `window_right = wr + d`. The two are equivalent.
+**Despite the `Varlen` prefix, `principal_diagonal_choice` is honored for
+dense calls too** (`d` is just uniform). Dense callers should not rely on it,
+though: the bit is far less tested on the dense path than the alternatives,
+which express the same masks:
+
+- causal: the sentinels, `BOTTOM_RIGHT_ALIGNED` for bottom-right;
+- a numeric window measured from the bottom-right diagonal: leave `p = 0` and
+  convert on the host, `window_left = wl - d`, `window_right = wr + d`.
+
+The results are the same either way; the recommendation is about test
+coverage, not semantics. The bit exists for varlen, where `d` differs per
+sequence and no single host-side shift can express it.
 
 ### A-4. Fully-masked rows
 

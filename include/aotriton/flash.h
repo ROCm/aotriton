@@ -160,8 +160,17 @@ struct AOTRITON_API VarlenLseLayout {
 // what every caller older than kVersion 5 (fwd) / 8 (bwd) sends.
 // BOTTOM_RIGHT (p = 1) measures from j - i = d, flash-attention's convention.
 // Sentinel windows (TOP_LEFT_ALIGNED, BOTTOM_RIGHT_ALIGNED) already name their
-// own diagonal and are NOT shifted again. The bit is honored for dense calls
-// too, where d is simply the same for every batch entry.
+// own diagonal and are NOT shifted again.
+//
+// NOTE: DESPITE THE "Varlen" PREFIX, THE BIT IS HONORED FOR DENSE CALLS TOO,
+// where d is simply the same for every batch entry. A dense call does not need
+// it, though, and SHOULD NOT use it: the bit is far less tested on the dense
+// path than the alternatives, which express the same masks:
+//   - causal: the sentinels, BOTTOM_RIGHT_ALIGNED for bottom-right;
+//   - a numeric window measured from the bottom-right diagonal: shift it on
+//     the host, Window_left - d and Window_right + d, and leave p = 0.
+// The bit exists for varlen, where d differs per sequence and no single host
+// shift can express it.
 struct AOTRITON_API VarlenPrincipalDiagonal {
   static constexpr uint32_t TOP_LEFT     = 0;  // j - i = 0 (default)
   static constexpr uint32_t BOTTOM_RIGHT = 1;  // j - i = seqlen_k[z] - seqlen_q[z]
