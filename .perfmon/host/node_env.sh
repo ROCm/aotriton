@@ -2,17 +2,17 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 #
-# Runs on a fleet peer (the host dir: where it executes). Source it, with
+# Runs on a remote GPU host (the host dir: where it executes). Source it, with
 #   PM_WORKDIR    the perfmon workdir (the scratch's wkdir.<name>)
 #   PM_SCRATCH    the shared scratch
 #   PM_ROCM       the ROCm version of the shared venv
 #   PM_THERMAL_GATE  optional, on|off (config row thermal_gate::<host> of this host)
 # set. It defines the environment a perfmon node needs (the path variables of
 # .def/lib/paths.sh, automation doc 2.2) and picks the venv. The checkout is
-# the one this file lives in: a peer mounts it at the same path as the control
+# the one this file lives in: the host mounts it at the same path as the control
 # host.
 #
-# The venv is, in order: the one already active (a claudepak-managed venv,
+# The venv is, in order: the one already active (a venv provided for the session,
 # read-only), if its `rocm-sdk version` is PM_ROCM; else the shared scratch
 # venv <scratch>/perfmon/venv/rocm<ver> that setup_session creates. aotriton is
 # never installed: PYTHONPATH carries .def/lib/pkgroot, which maps the checkout's
@@ -30,7 +30,7 @@ perfmon_venv_dir() {
 }
 
 # True if a venv is already active, is not the scratch venv, and carries ROCm
-# PM_ROCM: a venv the user (claudepak) manages, to be used as is.
+# PM_ROCM: a venv the user provides, to be used as is.
 perfmon_venv_managed() {
     [ -n "${VIRTUAL_ENV:-}" ] || return 1
     [ "$VIRTUAL_ENV" != "$(perfmon_venv_dir)" ] || return 1

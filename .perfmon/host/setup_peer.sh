@@ -2,11 +2,11 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 #
-# Runs on a fleet peer, over ssh, from .perfmon/bin/setup_session (automation
+# Runs on a remote GPU host, over ssh, from .perfmon/bin/setup_session (automation
 # doc 5.3, step A1). Idempotent; each check stops with a message at the first
 # failure.
 #
-# Two venv modes (node_env.sh). With a claudepak-managed venv active whose
+# Two venv modes (node_env.sh). With a venv provided for the session active whose
 # `rocm-sdk version` is <rocm>, nothing is created or installed (it is
 # read-only): the script only checks that aotriton (from the checkout, via
 # PYTHONPATH), psycopg, pytest and amd-smi are there, and names what the user
@@ -15,7 +15,7 @@
 # pytest and amdsmi into it.
 #
 # Usage: setup_peer.sh <workdir> <scratch> <rocm> [<arch hint>]
-#   <arch hint>  used to pick the ROCm device wheel when the peer cannot list
+#   <arch hint>  used to pick the ROCm device wheel when the host cannot list
 #                its own arch yet (the venv, which brings rocminfo, comes later)
 
 set -o pipefail
@@ -61,7 +61,7 @@ ok "scratch visible and writable at $PM_SCRATCH"
 ok "workdir visible at $PM_WORKDIR"
 
 # 2. The GPU: /dev/kfd, and (once ROCm is in reach) rocminfo listing an arch.
-[ -e /dev/kfd ] || fail "/dev/kfd does not exist on $(hostname): not a GPU container (claudepak --gpu)"
+[ -e /dev/kfd ] || fail "/dev/kfd does not exist on $(hostname): not a GPU environment"
 [ -r /dev/kfd ] && [ -w /dev/kfd ] || fail "/dev/kfd is not accessible to $(id -un) (groups: $(id -Gn))"
 ok "/dev/kfd accessible"
 
@@ -86,14 +86,14 @@ if perfmon_venv_managed; then
         if python -c "import $mod" 2>/dev/null; then
             ok "import $mod"
         else
-            echo "MISSING: import $mod fails; install it into the managed venv (claudepak)" >&2
+            echo "MISSING: import $mod fails; install it into the provided venv" >&2
             MISSING=1
         fi
     done
     if command -v amd-smi >/dev/null 2>&1; then
         ok "amd-smi on PATH"
     else
-        echo "MISSING: amd-smi not on PATH; install it into the managed venv (claudepak)" >&2
+        echo "MISSING: amd-smi not on PATH; install it into the provided venv" >&2
         MISSING=1
     fi
     [ "$MISSING" -eq 0 ] || fail "the managed venv $VIRTUAL_ENV lacks packages (above)"
@@ -106,7 +106,7 @@ fi
 VENV="$(perfmon_venv_dir)"
 mkdir -p "$PM_SCRATCH/perfmon/venv" "$PM_SCRATCH/perfmon/logs" "$PM_SCRATCH/perfmon/handoff"
 
-# 3. No managed venv: the shared venv, created once per ROCm. Two peers may set up at the same
+# 3. No managed venv: the shared venv, created once per ROCm. Two hosts may set up at the same
 #    time on the shared scratch, so the creation is serialised with a lock
 #    directory (mkdir is atomic).
 LOCK="$VENV.lock"
@@ -127,7 +127,7 @@ acquire_lock() {
 
 ARCH_NOW="$(peer_arches | head -1)"
 ARCH="${ARCH_NOW:-$ARCH_HINT}"
-[ -n "$ARCH" ] || fail "cannot tell this peer's arch (no rocminfo yet, no --arch hint, host not in workers.db)"
+[ -n "$ARCH" ] || fail "cannot tell this host's arch (no rocminfo yet, no --arch hint, host not in workers.db)"
 
 if [ ! -f "$VENV/bin/activate" ]; then
     acquire_lock
@@ -141,7 +141,7 @@ if [ ! -f "$VENV/bin/activate" ]; then
 fi
 . "$VENV/bin/activate"
 
-# ROCm wheels: the SDK once, then the device libraries of every arch a peer
+# ROCm wheels: the SDK once, then the device libraries of every arch a host
 # needs (one venv serves every arch of this ROCm).
 if ! command -v rocm-sdk >/dev/null 2>&1 || ! rocm-sdk targets 2>/dev/null | grep -qw "$ARCH"; then
     [ "$LOCKED" -eq 1 ] || acquire_lock

@@ -300,7 +300,7 @@ means direct access). It is a host property shared by every application.
   else `default_workdir`). Before each (re)start the manager runs
   `mkdir -p` and `rm -f` on the socket over ssh, because sshd does not unlink
   a stale socket. A Unix socket works where a TCP port on the host's loopback
-  does not: a claudepak peer on a Docker bridge has its own loopback, but sees
+  does not: a container on a Docker bridge has its own loopback, but sees
   the host workdir at the same path. `stop` stops both; `status` shows
   PostgreSQL and the tunnels. It runs on the server's bare metal and needs
   non-interactive ssh to each host (start `ssh-agent` and `ssh-add` your key

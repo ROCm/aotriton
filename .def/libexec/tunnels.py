@@ -16,7 +16,7 @@ directly. For each host with a config row `firewalled::<hostname>` = 1 in
 where <socket> is a Unix socket in the host's own workdir (as the server
 knows it: workers.db workdir_override, else default_workdir),
 <workdir>/run/pgsql/.s.PGSQL.<port> for PostgreSQL. A process on the host
-(a claudepak peer sees the workdir at the same path, a docker worker mounts it)
+(a remote host sees the workdir at the same path, a docker worker mounts it)
 sets PGHOST=<workdir>/run/pgsql and PGPORT=<port>, and libpq connects to the
 socket. Unlike a TCP port on the host's loopback this works from a container
 on a Docker bridge. Before each (re)start the stale socket is removed over

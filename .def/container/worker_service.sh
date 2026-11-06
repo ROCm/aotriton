@@ -249,7 +249,7 @@ fi
 load_config_container "$WORKDIR" || exit 1
 
 # config.rc names the image's Python (CELERY_WORKER_PYTHON). A node that runs
-# outside that image (a fleet container with a shared venv) names its own in
+# outside that image (a remote host with a shared venv) names its own in
 # AOTRITON_PYTHON, which wins. Application-neutral, like the AOTRITON_* paths.
 CELERY_WORKER_PYTHON="${AOTRITON_PYTHON:-${CELERY_WORKER_PYTHON:-}}"
 if [ -z "$CELERY_WORKER_PYTHON" ] && { [ "$COMMAND" = start ] || [ "$COMMAND" = restart ]; }; then
@@ -288,7 +288,7 @@ QUEUES_ARG=$(IFS=,; echo "${QUEUES[*]}")
 
 # Directories. The rundir holds node-local runtime files and defaults to
 # <workdir>/run (AOTRITON_RUNDIR in .def/lib/paths.sh); a node whose
-# workdir is on a network filesystem (perfmon in a fleet container) points
+# workdir is on a network filesystem (perfmon on a remote host) points
 # AOTRITON_RUNDIR at a local path instead.
 # The default comes from paths.sh, read in a subshell so that the rest of this
 # script keeps its own environment, with the workdir this invocation was given.

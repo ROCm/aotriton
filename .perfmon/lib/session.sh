@@ -2,15 +2,15 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 #
-# Control-side helpers shared by the .perfmon/bin commands that drive a fleet
-# peer over ssh (automation doc sections 1.1 and 4). Source it after
+# Control-side helpers shared by the .perfmon/bin commands that drive a remote GPU
+# host over ssh (automation doc sections 1.1 and 4). Source it after
 # .def/lib/db_query.sh.
 
 PERFMON_DEFAULT_ROCM="10.1.0"
 PERFMON_DEFAULT_TAGS='["0.9.2b","0.10b","0.11.2b","0.12.1b","0.13b","0.14.2b"]'
 
 # The shared scratch: --scratch if given, else the parent of the workdir
-# (claudepak-scratch/wkdir.<name> lives directly in it, automation doc 4).
+# (the workdir, wkdir.<name>, lives directly in it, automation doc 4).
 perfmon_scratch_root() {
     local workdir="$1"
     local override="${2:-}"

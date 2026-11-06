@@ -2,8 +2,8 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 #
-# Start, stop or query a perfmon node on a fleet peer, rootless and with no
-# docker: the fleet container is the worker container (automation doc 1.1).
+# Start, stop or query a perfmon node on a remote GPU host, rootless and with no
+# docker: the host is the worker environment (automation doc 1.1).
 #
 #   node --workdir <wkdir> --host <host> [--rocm <ver>] [--arch <arch>]
 #        [--scratch <dir>] [--session_name <name>] [--multi_gpu <id>...]
@@ -21,7 +21,7 @@
 #                           comes through the Unix socket of the SSH tunnel of
 #                           .def/libexec/tunnels.py)
 #   --subpool               the host's subpool in workers.db, when it has one
-# The peer must have been prepared with setup_session. The host's arch comes
+# The host must have been prepared with setup_session. The host's arch comes
 # from workers.db unless --arch is given. --rocm defaults to the first of
 # perfmon::rocm.
 

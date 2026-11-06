@@ -7,7 +7,7 @@
 #
 # The psql client is chosen once: containerized (docker run alpine/psql:<ver>)
 # when `docker` is available, otherwise a native `psql` on PATH (rootless
-# environments such as claudepak sandboxes and fleet peers). Force either one
+# environments such as unprivileged containers and remote GPU hosts). Force either one
 # with AOTRITON_PSQL=docker or AOTRITON_PSQL=native.
 
 set -e
