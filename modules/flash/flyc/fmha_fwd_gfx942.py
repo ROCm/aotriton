@@ -616,6 +616,8 @@ def build_fmha_fwd_gfx942(head_dim,
 
         # Prologue: iteration -1.
         k_dma(kv_base, 0)
+        # The vmcnt below waits for K(0) only: keep K(1) after it.
+        rocdl.sched_barrier(0)
         k_dma(kv_base + tr.BLOCK_N, 1)
         rocdl.s_waitcnt(vmcnt=n_kdma)
         cluster_barrier()

@@ -667,6 +667,8 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
 
         # Prologue: K(0), K(1), V(0); then iteration -1's half.
         k_dma(kv_base, 0)
+        # The vmcnt below counts everything after K(0) as newer: keep it after the DMA.
+        rocdl.sched_barrier(0)
         b0 = bias_load(kv_base, True)
         v_regs = v_load(kv_base)
         k_dma(kv_base + tr.BLOCK_N, 1)
