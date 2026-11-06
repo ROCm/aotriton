@@ -288,13 +288,19 @@ sorted by its cells:
 
 ```
 variant,gpu_device_id,vram_gib,power_cap_w,power_cap_default_w,gpus_per_node,thermal_gate,cpu,ram_speed,os,kernel,amdgpu,rocm,harness,measured
-any,0x75a0,288,,,8,off,AMD EPYC 9575F 64-Core Processor,,Debian GNU/Linux 13,6.12.43,,10.1.0,abc1234,2026-11-01..2026-11-03
+any,0x75a0,288,1400,1400,8,off,AMD EPYC 9575F 64-Core Processor,,Debian GNU/Linux 13,6.12.43,6.19.14,10.1.0,abc1234,2026-11-01..2026-11-03
 ```
 
 `harness` is the source commit of the measuring core. `measured` is the first
 and last date of the measurements that carried this configuration
 (`YYYY-MM-DD..YYYY-MM-DD`, or one date). Host names are never published. An
-empty cell is a fact the report did not carry. Machines of one variant that
+empty cell is a fact the report did not carry. The worker reads the power caps
+(the GPU's amdgpu hwmon `power1_cap` and `power1_cap_default`, found by the
+GPU's PCI address) and the `amdgpu` module version (`/sys/module/amdgpu/version`)
+from the node's sysfs, so campaigns measured before that was added have them
+empty, and so does an in-tree driver without a module version. `ram_speed` is
+always empty for now: only the DMI tables have it, and a container without root
+does not see them. Machines of one variant that
 report different device ids or different default power caps are listed on
 separate rows, and the export warns, since the variant is then not expected to
 perform the same.
@@ -334,7 +340,9 @@ repository stores times.
     family's workloads list, labelled by its model, with the TFLOPS of the
     unforced operator and of each forced backend. Cases whose adapters cannot
     run yet are not listed.
-  - the prime tables of every forced backend, each in a `<details>` block.
+  - the prime tables of every forced backend, each in a `<details>` block. A
+    backend that is excluded in every cell of the variant (flyc on an arch that
+    does not support it) has no block and no LLM column; a line names it instead.
 
   `—` marks excluded, `✗` marks no data, a blank cell was not measured. A
   generated note explains that the unforced operator can be slower than its
@@ -353,7 +361,8 @@ repository stores times.
 python -m aotriton.perfmon.perfdb show <file.perfdb>
 python -m aotriton.perfmon.perfdb render <perfdb dir> [--check]
 python -m aotriton.perfmon.perfdb compare <tag A> <tag B> [--arch A] [--variant V]
-                                  [--perfdb DIR] [--top N] [--summary_only]
+                                  [--perfdb DIR] [--top N] [--noise F]
+                                  [--include_forced] [--csv_file F|-]
 python -m aotriton.perfmon.export --workdir <workdir> --module flash --arch gfx942
                                   [--variant V] [--subject S ...] [--output DIR]
                                   [--entry_set prime llm] [--verify] [--include_incomplete]
@@ -366,12 +375,20 @@ python -m aotriton.perfmon.export --workdir <workdir> -l [--module M] [--arch A]
   alone does the same, which is what the shebang runs.
 - `compare` compares any two tags, not only adjacent ones. It joins files of
   the same name, then blocks of the same variant, then lines of the same entry;
-  entries that are a marker or missing on either side are skipped. It prints a
-  ratio (A over B) per line, the geometric mean per file, the overall geometric
-  mean and the entries with the largest regressions. A file pair whose
-  measurement keys differ is refused, reported, and makes the exit status 1.
+  entries that are a marker or missing on either side are skipped. By default
+  only the unforced operators are compared (what users get); `--include_forced`
+  adds the forced backends, each reported on its own row. The summary comes
+  first: per arch and file, the number of lines, the geometric mean of A over B,
+  how many lines are slower or faster beyond the noise (`--noise`, default 3%)
+  and how many of those are LLM cases; then the largest regressions
+  beyond noise (`--top`) with the entry's coordinates (dtype, hdim, causal,
+  dropout, heads, batch, seqlens, ...), and every LLM case that is slower beyond
+  noise. `--csv_file` also writes every compared line with its coordinates as
+  CSV (`-`: to stdout, after the summary). A file pair whose measurement keys
+  differ is refused, reported, and makes the exit status 1.
 - `export` reads `perfmon.latest_measurement` for the selection, prints how
-  many rows a newer one superseded and how many were `NotOK` or `crash`,
+  many points were measured (with the `OK`, `NotOK` and `crash` counts), how
+  many are excluded, and how many rows a newer one superseded,
   merges, writes `platform.csv`, re-renders the markdown, and with `--verify`
   reads the files back and checks every exported line. `--entry_set` names the
   sets whose arch-rejected entries are written as excluded (default prime and
@@ -388,16 +405,17 @@ python -m aotriton.perfmon.export --workdir <workdir> -l [--module M] [--arch A]
   exporting a campaign.
 - `export -l` writes nothing. It lists the (module, arch, variant, subject)
   combinations that exist in PostgreSQL for the options that were not given,
-  with the number of measurements and how many are `OK`, `NotOK` and `crash`,
-  the newest date, and whether `<tag>/data/<arch>/` already has a block for the
+  with the number of points that were timed (`measured`, the sum of `OK`,
+  `NotOK` and `crash`; excluded points were never run and are counted in
+  `excluded` only), the newest date, and whether `<tag>/data/<arch>/` already has a block for the
   variant, and an `incomplete` column with the shortfall of the selection's
   tasks (`-` when complete, else `<n> tasks, <m> results missing`; the details
   go to stderr):
 
   ```
-  variant  subject                      measured    OK  NotOK  crash  newest      exported  incomplete
-  any      aotriton-0.13b+rocm10.1.0        2816  2790     26      0  2026-11-20  yes       -
-  any      aotriton-0.14.2b+rocm10.1.0      2816  2801     15      0  2026-11-21  no        2 tasks, 7 results missing
+  variant  subject                      measured    OK  NotOK  crash  excluded  newest      exported  incomplete
+  any      aotriton-0.13b+rocm10.1.0        2816  2790     26      0      1450  2026-11-20  yes       -
+  any      aotriton-0.14.2b+rocm10.1.0      2816  2801     15      0      2878  2026-11-21  no        2 tasks, 7 results missing
   ```
 
 ### Live comparison of `head`
@@ -409,8 +427,10 @@ python -m aotriton.perfmon.export --workdir <workdir> -l [--module M] [--arch A]
 python -m aotriton.perfmon.live --workdir <workdir> --module flash --arch gfx942 gfx950
                                 --against 0.14.2b 0.13b [--against_subject S ...]
                                 [--subject aotriton-head+rocm...] [--variant V]
-                                [--noise 0.03] [--forced_check_baselines]
-                                [--format csv|markdown] [--output_file F] [--perfdb DIR]
+                                [--check regression forced_beats_unforced]
+                                [--noise 0.03] [--forced_check_baselines] [--top 10]
+                                [--format csv|markdown] [--output_file F] [--summary_only]
+                                [--perfdb DIR]
 ```
 
 It lists the flagged entries of the fault hunt: tuning-database cells tuned at
@@ -420,12 +440,21 @@ to those cells. Two checks, both with the noise rule of `compare`
 the tool warns when the committed `platform.csv` has another GPU device id than
 the live rows):
 
+`--check` runs only the named checks (default: both). `--subject` may name any
+subject of the database, so `--check forced_beats_unforced --subject <release
+subject>` runs the second check on a finished campaign without a head subject.
+
 - `regression`: a point of head slower than the same (variant, iface, backend,
   entry) in a committed tag (`--against`) or another subject in the database
   (`--against_subject`) by more than the noise.
 - `forced_beats_unforced`: within head (and, with `--forced_check_baselines`,
   within each reference), a forced backend faster than the unforced operator by
   more than the noise.
+
+A summary goes to stderr before the list: per check, reference, arch, iface and
+backend, the number of flags and the largest margin; then the `--top` flags of
+each check with the largest margin and their coordinates. `--summary_only` omits
+the list.
 
 Only points where both sides have a median are compared: a backend that fails
 or crashes (AITER-family backends often do) is not a flag; the summary on

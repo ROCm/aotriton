@@ -482,16 +482,71 @@ def test_compare_refuses_files_whose_measurement_keys_differ(tmp_path, desc):
     assert 'op_a.perfdb' not in {r[0] for r in ratios} and ratios
 
 
-def test_the_compare_command_prints_ratios_and_fails_on_a_refusal(tmp_path, desc, capsys):
+def _fake_desc_for(monkeypatch, desc):
+    monkeypatch.setattr(perfdb, '_desc_for', lambda root, module: desc)
+
+
+def test_the_compare_command_prints_the_summary_and_fails_on_a_refusal(tmp_path, desc, monkeypatch, capsys):
+    _fake_desc_for(monkeypatch, desc)
     _export(tmp_path, desc, _campaign(desc, S13)[:4])
     _export(tmp_path, desc, _campaign(desc, S14, scale=0.5)[:4])
     assert perfdb.main(['compare', '0.13b', '0.14.2b', '--perfdb', str(tmp_path)]) == 0
     out = capsys.readouterr().out
-    assert 'arch,file,variant,entry,median_a,median_b,a/b,beyond_noise' in out
-    assert 'overall geometric mean' in out and 'a/b 2' in out
+    assert 'arch,file,variant' not in out                        # no per-line CSV unless asked for
+    assert out.startswith('compare 0.13b -> 0.14.2b:') and 'unforced operators only' in out
+    assert 'op_a' in out and 'a/b geomean' in out and 'largest regressions' not in out
     path = tmp_path / '0.14.2b' / 'data' / ARCH / 'op_a.perfdb'
     path.write_text(path.read_text().replace('l2_flush,1', 'l2_flush,0'))
-    assert perfdb.main(['compare', '0.13b', '0.14.2b', '--perfdb', str(tmp_path), '--summary_only']) == 1
+    assert perfdb.main(['compare', '0.13b', '0.14.2b', '--perfdb', str(tmp_path)]) == 1
+
+
+def test_compare_defaults_to_the_unforced_files_and_reports_forced_backends_on_request(tmp_path, desc, monkeypatch,
+                                                                                    capsys):
+    _fake_desc_for(monkeypatch, desc)
+    _export(tmp_path, desc, _campaign(desc, S13))
+    slow = _campaign(desc, S14, scale=0.5)
+    for r in slow:
+        if r['backend'] == 'fast':
+            r['median_us'] *= 4                                 # the forced backend alone regressed
+    _export(tmp_path, desc, slow)
+    args = ['compare', '0.13b', '0.14.2b', '--perfdb', str(tmp_path), '--noise', '0.03']
+    assert perfdb.main(args) == 0
+    plain = capsys.readouterr().out
+    assert 'op_a.fast' not in plain and 'largest regressions' not in plain
+    assert perfdb.main(args + ['--include_forced']) == 0
+    forced = capsys.readouterr().out
+    assert 'op_a.fast' in forced and 'op_b.fast' in forced and 'largest regressions' in forced
+    # the worst list names the entry's coordinates, not only its ordinal
+    assert 'dtype=' in forced and 'seqlen=' in forced
+
+
+def test_compare_writes_the_lines_with_coordinates_after_the_summary(tmp_path, desc, monkeypatch, capsys):
+    _fake_desc_for(monkeypatch, desc)
+    _export(tmp_path, desc, _campaign(desc, S13)[:4])
+    _export(tmp_path, desc, _campaign(desc, S14, scale=0.5)[:4])
+    base = ['compare', '0.13b', '0.14.2b', '--perfdb', str(tmp_path)]
+    assert perfdb.main(base + ['--csv_file', '-']) == 0
+    out = capsys.readouterr().out
+    header = 'arch,file,variant,entry,T_io,hdim,causal,seqlen_q,seqlen_k,batch,n_heads_q,median_a,median_b,a/b,beyond_noise'
+    assert out.index('compare 0.13b') < out.index(header)
+    assert ',yes\n' in out
+    target = tmp_path / 'lines.csv'
+    assert perfdb.main(base + ['--csv_file', str(target)]) == 0
+    assert target.read_text().startswith(header) and 'arch,file' not in capsys.readouterr().out
+
+
+def test_compare_summary_counts_regressions_beyond_noise(tmp_path, desc, monkeypatch, capsys):
+    _fake_desc_for(monkeypatch, desc)
+    _export(tmp_path, desc, _campaign(desc, S13)[:4])
+    _export(tmp_path, desc, _campaign(desc, S14, scale=1.01)[:4])      # 1 % slower: noise
+    args = ['compare', '0.13b', '0.14.2b', '--perfdb', str(tmp_path)]
+    assert perfdb.main(args + ['--csv_file', '-']) == 0
+    out = capsys.readouterr().out
+    assert ',no\n' in out and ',yes\n' not in out
+    assert 'largest regressions' not in out
+    assert perfdb.main(args + ['--noise', '0.005']) == 0
+    out = capsys.readouterr().out
+    assert 'largest regressions beyond noise (top 2 of 2)' in out
 
 
 def test_beyond_noise_is_a_change_of_the_time_above_the_threshold():
@@ -501,19 +556,6 @@ def test_beyond_noise_is_a_change_of_the_time_above_the_threshold():
     assert perfdb.beyond_noise(1.04)
     assert not perfdb.beyond_noise(1.02)
     assert perfdb.beyond_noise(1.02, noise=0.01)
-
-
-def test_compare_lists_only_regressions_beyond_noise(tmp_path, desc, capsys):
-    _export(tmp_path, desc, _campaign(desc, S13)[:4])
-    _export(tmp_path, desc, _campaign(desc, S14, scale=1.01)[:4])      # 1 % slower: noise
-    args = ['compare', '0.13b', '0.14.2b', '--perfdb', str(tmp_path)]
-    assert perfdb.main(args) == 0
-    out = capsys.readouterr().out
-    assert ',no\n' in out and ',yes\n' not in out
-    assert 'largest regressions' not in out and '0 regressions, 0 improvements' in out
-    assert perfdb.main(args + ['--noise', '0.005']) == 0
-    out = capsys.readouterr().out
-    assert ',yes\n' in out and 'largest regressions' in out and '4 regressions, 0 improvements' in out
 
 
 # -- rendering -------------------------------------------------------------------------------------------------------
@@ -636,21 +678,34 @@ def test_show_prints_a_file_with_its_entries_spelled_out(tmp_path, desc, monkeyp
     assert lines[1].startswith('any,1,bf16,16,0,16,16,2,8,100,')
 
 
+def test_a_backend_excluded_in_every_cell_is_not_rendered(tmp_path, desc):
+    rows = _campaign(desc, S13)
+    only = [r for r in rows if r['backend'] is None] + [
+        {**r, 'status': 'excluded', 'median_us': None} for r in rows if r['backend'] == 'fast']
+    _export(tmp_path, desc, only)
+    perfdb.render(tmp_path, desc)
+    page = (tmp_path / '0.13b' / f'{ARCH}.md').read_text()
+    assert 'forced to fast' not in page and 'Excluded in every cell, so not shown: op_a fast, op_b fast.' in page
+    assert ' fast |' not in page            # nor is it a column of the LLM tables
+
+
 # -- the export command ----------------------------------------------------------------------------------------------
 
 def test_the_listing_prints_only_the_levels_that_were_not_given():
     selections = [
         {'module': 'flash', 'arch': ARCH, 'variant': 'any', 'subject': S13, 'measured': 2816, 'ok': 2790,
-         'notok': 26, 'crash': 0, 'newest': __import__('datetime').datetime(2026, 11, 20, 3, 0)},
+         'notok': 26, 'crash': 0, 'excluded': 1450,
+         'newest': __import__('datetime').datetime(2026, 11, 20, 3, 0)},
         {'module': 'flash', 'arch': ARCH, 'variant': 'any', 'subject': S14, 'measured': 2816, 'ok': 2801,
-         'notok': 15, 'crash': 0, 'newest': __import__('datetime').datetime(2026, 11, 21, 3, 0)},
+         'notok': 15, 'crash': 0, 'excluded': 0,
+         'newest': __import__('datetime').datetime(2026, 11, 21, 3, 0)},
     ]
     given = {'module': 'flash', 'arch': ARCH}
     lines = export.format_listing(selections, given=given, exported=lambda s: s['subject'] == S13)
     assert lines == [
-        'variant  subject                      measured    OK  NotOK  crash  newest      exported',
-        'any      aotriton-0.13b+rocm10.1.0        2816  2790     26      0  2026-11-20  yes',
-        'any      aotriton-0.14.2b+rocm10.1.0      2816  2801     15      0  2026-11-21  no',
+        'variant  subject                      measured    OK  NotOK  crash  excluded  newest      exported',
+        'any      aotriton-0.13b+rocm10.1.0        2816  2790     26      0      1450  2026-11-20  yes',
+        'any      aotriton-0.14.2b+rocm10.1.0      2816  2801     15      0         0  2026-11-21  no',
     ]
     everything = export.format_listing(selections[:1], given={}, exported=lambda s: False)
     assert everything[0].split()[:4] == ['module', 'arch', 'variant', 'subject']

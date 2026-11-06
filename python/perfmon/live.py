@@ -22,8 +22,14 @@ the same GPU; use `--noise 0.06` when the two sides ran on different GPUs):
     python -m aotriton.perfmon.live --workdir <workdir> --module flash \\
         --arch gfx942 gfx950 --against 0.14.2b 0.13b \\
         [--against_subject <subject> ...] [--subject <head subject>] \\
-        [--variant V] [--noise 0.03] [--format csv|markdown] \\
-        [--output_file F] [--perfdb modules/flash/perfdb] [--forced_check_baselines]
+        [--check regression forced_beats_unforced] [--variant V] [--noise 0.03] \\
+        [--format csv|markdown] [--output_file F] [--summary_only] [--top 10] \\
+        [--perfdb modules/flash/perfdb] [--forced_check_baselines]
+
+`--check` selects the checks (default: both; `regression` needs `--against` or
+`--against_subject`). `--subject` is the measured subject: the head subject, or
+any subject in the database (a release subject, to run `forced_beats_unforced`
+on a finished campaign).
 
 Only points where both sides have a median are compared: a backend that
 fails or crashes (the AITER family often does) is not a flag, it is counted in
@@ -31,6 +37,10 @@ the summary on stderr. Files whose timing method or L2 flush differ from the
 head rows are refused (never compared), as `perfdb compare` does. A baseline
 measured on a different GPU than head, by the `platform.csv` device id, gets a
 warning to widen the noise.
+
+A summary goes to stderr before the list: per check, reference, arch, iface and
+backend the number of flags and the largest margin, then the `--top` flags with
+the largest margin and their coordinates.
 
 Output columns: `check, arch, variant, iface, backend, reference, <the family's
 problem columns>, <its size columns>, reference_us, measured_us, ratio`. The
@@ -186,6 +196,44 @@ def sort_flags(flags) -> list[Flag]:
     return sorted(flags, key=key)
 
 
+def flag_coordinates(desc, flag: Flag) -> str:
+    """`name=value` pairs of the flagged entry (as the family describes an LLM
+    case), the unset ones left out."""
+    n = len(desc.PROBLEM_COLUMNS)
+    columns = desc.case_columns(desc.entry_from_rows(flag.coordinates[:n], flag.coordinates[n:]))
+    return ' '.join(f'{name}={value}' for name, value in columns.items() if value != '-')
+
+
+def margin(flag: Flag) -> float:
+    """How much faster the better side is: `ratio` for a forced backend, 1/ratio for a regression."""
+    return flag.ratio if flag.check == FORCED_BEATS_UNFORCED else 1.0 / flag.ratio
+
+
+def summary_lines(desc, flags, top: int) -> list[str]:
+    """Counts per (check, reference, arch, iface, backend) with the largest
+    margin, then the `top` flags per check with the largest margin."""
+    if not flags:
+        return ['nothing flagged']
+    groups: dict[tuple, list[Flag]] = {}
+    for f in flags:
+        groups.setdefault((f.check, f.reference, f.arch, f.iface, f.backend or UNFORCED_REFERENCE), []).append(f)
+    lines = []
+    for check in sorted({f.check for f in flags}):
+        mine = [f for f in flags if f.check == check]
+        table = [['reference', 'arch', 'iface', 'backend', 'flagged', 'largest margin']]
+        table += [[ref, arch, iface, backend, str(len(g)), perfdb.fmt4(max(margin(f) for f in g))]
+                  for (c, ref, arch, iface, backend), g in sorted(groups.items()) if c == check]
+        lines += [f'{check}: {len(mine)} flagged'] + ['  ' + t for t in perfdb.text_table(table, left=4)]
+        worst = sorted(mine, key=margin, reverse=True)[:top]
+        lines.append(f'  top {len(worst)} by margin:')
+        for f in worst:
+            lines.append(f'    {f.arch} {f.iface} {f.backend or UNFORCED_REFERENCE} vs {f.reference}: '
+                         f'{perfdb.fmt4(f.reference_us)} -> {perfdb.fmt4(f.measured_us)} us, '
+                         f'margin {perfdb.fmt4(margin(f))}')
+            lines.append(f'        {flag_coordinates(desc, f)}')
+    return lines
+
+
 def header_of(desc) -> list[str]:
     return list(FIXED_COLUMNS) + list(desc.PROBLEM_COLUMNS) + list(desc.SIZE_COLUMNS) + list(RATIO_COLUMNS)
 
@@ -261,6 +309,18 @@ def build_parser() -> argparse.ArgumentParser:
                         nargs='+',
                         default=[],
                         help='Other subjects in the database to compare against')
+    parser.add_argument('--check',
+                        nargs='+',
+                        choices=(REGRESSION, FORCED_BEATS_UNFORCED),
+                        default=[REGRESSION, FORCED_BEATS_UNFORCED],
+                        help='Checks to run (default: both)')
+    parser.add_argument('--top',
+                        type=int,
+                        default=10,
+                        help='How many flags of each check the summary lists (default 10)')
+    parser.add_argument('--summary_only',
+                        action='store_true',
+                        help='Print only the summary (to stderr), not the list')
     parser.add_argument('--noise',
                         type=float,
                         default=perfdb.NOISE_FRACTION,
@@ -300,7 +360,8 @@ def run(desc, root: Path, args, fetch, list_subjects) -> tuple[list[Flag], list[
             warnings.append(f'{arch}: no measurements of {head_subject}')
             continue
         measured = points_from_rows(desc, head_rows)
-        flags += forced_beats_unforced(arch, measured, args.noise)
+        if FORCED_BEATS_UNFORCED in args.check:
+            flags += forced_beats_unforced(arch, measured, args.noise)
         for tag in args.against:
             points = points_from_perfdb(root, desc, tag, arch, args.variant)
             if not points:
@@ -308,10 +369,11 @@ def run(desc, root: Path, args, fetch, list_subjects) -> tuple[list[Flag], list[
                 continue
             warnings += gpu_warnings(root, tag, arch, head_rows)
             found, counts = compare_points(arch, tag, points, measured, args.noise)
-            flags += found
-            for k, v in counts.items():
-                totals[k] += v
-            if args.forced_check_baselines:
+            if REGRESSION in args.check:
+                flags += found
+                for k, v in counts.items():
+                    totals[k] += v
+            if args.forced_check_baselines and FORCED_BEATS_UNFORCED in args.check:
                 flags += [_renamed(f, tag) for f in forced_beats_unforced(arch, points, args.noise)]
         for subject in args.against_subject:
             rows = [r for r in fetch(arch, [subject]) if args.variant in (None, r['variant'])]
@@ -320,10 +382,11 @@ def run(desc, root: Path, args, fetch, list_subjects) -> tuple[list[Flag], list[
                 continue
             points = points_from_rows(desc, rows)
             found, counts = compare_points(arch, subject, points, measured, args.noise)
-            flags += found
-            for k, v in counts.items():
-                totals[k] += v
-            if args.forced_check_baselines:
+            if REGRESSION in args.check:
+                flags += found
+                for k, v in counts.items():
+                    totals[k] += v
+            if args.forced_check_baselines and FORCED_BEATS_UNFORCED in args.check:
                 flags += [_renamed(f, subject) for f in forced_beats_unforced(arch, points, args.noise)]
     return sort_flags(flags), warnings, totals
 
@@ -384,14 +447,19 @@ def main(argv=None) -> int:
         conn.close()
     for warning in warnings:
         print(f'warning: {warning}', file=sys.stderr)
+    if REGRESSION in args.check:
+        print(f'# compared {totals["compared"]} points, {totals["no_reference"]} without data on the reference '
+              f'side, {totals["refused"]} refused (timing method differs); noise {args.noise:.1%}',
+              file=sys.stderr)
+    for line in summary_lines(desc, flags, args.top):
+        print(line, file=sys.stderr)
+    if args.summary_only:
+        return 0
     text = (render_markdown if args.format == 'markdown' else render_csv)(desc, flags)
     if args.output_file:
         args.output_file.write_text(text, encoding='utf-8')
     else:
         sys.stdout.write(text)
-    print(f'# {len(flags)} flagged; compared {totals["compared"]} points, {totals["no_reference"]} without '
-          f'data on the reference side, {totals["refused"]} refused (timing method differs); '
-          f'noise {args.noise:.1%}', file=sys.stderr)
     return 0
 
 

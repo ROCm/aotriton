@@ -23,6 +23,7 @@ shebang:
     python -m aotriton.perfmon.perfdb show <file.perfdb>
     python -m aotriton.perfmon.perfdb render <perfdb dir> [--check]
     python -m aotriton.perfmon.perfdb compare <tag A> <tag B> [--arch A] [--variant V]
+                                              [--include_forced] [--csv_file F]
 
 The lexical layer (shebang, comments, `#!` sections) is the tuning
 database's, `aotriton.database.interpreter.read_sections`.
@@ -531,6 +532,13 @@ class _ArchView:
     def backends(self, iface: str) -> list[str]:
         return sorted(f.backend for f in self.files.values() if f.iface == iface and f.backend is not None)
 
+    def backends_with_data(self, iface: str, variant: str) -> list[str]:
+        """The backends of `iface` that have a line other than excluded in
+        `variant`; a backend excluded everywhere (flyc on an arch it does not
+        support) has nothing to show."""
+        return [b for b in self.backends(iface)
+                if any(line != EXCLUDED for line in self.files[file_name(iface, b)].blocks.get(variant, {}).values())]
+
     def line(self, iface, backend, variant, entry):
         if entry is None:
             return None
@@ -576,7 +584,7 @@ def _llm_lines(view: _ArchView, iface: str, variant: str) -> list[str]:
              if not c.pending and iface in view.desc.phase_ifaces(c.phase)]
     if not cases:
         return []
-    backends = view.backends(iface)
+    backends = view.backends_with_data(iface, variant)
     columns = list(view.desc.case_columns(cases[0].entry))
     rows = []
     for case in cases:
@@ -627,8 +635,12 @@ def render_arch(view: _ArchView) -> str:
             llm += _llm_lines(view, iface, variant)
         if llm:
             out += ['', '### LLM cases'] + llm
+        silent = [f'{iface} {b}' for iface in desc.ifaces() for b in view.backends(iface)
+                  if b not in view.backends_with_data(iface, variant)]
+        if silent:
+            out += ['', 'Excluded in every cell, so not shown: ' + ', '.join(silent) + '.']
         for iface in desc.ifaces():
-            for backend in view.backends(iface):
+            for backend in view.backends_with_data(iface, variant):
                 out += ['', '<details>', f'<summary>{iface} forced to {backend}: prime</summary>']
                 out += _prime_lines(view, iface, backend, variant)
                 out += ['', '</details>']
@@ -853,42 +865,131 @@ def _cmd_render(args) -> int:
     return 0
 
 
+def coordinate_text(desc, entries: EntryList, ordinal: int) -> str:
+    """The entry's coordinates as the family describes an LLM case (dtype,
+    hdim, causal, dropout, sizes, ...): `name=value` pairs, the unset ones
+    (`-`) left out."""
+    problem, sizes = entries.rows_of(ordinal)
+    columns = desc.case_columns(desc.entry_from_rows(problem, sizes))
+    return ' '.join(f'{name}={value}' for name, value in columns.items() if value != '-')
+
+
+def text_table(rows: list[list[str]], *, left: int = 1) -> list[str]:
+    """Aligned columns: the first `left` columns left-aligned, the rest right-aligned."""
+    widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
+    return ['  '.join(c.ljust(widths[i]) if i < left else c.rjust(widths[i]) for i, c in enumerate(r)).rstrip()
+            for r in rows]
+
+
+def _stats_row(label: list[str], ratios, noise: float, llm: set) -> list[str]:
+    """One summary row: lines, geometric mean, slower, faster, within noise,
+    and the LLM cases that are slower/faster."""
+    slower = [r for r in ratios if beyond_noise(r[5], noise) and r[5] < 1.0]
+    faster = [r for r in ratios if beyond_noise(r[5], noise) and r[5] > 1.0]
+    return label + [str(len(ratios)), _ratio_text(geomean(r[5] for r in ratios)),
+                    str(len(slower)), str(len(faster)), str(len(ratios) - len(slower) - len(faster)),
+                    f'{sum(r[2] in llm for r in slower)}/{sum(r[2] in llm for r in faster)}']
+
+
+def _change_label(arch: str, r, multi_arch: bool) -> str:
+    name = r[0][:-len(EXT)] if r[0].endswith(EXT) else r[0]
+    variant = '' if r[1] == 'any' else f' [{r[1]}]'
+    return f'{arch} {name}{variant}' if multi_arch else f'{name}{variant}'
+
+
+def compare_summary(desc, entries: EntryList, tag_a: str, tag_b: str, by_arch: dict, *, noise: float,
+                    top: int, forced: bool) -> list[str]:
+    """The summary of `compare`: per file (so per backend) the statistics of
+    each arch, the largest regressions with their coordinates, and the LLM
+    cases that are slower beyond noise. `by_arch` is {arch: ratios of
+    compare_files()}."""
+    llm = _llm_ordinals(desc, entries)
+    scope = 'unforced operators and forced backends' if forced else ('unforced operators only, '
+                                                                  '--include_forced adds the forced backends')
+    lines = [f'compare {tag_a} -> {tag_b}: a/b above 1 means {tag_b} is faster; noise {noise:.1%}; {scope}']
+    table = [['arch', 'file', 'lines', 'a/b geomean', 'slower', 'faster', 'noise', 'LLM slower/faster']]
+    every = []
+    for arch, ratios in by_arch.items():
+        names = sorted({r[0] for r in ratios}, key=lambda n: (parse_file_name(n)[0], parse_file_name(n)[1] or ''))
+        for name in names:
+            table.append(_stats_row([arch, name[:-len(EXT)] if name.endswith(EXT) else name],
+                                    [r for r in ratios if r[0] == name], noise, llm))
+        if len(names) > 1:
+            table.append(_stats_row([arch, 'all'], ratios, noise, llm))
+        every += [(arch,) + r for r in ratios]
+    if len(by_arch) > 1:
+        table.append(_stats_row(['all', 'all'], [r[1:] for r in every], noise, llm))
+    lines += text_table(table, left=2)
+    multi = len(by_arch) > 1
+
+    def line_of(r) -> str:
+        arch, name, v, entry, ma, mb, ratio = r
+        return (f'{_change_label(arch, r[1:], multi)} entry {entry}: {fmt4(ma)} -> {fmt4(mb)} us, a/b {fmt4(ratio)}'
+                f'{" LLM" if entry in llm else ""}\n      {coordinate_text(desc, entries, entry)}')
+    slower = sorted((r for r in every if beyond_noise(r[6], noise) and r[6] < 1.0), key=lambda r: r[6])
+    if slower:
+        lines.append('')
+        lines.append(f'largest regressions beyond noise (top {min(top, len(slower))} of {len(slower)}):')
+        lines += [f'  {line_of(r)}' for r in slower[:top]]
+    llm_slower = [r for r in slower if r[3] in llm]
+    if llm_slower:
+        lines.append('')
+        lines.append(f'LLM cases slower beyond noise ({len(llm_slower)}):')
+        lines += [f'  {line_of(r)}' for r in llm_slower]
+    return lines
+
+
+def compare_csv(desc, entries: EntryList, by_arch: dict, noise: float) -> str:
+    """Every compared line as CSV, with the entry's coordinates."""
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator='\n')
+    writer.writerow(('arch', 'file', 'variant', 'entry') + tuple(desc.PROBLEM_COLUMNS)
+                    + tuple(desc.SIZE_COLUMNS) + ('median_a', 'median_b', 'a/b', 'beyond_noise'))
+    for arch, ratios in by_arch.items():
+        for name, v, entry, ma, mb, r in ratios:
+            problem, sizes = entries.rows_of(entry)
+            writer.writerow((arch, name, v, entry) + tuple(problem) + tuple(sizes)
+                            + (fmt4(ma), fmt4(mb), fmt4(r), 'yes' if beyond_noise(r, noise) else 'no'))
+    return out.getvalue()
+
+
 def _cmd_compare(args) -> int:
     root = Path(args.perfdb) if args.perfdb else None
     if root is None:
         from .registry import default_perfdb_dir
         root = default_perfdb_dir(args.module or 'flash')
+    desc = _desc_for(root, args.module or 'flash')
+    entries = EntryList.load(root, desc.PROBLEM_COLUMNS, desc.SIZE_COLUMNS)
+    names = None if args.include_forced else {file_name(i, None) for i in desc.ifaces()}
     status = 0
-    every = []
+    by_arch = {}
     arches = [args.arch] if args.arch else sorted(set(list_arches(root, args.tag_a))
                                                   & set(list_arches(root, args.tag_b)))
     for arch in arches:
         ratios, refused = compare_files(load_arch(root, args.tag_a, arch),
                                         load_arch(root, args.tag_b, arch),
-                                        variant=args.variant)
+                                        variant=args.variant,
+                                        names=names)
         for name in refused:
             print(f'{arch}/{name}: refused, the measurement keys differ', file=sys.stderr)
             status = 1
-        if not args.summary_only:
-            print('arch,file,variant,entry,median_a,median_b,a/b,beyond_noise')
-            for name, v, entry, ma, mb, r in ratios:
-                flag = 'yes' if beyond_noise(r, args.noise) else 'no'
-                print(f'{arch},{name},{v},{entry},{fmt4(ma)},{fmt4(mb)},{fmt4(r)},{flag}')
-        for name in sorted({r[0] for r in ratios}):
-            g = geomean(r[5] for r in ratios if r[0] == name)
-            print(f'# {arch} {name}: geometric mean a/b {_ratio_text(g)}')
-        every += [(arch,) + r for r in ratios]
-    print(f'# overall geometric mean a/b (above 1: {args.tag_b} is faster): '
-          f'{_ratio_text(geomean(r[6] for r in every))} over {len(every)} lines')
-    beyond = [r for r in every if beyond_noise(r[6], args.noise)]
-    regressions = [r for r in beyond if r[6] < 1.0]
-    print(f'# beyond noise ({args.noise:.1%}): {len(regressions)} regressions, '
-          f'{len(beyond) - len(regressions)} improvements, {len(every) - len(beyond)} within noise')
-    worst = sorted(regressions, key=lambda r: r[6])[:args.top]
-    if worst:
-        print(f'# largest regressions of {args.tag_b} against {args.tag_a} (beyond noise only):')
-        for arch, name, v, entry, ma, mb, r in worst:
-            print(f'#   {arch} {name} {v} entry {entry}: {fmt4(ma)} -> {fmt4(mb)} us, a/b {fmt4(r)}')
+        by_arch[arch] = ratios
+    if not any(by_arch.values()):
+        print(f'nothing to compare between {args.tag_a} and {args.tag_b}', file=sys.stderr)
+        return status or 1
+    for line in compare_summary(desc, entries, args.tag_a, args.tag_b, by_arch,
+                                noise=args.noise,
+                                top=args.top,
+                                forced=args.include_forced):
+        print(line)
+    if args.csv_file:
+        text = compare_csv(desc, entries, by_arch, args.noise)
+        if str(args.csv_file) == '-':
+            print()
+            sys.stdout.write(text)
+        else:
+            Path(args.csv_file).write_text(text, encoding='utf-8')
+            print(f'\nwrote {args.csv_file}')
     return status
 
 
@@ -934,9 +1035,14 @@ def build_parser() -> argparse.ArgumentParser:
                       type=float,
                       default=NOISE_FRACTION,
                       help='a change of the median time below this fraction is noise (default: %(default)s)')
-    comp.add_argument('--summary_only',
+    comp.add_argument('--include_forced',
                       action='store_true',
-                      help='omit the per-line ratios')
+                      help='also compare the forced backends (default: the unforced operators only); '
+                           'each backend is reported on its own row')
+    comp.add_argument('--csv_file',
+                      default=None,
+                      help='also write every compared line, with its coordinates, as CSV to this file '
+                           '(- for stdout, after the summary)')
     comp.set_defaults(func=_cmd_compare)
     return parser
 

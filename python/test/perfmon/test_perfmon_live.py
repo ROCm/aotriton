@@ -29,7 +29,7 @@ def entries(desc):
 
 def _args(**patch):
     out = dict(arch=[ARCH], variant=None, subject=None, against=[], against_subject=[], noise=0.03,
-               forced_check_baselines=False)
+               forced_check_baselines=False, check=[live.REGRESSION, live.FORCED_BEATS_UNFORCED])
     out.update(patch)
     return argparse.Namespace(**out)
 
@@ -170,3 +170,40 @@ def test_points_from_perfdb_matches_points_from_rows(tmp_path, desc, entries):
     export.export_rows(tmp_path, desc, ARCH, rows, ())
     assert live.points_from_perfdb(tmp_path, desc, TAG, ARCH) == live.points_from_rows(desc, rows)
     assert perfdb.NOISE_FRACTION == 0.03
+
+
+def test_check_selects_which_checks_run(tmp_path, desc, entries):
+    e = entries[0]
+    _release(tmp_path, desc, [e], [100.0])
+    rows = [row(desc, e, median=200.0, subject=HEAD),
+            row(desc, e, backend='triton', median=80.0, subject=HEAD)]
+    both, _, _ = _run(desc, tmp_path, _args(against=[TAG]), rows)
+    assert {f.check for f in both} == {live.REGRESSION, live.FORCED_BEATS_UNFORCED}
+    only, _, counts = _run(desc, tmp_path, _args(against=[TAG], check=[live.FORCED_BEATS_UNFORCED]), rows)
+    assert {f.check for f in only} == {live.FORCED_BEATS_UNFORCED} and counts['compared'] == 0
+    only, _, _ = _run(desc, tmp_path, _args(against=[TAG], check=[live.REGRESSION]), rows)
+    assert {f.check for f in only} == {live.REGRESSION}
+
+
+def test_the_summary_counts_per_backend_and_lists_the_top_with_coordinates(tmp_path, desc, entries):
+    rows = []
+    for i, e in enumerate(entries[:3]):
+        rows += [row(desc, e, median=100.0, subject=HEAD),
+                 row(desc, e, backend='triton', median=100.0 / (1.5 + i), subject=HEAD)]
+    rows.append(row(desc, entries[0], backend='aiter', median=10.0, subject=HEAD))
+    flags, _, _ = _run(desc, tmp_path, _args(), rows)
+    text = '\n'.join(live.summary_lines(desc, flags, top=2))
+    assert 'forced_beats_unforced: 4 flagged' in text
+    assert 'top 2 by margin' in text and text.count(' vs unforced: ') == 2
+    assert 'margin 10' in text and 'dtype=' in text         # the aiter point is the largest margin
+    rows_text = [line.split() for line in text.splitlines() if line.startswith('  unforced')]
+    assert rows_text[0][3:5] == ['aiter', '1'] and rows_text[1][3:5] == ['triton', '3']
+    assert live.summary_lines(desc, [], top=5) == ['nothing flagged']
+
+
+def test_the_parser_names_the_checks_and_uses_underscores():
+    args = live.build_parser().parse_args(['--arch', ARCH, '--check', 'forced_beats_unforced', '--summary_only',
+                                           '--top', '3'])
+    assert args.check == ['forced_beats_unforced'] and args.summary_only and args.top == 3
+    with pytest.raises(SystemExit):
+        live.build_parser().parse_args(['--arch', ARCH, '--check', 'nonsense'])
