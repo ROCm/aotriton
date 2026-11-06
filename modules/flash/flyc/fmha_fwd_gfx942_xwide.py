@@ -303,6 +303,14 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
         k_m0 = fx.Int32(rocdl.readfirstlane(fx.Int32.ir_type, fx.Int32(lds_base + fx.Index(tr.LDS_K_BASE))))
         k_m0 = k_m0 + wave_s * fx.Int32(tr.K_ROW_BYTES)
 
+        def k_m0_at(const):
+            """k_m0 + const in the loop: hoisted, the 16 sums would pin 16 SGPRs."""
+            return fx.Int32(llvm.inline_asm(T.i32,
+                                            [raw(k_m0)],
+                                            f's_add_u32 $0, $1, {const}',
+                                            '=s,s',
+                                            has_side_effects=True))
+
         def k_dma(kv_start, buf):
             al, noal = scope_attrs(f'k{buf}')
             for k in range_constexpr(2):
@@ -312,7 +320,7 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
                     if const_expr(tr.PADDED):
                         # Dwords wholly past hdim_qk read 0; the one it splits is fixed in LDS.
                         voff = (k_lane_col < fx.Int32(hdim_qk) - fx.Int32(128 * q)).select(voff, fx.Int32(OOB_VOFF))
-                    m0 = k_m0 + fx.Int32(buf * tr.K_TILE_BYTES + 8 * k * tr.K_ROW_BYTES + 256 * q)
+                    m0 = k_m0_at(buf * tr.K_TILE_BYTES + 8 * k * tr.K_ROW_BYTES + 256 * q)
                     op = rocdl.raw_ptr_buffer_load_lds(k_rsrc,
                                                        lds_ptr_at(fx.Int64(m0)),
                                                        fx.Int32(4),
@@ -421,12 +429,12 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
             """Fix the order of LDS reads and MFMAs; everything else may cross."""
             rocdl.sched_barrier(PIN_MASK)
 
-        def stream(reads, use):
-            """Software-pipelined LDS operands: read t + PREFETCH, then use t."""
-            ahead = [reads(t) for t in range(min(PREFETCH, len(reads.range)))]
+        def stream(reads, use, depth):
+            """Software-pipelined LDS operands: read t + depth, then use t."""
+            ahead = [reads(t) for t in range(min(depth, len(reads.range)))]
             for t in reads.range:
-                if const_expr(t + PREFETCH < len(reads.range)):
-                    ahead.append(reads(t + PREFETCH))
+                if const_expr(t + depth < len(reads.range)):
+                    ahead.append(reads(t + depth))
                 pinned()
                 use(t, ahead[t])
                 pinned()
@@ -449,7 +457,8 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
 
             stream(Reads(tr.NT,
                          lambda t: lds_load(k_rd[t % 2] + (buf * tr.K_TILE_BYTES + 128 * (t // 2)), v8e(), 16, f'k{buf}')),
-                   use)
+                   use,
+                   PREFETCH)
             return acc[0]
 
         def pv(o_accs, p_pack, buf):
@@ -461,7 +470,8 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
 
             stream(Reads(tr.NP,
                          lambda p: lds_load(vt_rd + (buf * tr.VT_TILE_BYTES + 1024 * p), v8e(), 16, f'vt{buf}')),
-                   use)
+                   use,
+                   PREFETCH)
             return o_accs
 
         c_scale = fx.Float32(sm_scale) * fx.Float32(LOG2E)
@@ -484,7 +494,22 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
             x = fx.maxnumf(x, peer(x, 16))
             return fx.maxnumf(x, peer(x, 32))
 
-        kv_lane = fx.Int32(lg * 4)
+        def lane_field(shift, width):
+            """Bits of the lane id, from vt_rd (lane * 16), behind asm LLVM cannot hoist: a
+            value derived from them is rebuilt where used instead of living across loops."""
+            return fx.Int32(llvm.inline_asm(T.i32,
+                                            [raw(fx.Int32(vt_rd))],
+                                            f'v_bfe_u32 $0, $1, {4 + shift}, {width}',
+                                            '=v,v',
+                                            has_side_effects=True))
+
+        def kv_lane():
+            """This lane's first key in a tile: 4 * lg."""
+            return lane_field(4, 2) * fx.Int32(4)
+
+        def row_now():
+            """q_row, rebuilt."""
+            return fx.Int32(q_start) + wave_s * fx.Int32(WAVE_M) + lane_field(0, 4)
 
         def smin(x, y):
             return (x < y).select(x, y)
@@ -508,16 +533,18 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
         kv_base = t0 * tr.BLOCK_N
         n_tiles = alive.select((fx.Index(kv_hi) + tr.BLOCK_N - 1) // tr.BLOCK_N - t0, fx.Index(0))
 
-        # This lane's row keeps keys [band_lo, band_lo + band_span]: one unsigned compare.
-        _row = fx.Int32(q_row)
-        _hi = smin(_row + win_r, sk_i32 - fx.Int32(1))
-        _lo = smax(_row - win_l, fx.Int32(0))
-        _empty = _hi < _lo
-        band_lo = _empty.select(fx.Int32(-(1 << 30)), _lo)
-        band_span = _empty.select(fx.Int32(0), _hi - _lo)
+        def band():
+            """This lane's row keeps keys [lo, lo + span]: one unsigned compare. An empty
+            band moves lo out of reach of any key."""
+            row = row_now()
+            hi = smin(row + win_r, sk_i32 - fx.Int32(1))
+            lo = smax(row - win_l, fx.Int32(0))
+            empty = hi < lo
+            return empty.select(fx.Int32(-(1 << 30)), lo), empty.select(fx.Int32(0), hi - lo)
 
         def mask_scores(s_vals, kv_start):
-            rel0 = fx.Int32(kv_start) + kv_lane - band_lo
+            band_lo, band_span = band()
+            rel0 = fx.Int32(kv_start) + kv_lane() - band_lo
             return [(fx.Uint32(rel0 + fx.Int32(i)) > fx.Uint32(band_span)).select(c_neg_inf, s_vals[i])
                     for i in range(4)]
 
@@ -549,7 +576,7 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
             b_rsrc = rocdl.get_buffer_rsrc(buffer_ops.create_buffer_resource_from_addr(
                 b_addr - fx.Int64(b_mis),
                 num_records_bytes=b_span * fx.Int64(2) + fx.Int64(b_mis)))
-            b_byte = b_mis + (fx.Int32(q_row) * fx.Int32(stride_b_seq_q) + k_row_off + kv_lane) * fx.Int32(2)
+            b_byte = b_mis + (fx.Int32(q_row) * fx.Int32(stride_b_seq_q) + k_row_off + fx.Int32(lg * 4)) * fx.Int32(2)
             b_lane = b_byte & fx.Int32(-4)
             b_shift = (b_byte & fx.Int32(3)) * fx.Int32(8)
 
@@ -622,15 +649,16 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
             l_new = l_old * corr + ((p[0] + p[1]) + (p[2] + p[3]))
             if const_expr(dropout):
                 # l sums P before the mask; 1/(1-p) joins 1/l at the end.
-                col = fx.Int32(kv_start) + kv_lane
-                vals = rng.u32(ph_seed, rng.grid_offset(ph_base, ph_stride, fx.Int32(q_row), col))
+                col = fx.Int32(kv_start) + kv_lane()
+                vals = rng.u32(ph_seed, rng.grid_offset(ph_base, ph_stride, row_now(), col))
                 p = [(fx.Int32(vals[i]) > fx.Int32(idropout_p)).select(p[i], fx.Float32(0.0)) for i in range(4)]
             return pack_p(p), l_new
 
         # One cluster and one barrier per tile; iteration j: DMA K(j+2) -> k[j%2],
-        # V^T(j+1) -> vt[(j+1)%2], load V(j+2), exp(j), QK(j+1) from k[(j+1)%2],
-        # PV(j) from vt[j%2], max(j+1), wait K(j+2). Unrolled by two so buffer
-        # indices (and alias scopes) are constants.
+        # exp(j), QK(j+1) from k[(j+1)%2], load V(j+1), PV(j) from vt[j%2], max(j+1),
+        # V^T(j+1) -> vt[(j+1)%2], wait K(j+2). Unrolled by two so buffer indices
+        # (and alias scopes) are constants. With no stagger, one barrier separates
+        # every producer from its consumer.
         n_kdma = tr.K_DMA_ROUNDS
         n_v = tr.V_UNITS_PER_THREAD * 4
 
@@ -644,11 +672,10 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
         rocdl.s_waitcnt(lgkmcnt=0)
         cluster_barrier()
         v_store_lds(v_regs, 0)
-        v_regs = v_load(kv_base + tr.BLOCK_N)
         s_raw = qk(0)
         # A finite initial max keeps fully masked rows NaN-free.
         s0, m0, corr0 = softmax_head(s_raw, c_neg_max, kv_base, True, b0)
-        rocdl.s_waitcnt(vmcnt=n_v)
+        rocdl.s_waitcnt(vmcnt=0)
         k_fix(1)
         rocdl.s_waitcnt(lgkmcnt=0)
         cluster_barrier()
@@ -662,24 +689,24 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
             l_old = carried[2]
             s_cur = carried[3:7]
             o_accs = list(carried[7:7 + n_o])
-            v_regs = list(carried[7 + n_o:])
             kv_cur = kv_base + j * tr.BLOCK_N
             kv_next = kv_cur + tr.BLOCK_N
             b_next = bias_load(kv_next, masked)
             k_dma(kv_next + tr.BLOCK_N, b)
-            v_store_lds(v_regs, 1 - b)
-            v_regs = v_load(kv_next + tr.BLOCK_N)
             o_accs = rescale_o(o_accs, corr)
             p_pack, l_new = softmax_tail(s_cur, m_cur, corr, l_old, kv_cur)
             s_next = qk(1 - b)
+            # V(j+1) lives only through PV(j): loaded after QK(j+1), stored at the end.
+            rocdl.sched_barrier(0)
+            v_regs = v_load(kv_next)
             o_accs = pv(o_accs, p_pack, b)
             s_vals, m_next, corr_next = softmax_head(s_next, m_cur, kv_next, masked, b_next)
-            # K(j+2) has only V(j+2) after it.
-            rocdl.s_waitcnt(vmcnt=n_v)
+            v_store_lds(v_regs, 1 - b)
+            rocdl.s_waitcnt(vmcnt=0)
             k_fix(b)
             rocdl.s_waitcnt(lgkmcnt=0)
             cluster_barrier()
-            return [m_next, corr_next, l_new] + s_vals + o_accs + v_regs
+            return [m_next, corr_next, l_new] + s_vals + o_accs
 
         def finish(carried, b, kv_last):
             """The last tile's exp and PV; its V^T is already in vt[b]."""
@@ -689,7 +716,7 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
             return [carried[0], l_last] + o_last
 
         # Every loop runs pairs (even, odd), so buffer indices are trace-time constants.
-        init = [m0, corr0, fx.Float32(0.0)] + s0 + [fx.full(4, 0.0, fx.Float32) for _ in range(n_o)] + v_regs
+        init = [m0, corr0, fx.Float32(0.0)] + s0 + [fx.full(4, 0.0, fx.Float32) for _ in range(n_o)]
         results0 = init
         for jp, carried in range(0, j_clean // 2, 1, init=init):
             mid = iteration(jp * 2, carried, 0, True)
@@ -715,8 +742,10 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
         inv_l = (l_fin > fx.Float32(0.0)).select(inv_l, fx.Float32(0.0))
         if const_expr(dropout):
             inv_l = inv_l * fx.Float32(dropout_scale)
+        q_row = fx.Index(row_now())
         q_ok = q_row < sq
         inv_v = fx.full(4, fx.Float32(inv_l), fx.Float32)
+        lane_g = lane_field(4, 2)
         for p in range_constexpr(tr.NP):
             # Lane holds rows d = 32p + 8*lg + 2i + e of MFMA 2p + e: 8 consecutive columns.
             o0 = Vec(results[2 + 2 * p]) * inv_v
@@ -725,7 +754,7 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
             for i in range_constexpr(4):
                 vals += [o0[i], o1[i]]
             packed = Vec.from_elements([fx.Float32(x).to(elem) for x in vals], elem)
-            d = fx.Index(32 * p) + lg * 8
+            d = fx.Index(32 * p) + fx.Index(lane_g) * 8
             ok = q_ok
             if const_expr(32 * p + 32 > tr.PAD_FLOOR):
                 ok = ok & (fx.Int32(d) < row_vo)
@@ -744,7 +773,7 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
         lse_base = lse_addr + fx.Int64(lse_row0) * fx.Int64(4)
         lse_bytes = (lse_addr == fx.Int64(0)).select(fx.Int64(0), fx.Int64(sq * lse_pitch) * fx.Int64(4))
         lse_rsrc = buffer_ops.create_buffer_resource_from_addr(lse_base, num_records_bytes=lse_bytes)
-        buffer_ops.buffer_store(lse, lse_rsrc, q_row * lse_pitch, mask=q_ok & (lg == fx.Index(0)))
+        buffer_ops.buffer_store(lse, lse_rsrc, q_row * lse_pitch, mask=q_ok & (lane_field(4, 2) == fx.Int32(0)))
 
     @flyc.jit
     def launch_fmha_fwd_gfx942_xwide(
