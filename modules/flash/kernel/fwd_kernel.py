@@ -323,18 +323,7 @@ def attn_fwd(
                 if (lb_empty and fb_empty) and rb_empty:
                     acc0, acc1, acc2 = composed_zeros_2d(BLOCK_M, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2, dtype=Out.type.element_ty)
                     # We still need to write 0s to the result.
-                    #
-                    # The column bound must be Hdim_vo, exactly as in the
-                    # epilogue store below, never BLOCK_DMODEL. BLOCK_DMODEL is
-                    # the padded register width (>= max(Hdim_qk, Hdim_vo)), so
-                    # bounding by it writes BLOCK_DMODEL - Hdim_vo zeros past
-                    # the end of every row. Out's rows are not padded: with
-                    # stride_om = Hdim_vo those zeros land on the next
-                    # (BLOCK_DMODEL - Hdim_vo) / Hdim_vo rows of the same head,
-                    # with BSHD-like strides on other heads' rows. When the
-                    # rows hit belong to a live tile of another program, the
-                    # result depends on which program stores last, so live
-                    # rows came out 0 at random.
+                    # Note: only store up to Hdim_vo, not BLOCK_DMODEL.
                     composed_store(acc0, acc1, acc2,
                                    BLOCK_M,
                                    BLOCK_DMODEL0,
