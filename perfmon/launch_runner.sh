@@ -92,4 +92,6 @@ fi
 export HIP_VISIBLE_DEVICES="${GPU}"
 unset ROCR_VISIBLE_DEVICES
 
+# A crash is recorded as a result; a core file only fills the disk.
+ulimit -c 0
 exec "${RUNNER}"

@@ -121,6 +121,8 @@ class ProbeHandler(MessageHandler):
 `python -m aotriton.pgdef.localq.graph tune` prints the whole graph. If any
 handler raises, the task fails through one common path.
 
+No process of a node writes a core dump: `run_node_role` sets `RLIMIT_CORE` to 0 first, and every child inherits it. A crash is recorded as a `crash` result, and cores only fill shared disks.
+
 GPU work runs in a supervised child process (**exaid**) that speaks a line
 protocol: send a command, read back `OK <json>` or an error. A crash or a
 timeout restarts the child without killing the worker.

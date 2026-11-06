@@ -30,6 +30,7 @@ a message for a queue with no workers fails its task instead of waiting.
 import argparse
 import logging
 import os
+import resource
 import signal
 import socket
 import sys
@@ -88,6 +89,17 @@ def _install_worker_signals(worker):
     signal.set_wakeup_fd(worker.wakeup_write_fd)
 
 
+def disable_core_dumps() -> None:
+    """Forbid core dumps for this process and everything it spawns.
+
+    A crashed runner is recorded as a `crash` result with its error output; a
+    core file (several GB for a GPU process) only fills shared disks. Both
+    limits are set to 0, so a child cannot raise the soft limit again, and
+    every child (exaid runners, the perfmon launch script, testrun) inherits it.
+    """
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+
 def run_node_role(*, app: str, handlers, start: type[StartHandler], runners: dict | None = None,
                   enrich=None, argv: list[str] | None = None) -> None:
     """Run one role of a node for `app` until it is told to stop.
@@ -101,6 +113,7 @@ def run_node_role(*, app: str, handlers, start: type[StartHandler], runners: dic
         enrich: optional callable(conn, task) -> dict for the reader
         argv: command line after the program name
     """
+    disable_core_dumps()
     configure_logging_with_flush()
     args = build_parser(app).parse_args(argv)
 
