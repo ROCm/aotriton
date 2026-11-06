@@ -116,7 +116,20 @@ BUILD_DIR="${BUILD_DIR:-${TMPDIR:-/tmp}/perfmon-core-rocm${ROCM}}"
 INSTALL_DIR="${PREFIX%/}/core"
 echo "[build_core] commit ${COMMIT}, amd-smi ${AMDSMI}, build ${BUILD_DIR}, install ${INSTALL_DIR}" >&2
 
-cmake -S "${SCRIPT_DIR}/core" -B "${BUILD_DIR}" -G Ninja \
+# The default build dir is keyed by ROCm only, so its cache may come from another
+# source tree (a different checkout, or aotriton.src): cmake refuses that.
+# Start such a tree fresh; the tree holds no products.
+CORE_SRC="${SCRIPT_DIR}/core"
+CACHE="${BUILD_DIR}/CMakeCache.txt"
+if [ -f "${CACHE}" ]; then
+  CACHED_SRC="$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "${CACHE}")"
+  if [ "${CACHED_SRC}" != "$(cd "${CORE_SRC}" && pwd -P)" ] && [ "${CACHED_SRC}" != "$(cd "${CORE_SRC}" && pwd)" ]; then
+    echo "[build_core] ${BUILD_DIR} was configured from ${CACHED_SRC}, not ${CORE_SRC}: rebuilding from scratch" >&2
+    rm -rf "${BUILD_DIR}"
+  fi
+fi
+
+cmake -S "${CORE_SRC}" -B "${BUILD_DIR}" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CXX_COMPILER="${HIPCC}" \
   -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
