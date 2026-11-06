@@ -1,0 +1,2 @@
+variant,gpu_device_id,vram_gib,power_cap_w,power_cap_default_w,gpus_per_node,thermal_gate,cpu,ram_speed,os,kernel,amdgpu,rocm,harness,measured
+any,0x74a1,192,,,8,off,AMD EPYC 9654 96-Core Processor,,Debian GNU/Linux 13 (trixie),6.8.0-134-generic,,10.1.0,a95d699d9a7b7324c2f768da89afdc4087a53924,2026-11-05..2026-11-06
