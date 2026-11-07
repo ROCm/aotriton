@@ -11,7 +11,8 @@ rules:
   - rmatches:
       arch: '^gfx1250(-strict)?$'
     venv: gfx1250
-  # gfx1100 only (gfx1101-gfx1103, gfx115x are not retuned for 0.15b)
+  # gfx1100 is retuned; gfx1101-gfx1103 copy its tuning cells. gfx115x stays
+  # on the default Triton until gfx1100's database is settled.
   - rmatches:
-      arch: '^gfx1100$'
+      arch: '^gfx110[0-3]$'
     venv: gfx1250
