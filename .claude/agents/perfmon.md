@@ -151,6 +151,16 @@ How to read results:
 
 The committed perfdb stays release-only: `export` refuses head, and a release's perfdb is generated after it ships.
 
+## Operating inside a containerized environment
+
+If you (the agent) run inside a container, and the build node and GPU hosts are themselves containers of a fleet whose pods you can reach with a plain `ssh <pod>`:
+- **No docker.** Use the docker-free paths only: `.perfmon/bin/setup_session`, `.perfmon/bin/node` (which run the node processes in the pod's Python venv over ssh) and `.perfmon/bin/build_subjects --host`. The PostgreSQL service, and the reverse SSH tunnels of firewalled hosts, run outside the containers (`.def/bin/srvctl` needs docker): ask the operator to start, stop or switch them.
+- **Each pod has its own copy of the project checkout and its own scratch**, even at the same paths; nothing is shared or synced. Builds reach the GPU hosts only through the server: `sync_workdir.sh --buildnode`, build on the build node, `fetchbuild`, `deploy`. To run code from your branch on a pod (node scripts, tests), push it to that pod's clone under a branch that is not checked out there (`git push <pod>:<checkout> HEAD:refs/heads/<tmp>`), check `git status` there, then `git checkout --detach <tmp>`. Don't do this on a pod whose node is running.
+- **The venv may be read-only and there may be no sudo.** If a package is missing (torch, triton, psycopg, amd-smi), stop and ask the operator to install it; don't create workarounds.
+- **The network is allowlisted per pod.** A pod may reach PostgreSQL directly, or only through a firewalled-host tunnel (`firewalled::<pod>`). If a connection hangs or is refused, it is the allowlist: ask the operator, don't try other ports or protocols. Port forwarding may be disabled, which is why firewalled hosts use the server-side tunnel.
+- **GPUs and disks may be shared with other tenants.** Check GPU load before starting a node and set the host's GPU selection; check free disk before long runs.
+- Never run `-m pg` tests against the campaign's database from a pod; use a disposable one.
+
 ## Rules and pitfalls
 
 - Never run the `-m pg` tests (`pytest -m pg`) against a database holding real data: their fixture drops and recreates the pgdef/perfmon/tune schemas. Use a dedicated disposable PostgreSQL (`AOTRITON_PG_TEST_DISPOSABLE=1` and `PG*` variables).
