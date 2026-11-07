@@ -161,6 +161,15 @@ If you (the agent) run inside a container, and the build node and GPU hosts are 
 - **GPUs and disks may be shared with other tenants.** Check GPU load before starting a node and set the host's GPU selection; check free disk before long runs.
 - Never run `-m pg` tests against the campaign's database from a pod; use a disposable one.
 
+### Environment quick reference
+
+- **Python for server-side commands** (`.perfmon/bin/export`, `python -m aotriton.perfmon.{perfdb,live}`, pq scripts, tests): `export AOTRITON_WORKDIR=<wkdir> PYTHONPATH=<checkout>/.def/lib/pkgroot` (the package root links `aotriton` to `<checkout>/python`); psycopg must be importable. On a pod, use that pod's checkout path.
+- **Connecting to PostgreSQL** from a script: `aotriton.pgdef.workdir.load_config(Path('<wkdir>'))`, then `psycopg.connect(**aotriton.pgdef.pq.conn.params_from_env(), autocommit=True)`. From a shell, source `<wkdir>/config.rc` and export `PGHOST=$CELERY_SERVICE_HOST PGPORT=$POSTGRES_PORT PGUSER=$POSTGRES_USER PGPASSWORD=$POSTGRES_PASSWORD` for `psql` (never a database name). Use pq functions for anything beyond reading: `aotriton.pgdef.pq.progress.queue_progress(conn, ('perfmon', None))`, `aotriton.perfmon.pq.measurements.subject_progress(conn, arch=...)`, `aotriton.pgdef.pq.tasks.{count,reset,delete}` with a `TaskSelector`.
+- **Waiting for a campaign**: there is no progress command and long foreground sleeps may be unavailable to you. Poll `export -l` or `queue_progress` from a background loop (every few minutes) and stop when an arch has no pending or running tasks, any task `failed`, or a heartbeat interval passed. Before exporting, wait until the arch's measurement count stops changing.
+- **Editing `workers.db` without the webui**: host settings are key/value rows of its `config` table (`<host>::gpu_selection`, `thermal_gate::<host>`, `firewalled::<host>`, `buildnode::*`, `perfmon::*`); host roles and arches are in the `workers` table. The `sqlite3` CLI may be missing: use Python's `sqlite3` module, insert or update rows only, never delete, and keep a copy of the file first.
+- **Firewalled hosts**: tunnel state is in `<wkdir>/run/ssh-tunnels.status` on the server; `touch <wkdir>/run/touch-me-to-refresh-ssh-tunnel` makes the tunnel manager reload. A host whose node cannot reach PostgreSQL is usually a down tunnel, not a perfmon bug.
+- **Side effects of syncing**: `sync_workdir.sh` and `deploy` copy the server's `workers.db` and `config.rc` over the pod's copies. That is intended (the server's copy is the authority), so don't keep pod-local edits in them.
+
 ## Rules and pitfalls
 
 - Never run the `-m pg` tests (`pytest -m pg`) against a database holding real data: their fixture drops and recreates the pgdef/perfmon/tune schemas. Use a dedicated disposable PostgreSQL (`AOTRITON_PG_TEST_DISPOSABLE=1` and `PG*` variables).
