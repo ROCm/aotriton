@@ -11,3 +11,7 @@ rules:
   - rmatches:
       arch: '^gfx1250(-strict)?$'
     venv: gfx1250
+  # gfx1100 only (gfx1101-gfx1103, gfx115x are not retuned for 0.15b)
+  - rmatches:
+      arch: '^gfx1100$'
+    venv: gfx1250
