@@ -1,7 +1,7 @@
 # Tuning worker dependencies: the engine's (requirements-def.txt, shared with every
 # pgdef application) plus what only tuning installs.
 #
-# Kept as a separate file rather than inlined: .tune/lib/create_dockerfile.sh installs
+# Kept as a separate file rather than inlined: .def/libexec/create_dockerfile.sh installs
 # it by name, and a tuning-only dependency belongs here rather than in every pgdef
 # image.
 -r requirements-def.txt

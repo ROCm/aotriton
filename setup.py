@@ -2,13 +2,14 @@
 # SPDX-License-Identifier: MIT
 #
 # `aotriton` is a PEP 420 implicit namespace package: this distribution ships
-# every `aotriton.<sub>` subpackage under python/ EXCEPT `tune`/`tune.*`, and
-# ships no `aotriton/__init__.py` of its own.
+# every `aotriton.<sub>` subpackage under python/ EXCEPT `tune`/`tune.*` and
+# `perfmon`/`perfmon.*`, and ships no `aotriton/__init__.py` of its own.
 #
-# python/tune/ is a separate distribution (python/tune/setup.py, package name
-# `aotriton-tune`) merging into the same namespace at import time -- split out
-# so the main wheel (what the code generator depends on) never bundles tuning
-# infra; pip extras can't gate wheel contents, only extra dependencies.
+# python/tune/ and python/perfmon/ are separate distributions
+# (python/<app>/setup.py, package names `aotriton-tune` and `aotriton-perfmon`)
+# merging into the same namespace at import time -- split out so the main wheel
+# (what the code generator depends on) never bundles application infra; pip
+# extras can't gate wheel contents, only extra dependencies.
 #
 # The version is parsed from CMakeLists.txt, the single source of truth
 # (set(AOTRITON_VERSION_{MAJOR,MINOR,PATCH}_INT ...)). Never hard-code it here.
@@ -38,15 +39,16 @@ def _aotriton_version() -> str:
 
 # Sub-packages under python/ (e.g. 'codegen', 'template_instantiation.compat').
 # modules/ holds user application source (Triton kernels, AOT artifacts)
-# compiled BY aotriton, so it's excluded; tune/tune.* is excluded because it's
-# the separate `aotriton-tune` distribution (python/tune/setup.py). pgdef/ IS in
+# compiled BY aotriton, so it's excluded; tune/tune.* and perfmon/perfmon.* are
+# excluded because each is a separate distribution (`aotriton-tune`,
+# `aotriton-perfmon`; python/<app>/setup.py). pgdef/ IS in
 # this distribution: find_packages() picks it up because it has an __init__.py
 # (its pq/ subpackage's *.sql file needs the package_data entry below).
 #
 # Must stay find_packages(), never find_namespace_packages(): the latter
 # would sweep the standalone python/pytest-gpu-lease/ project (its own
 # pyproject.toml, no __init__.py) into this wheel too.
-_subs = find_packages(where=str(_PYDIR), exclude=['modules', 'modules.*', 'tune', 'tune.*'])
+_subs = find_packages(where=str(_PYDIR), exclude=['modules', 'modules.*', 'tune', 'tune.*', 'perfmon', 'perfmon.*'])
 # 'aotriton' itself is listed so that an editable install (pip install -e)
 # works: setuptools' editable finder only resolves a mapped package that has an
 # __init__.py, or one it knows to be a namespace, and it learns the namespaces
@@ -73,7 +75,7 @@ _package_data = {
         'template/*.cc', 'template/*.h',
         'template/snippet/*.cc', 'template/snippet/*.h',
     ],
-    # Applied by .tune/bin/initdb straight from a checkout, and also read from
+    # Applied by .def/bin/initdb straight from a checkout, and also read from
     # the installed package by aotriton.pgdef.pq.
     'aotriton.pgdef.pq': ['*.sql'],
 }

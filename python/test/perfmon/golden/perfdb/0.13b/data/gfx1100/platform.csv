@@ -1,0 +1,2 @@
+variant,gpu_device_id,vram_gib,power_cap_w,power_cap_default_w,gpus_per_node,thermal_gate,cpu,ram_speed,os,kernel,amdgpu,rocm,harness,measured
+any,0x75a0,288,,,8,off,Test CPU,,Debian 13,6.12,,10.1.0,abc1234,2026-11-01

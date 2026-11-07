@@ -16,6 +16,7 @@ import os
 from collections import deque, defaultdict
 from pathlib import Path
 
+from .. import paths
 from .buffered_socket import BufferedSocket
 from .handlers import DAG_ACK, QUEUES, MessageHandler
 
@@ -37,14 +38,15 @@ class LocalBroker:
     messages are dropped.
     """
 
-    def __init__(self, socket_path: str = '/tmp/aotriton-broker.sock', *,
+    def __init__(self, socket_path: str | None = None, *,
                  handlers: dict | None = None,
                  priorities: dict | None = None,
                  ack_class: str = DAG_ACK,
                  queues: tuple[str, ...] = QUEUES):
         """
         Args:
-            socket_path: Unix socket to listen on
+            socket_path: Unix socket to listen on (default:
+                aotriton.pgdef.paths.broker_socket())
             handlers: message class -> object providing resolve_dependency()
                 and teardown_with_unmet_dependency(), for every class that
                 can be blocked on a dependency. The application supplies it;
@@ -55,7 +57,7 @@ class LocalBroker:
             queues: names of the queues that have workers. A zero-GPU node
                 passes ('cpu',), a zero-CPU node ('gpu',).
         """
-        self.socket_path = socket_path
+        self.socket_path = socket_path or str(paths.broker_socket())
         self.handlers = dict(handlers or {})
         self.priorities = dict(priorities or {})
         self.ack_class = ack_class

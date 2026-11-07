@@ -94,7 +94,7 @@ def default_modules_dir() -> Path:
 
     Resolution order:
       1. `AOTRITON_MODULES_DIR` env var, if set -- the explicit override.
-      2. `<cwd>/modules` -- all `.tune/bin/*` / `.tune/remote/*` wrappers `cd`
+      2. `<cwd>/modules` -- all `.def/`, `.tune/` and `.perfmon/` wrappers `cd`
          into `$AOTRITON_ROOT` before invoking `python3 -m aotriton.<app>.*`
          (see e.g. `.tune/bin/dispatch`), so this covers every production
          call site.

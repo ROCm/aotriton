@@ -1,0 +1,109 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+#
+# Runs on a remote GPU host (the host dir: where it executes). Source it, with
+#   PM_WORKDIR    the perfmon workdir (the scratch's wkdir.<name>)
+#   PM_SCRATCH    the shared scratch
+#   PM_ROCM       the ROCm version of the shared venv
+#   PM_THERMAL_GATE  optional, on|off (config row thermal_gate::<host> of this host)
+# set. It defines the environment a perfmon node needs (the path variables of
+# .def/lib/paths.sh, automation doc 2.2) and picks the venv. The checkout is
+# the one this file lives in: the host mounts it at the same path as the control
+# host.
+#
+# The venv is, in order: the one already active (a venv provided for the session,
+# read-only), if its `rocm-sdk version` is PM_ROCM; else the shared scratch
+# venv <scratch>/perfmon/venv/rocm<ver> that setup_session creates. aotriton is
+# never installed: PYTHONPATH carries .def/lib/pkgroot, which maps the checkout's
+# python/ to the `aotriton` namespace.
+#
+#   perfmon_env_setup      export the variables; needs no venv
+#   perfmon_venv_managed   true if the active venv is a managed one of PM_ROCM
+#   perfmon_venv_activate  pick the venv and put ROCm's bin on PATH
+#   perfmon_env_print      the exports a node needs, for a human or an `eval`
+
+PM_CHECKOUT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+perfmon_venv_dir() {
+    echo "$PM_SCRATCH/perfmon/venv/rocm$PM_ROCM"
+}
+
+# True if a venv is already active, is not the scratch venv, and carries ROCm
+# PM_ROCM: a venv the user provides, to be used as is.
+perfmon_venv_managed() {
+    [ -n "${VIRTUAL_ENV:-}" ] || return 1
+    [ "$VIRTUAL_ENV" != "$(perfmon_venv_dir)" ] || return 1
+    [ -x "$VIRTUAL_ENV/bin/python" ] || return 1
+    command -v rocm-sdk >/dev/null 2>&1 || return 1
+    [ "$(rocm-sdk version 2>/dev/null | head -1)" = "$PM_ROCM" ]
+}
+
+perfmon_env_setup() {
+    export AOTRITON_WORKDIR="$PM_WORKDIR"
+    export AOTRITON_SRC="$PM_CHECKOUT"
+    # Node-local: the broker socket and pid files cannot live on the scratch.
+    export AOTRITON_RUNDIR="${XDG_RUNTIME_DIR:-/tmp}/aotriton-perfmon"
+    mkdir -p "$AOTRITON_RUNDIR"
+    # Memory-backed, node-local; the default may not be writable in a container.
+    local default_tmpfs
+    default_tmpfs="$(. "$PM_CHECKOUT/.def/lib/paths.sh"; echo "$AOTRITON_TMPFS")"
+    if [ -d "$default_tmpfs" ] && [ -w "$default_tmpfs" ]; then
+        export AOTRITON_TMPFS="$default_tmpfs"
+    else
+        export AOTRITON_TMPFS="$AOTRITON_RUNDIR/tmpfs"
+        mkdir -p "$AOTRITON_TMPFS"
+    fi
+    # aotriton is used from the checkout, not installed.
+    export PYTHONPATH="$PM_CHECKOUT/.def/lib/pkgroot${PYTHONPATH:+:$PYTHONPATH}"
+    export AOTRITON_MODULES_DIR="$PM_CHECKOUT/modules"
+    export PYTHONPYCACHEPREFIX="$AOTRITON_RUNDIR/pycache"
+    export PYTHONDONTWRITEBYTECODE=1
+    if [ -n "${PM_THERMAL_GATE:-}" ]; then
+        export AOTRITON_THERMAL_GATE="$PM_THERMAL_GATE"
+    fi
+}
+
+perfmon_venv_activate() {
+    local venv
+    if perfmon_venv_managed; then
+        venv="$VIRTUAL_ENV"
+    else
+        venv="$(perfmon_venv_dir)"
+        if [ ! -f "$venv/bin/activate" ]; then
+            echo "Error: no usable venv for ROCm $PM_ROCM: neither an active (managed) venv" \
+                 "whose rocm-sdk version is $PM_ROCM, nor the shared venv $venv;" \
+                 "activate a managed one, or run .perfmon/bin/setup_session." >&2
+            return 1
+        fi
+        . "$venv/bin/activate"
+    fi
+    # The ROCm wheels keep rocminfo and rocm_agent_enumerator out of the venv's
+    # bin/; rocm-sdk knows where they are.
+    if command -v rocm-sdk >/dev/null 2>&1; then
+        export ROCM_PATH="$(rocm-sdk path --root)"
+        export PATH="$(rocm-sdk path --bin):$PATH"
+    fi
+    # worker_service.sh starts every process with $CELERY_WORKER_PYTHON, which a
+    # config.rc written for the tuning image points into that image. It
+    # honours AOTRITON_PYTHON over it.
+    export AOTRITON_PYTHON="$venv/bin/python"
+}
+
+perfmon_env_print() {
+    cat <<PRINT
+export AOTRITON_WORKDIR=$AOTRITON_WORKDIR
+export AOTRITON_SRC=$AOTRITON_SRC
+export AOTRITON_RUNDIR=$AOTRITON_RUNDIR
+export AOTRITON_TMPFS=$AOTRITON_TMPFS
+export PYTHONPYCACHEPREFIX=$PYTHONPYCACHEPREFIX
+export AOTRITON_THERMAL_GATE=${AOTRITON_THERMAL_GATE:-off}   # per host: config row thermal_gate::<host>
+export PYTHONPATH=$PYTHONPATH
+export AOTRITON_MODULES_DIR=$AOTRITON_MODULES_DIR
+PRINT
+    if perfmon_venv_managed; then
+        echo "# venv: the active managed one, $VIRTUAL_ENV"
+    else
+        echo ". $(perfmon_venv_dir)/bin/activate"
+    fi
+}

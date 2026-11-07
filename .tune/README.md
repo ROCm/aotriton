@@ -9,7 +9,7 @@ operational notes and known issues.
 
 On a multi-GPU host, every worker process appears in the `amd-smi process`
 output of **every** GPU, not just the one it tunes on. With 8 workers on an
-8-GPU host, `.tune/remote/get_status.sh` reports `8/8/8/8/8/8/8/8` instead of
+8-GPU host, `.def/host/get_status.sh` reports `8/8/8/8/8/8/8/8` instead of
 `1/1/1/1/1/1/1/1`.
 
 Only the GPU actually in use reports a nonzero `vram_mem`; the other rows are

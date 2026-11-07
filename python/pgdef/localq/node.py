@@ -14,7 +14,7 @@ application. The application owns an entry point, `python -m aotriton.<app>.node
                       runners={'tuner': ExaidTunerWorker}, enrich=enrich,
                       argv=sys.argv[1:])
 
-`.tune/remote/worker_service.sh --category <app>[,<level1>]` runs `python -m aotriton.<app>.node
+`.def/container/worker_service.sh --category <app>[,<level1>]` runs `python -m aotriton.<app>.node
 <role>` for each process of the node:
 
     broker       [--queues gpu,cpu]
@@ -30,12 +30,14 @@ a message for a queue with no workers fails its task instead of waiting.
 import argparse
 import logging
 import os
+import resource
 import signal
 import socket
 import sys
 
 from psycopg.rows import dict_row
 
+from aotriton.pgdef import paths
 from aotriton.pgdef.pq.category import argparse_type, format_category
 from aotriton.pgdef.pq.conn import ReconnectableConn, params_from_env
 from aotriton.pgdef.utils import configure_logging_with_flush
@@ -51,8 +53,7 @@ ROLES = ('broker', 'gpu_worker', 'cpu_worker', 'reader')
 
 
 def default_broker_socket() -> str:
-    return (os.environ.get('AOTRITON_BROKER_SOCKET')
-            or '/tmp/aotriton-broker.sock')
+    return str(paths.broker_socket())
 
 
 def build_parser(app: str) -> argparse.ArgumentParser:
@@ -88,6 +89,17 @@ def _install_worker_signals(worker):
     signal.set_wakeup_fd(worker.wakeup_write_fd)
 
 
+def disable_core_dumps() -> None:
+    """Forbid core dumps for this process and everything it spawns.
+
+    A crashed runner is recorded as a `crash` result with its error output; a
+    core file (several GB for a GPU process) only fills shared disks. Both
+    limits are set to 0, so a child cannot raise the soft limit again, and
+    every child (exaid runners, the perfmon launch script, testrun) inherits it.
+    """
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+
 def run_node_role(*, app: str, handlers, start: type[StartHandler], runners: dict | None = None,
                   enrich=None, argv: list[str] | None = None) -> None:
     """Run one role of a node for `app` until it is told to stop.
@@ -101,6 +113,7 @@ def run_node_role(*, app: str, handlers, start: type[StartHandler], runners: dic
         enrich: optional callable(conn, task) -> dict for the reader
         argv: command line after the program name
     """
+    disable_core_dumps()
     configure_logging_with_flush()
     args = build_parser(app).parse_args(argv)
 

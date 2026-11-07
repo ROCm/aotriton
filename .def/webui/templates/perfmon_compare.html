@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block title %}Perfmon Compare{% endblock %}
+
+{% block content %}
+<h2>Perfmon Compare</h2>
+<p>Compare two sides of one arch: A is the old side, B the new one. A ratio is
+   A/B of the median time, so above 1.0 means B is faster. The join and the
+   numbers are those of <code>python -m aotriton.perfmon.perfdb compare</code>.
+   A <em>tag</em> is a release committed under <code>modules/{{ args.family }}/perfdb/</code>;
+   a <em>live</em> subject is read from PostgreSQL (e.g. HEAD, which is never
+   exported).</p>
+
+{% macro side_select(name, current) %}
+<select name="{{ name }}" required>
+    <option value="">choose</option>
+    <optgroup label="Exported tags">
+        {% for tag in selector.tags %}
+        <option value="tag:{{ tag }}" {% if current == 'tag:' ~ tag %}selected{% endif %}>{{ tag }}</option>
+        {% endfor %}
+    </optgroup>
+    <optgroup label="Live subjects (PostgreSQL)">
+        {% for subject in selector.live|map(attribute='subject')|unique %}
+        <option value="live:{{ subject }}" {% if current == 'live:' ~ subject %}selected{% endif %}>{{ subject }}</option>
+        {% endfor %}
+    </optgroup>
+</select>
+{% endmacro %}
+
+<form method="get" action="/perfmon/compare" style="display: flex; flex-wrap: wrap; gap: 0.8rem; align-items: end;">
+    <label>Family
+        <select name="family">
+            {% for family in families %}
+            <option value="{{ family }}" {% if family == args.family %}selected{% endif %}>{{ family }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>A (old) {{ side_select('a', args.a) }}</label>
+    <label>B (new) {{ side_select('b', args.b) }}</label>
+    <label>Arch
+        <select name="arch" required>
+            <option value="">choose</option>
+            {% for arch in arches %}
+            <option value="{{ arch }}" {% if arch == args.arch %}selected{% endif %}>{{ arch }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>Variant (empty: all)
+        <input type="text" name="variant" value="{{ args.variant }}" placeholder="any"
+               style="width: 8rem; font-family: monospace;">
+    </label>
+    <label>Largest regressions
+        <input type="number" name="top" min="0" value="{{ args.top }}" style="width: 6rem;">
+    </label>
+    <button type="submit" style="width: auto;">Compare</button>
+</form>
+
+{% if error %}
+<p style="color: #dc3545;"><strong>Error:</strong> {{ error }}</p>
+{% endif %}
+{% if not selector.tags %}
+<p style="color: gray;">No tag has been exported to <code>modules/{{ args.family }}/perfdb/</code> yet.</p>
+{% endif %}
+
+{% if result %}
+<section>
+    <h3>{{ args.arch }}: {{ args.a }} &rarr; {{ args.b }}</h3>
+    <p>Overall geometric mean A/B:
+       <strong>{% if result.geomean %}{{ fmt4(result.geomean) }}{% else %}n/a{% endif %}</strong>
+       over {{ result.lines|length }} line(s).
+       {% if result.geomean %}{% if result.geomean >= 1 %}B is faster.{% else %}B is slower.{% endif %}{% endif %}
+       <a href="/perfmon/compare?{{ {'family': args.family, 'a': args.a, 'b': args.b, 'arch': args.arch, 'variant': args.variant, 'top': args.top, 'format': 'csv'}|urlencode }}">Download every line (CSV)</a></p>
+
+    {% if result.refused %}
+    <p style="color: #dc3545;">Refused, the measurement keys differ (timing method, iterations, L2 flush, unit):
+       {% for name in result.refused %}<code>{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+    {% endif %}
+    {% if result.only_a or result.only_b %}
+    <p style="color: gray;">Not in both sides:
+       {% if result.only_a %}only A: {% for name in result.only_a %}<code>{{ name }}</code> {% endfor %}{% endif %}
+       {% if result.only_b %}only B: {% for name in result.only_b %}<code>{{ name }}</code> {% endfor %}{% endif %}</p>
+    {% endif %}
+
+    <h4>Per file</h4>
+    <table>
+        <thead><tr><th>File</th><th>Lines</th><th>Geometric mean A/B</th></tr></thead>
+        <tbody>
+            {% for f in result.files %}
+            <tr>
+                <td><code>{{ f.file }}</code></td>
+                <td>{{ f.lines }}</td>
+                <td>{% if f.geomean %}{{ fmt4(f.geomean) }}{% else %}n/a{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h4>Largest regressions of B against A</h4>
+    {% if result.worst %}
+    <table>
+        <thead><tr><th>File</th><th>Variant</th><th>Entry</th><th>A (us)</th><th>B (us)</th><th>A/B</th></tr></thead>
+        <tbody>
+            {% for line in result.worst %}
+            <tr>
+                <td><code>{{ line.file }}</code></td>
+                <td>{{ line.variant }}</td>
+                <td title="{{ line.label }}">{{ line.entry }}: <small>{{ line.label }}</small></td>
+                <td>{{ fmt4(line.median_a) }}</td>
+                <td>{{ fmt4(line.median_b) }}</td>
+                <td>{{ fmt4(line.ratio) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color: gray;">No comparable lines.</p>
+    {% endif %}
+
+    <details>
+        <summary>Per-line ratios ({{ [result.lines|length, max_shown]|min }} of {{ result.lines|length }})</summary>
+        <table>
+            <thead><tr><th>File</th><th>Variant</th><th>Entry</th><th>A (us)</th><th>B (us)</th><th>A/B</th></tr></thead>
+            <tbody>
+                {% for line in result.lines[:max_shown] %}
+                <tr>
+                    <td><code>{{ line.file }}</code></td>
+                    <td>{{ line.variant }}</td>
+                    <td title="{{ line.label }}">{{ line.entry }}</td>
+                    <td>{{ fmt4(line.median_a) }}</td>
+                    <td>{{ fmt4(line.median_b) }}</td>
+                    <td>{{ fmt4(line.ratio) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </details>
+</section>
+{% endif %}
+{% endblock %}

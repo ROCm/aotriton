@@ -1,5 +1,5 @@
 ---
-applyTo: "v3python/tune/**/*.py",".tune/**/*.py"
+applyTo: "v3python/tune/**/*.py",".tune/**/*.py",".def/**/*.py"
 ---
 
 These are internal-only scripts for the AOTriton tuning infrastructure.

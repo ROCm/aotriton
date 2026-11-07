@@ -1,0 +1,95 @@
+# SHA-256 digests of the AOTriton release assets perfmon downloads.
+#
+# Format is sha256sum(1)'s, so a line can be checked directly:
+#     grep ' <asset>$' asset_sha256.txt | sha256sum -c -
+#
+# Source: GitHub's release API reports a `digest` field per asset
+# (`sha256:<hex>`), which is what the release page shows. Regenerate with
+#     perfmon/scripts/lib/refresh_asset_sha256.sh > perfmon/scripts/lib/asset_sha256.txt
+# Not fetched at build time on purpose: a digest fetched over the same
+# connection as the file it vouches for checks that the download completed, not
+# that it is the file this repo was tested against. Committing it makes the
+# expected bytes reviewable, and a change to them show up in a diff.
+#
+# Every asset of every tag is listed, not just the ones the build scripts ask
+# for today: the extra lines cost nothing, and a tag whose asset name changes
+# should fail on the name rather than by falling through to "digest unknown".
+#
+# An asset with no entry here is a WARNING, not an error -- a new tag can be
+# built before anyone records its digests. Add them here to make it enforced.
+
+# --- 0.9.2b (2 assets) ---
+a5eca4131c92826d8fcc94dfde593e202d478ae8cf7cddc555730596466156ea  aotriton-0.9.2b-manylinux_2_28_x86_64-rocm7.0-shared.tar.gz
+9061bff8a1f7b857399467260b54714d659fd812a41eeee049f0a3e9c8b9aeeb  aotriton-0.9.2b_612896439f-manylinux_2_28_x86_64-rocm7.0-shared.tar.gz
+
+# --- 0.10b (4 assets) ---
+861cd9f7479eec943933c27cb86920247e5b5dd139bc7c1376c81808abb7d7fe  aotriton-0.10b-manylinux_2_28_x86_64-rocm6.3-shared.tar.gz
+acea7d811a2d3bbe718b6e07fc2a9f739e49eecd60b4b6a36fcb3fe8edf85d78  aotriton-0.10b-manylinux_2_28_x86_64-rocm6.4-shared.tar.gz
+7e29c325d5bd33ba896ddb106f5d4fc7d715274dca7fe937f724fffa82017838  aotriton-0.10b-manylinux_2_28_x86_64-rocm6.5-shared.tar.gz
+1e9b3dddf0c7fc07131c6f0f5266129e83ce2331f459fa2be8c63f4ae91b0f5b  aotriton-0.10b-manylinux_2_28_x86_64-rocm7.0-shared.tar.gz
+
+# --- 0.11b (10 assets) ---
+ec134032087344176695505db659387374d1916adfee16f0db47dee38d9c8603  aotriton-0.11b-images-amd-gfx11xx.tar.gz
+fec05205747ff51649b1e151545267d5aa2037ba9d0338cad286882915b941b0  aotriton-0.11b-images-amd-gfx120x.tar.gz
+c19a41c9480510ab32e6fb05e6ed0a3832d6b07634f050b836b760200befa735  aotriton-0.11b-images-amd-gfx90a.tar.gz
+3a06a99971dddb7703a30378f1c5d6b41468d926ea51821156d1b6857b985bc4  aotriton-0.11b-images-amd-gfx942.tar.gz
+27fc21f6761d57987a700436de8cf29cbdd9eeee91318dfed596eeb147d219ad  aotriton-0.11b-images-amd-gfx950.tar.gz
+6cae3d5de75ee205d22e088f7dfaab1227056d02ea67f29ccdbc09f2be4e8c8f  aotriton-0.11b-manylinux_2_28_x86_64-rocm6.2-shared.tar.gz
+72a153549ea20707331e8a1f1e3d1b8de2913f9d5af2b900c56235d578b57efe  aotriton-0.11b-manylinux_2_28_x86_64-rocm6.3-shared.tar.gz
+c7f319dd7448cbbbab81889dd8a37d47dbc25ebcbd89760f09e6a0904e556393  aotriton-0.11b-manylinux_2_28_x86_64-rocm6.4-shared.tar.gz
+a2a974e0ad929a5e5827c0f896c59bda4872459cbaf8dd8e0a00407f404491cf  aotriton-0.11b-manylinux_2_28_x86_64-rocm7.0-shared.tar.gz
+d4eb24c9f1a0cfedb35f9292efb41d16589cf5a4b98c3c0940181bbefc49d722  aotriton-0.11b-manylinux_2_28_x86_64-rocm7.1-shared.tar.gz
+
+# --- 0.11.2b (11 assets) ---
+839299637fccb13fbe3e7823d57d1b2dcd0e0bed78abbcb7005ea5f4fd82b928  aotriton-0.11.2b-images-amd-gfx11xx.tar.gz
+0a4ff324bffdac0c2fde87a8a7f70563d3c84a80ad4e8f31345f2b40a1384e95  aotriton-0.11.2b-images-amd-gfx120x.tar.gz
+fe9f04b66bf52ac27cd025e1d89cfd04974dd3fb3ae076192f783641a4d80fdf  aotriton-0.11.2b-images-amd-gfx90a.tar.gz
+0a7bcee19d3bb6d548732248c3234f7b92736c2ab7a7aae65294b87a7fd64c06  aotriton-0.11.2b-images-amd-gfx942.tar.gz
+c1ba3bfe84217fd67df3dd1f8b67c80a7f7b33d0ad4d74b41d6567036e032ace  aotriton-0.11.2b-images-amd-gfx950.tar.gz
+d784314849ba1911181dfc80cd845064ff6f0cdad10e2f4c53eb84a8b89245b9  aotriton-0.11.2b-manylinux_2_28_x86_64-rocm6.2-shared.tar.gz
+f4b14dc111c334e967b28a1cf9ed4c63264c634dbdccbb5849aa9490022992f7  aotriton-0.11.2b-manylinux_2_28_x86_64-rocm6.3-shared.tar.gz
+6b51d8479c85b902334e4f5518f404a8f5d563fd8d4732cb8b621ed4b45c2876  aotriton-0.11.2b-manylinux_2_28_x86_64-rocm6.4-shared.tar.gz
+5501a0a3b300890001b6625f2a3539a7bad60f386f0a061ebe7d4ed5ca0fafb9  aotriton-0.11.2b-manylinux_2_28_x86_64-rocm7.0-shared.tar.gz
+fee36beb3ea484ce18155bbafe026c577fd6705e4469e59405b260bd74b8cc10  aotriton-0.11.2b-manylinux_2_28_x86_64-rocm7.1-shared.tar.gz
+cd8abf27bbb63cec45c94135e9b28745966074263a6b0555e5878ae1cb6a2349  aotriton-0.11.2b-manylinux_2_28_x86_64-rocm7.2-shared.tar.gz
+
+# --- 0.12.1b (15 assets) ---
+54454fe2ea8e4e2979cc45491dc4582d2fc03ee7b15ac73a8dcffed3a5696858  aotriton-0.12.1b+asan-images-amd-gfx942.tar.gz
+e3392aa03edb303456b2d93a3ebf2cbfed8aed4d3f623eb5cee1bf14515857d9  aotriton-0.12.1b+asan-images-amd-gfx950.tar.gz
+5bfd930dc0e4f8b06ecbde6c6ff878524e2b09aab919eb0612c705639b6c11dd  aotriton-0.12.1b+asan-manylinux_2_28_x86_64-rocm7.14-shared.tar.gz
+c9cac7cf6f277168e1659ac2f04706f8823580b7c7e3e895f5a5503ed6bdd55f  aotriton-0.12.1b-images-amd-gfx110x.tar.gz
+3177387a15c678b30057f4584d1fc1b8f8db56163890cb5c98f27450209f5a7b  aotriton-0.12.1b-images-amd-gfx115x.tar.gz
+68572511ce6487a83f9014bd255bd69c8943f87d0c93bd57b2daac5fbc6c79c1  aotriton-0.12.1b-images-amd-gfx120x.tar.gz
+f15547af1cf95292701dffb9f1f593e8a83b34f4ae7cfc40c821e913c12c961a  aotriton-0.12.1b-images-amd-gfx1250.tar.gz
+bb8bf2237b77fc503bc2967ea0d99d6ca419126c479e951ea42b712737128086  aotriton-0.12.1b-images-amd-gfx90a.tar.gz
+f08edacf83c9ccf1c4bdcb51f1cab052d1680abea31c9e035f3f9fadb2f13ba4  aotriton-0.12.1b-images-amd-gfx942.tar.gz
+307a37d729cda3a2120449909e5192cd71c2badccbd37f0222786098e69c7a91  aotriton-0.12.1b-images-amd-gfx950.tar.gz
+981981cfa065eaad2b32cd6e5a7a1ed21227a66b0d17b9199f354aff7d03d8fd  aotriton-0.12.1b-manylinux_2_28_x86_64-rocm6.4-shared.tar.gz
+44f6699e669e620428d65ac12c7e4f5e6b5dcbd1e25e65b5dbb6d887c5e8ced0  aotriton-0.12.1b-manylinux_2_28_x86_64-rocm7.0-shared.tar.gz
+4298bd4cec76d1d090d7f0b8c43220c49291d4cc6e705f6896a459c020eec48b  aotriton-0.12.1b-manylinux_2_28_x86_64-rocm7.1-shared.tar.gz
+285a37fc663934ae2b51a9ae84d15e6c5cd567316fa02921d0281fd9f62c55e5  aotriton-0.12.1b-manylinux_2_28_x86_64-rocm7.14-shared.tar.gz
+fb3ad4b75816366686ff3dcf41a8ba5f095ac471c22bd8f08bd1e6f103d90286  aotriton-0.12.1b-manylinux_2_28_x86_64-rocm7.2-shared.tar.gz
+
+# --- 0.13b (17 assets) ---
+563d2e4c41b367725c7b8e12fdfd04df4d1b1ff15947e011e2452818f3a43d26  aotriton-0.13b+asan-images-amd-gfx942.tar.gz
+b428dfe6eef7a1dcfac54ac2408dd136dbd622016331dc863e87ce9ea84c8054  aotriton-0.13b+asan-images-amd-gfx950.tar.gz
+3f5cfba6c42261a3e3b44022c66083ec859fcc98296faa4646b65373fead3448  aotriton-0.13b+asan-manylinux_2_28_x86_64-rocm7.14-shared.tar.gz
+7a7928d881d6341fc0b8ffb3ad7077f62438a8412ec57f97fb4b4dfbc73b3e64  aotriton-0.13b+asan-manylinux_2_28_x86_64-rocm7.15-shared.tar.gz
+efe773e7a2c8adc995d90ecd0daca2db801285445ee10432df2b29c67d5b11d2  aotriton-0.13b-images-amd-gfx110x.tar.gz
+1bc50e8aa8b6bda3410e92886ccca8fd45df3e60a6cbda9ffc58b2c541efd5c2  aotriton-0.13b-images-amd-gfx115x.tar.gz
+6a465dbc03148bba8a2d78c4c2a3cb83155eca00f4f7f749e676402d7660968c  aotriton-0.13b-images-amd-gfx120x.tar.gz
+4aaf71d6e510549d593757e5f88598df1e4a29cbcd91f70750ee8a76f65c027f  aotriton-0.13b-images-amd-gfx1250.tar.gz
+a3d1a6868ce290ba8118618207093e785252eff4e18a64f495752cb5a03ffed6  aotriton-0.13b-images-amd-gfx90a.tar.gz
+ccdbc7e3d96839be4895ee004f21531cc55d590c9018937b9e314bba363b3927  aotriton-0.13b-images-amd-gfx942.tar.gz
+518fd072eb05948fc0a6c25a20832591c6406df865e3b691a2aeff3fd4c5ce1d  aotriton-0.13b-images-amd-gfx950.tar.gz
+2fafa80953d9a49bd20e794bb8c0e1646e8aa815be2fb161deaa849a47547b17  aotriton-0.13b-manylinux_2_28_x86_64-rocm6.4-shared.tar.gz
+7409f7c974cc79be731a419818bdb2ed6b8a3640fd40665baa76ec3c2a537204  aotriton-0.13b-manylinux_2_28_x86_64-rocm7.0-shared.tar.gz
+f061a997679d8529a7b196b0ffb39912145ede217e515e1ee9ef5673b56d9e41  aotriton-0.13b-manylinux_2_28_x86_64-rocm7.1-shared.tar.gz
+7a139797c16b002fd5d9bcd706d36dc9819bb108877150f8186da21d0590eaa6  aotriton-0.13b-manylinux_2_28_x86_64-rocm7.14-shared.tar.gz
+f024225d8b6063f7d95974e5957cb20893a1579a9a73b22b60426441331bc021  aotriton-0.13b-manylinux_2_28_x86_64-rocm7.15-shared.tar.gz
+1cdeebb7ef61ab691fba1d81da919b9db5d8bef28269c892a30bd13a0495b7a0  aotriton-0.13b-manylinux_2_28_x86_64-rocm7.2-shared.tar.gz
+
+# --- 0.14.2b ---
+# TODO(perfmon): no digests yet (written without network access). Until
+# refresh_asset_sha256.sh has been run for 0.14.2b, its assets are downloaded
+# unverified, with a warning.

@@ -1,0 +1,11 @@
+model,phase,T_io,hdim_qk,hdim_v,causal,window_left,window_right,dropout_p,bias_type,bias_shape,n_heads_q,n_heads_kv,varlen,storage_flip,batch,seqlen_q,seqlen_k,pending
+roberta-large,fwd_bwd,fp16,64,64,0,-1,-1,0.1,1,b1qk,16,16,0,0,512,384,384,0
+bert-large-uncased,fwd_bwd,fp16,64,64,0,-1,-1,0.1,0,-,16,16,0,0,192,512,512,0
+distilbert-base-uncased,fwd_bwd,fp16,64,64,0,-1,-1,0.1,0,-,12,12,0,0,384,512,512,0
+gpt2,fwd_bwd,fp16,64,64,1,-1,-1,0.1,0,-,12,12,0,0,72,1024,1024,0
+roberta-large,fwd_bwd,fp16,64,64,0,-1,-1,0.1,1,b1qk,16,16,0,0,1536,128,128,0
+roberta-large,fwd_bwd,fp16,64,64,0,-1,-1,0.1,1,b1qk,16,16,0,0,768,256,256,0
+roberta-large,fwd_bwd,fp16,64,64,0,-1,-1,0.1,1,b1qk,16,16,0,0,384,512,512,0
+roberta-large,fwd_bwd,fp16,64,64,0,-1,-1,0.1,1,b1qk,16,16,0,0,192,1024,1024,0
+roberta-large,fwd_bwd,fp16,64,64,0,-1,-1,0.1,1,b1qk,16,16,0,0,96,2048,2048,0
+roberta-large,fwd_bwd,fp16,64,64,0,-1,-1,0.1,1,b1qk,16,16,0,0,48,4096,4096,0

@@ -1,0 +1,18 @@
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+#
+# Packaging for the `aotriton-perfmon` distribution: python/perfmon/ -> aotriton.perfmon.
+# A standalone distribution inside python/ (excluded from the root setup.py's
+# find_packages()). `aotriton` is a PEP 420 namespace package: this ships
+# aotriton/perfmon/... with no aotriton/__init__.py, merging into the same
+# namespace as the main `aotriton` distribution at import time.
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aotriton-perfmon"
+dynamic = ["version"]
+description = "AOTriton performance monitoring (aotriton.perfmon)"
+requires-python = ">=3.10"

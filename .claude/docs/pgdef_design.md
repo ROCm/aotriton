@@ -22,7 +22,7 @@ which phases have landed. Landed so far:
   `node`, `dispatch` and `handlers`.
 
 * P4: `MANIFEST` per application (`python/tune/manifest.py`; shared lookup in
-  `pgdef/manifest.py`, `.tune/lib/manifest.sh`); `worker_service.sh`, `wkctl`,
+  `pgdef/manifest.py`, `.def/lib/manifest.sh`); `worker_service.sh`, `wkctl`,
   `deploy`, `sync_workdir`, `fetchbuild` and `start_worker` read it; `workers.db` has a `subpool` column. NOT done: unifying
   tuning onto the perfmon image model and non-root container (the plan keeps tuning
   root, installing aotriton at container launch, in this refactor).
@@ -48,7 +48,7 @@ which phases have landed. Landed so far:
   * No shared tool takes `--apps`. The image tools (`prepwkdir`, `imgbld`,
     `build_image.sh`) are tune's own, unchanged from 0.14, and take no
     application at all.
-  * **Category helpers** in `.tune/lib/category.sh`, mechanism separate from
+  * **Category helpers** in `.def/lib/category.sh`, mechanism separate from
     policy:
     * `parse_category <category>` is pure syntax. It sets `CAT_LEVEL0` and
       `CAT_LEVEL1` (one field each, empty if absent), with no manifest lookups
@@ -86,15 +86,15 @@ which phases have landed. Landed so far:
     `pgdef.pq.dispatch.drive(source, argv)`) and `aotriton.<app>.manifest`.
   * `worker_service.sh --category <app>[,<level1>]` runs `python -m
     aotriton.<app>.node <role>`. One application per node.
-  * **`.tune/remote/worker_service.sh` is the generic DEF node starter, not a
-    tuning script**, despite living under `.tune/`.
+  * **`.def/container/worker_service.sh` is the generic DEF node starter, not a
+    tuning script**, which is why it lives in `.def/container/`, not `.tune/`.
     * It takes only engine vocabulary: `--category <app>[,<level1>]`
       (required for start and restart; its first level is the application)
       and `--subpool`.
     * It must never grow application-specific flags such as tune's
       `--tuning_mode`. Those belong to the application's own tools.
     * It exports the neutral `AOTRITON_BROKER_SOCKET`.
-    * The SLURM wrapper `.tune/remote/run_worker.sh` forwards `--category`
+    * The SLURM wrapper `.def/host/run_worker.sh` forwards `--category`
       and `--subpool` to it.
   * The shared process layout is a known limitation; the ideal fix is a
     service script per application. Until then, zero GPU or zero CPU workers
@@ -110,7 +110,7 @@ which phases have landed. Landed so far:
     typed views and derived tables in their own schema. Tables derived from
     reports use `ON DELETE CASCADE`, so a generic reset needs no application
     code.
-* **initdb** (`.tune/bin/initdb`, which is also behind the webui buttons) applies
+* **initdb** (`.def/bin/initdb`, which is also behind the webui buttons) applies
   every layer's idempotent `schema.sql` with `psql`. pgdef's runs first, then a
   glob of `python/*/pq/schema.sql`. It creates all applications' schemas,
   imports no Python, and `--recreate` drops those schemas with `CASCADE`.
@@ -283,7 +283,7 @@ below describe that version and the PR that brings it in.
   `TuningDescription`. It is neutral to pgdef: everything it decides crosses
   into the engine only as jsonb, or as perfmon code passed to `run_node_role`.
   If that redesign seems to need a pgdef change, treat it as a design smell.
-* **Next PR (tentative): reorganise `.tune/` for all pgdef applications**, as
+* **Done (see `.def/INVENTORY.md`): reorganise `.tune/` for all pgdef applications**, as
   part of materialising perfmon. The layout is **not decided**. Candidates:
   * a nested `.defs/` that becomes the shared directory of all pgdef
     applications;

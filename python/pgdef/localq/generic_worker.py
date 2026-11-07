@@ -21,6 +21,7 @@ import socket
 import time
 from pathlib import Path
 
+from .. import paths
 from .handlers import (BROKER_CLASSES, GRACEFUL_CANCEL, TASK_FAILED, EmitsViolation, HandlerSet,
                        NodeContext, Permanent, ack, task_header)
 from .protocol import send_message, recv_message
@@ -40,7 +41,7 @@ class GenericWorker:
     """
 
     def __init__(self, worker_id: str, queue_name: str, handler_set: HandlerSet,
-                 ctx: NodeContext, broker_socket: str = '/tmp/aotriton-broker.sock',
+                 ctx: NodeContext, broker_socket: str | None = None,
                  idle_sleep_s: float = 0.5):
         """
         Initialize generic worker.
@@ -51,13 +52,14 @@ class GenericWorker:
             handler_set: every handler class of the application (and the
                 engine's); this worker instantiates those of its own queue
             ctx: the resources handlers may use (db_conn, runners, gpu_id)
-            broker_socket: Path to broker Unix socket
+            broker_socket: Path to broker Unix socket (default:
+                aotriton.pgdef.paths.broker_socket())
             idle_sleep_s: how long to sleep when the queue is empty
         """
         self.idle_sleep_s = idle_sleep_s
         self.worker_id = worker_id
         self.queue_name = queue_name
-        self.broker_socket = broker_socket
+        self.broker_socket = broker_socket or str(paths.broker_socket())
         self.handler_set = handler_set
         self.ctx = ctx
 

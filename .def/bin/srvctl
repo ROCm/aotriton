@@ -1,0 +1,134 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Control server services: PostgreSQL, and the SSH tunnel manager that carries
+# it to the hosts marked firewalled (.def/libexec/tunnels.py)
+# Usage: srvctl <workdir> <action>
+
+set -e
+
+# readlink -f: the compatibility links in .tune/bin/ must find .def/, not .tune/.
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$DEF_ROOT/lib/config_load.sh"
+
+WORKDIR="$1"
+ACTION="$2"
+
+if [ -z "$WORKDIR" ] || [ -z "$ACTION" ]; then
+    echo "Usage: $0 <workdir> <action>" >&2
+    echo "Actions: start|stop|restart|status" >&2
+    exit 1
+fi
+
+load_config "$WORKDIR"
+
+TUNNELS_PID="$WORKDIR/run/ssh-tunnels.pid"
+TUNNELS_STATUS="$WORKDIR/run/ssh-tunnels.status"
+
+tunnels_running() {
+    [ -f "$TUNNELS_PID" ] && kill -0 "$(cat "$TUNNELS_PID")" 2>/dev/null
+}
+
+start_tunnels() {
+    mkdir -p "$WORKDIR/run"
+    if tunnels_running; then
+        echo "SSH tunnel manager already running (pid $(cat "$TUNNELS_PID"))"
+        return 0
+    fi
+    echo "Starting SSH tunnel manager..."
+    nohup python3 "$DEF_ROOT/libexec/tunnels.py" "$WORKDIR" >> "$WORKDIR/run/ssh-tunnels.out" 2>&1 &
+    echo $! > "$TUNNELS_PID"
+    echo "Started SSH tunnel manager: pid $!, log $WORKDIR/run/ssh-tunnels.log"
+    echo "WARNING: the tunnels to firewalled hosts need non-interactive ssh from this host" >&2
+    echo "  to each of them (ssh runs with BatchMode=yes). If your key has a passphrase," >&2
+    echo "  start ssh-agent and ssh-add your key first." >&2
+    if [ -z "${SSH_AUTH_SOCK:-}" ]; then
+        echo "  SSH_AUTH_SOCK is not set in this shell: no ssh-agent is reachable." >&2
+    fi
+    echo "  Each firewalled host must also permit remote Unix-socket forwarding, in its" >&2
+    echo "  sshd (AllowStreamLocalForwarding, on by default) and in SELinux." >&2
+    echo "  See $TUNNELS_STATUS" >&2
+}
+
+stop_tunnels() {
+    if tunnels_running; then
+        local pid
+        pid="$(cat "$TUNNELS_PID")"
+        echo "Stopping SSH tunnel manager (pid $pid)..."
+        kill -TERM "$pid" 2>/dev/null || true
+        local i
+        for i in $(seq 1 50); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.2
+        done
+        kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null || true
+    fi
+    rm -f "$TUNNELS_PID"
+}
+
+# Prints "running" or "stopped"; returns 0 when running.
+postgres_status() {
+    local PIDF="$WORKDIR/run/container.pids"
+    local POSTGRES_ID
+
+    if [ ! -f "$PIDF" ]; then
+        echo "stopped"
+        return 1
+    fi
+
+    POSTGRES_ID=$(cat "$PIDF")
+
+    if [ -z "$POSTGRES_ID" ]; then
+        echo "stopped"
+        return 1
+    fi
+
+    # Fast check: docker ps --filter returns empty if not running
+    if docker ps --no-trunc --quiet --filter id="$POSTGRES_ID" | grep -q .; then
+        echo "running"
+        return 0
+    else
+        echo "stopped"
+        rm -f "$PIDF"
+        return 1
+    fi
+}
+
+case "$ACTION" in
+    start)
+        "$DEF_ROOT/libexec/start_services.sh" "$WORKDIR"
+        start_tunnels
+        ;;
+    stop)
+        stop_tunnels
+        "$DEF_ROOT/libexec/stop_services.sh" "$WORKDIR"
+        ;;
+    restart)
+        stop_tunnels
+        "$DEF_ROOT/libexec/stop_services.sh" "$WORKDIR"
+        sleep 2
+        "$DEF_ROOT/libexec/start_services.sh" "$WORKDIR"
+        start_tunnels
+        ;;
+    status)
+        PG_RC=0
+        PG_STATE="$(postgres_status)" || PG_RC=$?
+        echo "PostgreSQL: $PG_STATE"
+        if tunnels_running; then
+            echo "SSH tunnel manager: running (pid $(cat "$TUNNELS_PID"))"
+        else
+            echo "SSH tunnel manager: stopped"
+        fi
+        if [ -f "$TUNNELS_STATUS" ]; then
+            cat "$TUNNELS_STATUS"
+        fi
+        exit "$PG_RC"
+        ;;
+    *)
+        echo "Unknown action: $ACTION" >&2
+        exit 1
+        ;;
+esac

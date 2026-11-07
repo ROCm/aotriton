@@ -99,7 +99,8 @@ worker, all connected through a Unix socket:
                         ↕  Unix socket
     ├── PG readers   (claim a task each; get its ack from the broker)
     ├── GPU workers  (one per GPU; run the subprocess runners, exaid)
-    └── CPU workers  (write results to PostgreSQL)
+    └── CPU workers  (write results to PostgreSQL, behind the GPU workers;
+                      see "Completion does not wait for result writes")
 ```
 
 The broker is the hub, and every connection is two-way. A handler on any
@@ -119,6 +120,8 @@ class ProbeHandler(MessageHandler):
 
 `python -m aotriton.pgdef.localq.graph tune` prints the whole graph. If any
 handler raises, the task fails through one common path.
+
+No process of a node writes a core dump: `run_node_role` sets `RLIMIT_CORE` to 0 first, and every child inherits it. A crash is recorded as a `crash` result, and cores only fill shared disks.
 
 GPU work runs in a supervised child process (**exaid**) that speaks a line
 protocol: send a command, read back `OK <json>` or an error. A crash or a
@@ -181,6 +184,39 @@ If the broker shuts down while a semaphore message is still parked, it calls
 the handler's `teardown_with_unmet_dependency()`. By default that gives the task
 back to the queue.
 
+### Completion does not wait for result writes
+
+This is intentional. The join releases when every result *message* has
+reached the broker, not when the CPU workers have written those results to
+PostgreSQL. Tune's `tune/postprocess` and perfmon's `perfmon/finalize`
+therefore mark a task `done` while some of its result rows can still be
+queued for writing.
+
+Why:
+
+* A GPU worker hands its result to the broker and starts the next message at
+  once. It never waits for PostgreSQL.
+* Completing the task releases its PG reader, so the next task is claimed
+  while the previous task's results are still being written. GPUs do not idle
+  between tasks.
+* Writing one result row takes milliseconds. Waiting for it would buy nothing
+  but idle GPU time.
+
+What it means:
+
+* `done` means "all results produced", not "all results stored". The writes
+  normally follow within seconds.
+* The lag grows only when the CPU workers write more slowly than the GPUs
+  produce results. Kernel tuning reports one row per kernel variant (hundreds
+  per task). Over a remote link, at a few tens of rows per second, a node can
+  fall behind for hours over a long run. That backlog is a throughput matter,
+  not a slow write.
+* Read results (`compute_best_results`, perfmon export) once the node's CPU
+  queue has drained, or check the expected row count. A task being `done` is
+  not enough.
+* Stop a node only after its CPU queue has drained. Queued writes live in the
+  broker's memory, and their task is already `done`, so nothing redoes them.
+
 ## Writing an application
 
 An application is an ordinary program that uses pgdef as a library. It
@@ -190,7 +226,7 @@ provides three entry points, as modules of `aotriton.<app>`:
 |---|---|
 | `aotriton.<app>.node` | Starts one node process (broker, GPU/CPU worker, or reader), passing the app's handlers and runners to `pgdef.localq.node.run_node_role` |
 | `aotriton.<app>.dispatch` | Turns the app's CLI options into tasks, through `pgdef.pq.dispatch.drive` |
-| `aotriton.<app>.manifest` | Prints settings for the `.tune` scripts: image, container environment, install directories |
+| `aotriton.<app>.manifest` | Prints settings for the `.def` scripts: image, container environment, install directories |
 
 ```python
 # python/tune/node.py
@@ -198,13 +234,13 @@ run_node_role(app='tune', handlers=HANDLERS, start=TuneStartHandler,
               runners={'tuner': ExaidTunerWorker}, enrich=enrich, argv=sys.argv[1:])
 ```
 
-`.tune/remote/worker_service.sh --category tune,kernel` starts `python -m aotriton.tune.node <role>`.
-Despite its location under `.tune/`, `worker_service.sh` is the generic node
+`.def/container/worker_service.sh --category tune,kernel` starts `python -m aotriton.tune.node <role>`.
+`worker_service.sh` lives in `.def/container/`: it is the generic node
 starter for every application. It takes only engine options (`--category`,
 whose first level is the application, and `--subpool`), never an
 application's own flags such as tune's `--tuning_mode`.
 
-The `.tune` shell scripts learn everything application-specific from the
+The `.def` shell scripts learn everything application-specific from the
 application's `MANIFEST` dict (`python/<app>/manifest.py`), one key at a time:
 
 ```bash
@@ -212,7 +248,7 @@ python3 -m aotriton.tune.manifest deploy.role
 python3 -m aotriton.tune.manifest install.subtree --arch gfx950 --cat_level1 op
 ```
 
-(`.tune/lib/manifest.sh` wraps this as `app_manifest` and `require_app`, the one
+(`.def/lib/manifest.sh` wraps this as `app_manifest` and `require_app`, the one
 validation each script keeps.) The manifest holds where the build is installed, what to fetch from the build
 node, the host role that runs the application, and the category levels it accepts.
 A machine's subpool (MI355) is host inventory: a column of `workers.db`, set on
@@ -240,7 +276,7 @@ own terms instead. Tune says `tuning_level` and `--tuning_mode kernel|op`, not
 between the two and documents its mapping, e.g. "tune stores its tuning level
 as `cat_level1`".
 
-`.tune/bin/initdb`, which is also behind the webui's Init DB button, creates
+`.def/bin/initdb`, which is also behind the webui's Init DB button, creates
 every schema for every application. Each `pq` ships an idempotent
 `schema.sql`, and pgdef's runs first. `--recreate` drops and recreates them all.
 
@@ -248,13 +284,50 @@ Partitions need no setup. Dispatch creates a pool's partitions the first time
 it inserts into that pool, by calling the engine's SQL function
 `pgdef.ensure_pool(pool)` with the pool name as a query argument.
 
+## Firewalled hosts
+
+Some hosts cannot reach the server's PostgreSQL (a firewall between the
+networks eats the replies), though SSH to them works. Such a host is marked
+**Firewalled** on the webui's Workers page (a config row
+`firewalled::<hostname>` = 1 in `workers.db`, no schema change; absent or `0`
+means direct access). It is a host property shared by every application.
+
+* `srvctl <workdir> start` starts PostgreSQL and then the tunnel manager,
+  `.def/libexec/tunnels.py`, which keeps one reverse tunnel to a Unix socket
+  (`ssh -N -R <host workdir>/run/pgsql/.s.PGSQL.<POSTGRES_PORT>:127.0.0.1:<POSTGRES_PORT> <host>`)
+  up per firewalled host and restarts it with back-off. `<host workdir>` is the
+  host's workdir as the server knows it (`workdir_override` in `workers.db`,
+  else `default_workdir`). Before each (re)start the manager runs
+  `mkdir -p` and `rm -f` on the socket over ssh, because sshd does not unlink
+  a stale socket. A Unix socket works where a TCP port on the host's loopback
+  does not: a container on a Docker bridge has its own loopback, but sees
+  the host workdir at the same path. `stop` stops both; `status` shows
+  PostgreSQL and the tunnels. It runs on the server's bare metal and needs
+  non-interactive ssh to each host (start `ssh-agent` and `ssh-add` your key
+  first if it has a passphrase); each host's sshd must allow remote
+  Unix-socket forwarding (`AllowStreamLocalForwarding`, on by default) and so
+  must SELinux.
+* Changing the row (the checkbox, or an agent writing the workdir) is followed
+  by a touch of `<workdir>/run/touch-me-to-refresh-ssh-tunnel`; the manager
+  polls it and reloads. The result is in `<workdir>/run/ssh-tunnels.status`
+  (also on the webui's Servers tab); its log is `ssh-tunnels.log`.
+* A node on a firewalled host is started with
+  `PGHOST=<host workdir>/run/pgsql` (the socket's directory; libpq treats a
+  `PGHOST` starting with `/` that way) and `PGPORT=<POSTGRES_PORT>` (it names
+  the file `.s.PGSQL.<port>`): `.perfmon/bin/node` and `start_worker.sh` read
+  the row on the server and pass the values on as arguments, so host-side
+  scripts never open `workers.db`. A tune docker worker mounts the workdir at
+  the image workdir, so it gets `PGHOST=<image workdir>/run/pgsql` (usually
+  `/wkdir/run/pgsql`). `worker_service.sh` keeps a preset `PGHOST`/`PGPORT`
+  over `config.rc`'s.
+
 ## Common operations
 
 ```bash
 # Dispatch: each application has its own dispatch command
 python -m aotriton.tune.dispatch --category tune,kernel --pool gfx950 --workdir <workdir> --module flash <tune options>
 
-# Start a node's processes (normally done by .tune/remote/worker_service.sh --category tune,kernel)
+# Start a node's processes (normally done by .def/container/worker_service.sh --category tune,kernel)
 python -m aotriton.tune.node reader --pool gfx950 --subpool MI355 --category tune,kernel
 ```
 

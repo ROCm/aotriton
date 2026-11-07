@@ -1,0 +1,103 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Open an interactive bash shell inside the tuning Docker image.
+#
+# The workdir is detected automatically from the script's location:
+#   bash_direct lives at  <workdir>/aotriton.src/.tune/host/bash_direct
+#   so workdir is         <workdir>/aotriton.src/../.. resolved
+#
+# Docker image and connection parameters are read from <workdir>/config.rc.
+# The container is removed automatically on exit (--rm).
+#
+# GPU architecture is detected automatically via rocm_agent_enumerator.
+#
+# PYTHONPATH defaults to the tuning library (installed/<arch>/lib).
+# Pass --op to use the testing library (installed/test/<arch>/lib) instead.
+#
+# Examples:
+#   .tune/host/bash_direct
+#   .tune/host/bash_direct --op
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/../../.def" && pwd)"
+AOTRITON_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+WORKDIR="$(cd "$AOTRITON_ROOT/.." && pwd)"
+
+# The image's layout (.def/lib/paths.sh): where the container sees the workdir.
+. "$DEF_ROOT/lib/paths.sh"
+IMG_WORKDIR="$AOTRITON_IMAGE_WORKDIR"
+IMG_SRC="$AOTRITON_IMAGE_SRC"
+IMG_RUNDIR="$AOTRITON_IMAGE_RUNDIR"
+
+USE_OP=false
+for arg in "$@"; do
+    case "$arg" in
+        --op) USE_OP=true ;;
+        *) echo "Unknown argument: $arg" >&2; exit 1 ;;
+    esac
+done
+
+if [ ! -f "$WORKDIR/config.rc" ]; then
+    echo "Error: config.rc not found at $WORKDIR/config.rc" >&2
+    exit 1
+fi
+
+. "$WORKDIR/config.rc"
+
+if [ -z "${CELERY_WORKER_IMAGE:-}" ]; then
+    echo "Error: CELERY_WORKER_IMAGE not set in config.rc" >&2
+    exit 1
+fi
+
+ARCH=$(rocm_agent_enumerator | grep -v gfx000 | head -1)
+if [ -z "$ARCH" ]; then
+    echo "Error: could not detect arch via rocm_agent_enumerator" >&2
+    exit 1
+fi
+
+if $USE_OP; then
+    WORKER_PYTHONPATH="$IMG_WORKDIR/installed/test/$ARCH/lib"
+else
+    WORKER_PYTHONPATH="$IMG_WORKDIR/installed/$ARCH/lib"
+fi
+
+# Same preparation the worker path does, for the same reason: `aotriton` is
+# not in the image's venv (the package lives in the bind-mounted checkout, so
+# it is installed at launch -- see install_aotriton_pkg.sh), and modules/ is
+# never shipped inside it, so registry.default_modules_dir() must be told
+# where the checkout's copy is rather than inferring site-packages/ from the
+# install. Done here even though this shell runs nothing itself: the whole
+# point of it is to run the tuning entry points by hand, and a shell that
+# cannot `python -m aotriton.tune.testrun` is not the environment it is
+# advertised to reproduce.
+exec docker run --rm -it \
+    --device=/dev/kfd \
+    --device=/dev/dri \
+    --group-add video \
+    --cap-add=SYS_PTRACE \
+    --security-opt seccomp=unconfined \
+    --ipc=host \
+    --network=host \
+    -e "PYTHONPATH=$WORKER_PYTHONPATH" \
+    -e AOTRITON_WORKDIR="$IMG_WORKDIR" \
+    -e AOTRITON_SRC="$IMG_SRC" \
+    -e AOTRITON_RUNDIR="$IMG_RUNDIR" \
+    -e AOTRITON_TMPFS="$AOTRITON_IMAGE_TMPFS" \
+    -e PYTHONPYCACHEPREFIX="$IMG_RUNDIR/pycache" \
+    --mount type=bind,source="$(realpath "$WORKDIR")",target="$IMG_WORKDIR" \
+    "$CELERY_WORKER_IMAGE" \
+    bash -l -c '
+        source "$AOTRITON_WORKDIR/config.rc"
+        source "$(dirname "$CELERY_WORKER_PYTHON")/activate"
+        cd "$AOTRITON_SRC"
+        bash .def/container/install_aotriton_pkg.sh
+        export AOTRITON_MODULES_DIR="$AOTRITON_SRC/modules"
+        source .ci/common-vars.sh
+        add_torch_ldconfig
+        export COLUMNS=400
+        exec bash
+    '

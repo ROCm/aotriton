@@ -56,11 +56,11 @@ git clone --recursive https://github.com/ROCm/aotriton.git -b main -o upstream
 cd aotriton
 
 # 2. Create and configure working directory
-.tune/bin/initproj ~/wkdir.tuning
+.def/bin/initproj ~/wkdir.tuning
 
 # 3. Generate mTLS certificates and start WebUI
-.tune/webui/gencerts/generate_all_certs.sh ~/wkdir.tuning   # first time only
-~/venv/bin/python .tune/dashboard.py ~/wkdir.tuning
+.def/webui/gencerts/generate_all_certs.sh ~/wkdir.tuning   # first time only
+~/venv/bin/python .def/bin/dashboard.py ~/wkdir.tuning
 #    Open https://<CELERY_SERVICE_HOST>:8888 — import client.p12 into browser first
 
 # 4. Register GPU workers
@@ -69,21 +69,21 @@ cd aotriton
 # 5. Prepare workdir — REQUIRED before every build when dev repo has changed
 #    (copies aotriton.src from upstream/main into <workdir>/aotriton.src)
 #    WebUI → Builds tab → Deployment → Prepare Workdir
-#    (or: .tune/bin/prepwkdir ~/wkdir.tuning)
+#    (or: .def/bin/prepwkdir ~/wkdir.tuning)
 
 # 6. Deploy to remote build node (if using one; required before building there)
 #    WebUI → Builds tab → Deployment → Deploy to Remote Build Node
 
 # 7. Build tuning version of AOTriton libraries
 #    WebUI → Builds tab → Build Tuning Version → Build Libraries (All)
-#    (or: .tune/bin/libbld ~/wkdir.tuning)
+#    (or: .tune/container/libbld ~/wkdir.tuning)
 
 # 8. Fetch tuning libraries from remote build node (if applicable)
 #    WebUI → Builds tab → Build Tuning Version → Fetch from Remote Build Node
 
 # 9. Deploy to GPU workers
 #    WebUI → Workers tab → Bulk Actions → Deploy to All Workers
-#    (or: .tune/bin/deploy ~/wkdir.tuning)
+#    (or: .def/bin/deploy ~/wkdir.tuning)
 
 # 10. Build Docker images on each worker
 #     WebUI → Workers tab → Bulk Actions → Build Images on All Workers
@@ -91,11 +91,11 @@ cd aotriton
 # 11. Start PostgreSQL and initialize database schema
 #     WebUI → Servers tab → PostgreSQL → Start Server
 #     WebUI → Servers tab → Database Schema → Initialize Schema
-#     (or: .tune/bin/srvctl ~/wkdir.tuning start && .tune/bin/initdb ~/wkdir.tuning)
+#     (or: .def/bin/srvctl ~/wkdir.tuning start && .def/bin/initdb ~/wkdir.tuning)
 
 # 12. Start GPU workers (select GPUs first)
 #     WebUI → Workers tab → per-host → Start
-#     (or: .tune/bin/wkctl ~/wkdir.tuning start)
+#     (or: .def/bin/wkctl ~/wkdir.tuning start)
 
 # 13. Dispatch tuning tasks
 #     .tune/bin/dispatch ~/wkdir.tuning flash --arch gfx942
@@ -127,8 +127,8 @@ cd aotriton
 #     WebUI → Testing tab → Run Test / Run Partial Test
 
 # 22. Stop workers and services when done
-.tune/bin/wkctl ~/wkdir.tuning stop
-.tune/bin/srvctl ~/wkdir.tuning stop
+.def/bin/wkctl ~/wkdir.tuning stop
+.def/bin/srvctl ~/wkdir.tuning stop
 ```
 
 # Detailed Steps
@@ -152,7 +152,7 @@ cd aotriton
 ## Create Working Directory
 
 ```bash
-.tune/bin/initproj <working_directory>
+.def/bin/initproj <working_directory>
 ```
 
 This interactive script will:
@@ -247,7 +247,7 @@ certificates signed by the same CA. Certificates are stored in
 from `config.rc`.
 
 ```bash
-.tune/webui/gencerts/generate_all_certs.sh <working_directory>
+.def/webui/gencerts/generate_all_certs.sh <working_directory>
 ```
 
 The script is interactive:
@@ -272,7 +272,7 @@ Generated files in `<workdir>/secrets/`:
 ### Launch the WebUI
 
 ```bash
-~/venv/bin/python .tune/dashboard.py <working_directory> [--port 8888]
+~/venv/bin/python .def/bin/dashboard.py <working_directory> [--port 8888]
 ```
 
 The server starts on `https://0.0.0.0:8888` by default. Open
@@ -284,7 +284,7 @@ The server starts on `https://0.0.0.0:8888` by default. Open
 For sharing a read-only progress view without certificate distribution:
 
 ```bash
-~/venv/bin/python .tune/dashboard.py <working_directory> --guest [--port 9999]
+~/venv/bin/python .def/bin/dashboard.py <working_directory> --guest [--port 9999]
 ```
 
 Guest mode serves plain HTTP on port 9999 with no client certificate required.
@@ -324,7 +324,7 @@ copies `image.scripts/`, and generates `image.build/Dockerfile`.
 CLI equivalent:
 
 ```bash
-.tune/bin/prepwkdir <working_directory>
+.def/bin/prepwkdir <working_directory>
 ```
 
 > **Important:** The workdir maintains its own copy of the AOTriton source at
@@ -360,7 +360,7 @@ Build artifacts land in `<workdir>/installed/<arch>/`.
 CLI equivalent:
 
 ```bash
-.tune/bin/libbld <working_directory>
+.tune/container/libbld <working_directory>
 ```
 
 ## Fetch Tuning Libraries from Remote Build Node
@@ -383,7 +383,7 @@ and `aotriton.src/`) are synced with `--delete`.
 CLI equivalent:
 
 ```bash
-.tune/bin/deploy <working_directory>
+.def/bin/deploy <working_directory>
 ```
 
 ## Build Worker Docker Images
@@ -397,7 +397,7 @@ Build progress streams live in the Command Output panel. The image is tagged as
 To follow a build from the CLI:
 
 ```bash
-.tune/single/build_image.sh <working_directory> <hostname> --follow
+.def/libexec/build_image.sh <working_directory> <hostname> --follow
 ```
 
 ## Initialize Database Schema
@@ -414,16 +414,16 @@ To drop all data and recreate from scratch, click **Recreate Schema (Danger)**.
 CLI equivalents:
 
 ```bash
-.tune/bin/srvctl <working_directory> start
-.tune/bin/initdb <working_directory>
-.tune/bin/initdb <working_directory> --recreate  # destructive
+.def/bin/srvctl <working_directory> start
+.def/bin/initdb <working_directory>
+.def/bin/initdb <working_directory> --recreate  # destructive
 ```
 
 **Connecting to PostgreSQL directly:**
 
 ```bash
-.tune/bin/psql <working_directory>       # interactive shell
-.tune/bin/psql <working_directory> -c "SELECT COUNT(*) FROM pgdef.task;"
+.def/bin/psql <working_directory>       # interactive shell
+.def/bin/psql <working_directory> -c "SELECT COUNT(*) FROM pgdef.task;"
 ```
 
 ## Start GPU Workers
@@ -449,11 +449,11 @@ worker row's schedule controls.
 CLI equivalents:
 
 ```bash
-.tune/bin/wkctl <working_directory> start
-.tune/bin/wkctl <working_directory> stop
-.tune/bin/wkctl <working_directory> restart
+.def/bin/wkctl <working_directory> start
+.def/bin/wkctl <working_directory> stop
+.def/bin/wkctl <working_directory> restart
 # Target specific hosts:
-.tune/bin/wkctl --host gpu-01.example.com <working_directory> start
+.def/bin/wkctl --host gpu-01.example.com <working_directory> start
 ```
 
 Check worker logs on the remote host:
@@ -489,8 +489,8 @@ failed / cancelled / total / ETA) that auto-refreshes every 30 seconds.
 For raw queries:
 
 ```bash
-.tune/bin/psql ~/wkdir.tuning -c "SELECT * FROM pgdef.queue_progress;"
-.tune/bin/psql ~/wkdir.tuning -c "SELECT * FROM pgdef.completion_eta;"
+.def/bin/psql ~/wkdir.tuning -c "SELECT * FROM pgdef.queue_progress;"
+.def/bin/psql ~/wkdir.tuning -c "SELECT * FROM pgdef.completion_eta;"
 ```
 
 ## Export Tuning Results
@@ -558,7 +558,7 @@ the Testing tab to run pytest correctness checks.
 CLI equivalent:
 
 ```bash
-.tune/bin/testbld <working_directory>
+.tune/container/testbld <working_directory>
 ```
 
 ## Fetch Testing Libraries from Remote Build Node
@@ -745,9 +745,9 @@ git commit -m "database: update gfx1100 tuning database"
 ## Workers Not Fetching Tasks
 
 **Check:**
-1. PostgreSQL is running: `.tune/bin/srvctl <workdir> status`
+1. PostgreSQL is running: `.def/bin/srvctl <workdir> status`
 2. Workers are running: `ssh <worker> docker ps`
-3. Database connection works: `.tune/bin/psql <workdir>`
+3. Database connection works: `.def/bin/psql <workdir>`
 4. Tasks exist in queue: `SELECT COUNT(*) FROM pgdef.task WHERE status='pending';`
 
 **Common issues:**
@@ -764,7 +764,7 @@ git commit -m "database: update gfx1100 tuning database"
 
 **Solutions:**
 - Stuck tasks: readers reap expired leases automatically; `.tune/bin/reset_task --select stale` forces a reset. `SELECT * FROM pgdef.expired_leases;` lists lapsed leases
-- Restart workers: `.tune/bin/wkctl <workdir> restart`
+- Restart workers: `.def/bin/wkctl <workdir> restart`
 
 ## Permission Errors During Rsync
 
@@ -802,10 +802,10 @@ ssh <worker> "docker run --rm -v <worker_workdir>:/wkdir -w /wkdir <worker_image
 docker port aotriton_pgsql.<suffix>
 
 # If port is wrong, delete old volume and restart
-.tune/bin/srvctl <workdir> stop
+.def/bin/srvctl <workdir> stop
 docker volume rm <POSTGRES_DOCKER_VOLUME>
-.tune/bin/srvctl <workdir> start
-.tune/bin/initdb <workdir> --recreate
+.def/bin/srvctl <workdir> start
+.def/bin/initdb <workdir> --recreate
 ```
 
 # Architecture Notes
@@ -860,16 +860,16 @@ Planned workflow:
 
 ```bash
 # Setup
-.tune/bin/initproj <workdir>  # Enable SLURM when prompted
+.def/bin/initproj <workdir>  # Enable SLURM when prompted
 # TODO: Register SLURM GRES configurations via WebUI
-.tune/bin/libbld <workdir>
-.tune/bin/prepwkdir <workdir>
+.tune/container/libbld <workdir>
+.def/bin/prepwkdir <workdir>
 # TODO: Build SLURM venv script
-.tune/bin/deploy <workdir>  # Rsync to SLURM shared filesystem
+.def/bin/deploy <workdir>  # Rsync to SLURM shared filesystem
 
 # Start services and submit jobs
-.tune/bin/srvctl <workdir> start
-.tune/bin/srun <workdir>  # Submit SLURM batch jobs
+.def/bin/srvctl <workdir> start
+.def/bin/srun <workdir>  # Submit SLURM batch jobs
 
 # Dispatch tasks (same as Docker workflow)
 # TODO: WebUI task dispatch

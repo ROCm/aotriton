@@ -156,7 +156,7 @@ def test_renew_extends_the_lease_for_the_owner_only(pg_conn, pool):
 
 
 def test_expired_lease_is_reaped_back_to_pending_and_keeps_the_appcookie(pg_conn, pool):
-    tasks.insert(pg_conn, pool, [_spec()])
+    tasks.insert(pg_conn, pool, [_spec(max_attempts=2)])       # retry is opt-in
     (t,) = _claim(pg_conn, lease_s=-1)                       # already expired
     tasks.append_cookie(pg_conn, t.ref, 'done', [1])
     assert progress.expired_leases(pg_conn)[0]['expired_count'] == 1
@@ -166,6 +166,13 @@ def test_expired_lease_is_reaped_back_to_pending_and_keeps_the_appcookie(pg_conn
     assert row['logistics']['errors'][0]['reason'] == 'lease_expired'
     (again,) = _claim(pg_conn, worker='w1')
     assert again.logistics.attempt == 2 and again.appcookie == {'done': [1]}
+
+
+def test_reaping_fails_a_default_task_because_retry_is_opt_in(pg_conn, pool):
+    tasks.insert(pg_conn, pool, [_spec()])
+    (t,) = _claim(pg_conn, lease_s=-1)
+    assert tasks.reap_expired(pg_conn, pool) == [(t.id, 'failed')]
+    assert _row(pg_conn, t.ref)['status'] == 'failed'
 
 
 def test_a_stolen_lease_cannot_be_settled_by_its_old_owner(pg_conn, pool):

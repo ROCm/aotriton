@@ -6,6 +6,7 @@ import json
 import logging
 from pathlib import Path
 
+from aotriton.pgdef import paths
 from aotriton.pgdef.exaid import ExaidProxy, ExaidSubprocessNotOK
 
 logger = logging.getLogger(__name__)
@@ -23,10 +24,9 @@ class ExaidTunerWorker(object):
     (Revision note 3).
 
     Startup is ~2 s (torch plus a GPU context), so the process is reused across
-    tasks. TMPFS_LOCATION is the tuner's scratch space for prepared data.
+    tasks. `tmpfs` is the tuner's scratch space for prepared data, under
+    aotriton.pgdef.paths.tmpfs().
     """
-
-    TMPFS_LOCATION = Path('/dev/shm/aotriton-tuner')
 
     def __init__(self, module_name: str, gpu_id: int):
         self._module_name = module_name
@@ -47,7 +47,7 @@ class ExaidTunerWorker(object):
 
     @property
     def tmpfs(self) -> Path:
-        return self.TMPFS_LOCATION
+        return paths.tmpfs() / 'aotriton-tuner'
 
     @property
     def proxy(self):
@@ -60,7 +60,7 @@ class ExaidTunerWorker(object):
         return tune.ENTRY_CLASS.from_dict(entry_dict)
 
     def get_tmpfs_for(self, entry_dict):
-        return self.TMPFS_LOCATION / self.entry_from_dict(entry_dict).as_posix()
+        return self.tmpfs / self.entry_from_dict(entry_dict).as_posix()
 
     def prepare_data(self, entry_dict: dict, workdir: Path, extra_im_texts: list[str] = []):
         logger.info(f"prepare_data: entry={entry_dict}, workdir={workdir}, extra_ims={len(extra_im_texts)}")

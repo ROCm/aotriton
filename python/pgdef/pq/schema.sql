@@ -4,7 +4,7 @@
 -- pgdef: the engine's PostgreSQL schema.
 --
 -- Plain, idempotent SQL (CREATE ... IF NOT EXISTS / CREATE OR REPLACE): no psql
--- meta-commands, no PL/pgSQL, so `.tune/bin/initdb` can feed it to psql and a
+-- meta-commands, no PL/pgSQL, so `.def/bin/initdb` can feed it to psql and a
 -- test can feed it to psycopg. Applied FIRST; every application's own
 -- python/<app>/pq/schema.sql references these tables and is applied after.
 --

@@ -418,7 +418,7 @@ def test_family_static_route_guards_traversal_and_unknown_family():
     pytest.importorskip('psycopg')
     from werkzeug.exceptions import NotFound
 
-    tune_dir = str(_REPO_ROOT / '.tune')
+    tune_dir = str(_REPO_ROOT / '.def')
     inserted = tune_dir not in sys.path
     if inserted:
         sys.path.insert(0, tune_dir)
@@ -623,21 +623,24 @@ def test_entry_selector_is_the_only_clause_builder():
 
 
 def test_no_raw_tuning_db_sql_outside_pq():
-    # Regression guard for the CLAUDE.md rule: .tune/ must reach the tuning
+    # Regression guard for the CLAUDE.md rule: .def/, .tune/ and .perfmon/ must reach the tuning
     # database through aotriton.tune.pq, never with its own SQL.
     import re
-    # .tune/bin/psql is an interactive psql wrapper; SQL in its help text is
+    # .def/bin/psql is an interactive psql wrapper; SQL in its help text is
     # the point of the tool, not a bypass of the pq layer.
-    EXEMPT = {'.tune/bin/psql'}
+    EXEMPT = {'.def/bin/psql'}
     offenders = []
     pat = re.compile(r"\b(FROM|JOIN|UPDATE|INSERT INTO|DELETE FROM)\s+(pgdef|tune)\.\w+"
                      r"|payload->'entry'")
-    for sub in ('webui', 'libexec', 'bin', 'remote'):
-        d = _REPO_ROOT / '.tune' / sub
+    for sub in ('.def/webui', '.def/libexec', '.def/bin', '.def/host',
+                '.def/container', '.tune/libexec', '.tune/bin', '.tune/host',
+                '.tune/container', '.perfmon/bin'):
+        d = _REPO_ROOT / sub
         if not d.is_dir():
             continue
         for f in d.rglob('*'):
-            if not f.is_file() or f.suffix in {'.html', '.js', '.css'}:
+            # The compatibility links in .tune/bin/ are scanned at their target.
+            if f.is_symlink() or not f.is_file() or f.suffix in {'.html', '.js', '.css'}:
                 continue
             if str(f.relative_to(_REPO_ROOT)) in EXEMPT:
                 continue
@@ -741,7 +744,7 @@ def test_visperf_descriptors_agree_across_languages():
 def test_export_assets_resolve_per_tree(tmp_path):
     """The three trees have three lifetimes, so three resolution rules.
 
-    python/ is installed and its template is package data; .tune/ and modules/
+    python/ is installed and its template is package data; .def/ and modules/
     are checkout-only and must be named by the caller. An installed package
     cannot infer where a checkout is, and pretending otherwise is what once
     produced a silently JS-less export.
@@ -753,32 +756,32 @@ def test_export_assets_resolve_per_tree(tmp_path):
     assert ev._TEMPLATE.is_file()
     assert ev._TEMPLATE.parent == Path(ev.__file__).parent
 
-    # perf.js is NOT: it belongs to .tune/, which is never installed.
+    # perf.js is NOT: it belongs to .def/, which is never installed.
     assert not (Path(ev.__file__).parent / 'static' / 'perf.js').exists(), (
-        'perf.js is back inside the package; it belongs to .tune/')
-    assert (_REPO_ROOT / '.tune' / ev._PERF_JS_RELPATH).is_file()
+        'perf.js is back inside the package; it belongs to .def/')
+    assert (_REPO_ROOT / '.def' / ev._PERF_JS_RELPATH).is_file()
 
-    # An explicit tune_root is honoured, and a missing perf.js raises rather
+    # An explicit def_root is honoured, and a missing perf.js raises rather
     # than producing an export with no renderer in it.
-    fake_tune = tmp_path / '.tune'
-    (fake_tune / 'webui' / 'static' / 'js').mkdir(parents=True)
-    (fake_tune / 'webui' / 'static' / 'js' / 'perf.js').write_text('/*STUB*/')
+    fake_def = tmp_path / '.def'
+    (fake_def / 'webui' / 'static' / 'js').mkdir(parents=True)
+    (fake_def / 'webui' / 'static' / 'js' / 'perf.js').write_text('/*STUB*/')
     fake_modules = tmp_path / 'modules'
     for family in ['flash']:
         d = fake_modules / family / 'visperf' / 'static'
         d.mkdir(parents=True)
         (d / f'{family}.js').write_text('/*FAM*/')
-    html = ev.build_export_html({}, tune_root=fake_tune, modules_dir=fake_modules)
+    html = ev.build_export_html({}, def_root=fake_def, modules_dir=fake_modules)
     assert '/*STUB*/' in html and '/*FAM*/' in html
 
     with pytest.raises(FileNotFoundError):
-        ev.build_export_html({}, tune_root=tmp_path / 'nope',
+        ev.build_export_html({}, def_root=tmp_path / 'nope',
                              modules_dir=fake_modules)
 
 
-def test_default_tune_root_matches_the_checkout():
-    from aotriton.tune.registry import default_tune_root
-    assert (default_tune_root() / 'webui' / 'static' / 'js' / 'perf.js').is_file()
+def test_default_def_root_matches_the_checkout():
+    from aotriton.tune.registry import default_def_root
+    assert (default_def_root() / 'webui' / 'static' / 'js' / 'perf.js').is_file()
 
 
 def test_export_inlines_perf_js_before_family_js(tmp_path):
@@ -791,16 +794,16 @@ def test_export_inlines_perf_js_before_family_js(tmp_path):
     pytest.importorskip('psycopg')
     from aotriton.tune.pq.export_visperf import build_export_html
 
-    tune = tmp_path / '.tune'
-    (tune / 'webui' / 'static' / 'js').mkdir(parents=True)
-    (tune / 'webui' / 'static' / 'js' / 'perf.js').write_text(
+    deff = tmp_path / '.def'
+    (deff / 'webui' / 'static' / 'js').mkdir(parents=True)
+    (deff / 'webui' / 'static' / 'js' / 'perf.js').write_text(
         'function registerDescriptor(d){} /*ENGINE*/')
     mods = tmp_path / 'modules'
     d = mods / 'flash' / 'visperf' / 'static'
     d.mkdir(parents=True)
     (d / 'flash.js').write_text('registerDescriptor({id:"flash"}); /*FAMILY*/')
 
-    html = build_export_html({}, tune_root=tune, modules_dir=mods)
+    html = build_export_html({}, def_root=deff, modules_dir=mods)
     assert html.index('/*ENGINE*/') < html.index('/*FAMILY*/'), (
         'family descriptor JS is inlined before the engine that defines '
         'registerDescriptor()')

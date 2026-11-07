@@ -9,7 +9,7 @@ The tune application's node entry point.
     python -m aotriton.tune.node cpu_worker
     python -m aotriton.tune.node reader --pool gfx950 --subpool MI355 --category tune,kernel
 
-`.tune/remote/worker_service.sh --category tune,kernel` starts these. pgdef is a library:
+`.def/container/worker_service.sh --category tune,kernel` starts these. pgdef is a library:
 it never imports this module; this module hands it the handlers, the runner
 type and the reader's enrichment.
 """

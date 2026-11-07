@@ -1,0 +1,71 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Deploy workdir to all workers
+# Usage: deploy <workdir> --category <app>[,<level1>]
+#
+# The application is the category's first level. Which hosts and which build to
+# sync come from its manifest (python/<app>/manifest.py): deploy.role and
+# install.subtree. For example:
+#   --category tune,kernel  Deploy to Tuner-role hosts; sync installed/<arch>/.
+#   --category tune,op      Deploy to Tuner-role hosts; sync installed/test/<arch>/.
+
+set -e
+
+# readlink -f: the compatibility links in .tune/bin/ must find .def/, not .tune/.
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$DEF_ROOT/lib/config_load.sh"
+. "$DEF_ROOT/lib/db_query.sh"
+. "$DEF_ROOT/lib/manifest.sh"
+. "$DEF_ROOT/lib/category.sh"
+
+WORKDIR="$1"
+shift
+
+CATEGORY=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --category) CATEGORY="$2"; shift 2 ;;
+    *) echo "Unknown argument: $1" >&2; exit 1 ;;
+  esac
+done
+
+if [ -z "$WORKDIR" ]; then
+    echo "Usage: $0 <workdir> --category <app>[,<level1>]" >&2
+    exit 1
+fi
+
+# Entry script: validate early so a typo fails before any rsync (the endpoint,
+# sync_workdir.sh, checks it again). Only level 0 is used here.
+validate_category "$CATEGORY" || exit 1
+parse_category "$CATEGORY"
+
+load_config "$WORKDIR"
+
+echo "Deploying from $WORKDIR (application=$CAT_LEVEL0, category=$CATEGORY)"
+
+# What to sync is the application's manifest's business (sync_workdir.sh reads it).
+SYNC_ARGS=(--category "$CATEGORY")   # forwarded as it is
+ROLE="$(app_manifest "$CAT_LEVEL0" deploy.role)"
+mapfile -t WORKER_DATA < <(get_workers "$WORKDIR" "$ROLE")
+
+for worker in "${WORKER_DATA[@]}"; do
+    IFS='|' read -r hostname arch workdir_override <<< "$worker"
+    WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
+
+    echo "Deploying to $hostname ($arch) at $WORKER_WORKDIR"
+
+    "$DEF_ROOT/libexec/sync_workdir.sh" "$WORKDIR" "$hostname" "${SYNC_ARGS[@]}"
+done
+
+# SLURM deployment if configured
+if [ -n "$SLURM_LOGIN_NODE" ]; then
+    echo "Deploying to SLURM: $SLURM_LOGIN_NODE at $SLURM_WORKER_DIR"
+
+    "$DEF_ROOT/libexec/sync_workdir.sh" "$WORKDIR" "$SLURM_LOGIN_NODE" "${SYNC_ARGS[@]}"
+fi
+
+echo "Deployment complete"

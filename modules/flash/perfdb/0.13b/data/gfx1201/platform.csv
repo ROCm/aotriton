@@ -1,0 +1,2 @@
+variant,gpu_device_id,vram_gib,power_cap_w,power_cap_default_w,gpus_per_node,thermal_gate,cpu,ram_speed,os,kernel,amdgpu,rocm,harness,measured
+any,0x7551,31.9,,,4,on,AMD Ryzen Threadripper PRO 7965WX 24-Cores,,Debian GNU/Linux 13 (trixie),6.11.0-26-generic,,10.1.0,a95d699d9a7b7324c2f768da89afdc4087a53924,2026-11-06

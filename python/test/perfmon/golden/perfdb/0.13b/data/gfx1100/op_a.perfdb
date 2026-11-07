@@ -1,0 +1,18 @@
+#!/usr/bin/env -S python -m aotriton.perfmon.perfdb
+#! metadata
+iface,op_a
+backend,-
+timing_method,hipgraph_ev100
+iterations,100
+l2_flush,1
+unit,us
+#! results any
+entry,median,mean,stddev,min,p05,p95
+1,100,100,0.05,99.8,99.9,100.3
+2,110,110,0.05,109.8,109.9,110.3
+3,-
+4,-
+5,140,140,0.05,139.8,139.9,140.3
+6,150,150,0.05,149.8,149.9,150.3
+7,-
+8,-

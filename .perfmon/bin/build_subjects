@@ -1,0 +1,176 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Builds the core for each ROCm, then subjects for each target, into
+# <workdir>/installed/perfmon. The host that builds must have that ROCm
+# toolchain: the perfmon image, or a host with a ROCm Python venv (a venv
+# provided for the session, else a shared one; see setup_session). Thin on
+# purpose: perfmon/build_core.sh and perfmon/build_subject.sh do the work.
+#
+# Tune and perfmon share one way to build on the remote build node (prepwkdir -> <workdir>/aotriton.src -> sync_workdir.sh --buildnode), so
+# an operator who knows one app's build flow knows the other's.
+#
+# Usage: build_subjects --workdir <wkdir> [--host <build host>] [--rocm <ver>]...
+#                       [--arch <target>...] [--prefix <dir>] [--scratch <dir>]
+#                       [--without_amdsmi] [<tag>...] [-- <build_subject.sh options>]
+#   --workdir <wkdir> the perfmon workdir; default $AOTRITON_WORKDIR
+#                     (.def/lib/paths.sh)
+#   --host <h>        run on <h> over ssh, from the build node's copy of the workdir
+#                     (workers.db buildnode::workdir_override, else default_workdir;
+#                     as sync_workdir.sh --buildnode) and the scripts in its
+#                     aotriton.src; run sync_workdir.sh --buildnode first. The venv is
+#                     that of each ROCm (the one provided for the session, else the
+#                     shared one). Products go to the node's <workdir>/installed/perfmon
+#                     (unless --prefix). Without --host, run here, with the
+#                     toolchain already in the environment.
+#   --rocm <ver>      repeatable; default workers.db perfmon::rocm, else 10.1.0
+#   --arch <target>...  what to build; default MAJOR. A target is
+#                       MAJOR   one subject per tag for the five arches of
+#                               AOTRITON_MAJOR_ARCHES (python/gpu_targets.py),
+#                               in <prefix>/MAJOR; the dev team's choice
+#                       ALL     MAJOR, and a subject of its own for every other
+#                               arch of AOTRITON_SUPPORTED_GPUS
+#                       <arch>  a subject of that arch, in <prefix>/<arch>, for
+#                               external users; a major arch means MAJOR
+#   --prefix <dir>    default <wkdir>/installed/perfmon (with --host: the node's wkdir)
+#   --scratch <dir>   default: the parent of the workdir (locates the venv)
+#   <tag>...          release tags, or head: the committed tip of your branch, as
+#                     .def/bin/prepwkdir clones it into <wkdir>/aotriton.src (uncommitted
+#                     work is not in it). With --host, sync it to the build node
+#                     first: .def/bin/prepwkdir <wkdir>, then
+#                     .def/libexec/sync_workdir.sh <wkdir> <host> --buildnode
+#                     (this script does not). Subject aotriton-head+rocm<ver>, for
+#                     live comparison; <subject>/source.txt records the commit built.
+#                     The committed perfdb is release-only. Default workers.db perfmon::tags
+# Options after `--` go to build_subject.sh (also with --host, on the remote), e.g.
+# --cache_dir <dir>. head needs the wheels it compiles kernels with:
+#   head -- --triton_wheel <abs .whl> --flydsl_wheel <abs .whl>
+# (paths on the build host; see build_subject.sh).
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+. "$ROOT/.def/lib/paths.sh"
+. "$ROOT/.def/lib/db_query.sh"
+. "$ROOT/.perfmon/lib/session.sh"
+. "$ROOT/perfmon/scripts/lib/arches.sh"
+
+usage() {
+    sed -n '/^# Usage:/,/^# Options after/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+    exit 1
+}
+
+WORKDIR="$AOTRITON_WORKDIR"
+HOST=""
+ROCMS=()
+ARCHES=()
+PREFIX=""
+SCRATCH=""
+CORE_OPTS=()
+TAGS=()
+SUBJECT_OPTS=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --workdir) WORKDIR="$2"; shift 2 ;;
+        --host)    HOST="$2"; shift 2 ;;
+        --rocm)    ROCMS+=("$2"); shift 2 ;;
+        --arch)
+            # One or more targets; a tag never looks like gfx<hex>, MAJOR or ALL.
+            shift
+            [ "$#" -gt 0 ] && [[ "$1" =~ ^(gfx[0-9a-f]+|MAJOR|ALL)$ ]] || { echo "Error: --arch needs a target" >&2; usage; }
+            while [ "$#" -gt 0 ] && [[ "$1" =~ ^(gfx[0-9a-f]+|MAJOR|ALL)$ ]]; do
+                ARCHES+=("$1"); shift
+            done ;;
+        --prefix)  PREFIX="$2"; shift 2 ;;
+        --scratch) SCRATCH="$2"; shift 2 ;;
+        --without_amdsmi) CORE_OPTS+=(--without_amdsmi); shift ;;
+        --help|-h) usage ;;
+        --)        shift; SUBJECT_OPTS=("$@"); break ;;
+        -*) echo "Error: unknown option: $1" >&2; usage ;;
+        *) TAGS+=("$1"); shift ;;
+    esac
+done
+
+if [ ! -f "$WORKDIR/config.rc" ]; then
+    echo "Error: workdir $WORKDIR has no config.rc (use --workdir)" >&2
+    exit 1
+fi
+WORKDIR="$(cd "$WORKDIR" && pwd)"
+export AOTRITON_WORKDIR="$WORKDIR"
+[ -n "$PREFIX" ] || PREFIX="$WORKDIR/installed/perfmon"
+
+# Defaults from workers.db, which the webui edits (absent on a bare workdir).
+HAVE_DB=0
+[ -f "$WORKDIR/workers.db" ] && HAVE_DB=1
+if [ "${#ROCMS[@]}" -eq 0 ]; then
+    if [ "$HAVE_DB" -eq 1 ]; then
+        mapfile -t ROCMS < <(perfmon_rocm_versions "$WORKDIR")
+    else
+        ROCMS=("$PERFMON_DEFAULT_ROCM")
+    fi
+fi
+if [ "${#TAGS[@]}" -eq 0 ]; then
+    if [ "$HAVE_DB" -eq 1 ]; then
+        mapfile -t TAGS < <(get_config_list "$WORKDIR" "perfmon::tags" "$PERFMON_DEFAULT_TAGS")
+    else
+        mapfile -t TAGS < <(python3 -c 'import json, sys
+print("\n".join(json.loads(sys.argv[1])))' "$PERFMON_DEFAULT_TAGS")
+    fi
+fi
+[ "${#ARCHES[@]}" -gt 0 ] || ARCHES=("$PERFMON_MAJOR_POOL")
+# The targets as subject pools: ALL is MAJOR and the other supported arches, a
+# major arch is MAJOR, and a pool is built once however it was named.
+TARGETS=()
+_add_target() {
+    local t
+    for t in ${TARGETS[@]+"${TARGETS[@]}"}; do [ "$t" = "$1" ] && return 0; done
+    TARGETS+=("$1")
+}
+for ARCH in "${ARCHES[@]}"; do
+    if [ "$ARCH" = ALL ]; then
+        _add_target "$PERFMON_MAJOR_POOL"
+        for A in $(perfmon_supported_arches); do _add_target "$(perfmon_subject_pool "$A")"; done
+    elif [ "$ARCH" = "$PERFMON_MAJOR_POOL" ]; then
+        _add_target "$ARCH"
+    else
+        POOL="$(perfmon_subject_pool "$ARCH")"
+        [ "$POOL" = "$ARCH" ] || echo "[perfmon] $ARCH is a major arch: building $POOL" >&2
+        _add_target "$POOL"
+    fi
+done
+ARCHES=("${TARGETS[@]}")
+if [ "${#TAGS[@]}" -eq 0 ]; then
+    echo "Error: no tag given and perfmon::tags is empty" >&2
+    exit 1
+fi
+
+if [ -n "$HOST" ]; then
+    # One ssh per ROCm: each has its own venv. build_run.sh activates it and
+    # calls this script again, without --host.
+    SCRATCH="$(perfmon_scratch_root "$WORKDIR" "$SCRATCH")"
+    RWORKDIR="$(get_buildnode_workdir "$WORKDIR")"
+    [ -n "$RWORKDIR" ] || { echo "Error: no build node workdir in $WORKDIR/workers.db" >&2; exit 1; }
+    # Without --prefix, the product tree is the build node's.
+    RPREFIX="$PREFIX"
+    [ "$PREFIX" != "$WORKDIR/installed/perfmon" ] || RPREFIX="$RWORKDIR/installed/perfmon"
+    for ROCM in "${ROCMS[@]}"; do
+        REMOTE=(bash "$RWORKDIR/aotriton.src/.perfmon/host/build_run.sh" "$RWORKDIR" "$SCRATCH" "$ROCM"
+                --workdir "$RWORKDIR" --rocm "$ROCM" --prefix "$RPREFIX"
+                --arch "${ARCHES[@]}" ${CORE_OPTS[@]+"${CORE_OPTS[@]}"}
+                "${TAGS[@]}")
+        [ "${#SUBJECT_OPTS[@]}" -eq 0 ] || REMOTE+=(-- "${SUBJECT_OPTS[@]}")
+        echo "[perfmon] building on $HOST: rocm=$ROCM arch=${ARCHES[*]} tags=${TAGS[*]}" >&2
+        ssh "$HOST" "$(printf '%q ' "${REMOTE[@]}")"
+    done
+    exit 0
+fi
+
+for ROCM in "${ROCMS[@]}"; do
+    "$ROOT/perfmon/build_core.sh" ${CORE_OPTS[@]+"${CORE_OPTS[@]}"} --rocm "$ROCM" "$PREFIX"
+    for ARCH in "${ARCHES[@]}"; do
+        "$ROOT/perfmon/build_subject.sh" ${SUBJECT_OPTS[@]+"${SUBJECT_OPTS[@]}"} \
+            --rocm "$ROCM" "$ARCH" "$PREFIX" "${TAGS[@]}"
+    done
+done

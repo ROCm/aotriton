@@ -35,7 +35,7 @@ export AOTRITON_INSTALL_PATH="${AOTRITON_INSTALL_PATH:-installed_dir/aotriton}"
 
 # AOTRITON_NO_PYTHON is not just "torch has no use for pyaotriton": leaving the
 # bindings on drags in find_package(Torch), which hard-errors without
-# PYTORCH_ROCM_ARCH (see .tune/single/build_arch.sh for that fight).
+# PYTORCH_ROCM_ARCH (see .tune/container/build_arch.sh for that fight).
 #
 # And no -DCMAKE_PREFIX_PATH. CMakeLists.txt already prefers $ENV{ROCM_PATH}
 # and falls back to /opt/rocm itself, so passing /opt/rocm on the command line

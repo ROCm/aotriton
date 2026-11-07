@@ -1,0 +1,55 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Probe status for all registered workers
+# Usage: probe-status <workdir>
+
+set -e
+
+# readlink -f: the compatibility links in .tune/bin/ must find .def/, not .tune/.
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+DEF_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+WORKDIR="$1"
+
+if [ -z "$WORKDIR" ]; then
+  echo "Usage: $0 <workdir>" >&2
+  exit 1
+fi
+
+DB_PATH="$WORKDIR/workers.db"
+if [ ! -f "$DB_PATH" ]; then
+  echo "Error: workers.db not found at $DB_PATH" >&2
+  exit 1
+fi
+
+# Get all hostnames
+mapfile -t HOSTNAMES < <(sqlite3 "$DB_PATH" "SELECT DISTINCT hostname FROM workers ORDER BY hostname;")
+
+TOTAL=${#HOSTNAMES[@]}
+SUCCESS=0
+FAILED=0
+
+echo "Probing status for $TOTAL worker(s)..."
+echo ""
+
+for HOSTNAME in "${HOSTNAMES[@]}"; do
+  echo "$HOSTNAME:"
+
+  if "$DEF_ROOT/libexec/get_worker_status.sh" "$WORKDIR" "$HOSTNAME"; then
+    SUCCESS=$((SUCCESS + 1))
+  else
+    FAILED=$((FAILED + 1))
+  fi
+
+  echo ""
+done
+
+echo "Summary:"
+echo "  Success: $SUCCESS/$TOTAL"
+echo "  Failed: $FAILED/$TOTAL"
+
+if [ $FAILED -gt 0 ]; then
+  exit 1
+fi

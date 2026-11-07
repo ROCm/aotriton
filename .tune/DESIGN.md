@@ -8,7 +8,7 @@
 <workdir>/
 ├── config.rc                 # Configuration file (sourced by scripts)
 ├── workers.db               # SQLite database of registered workers
-├── .tune/                   # Tuning framework (copied from aotriton/.tune)
+├── .def/, .tune/            # Operator tooling (copied from aotriton/.def and aotriton/.tune)
 ├── python/                  # Python tuning code (copied from aotriton/python, installed as the `aotriton` package)
 ├── image.build/             # Docker image build context (generated)
 ├── installed/               # Architecture-specific installed libraries
@@ -21,7 +21,7 @@
 │   │   └── worker-<arch>-<id>.pid
 │   ├── logs/                # Worker log files
 │   │   └── worker-<arch>-<id>.log
-│   └── worker.containerid   # Docker container ID (used by single/ scripts)
+│   └── worker.containerid   # Docker container ID (used by .def/libexec/ scripts)
 ├── scratch/                 # Temporary/local-only data (EXCLUDED from sync)
 │   └── webui-commands/      # Web UI command logs
 └── secrets/                 # Secrets (certificates, keys) (EXCLUDED from sync)
@@ -46,34 +46,47 @@
 
 ```
 aotriton/
-├── .tune/                   # Tuning infrastructure
-│   ├── bin/                 # Control scripts (run on server/dev machine)
-│   │   ├── srvctl          # Server control (PostgreSQL)
-│   │   ├── wkctl           # Worker control (bulk operations)
-│   │   ├── deploy          # Deploy workdir to all workers
-│   │   ├── prepwkdir       # Prepare workdir structure
-│   │   ├── initdb          # Initialize database schema
-│   │   ├── libbld          # Build libraries (dev machine only)
-│   │   └── imgbld          # Build Docker images on all workers
-│   ├── single/             # Single-worker operations
+├── .def/                    # Shared by every DEF application (tune, perfmon, ...)
+│   ├── bin/                 # Operator commands (run on the control host)
+│   │   ├── srvctl           # Server control (PostgreSQL)
+│   │   ├── wkctl            # Worker control (bulk operations)
+│   │   ├── deploy           # Deploy workdir to all workers
+│   │   ├── prepwkdir        # Prepare workdir structure
+│   │   ├── initdb           # Initialize database schema
+│   │   ├── imgbld           # Build Docker images on all workers
+│   │   └── dashboard.py     # Web dashboard entry point
+│   ├── libexec/             # Per-host primitives called by bin/ and the webui
 │   │   ├── start_worker.sh
 │   │   ├── stop_worker.sh
 │   │   ├── restart_worker.sh
-│   │   ├── sync_workdir.sh # Sync workdir to one worker
-│   │   ├── build_image.sh  # Build Docker image on one worker
+│   │   ├── sync_workdir.sh  # Sync workdir to one worker
+│   │   ├── build_image.sh   # Build Docker image on one worker
 │   │   └── ...
-│   ├── remote/             # Scripts executed ON remote workers
+│   ├── host/                # Run on a worker or build host, outside containers
+│   │   ├── run_worker.sh
+│   │   ├── slurm_worker_job.sh
+│   │   └── get_status.sh
+│   ├── container/           # Run inside the worker container
 │   │   ├── worker_service.sh  # SysV-style init for workers
-│   │   └── rayctl          # Ray cluster control
-│   ├── lib/                # Shared bash libraries
+│   │   └── install_aotriton_pkg.sh
+│   ├── lib/                 # Sourced shell libraries only
 │   │   ├── config_load.sh
 │   │   └── db_query.sh
-│   └── webui/              # Web dashboard
+│   ├── image.scripts/       # Run inside the container at image build
+│   └── webui/               # Web dashboard
 │       ├── __init__.py
 │       ├── routes.py
 │       ├── tasks.py
 │       ├── action_tracker.py
 │       └── templates/
+├── .tune/                   # Tune-only tooling (same sub-directory roles as .def/)
+│   ├── bin/                 # bake_lut, compute_best_results, remotebld, runtest, ...
+│   ├── host/                # prebuild_wheel.sh, bash_direct, testrun_direct
+│   ├── container/           # libbld, testbld, build_arch.sh, ...
+│   ├── libexec/             # run-test.sh, broken_entries_to_db, pq_helpers.py, ...
+│   └── lib/                 # aotriton_version.sh, find_flydsl.sh, ...
+├── .perfmon/                # Perfmon-only operator tooling
+│   └── bin/                 # build_subjects, dispatch, export
 ├── python/                 # `aotriton` package (python/ -> aotriton, see setup.py)
 │   └── tune/               # aotriton.tune -- tuning modules
 │       ├── exaid.py        # Execution backend
@@ -159,7 +172,7 @@ run_command(cmd, cwd, workdir, description)
 
 **Individual Worker**:
 ```bash
-.tune/single/build_image.sh <workdir> <hostname> [--arch <arch>] [--follow]
+.def/libexec/build_image.sh <workdir> <hostname> [--arch <arch>] [--follow]
   → ssh <hostname> "jobid=$(tsp docker build ...) && tsp -c $jobid"
   → --follow flag: web UI gets real-time output via tsp -c
   → tsp -c blocks until completion and exits with job's exit code
@@ -170,7 +183,7 @@ run_command(cmd, cwd, workdir, description)
 
 **Bulk (All Workers)**:
 ```bash
-.tune/bin/imgbld <workdir>
+.def/bin/imgbld <workdir>
   → Iterates workers.db
   → Calls build_image.sh for each worker (without --follow), passing --arch
 ```
@@ -268,13 +281,13 @@ docker run "$IMAGE" ...
 
 ```bash
 # Start workers (on each worker machine)
-.tune/remote/worker_service.sh <workdir> <arch> start [num_workers]
+.def/container/worker_service.sh <workdir> <arch> start [num_workers]
   → Starts Ray cluster (shared)
   → Spawns N worker_main.py processes
   → Each worker_main.py connects to Ray cluster and polls PostgreSQL
 
 # Stop workers
-.tune/remote/worker_service.sh <workdir> <arch> stop
+.def/container/worker_service.sh <workdir> <arch> stop
   → Graceful shutdown (SIGTERM, 30s timeout)
   → Force kill if needed (SIGKILL)
   → Stops Ray cluster
@@ -299,27 +312,27 @@ docker run "$IMAGE" ...
 
 ```bash
 # 1. Prepare workdir (on server/dev machine)
-.tune/bin/prepwkdir <workdir>
+.def/bin/prepwkdir <workdir>
   → Creates directory structure
   → Copies config.rc template
   → Initializes workers.db
 
 # 2. Build libraries (on dev machine ONLY, manual SSH)
-.tune/bin/libbld <workdir>
+.tune/container/libbld <workdir>
   → Builds AOTriton libraries for all architectures
   → Stores in <workdir>/installed/<arch>/
 
 # 3. Deploy to workers
-.tune/bin/deploy <workdir>
+.def/bin/deploy <workdir>
   → Syncs to all workers (excludes /build, /run, /scratch, /secrets, /installed)
   → Syncs architecture-specific /installed/<arch> per worker
 
 # 4. Build Docker images on workers
-.tune/bin/imgbld <workdir>
+.def/bin/imgbld <workdir>
   → Builds worker Docker image on each worker (via tsp)
 
 # 5. Start workers
-.tune/bin/wkctl <workdir> start
+.def/bin/wkctl <workdir> start
   → Starts worker_service.sh on each worker via SSH
 ```
 
@@ -353,7 +366,7 @@ CELERY_WORKER_IMAGE=aotriton-worker:latest
 
 **Loading Pattern**:
 ```bash
-. "$TUNE_ROOT/lib/config_load.sh"
+. "$DEF_ROOT/lib/config_load.sh"
 load_config "$WORKDIR"  # Sources <workdir>/config.rc
 ```
 
@@ -378,7 +391,7 @@ ssh <worker> "cd <workdir> && .tune/remote/rayctl <workdir> status"
 
 **Check worker status**:
 ```bash
-ssh <worker> "cd <workdir> && .tune/remote/worker_service.sh <workdir> <arch> status"
+ssh <worker> "cd <workdir> && .def/container/worker_service.sh <workdir> <arch> status"
 ```
 
 **View logs**:
