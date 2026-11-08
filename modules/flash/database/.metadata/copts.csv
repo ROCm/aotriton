@@ -23,3 +23,7 @@ waves_per_eu,num_warps,num_stages
 3,2,1
 2,8,4
 1,8,4
+4,8,2
+1,8,2
+3,8,3
+4,8,3
