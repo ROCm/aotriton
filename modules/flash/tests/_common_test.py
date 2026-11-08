@@ -1011,7 +1011,8 @@ class SdpaContext(object):
             return False, max_adiff, None
         # print(f"{adiff=} {test_error=}")
         if adiff is not None:
-            valid = test_error < (adiff * 2.0)
+            # <=, not <: a recorded adiff of exactly 0.0 (an exact tensor) must pass its own 0.0.
+            valid = test_error <= (adiff * 2.0)
         else:
             atol = default_atol[torch.float32]
             threshold = max(atol, ref_error * fudge_factor)
