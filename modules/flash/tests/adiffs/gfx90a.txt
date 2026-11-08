@@ -1,3 +1,9 @@
+# gfx90a: fp16 MFMA flushes subnormals. Window (0,0) makes P == 1 on a single key, so O copies V and dV copies dO:
+# any value below 6.1e-5 reads back as 0, while the reference error is exactly 0 (so no fudge factor can pass).
+modules/flash/tests/test_varlen.py::test_varlen_principal_diagonal_chunked_prefill[compact-0_0-hdim64-3] (call)	{"adiff": 3.403425216674805e-05, "grads_adiff": [0.0, 0.0, 4.8220157623291016e-05, 0.0]}
+modules/flash/tests/test_varlen.py::test_varlen_principal_diagonal_chunked_prefill[padded-0_0-hdim64-3] (call)	{"adiff": 1.8894672393798828e-05, "grads_adiff": [0.0, 0.0, 3.5762786865234375e-07, 0.0]}
+modules/flash/tests/test_varlen.py::test_varlen_principal_diagonal_fa_windows[compact-FA_0_0-hdim64-3] (call)	{"adiff": 5.549192428588867e-05, "grads_adiff": [0.0, 0.0, 4.8220157623291016e-05, 0.0]}
+modules/flash/tests/test_varlen.py::test_varlen_principal_diagonal_fa_windows[padded-FA_0_0-hdim64-3] (call)	{"adiff": 4.285573959350586e-05, "grads_adiff": [0.0, 0.0, 4.9948692321777344e-05, 0.0]}
 test/test_backward.py::test_regular_bwd[V3-False-l2-dtype2-0.5-CausalOff-8192-8192-hdim216-5-3] (call)	OOM
 test/test_backward.py::test_regular_bwd[V3-False-l2-dtype2-0.5-CausalOff-8192-8192-hdim224-5-3] (call)	OOM
 test/test_backward.py::test_regular_bwd[V3-False-l2-dtype2-0.5-CausalOff-8192-8192-hdim248-5-3] (call)	OOM
