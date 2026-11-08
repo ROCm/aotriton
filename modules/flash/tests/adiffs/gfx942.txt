@@ -1,0 +1,12 @@
+# gfx942 (AOTriton 0.15b, level-3 v3 backend): no per-test adiff allowances.
+#
+# Two known failures are NOT covered by this file, because
+# test_common_mistakes (modules/flash/tests/_core_test_common_mistakes.py) has
+# its own bounds and never consults USE_ADIFFS_TXT. They are numerical errors
+# of the AITER backward reached through the v3 backend; the split and fused
+# Triton backends pass both, and the failures are deterministic:
+#
+# test_backward.py::test_common_mistakes[sharp_softmax-dtype0]
+#   dv error 7.023e-04 is 2.7x the floor 2.587e-04 (limit 2.0x)
+# test_backward.py::test_common_mistakes[one_signed_values-dtype0]
+#   dv is biased by -6.873e-04 of its mean magnitude (bound 1.221e-04)
