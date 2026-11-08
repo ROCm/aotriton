@@ -26,10 +26,17 @@ every added line as a release decision that must be justified.
   - `NAN`: the test is marked xfail (known NaN).
   - `CPUREF`: the test is validated against the CPU reference because the GPU
     reference is not trustworthy for it. Hand-added only, never generated.
-- Only tests that go through `_core_test_backward.py` (e.g. `test_regular_bwd`,
-  `test_irregulars`) consult the file. Before documenting a failure of another
-  test (e.g. `test_common_mistakes`), check whether it reads the adiffs file; if
-  it does not, record it the way that test documents known failures and say so.
+- The files' purpose is documentation: every known numerical issue of a
+  release, in one format, at one well-known location. Test code consulting them
+  is a convenience, not a requirement (releases are not tested with
+  `USE_ADIFFS_TXT` in practice), so do not add handling code to a test just to
+  document its failure.
+- Tests that go through `_core_test_backward.py` (e.g. `test_regular_bwd`,
+  `test_irregulars`) and the varlen tests read the file. For a test that does
+  not (e.g. `test_common_mistakes`), still record it in the same
+  `<id> (call)<TAB><JSON>` format, with a JSON object of the values the test
+  reported (e.g. `{"dv_error": ..., "dv_floor": ...}`), and a comment saying the
+  test does not read the file.
 - Test ids carry the backend (`V3-`, `Split-`, ...), so entries are per backend.
 
 ## Producing entries (never hand-type numbers)
