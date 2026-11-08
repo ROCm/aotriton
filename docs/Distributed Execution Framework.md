@@ -217,6 +217,20 @@ What it means:
 * Stop a node only after its CPU queue has drained. Queued writes live in the
   broker's memory, and their task is already `done`, so nothing redoes them.
 
+Dropped database connections:
+
+* Every long-lived engine connection (`ReconnectableConn`: CPU workers and PG
+  readers) sets TCP keepalives (idle 60 s, interval 15 s, 4 probes). Without
+  them the network closes idle connections, and the next write is lost.
+* If a CPU handler still fails with a connection-level
+  `psycopg.OperationalError`, the worker reconnects and runs that handler
+  once more. SQL errors are not retried, and neither is GPU work. The result
+  writes use `replace=True`, so a repeated write does not duplicate rows.
+* The PG reader renews leases and claims through the same connection. A failed
+  renewal is logged and tried again, and the next call reconnects. A lost
+  claim or completion at worst leaves the task `running` until its lease
+  lapses, and then it is reaped back to `pending`.
+
 ## Writing an application
 
 An application is an ordinary program that uses pgdef as a library. It
