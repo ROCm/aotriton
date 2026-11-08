@@ -21,12 +21,28 @@ import socket
 import time
 from pathlib import Path
 
+import psycopg
+
 from .. import paths
 from .handlers import (BROKER_CLASSES, GRACEFUL_CANCEL, TASK_FAILED, EmitsViolation, HandlerSet,
                        NodeContext, Permanent, ack, task_header)
 from .protocol import send_message, recv_message
 
 logger = logging.getLogger(__name__)
+
+# SQLSTATE of a server that went away: class 08 (connection exception) and
+# 57P01-57P03 (admin shutdown, crash shutdown, cannot connect now).
+_GONE_SQLSTATES = ('08', '57P01', '57P02', '57P03')
+
+
+def is_connection_error(exc: Exception) -> bool:
+    """True for a psycopg.OperationalError about the connection itself. Errors
+    that carry another SQLSTATE (deadlock, statement timeout, ...) are SQL
+    errors and are not retried."""
+    if not isinstance(exc, psycopg.OperationalError):
+        return False
+    sqlstate = exc.sqlstate
+    return sqlstate is None or sqlstate.startswith(_GONE_SQLSTATES)
 
 
 class GenericWorker:
@@ -205,7 +221,7 @@ class GenericWorker:
                                    f"on queue {self.queue_name!r}")
 
             logger.info(f"Handling {msg_class} (task_id={task_id})")
-            result = handler.handle(message, self.ctx)
+            result = self._run_handler(handler, message)
             results = self.prepare_results(handler, result)
         except Exception as e:
             logger.error(f"Handler error for {msg_class} (task_id={task_id}): {e}", exc_info=True)
@@ -216,6 +232,24 @@ class GenericWorker:
             logger.info(f"Forwarding result {i + 1}/{len(results)} for {msg_class}")
             self._forward_message(r)
         logger.info(f"Completed {msg_class} (task_id={task_id})")
+
+    def _run_handler(self, handler, message: dict):
+        """Run `handler`. A CPU-queue handler is the database step (GPU handlers
+        do GPU work and are never re-run): when it dies of a connection-level
+        psycopg.OperationalError (the server or the network closed the idle
+        connection), reconnect and run it once more. Other errors, including
+        SQL errors such as IntegrityError, are not retried. The writes behind
+        CPU handlers are idempotent (reports.insert(replace=True))."""
+        try:
+            return handler.handle(message, self.ctx)
+        except psycopg.OperationalError as e:
+            reconnect = getattr(self.ctx.db_conn, 'reconnect', None)
+            if self.queue_name != 'cpu' or reconnect is None or not is_connection_error(e):
+                raise
+            logger.warning(f"Database connection lost in {message['class']} "
+                           f"(task_id={message.get('task_id')}): {e}; reconnecting, retrying once")
+            reconnect()
+            return handler.handle(message, self.ctx)
 
     def prepare_results(self, handler, result) -> list[dict]:
         """Normalise a handler's return value to a list of messages, check each
