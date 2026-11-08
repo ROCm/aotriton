@@ -182,6 +182,18 @@ if [ ${SUITE_DEBUG} -gt 0 ] && [ ${#CMDLIST[@]} -ne 1 ]; then
   help 1
 fi
 
+# --yaml is a path, read by several steps below. A name that is not a file
+# makes the first of them, the Triton hash resolution, fail; caught here, the
+# error names the actual mistake instead of an empty hash list.
+if [[ -n "${SUITE_YAML}" && ! -f "${SUITE_YAML}" ]]; then
+  echo "Error: --yaml ${SUITE_YAML}: no such file." >&2
+  _suite_yaml_hint="$(dirname "${BASH_SOURCE[0]}")/${SUITE_YAML}.yaml"
+  if [[ -f "${_suite_yaml_hint}" ]]; then
+    echo "       Did you mean --yaml ${_suite_yaml_hint}?" >&2
+  fi
+  exit 1
+fi
+
 # --flydsl_commit is the switch; the other two only modify how it is honoured.
 # Silently ignoring them would be the wrong kind of quiet: someone who passed
 # --flydsl_origin meant to build FlyDSL from source, and a release that did not
@@ -265,7 +277,14 @@ WHEEL_CACHE_DIR="${CACHE_DIR}/wheels"
 mkdir -p "${WHEEL_CACHE_DIR}" "${CACHE_DIR}/pip"
 
 # Determine Triton hashes to build (shared with .tune).
-readarray -t TRITON_HASHES < <(bash "${SCRIPT_DIR}/resolve-triton-hashes.sh" "${SCRIPT_DIR}/.." "${SUITE_YAML}")
+# Command substitution, not process substitution: `readarray < <(...)` reports
+# readarray's status, so a failed resolution used to continue with an empty
+# list and only surface later, in build_triton_wheels.sh, as a missing hash.
+TRITON_HASHES_TEXT="$(bash "${SCRIPT_DIR}/resolve-triton-hashes.sh" "${SCRIPT_DIR}/.." "${SUITE_YAML}")" || {
+  echo "Error: could not resolve the Triton hashes to build${SUITE_YAML:+ from ${SUITE_YAML}}." >&2
+  exit 1
+}
+readarray -t TRITON_HASHES <<< "${TRITON_HASHES_TEXT}"
 DEFAULT_HASH="${TRITON_HASHES[0]}"
 
 # Triton wheels are only needed for image builds (GPU kernel images embed the wheel).
