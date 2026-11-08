@@ -176,6 +176,9 @@ def remove_larger_than(data_list, threshold):
 def remove_not_larger_than(data_list, threshold):
     return [x for x in data_list if x > threshold]
 
+def remove_outside(data_list, low, high):
+    return [x for x in data_list if low <= x <= high]
+
 def cdiv(x, div):
     return (x + div - 1) // div
 
@@ -205,6 +208,15 @@ if AOTRITON_UT_ARCH in ('gfx1250', 'gfx1250-strict'):
     NPOT_HEADDIMS = remove_larger_than(NPOT_HEADDIMS, 256)
     PRIME_HEADDIMS = remove_larger_than(PRIME_HEADDIMS, 256)
     M8_HEADDIMS = remove_larger_than(M8_HEADDIMS, 256)
+
+# gfx1100's 0.15b retune covers head dims 64, 80 and 128 only, so its level-3
+# run tests head dims 48 to 128: those padded up to 64, 80 or 128, plus 48 as
+# the boundary below them.
+if AOTRITON_UT_ARCH in ('gfx1100@0.15b',):
+    POT_HEADDIMS = remove_outside(POT_HEADDIMS, low=48, high=128)
+    NPOT_HEADDIMS = remove_outside(NPOT_HEADDIMS, low=48, high=128)
+    PRIME_HEADDIMS = remove_outside(PRIME_HEADDIMS, low=48, high=128)
+    M8_HEADDIMS = remove_outside(M8_HEADDIMS, low=48, high=128)
 
 ALL_INT_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS + M8_HEADDIMS
 ALL_INT_HEADDIMS = sorted(list(set(ALL_INT_HEADDIMS)))

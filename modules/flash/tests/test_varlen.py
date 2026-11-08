@@ -39,13 +39,20 @@ from _common_test import (
 # also out when the FORWARD is pinned to flyc, and that half was added to
 # _core_test_backward.py only -- so every fp32 varlen case asked for a kernel
 # that was never built. Importing the name is what stops the two drifting again.
-from _core_test_backward import DTYPES, SKIP_BWD, NONPOS_SCALES
+from _core_test_backward import DTYPES, SKIP_BWD, NONPOS_SCALES, AOTRITON_UT_ARCH, remove_outside
 
 FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
 
 POT_HEADDIMS = [16, 32, 64, 128, 256]
 NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
 PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241]
+
+# Same narrowing as _core_test_backward.py: gfx1100's 0.15b retune covers head
+# dims 64, 80 and 128 only.
+if AOTRITON_UT_ARCH in ('gfx1100@0.15b',):
+    POT_HEADDIMS = remove_outside(POT_HEADDIMS, low=48, high=128)
+    NPOT_HEADDIMS = remove_outside(NPOT_HEADDIMS, low=48, high=128)
+    PRIME_HEADDIMS = remove_outside(PRIME_HEADDIMS, low=48, high=128)
 
 # SEQLEN_Q = [4, 8, 64, 143, 256, 512, 1024, 2048]
 # SEQLEN_K = [4, 8, 64, 128, 256, 587, 1024, 2048]
