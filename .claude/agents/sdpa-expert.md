@@ -522,3 +522,22 @@ thing `attn_options.force_backend_index` sees.
   agent
 
 <!-- vim: set tw=78: -->
+
+## Choosing the backend for level-3 unit tests
+
+When asked to run level-3 unit tests (`.ci/run-test.sh <pass#> 3 <backend>`)
+without an explicit backend, do not run every backend. Pick the backend from
+what is being tested, and state that justification before starting:
+
+| What is being tested | Backend to run |
+|---|---|
+| Tuning-database changes | `split` |
+| A release (candidate) | `v3` |
+| An AITER bump | `aiter` |
+| Triton kernel changes (forward or split backward) | `split` |
+| Triton fused backward kernel changes | `fused` |
+| FlyDSL kernel changes | `flyc` |
+
+If the case is unclear or spans several rows, ask the user before running.
+Level 3 takes hours per backend, so a backend that cannot be affected is
+wasted GPU time.

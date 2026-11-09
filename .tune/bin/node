@@ -1,0 +1,102 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+#
+# Start, stop or query a tune node on a fleet peer, rootless and with no
+# docker: the fleet container is the worker container. The tune counterpart of
+# .perfmon/bin/node.
+#
+#   node --workdir <wkdir> --host <host> --host_workdir <dir> [--checkout <dir>]
+#        [--category tune,kernel|tune,op] [--arch <arch>] [--session_name <name>]
+#        [--multi_gpu <id>...] [--nreader <n>] [--ncpu <n>] [--graceful]
+#        start|stop|status
+#
+# Over `ssh <host>` it runs `.def/container/worker_service.sh <command>` in the
+# active (managed) venv, with the path variables set (node_env.sh; the rundir is
+# ${XDG_RUNTIME_DIR:-/tmp}/aotriton-tune, apart from perfmon's), with
+#   --workdir        the control host's workdir (workers.db: the host's arch,
+#                    subpool, thermal gate, PostgreSQL endpoint). It is only read.
+#   --host_workdir   the host's own workdir: config.rc (database host and
+#                    credentials) and installed/<arch>/ (the tuning build,
+#                    see relay_build)
+#   --checkout       the checkout on the host to run from, default: the one
+#                    this script lives in (it must exist at that path there)
+#   --multi_gpu      the GPUs to use. Unlike perfmon's node, the host's stored
+#                    selection is NOT used by default: a host shared with
+#                    another application must be told which GPUs are free.
+#                    -1 = all.
+# The host's arch comes from workers.db unless --arch is given.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+. "$ROOT/.def/lib/db_query.sh"
+
+usage() {
+    sed -n '/^#   node --workdir/,/^# The host.s arch/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+    exit 1
+}
+
+WORKDIR=""
+HOST=""
+HOST_WORKDIR=""
+CHECKOUT="$ROOT"
+CATEGORY="tune,kernel"
+ARCH=""
+COMMAND=""
+SERVICE_ARGS=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --workdir)      WORKDIR="$2"; shift 2 ;;
+        --host)         HOST="$2"; shift 2 ;;
+        --host_workdir) HOST_WORKDIR="$2"; shift 2 ;;
+        --checkout)     CHECKOUT="$2"; shift 2 ;;
+        --category)     CATEGORY="$2"; shift 2 ;;
+        --arch)         ARCH="$2"; shift 2 ;;
+        --session_name|--nreader|--ncpu)
+            SERVICE_ARGS+=("$1" "$2"); shift 2 ;;
+        --multi_gpu)
+            SERVICE_ARGS+=("$1"); shift
+            while [ "$#" -gt 0 ] && [[ "$1" =~ ^-?[0-9]+$ ]]; do
+                SERVICE_ARGS+=("$1"); shift
+            done ;;
+        --graceful) SERVICE_ARGS+=("$1"); shift ;;
+        --help|-h) usage ;;
+        start|stop|status)
+            [ -z "$COMMAND" ] || { echo "Error: more than one command" >&2; usage; }
+            COMMAND="$1"; shift ;;
+        *) echo "Error: unknown argument: $1" >&2; usage ;;
+    esac
+done
+if [ -z "$WORKDIR" ] || [ -z "$HOST" ] || [ -z "$HOST_WORKDIR" ] || [ -z "$COMMAND" ]; then
+    echo "Error: --workdir, --host, --host_workdir and a command (start|stop|status) are required" >&2
+    usage
+fi
+[ -f "$WORKDIR/workers.db" ] || { echo "Error: $WORKDIR/workers.db not found" >&2; exit 1; }
+WORKDIR="$(cd "$WORKDIR" && pwd)"
+
+[ -n "$ARCH" ] || ARCH="$(get_worker_by_hostname "$WORKDIR" "$HOST" | cut -d'|' -f1)"
+if [ -z "$ARCH" ]; then
+    echo "Error: $HOST has no arch in workers.db; register it or pass --arch" >&2
+    exit 1
+fi
+THERMAL_GATE="$(get_worker_thermal_gate "$WORKDIR" "$HOST")"
+SUBPOOL="$(get_worker_subpool "$WORKDIR" "$HOST")"
+# Read here, on the server, and passed on: the host never opens workers.db.
+PG_ENDPOINT="$(get_worker_pg_endpoint "$WORKDIR" "$HOST")"
+PG_HOST="${PG_ENDPOINT% *}"
+PG_PORT="${PG_ENDPOINT#* }"
+
+if [ "$COMMAND" = start ]; then
+    SERVICE_ARGS+=(--category "$CATEGORY" --hostname "$HOST")
+    [ -z "$SUBPOOL" ] || SERVICE_ARGS+=(--subpool "$SUBPOOL")
+fi
+
+# One word per argument, quoted for the remote shell.
+REMOTE=(bash "$CHECKOUT/.tune/host/node_run.sh" "$HOST_WORKDIR" "$THERMAL_GATE" "$PG_HOST" "$PG_PORT" \
+             "$COMMAND" "$ARCH" ${SERVICE_ARGS[@]+"${SERVICE_ARGS[@]}"})
+PG_DESC="direct"
+[ -z "$PG_HOST" ] || PG_DESC="$PG_HOST:$PG_PORT"
+echo "node $COMMAND on $HOST: arch=$ARCH category=$CATEGORY thermal_gate=$THERMAL_GATE pg=$PG_DESC subpool=${SUBPOOL:-(none)}" >&2
+exec ssh "$HOST" "$(printf '%q ' "${REMOTE[@]}")"

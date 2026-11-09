@@ -113,6 +113,12 @@ class TuningDescription(ABC):
     `probe_all_impls()` resolve whichever DSL name they are given.
     """
 
+    # Name of the test case used only for timing, or None to time the first
+    # test. A family whose benchmark inputs differ from its accuracy-test inputs
+    # (e.g. larger batch to keep the GPU busy) names that case here: benchmark()
+    # times it, skips its accuracy check, and probing avoids loading it.
+    TIMING_TEST: str | None = None
+
     @property
     @abstractmethod
     def ENTRY_CLASS(self):
@@ -306,7 +312,8 @@ class TuningDescription(ABC):
         a DSL-spelled name, e.g. 'attn_fwd' or 'op.attn_fwd', as returned by
         `list_impls()`."""
         entry, tests = self.get_entry(root, and_tests=True)
-        test = tests[0]
+        # Enumeration does not need the (possibly large) timing inputs.
+        test = next(t for t in tests if t['test_name'] != self.TIMING_TEST)
         im = self.INPUT_METADATA.from_dict(test["input_metadata"])
         pt = Path(test["pt_file"])
         return self._do_probe_all_impls(entry, im, which_impl, pt)
@@ -387,8 +394,14 @@ class TuningDescription(ABC):
                 im = self.INPUT_METADATA.from_dict(t['input_metadata'])
                 pt = t['pt_file']
                 yield t['test_name'], im, pt
-        adiffs = {tname : self.run_single_test(im, pt, which_impl) for tname, im, pt in gen()}
-        for _, bim, pt in gen():
+        # Accuracy runs on every test except the timing-only one, which exists
+        # to fill the GPU and is not a test size.
+        adiffs = {tname : self.run_single_test(im, pt, which_impl)
+                  for tname, im, pt in gen()
+                  if tname != self.TIMING_TEST}
+        for tname, bim, pt in gen():
+            if self.TIMING_TEST is not None and tname != self.TIMING_TEST:
+                continue
             impl_desc, times = self.run_single_benchmark(bim, pt, which_impl)
             break
         return entry, impl_desc, adiffs, times, bim

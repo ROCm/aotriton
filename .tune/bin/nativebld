@@ -1,0 +1,52 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+#
+# Build the tuning version of AOTriton on a fleet peer with no docker, over ssh
+# (the native counterpart of remotebld's `libbld` step; see
+# .tune/host/build_native.sh, which does the work on the peer).
+#
+#   nativebld --host <build host> --host_workdir <dir> --arch <arch>
+#             [--checkout <dir>] [build_native.sh options...]
+#
+#   --host           the build host's ssh name
+#   --host_workdir   the build host's workdir: build/<arch> and installed/<arch>
+#                    go there. It need not be the shared workdir.
+#   --checkout       the checkout on the build host to build from, default: the
+#                    one this script lives in (it must exist at that path there)
+# The remaining options (--flydsl_wheel, --jobs, --external_tuning_database) go
+# to build_native.sh. Fetch the result to a worker with relay_build.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+usage() {
+    sed -n '/^#   nativebld --host/,/^# to build_native/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+    exit 1
+}
+
+HOST=""
+HOST_WORKDIR=""
+ARCH=""
+CHECKOUT="$ROOT"
+BUILD_OPTS=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --host)         HOST="$2"; shift 2 ;;
+        --host_workdir) HOST_WORKDIR="$2"; shift 2 ;;
+        --arch)         ARCH="$2"; shift 2 ;;
+        --checkout)     CHECKOUT="$2"; shift 2 ;;
+        --help|-h)      usage ;;
+        *)              BUILD_OPTS+=("$1"); shift ;;
+    esac
+done
+if [ -z "$HOST" ] || [ -z "$HOST_WORKDIR" ] || [ -z "$ARCH" ]; then
+    echo "Error: --host, --host_workdir and --arch are required" >&2
+    usage
+fi
+
+REMOTE=(bash "$CHECKOUT/.tune/host/build_native.sh" ${BUILD_OPTS[@]+"${BUILD_OPTS[@]}"} "$HOST_WORKDIR" "$ARCH")
+echo "[tune] building $ARCH on $HOST from $CHECKOUT into $HOST_WORKDIR" >&2
+exec ssh "$HOST" "$(printf '%q ' "${REMOTE[@]}")"

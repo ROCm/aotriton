@@ -18,6 +18,21 @@ import psycopg
 logger = logging.getLogger(__name__)
 
 
+# Idle TCP connections between a host and the server get closed by the network
+# (container-network connection tracking, firewalls), long before the server's
+# tcp_keepalives_idle (7200 s) would send a probe. A worker with few writes then
+# finds its connection dead at the next write. Client-side keepalives probe an
+# idle connection often enough to keep the tracking entry alive and to notice a
+# dead peer within about idle + interval * count = 120 s. libpq options, passed
+# to psycopg.connect as keyword arguments, not as part of the params dict.
+KEEPALIVE_OPTIONS = {
+    'keepalives': 1,
+    'keepalives_idle': 60,
+    'keepalives_interval': 15,
+    'keepalives_count': 4,
+}
+
+
 def params_from_env(environ=None) -> dict:
     """PostgreSQL connection parameters from the environment.
 
@@ -67,8 +82,20 @@ class ReconnectableConn:
         self._connect()
 
     def _connect(self):
-        self._conn = psycopg.connect(**self._params, **self._kwargs)
+        self._conn = psycopg.connect(**self._params,
+                                     **KEEPALIVE_OPTIONS,
+                                     **self._kwargs)
         logger.info("Database connection (re)established")
+
+    def reconnect(self):
+        """Drop the current connection (even one that still looks open) and
+        open a fresh one. Used after a connection-level error."""
+        try:
+            if self._conn is not None and not self._conn.closed:
+                self._conn.close()
+        except Exception:
+            pass
+        self._connect()
 
     def cursor(self, **kwargs):
         if self._conn.closed:

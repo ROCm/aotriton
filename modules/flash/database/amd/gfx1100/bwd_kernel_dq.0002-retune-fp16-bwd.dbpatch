@@ -1,0 +1,24 @@
+#!/usr/bin/env -S python -m aotriton.database.interpreter
+#! tuning keys
+max_seqlen_q,16,32,64,128,256,512,1024,2048
+max_seqlen_k,16,32,64,128,256,512,1024,2048
+#! tuning tensor
+functional,tuning keys->hsaco_options
+79,
+[8]
+[8]
+[8]
+[8]
+[8]
+[8]
+[8]
+[7],25
+91,
+[8]
+[8]
+[8]
+[8]
+[8]
+[8]
+[8]
+[7],32

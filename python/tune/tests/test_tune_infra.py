@@ -318,6 +318,94 @@ def test_flash_entry_round_trips_through_pon():
     assert FlashEntry(**d) == e
 
 
+# --- benchmark sizes versus accuracy-test sizes -------------------------------
+
+@pytest.mark.parametrize('seqlen_q,expect', [
+    (16, (128, 8)),
+    (128, (128, 8)),
+    (256, (64, 8)),
+    (512, (32, 8)),
+    (1024, (16, 8)),
+    (2048, (8, 8)),
+    (4096, (4, 8)),
+    (8192, (2, 8)),
+])
+def test_flash_benchmark_shape_table(seqlen_q, expect):
+    from aotriton.tune.registry import load_flash_entry_module
+    entry = load_flash_entry_module(modules_dir=_MODULES_DIR)
+    assert entry.benchmark_shape(seqlen_q) == expect
+    # The accuracy-test sizes are the prime 3 x 5 defaults, untouched.
+    im = entry.FlashInputMetadata()
+    assert (im.BATCH, im.N_HEADS) == (3, 5)
+
+
+def test_flash_benchmark_shape_fills_gpu_and_keeps_gqa_ratio():
+    from aotriton.tune.registry import load_flash_entry_module
+    entry = load_flash_entry_module(modules_dir=_MODULES_DIR)
+    for seqlen_q in (16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192):
+        batch, heads = entry.benchmark_shape(seqlen_q)
+        assert batch * heads >= 15
+        assert batch * heads <= entry.BENCH_MAX_BATCH_HEADS
+        # Reaches the row target unless the cap bites.
+        assert (batch * heads * seqlen_q >= entry.BENCH_QUERY_ROWS
+                or batch * heads == entry.BENCH_MAX_BATCH_HEADS)
+        gbatch, gheads = entry.benchmark_shape(seqlen_q, (10, 2))
+        assert gheads == (10, 2)
+        assert gbatch >= batch * heads // 10
+
+
+def test_flash_tune_times_a_separate_benchmark_case():
+    from aotriton.tune.registry import load_family_tune
+    tune = load_family_tune('flash', modules_dir=_MODULES_DIR).FlashTune()
+    assert tune.TIMING_TEST == '00_benchmark'
+
+
+def test_tuning_description_benchmark_skips_accuracy_of_timing_test(tmp_path):
+    import json
+    from aotriton.tune.tdesc import TuningDescription
+
+    calls = []
+
+    class FakeIM:
+        @staticmethod
+        def from_dict(d):
+            return d
+
+    class FakeEntry:
+        @staticmethod
+        def from_dict(d):
+            return d
+
+    class Fake(TuningDescription):
+        ENTRY_CLASS = FakeEntry
+        INPUT_METADATA = FakeIM
+        TIMING_TEST = 'timing'
+
+        def __init__(self):
+            pass
+
+        def run_single_test(self, input_metadata, pt, which_impl):
+            calls.append(('test', input_metadata['n']))
+            return [0.0]
+
+        def run_single_benchmark(self, input_metadata, pt, which_impl):
+            calls.append(('bench', input_metadata['n']))
+            return {}, [1.0, 1.0, 1.0]
+
+        def __getattr__(self, name):
+            # Abstract members this test does not exercise.
+            raise AttributeError(name)
+
+    Fake.__abstractmethods__ = frozenset()
+    tests = [{'test_name': 'a', 'input_metadata': {'n': 'small'}, 'pt_file': 'a.pt'},
+             {'test_name': 'timing', 'input_metadata': {'n': 'big'}, 'pt_file': 't.pt'}]
+    (tmp_path / 'entry.json').write_text(json.dumps({'entry': {}, 'tests': tests}))
+    _, _, adiffs, _, bim = Fake().benchmark(tmp_path, None)
+    assert calls == [('test', 'small'), ('bench', 'big')]
+    assert list(adiffs) == ['a']
+    assert bim == {'n': 'big'}
+
+
 # --- (c) pq/localq stay torch-free at import time -----------------------------
 
 def _iter_pq_localq_module_names():

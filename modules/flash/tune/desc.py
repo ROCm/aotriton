@@ -3,7 +3,7 @@
 
 from aotriton.tune.tdesc import TuningDescription, ImplSelector
 from aotriton.tune.utils import asdict_shallow, sanitize_value
-from .entry import FlashEntry, FlashInputMetadata
+from .entry import FlashEntry, FlashInputMetadata, benchmark_shape
 from dataclasses import asdict
 import dataclasses
 from pathlib import Path
@@ -34,6 +34,9 @@ construction time.
 class FlashTune(TuningDescription):
     ENTRY_CLASS = FlashEntry
     INPUT_METADATA = FlashInputMetadata
+    # '00_benchmark' is timed at benchmark_shape() sizes and is not an accuracy
+    # test; the accuracy cases keep the 3 x 5 sizes (see entry.py).
+    TIMING_TEST = '00_benchmark'
 
     def _provider_for(self, name: str):
         """Resolve the DSL name `name` (e.g. 'attn_fwd' or 'op.attn_fwd') to
@@ -235,8 +238,15 @@ class FlashTune(TuningDescription):
         Pre-condition: called with device_ctx()
         '''
         im = FlashInputMetadata(**asdict(entry))
+        # Timing-only case: sized to fill the GPU (entry.py, benchmark_shape).
+        batch, n_heads = benchmark_shape(im.seqlen_q, im.N_HEADS)
+        bench = dataclasses.replace(im, BATCH=batch, N_HEADS=n_heads)
+        bench = self._clamp_memory_usage(bench)
+        yield self._write_ref(bench, data_root, '00_benchmark')
+
+        # Accuracy cases below keep the small prime 3 x 5 sizes.
         im = self._clamp_memory_usage(im)
-        yield self._write_ref(im, data_root, '00_benchmark')
+        yield self._write_ref(im, data_root, '00_regular')
 
         gqa = dataclasses.replace(im, N_HEADS=(10, 2))
         gqa = self._clamp_memory_usage(gqa)

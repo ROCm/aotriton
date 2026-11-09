@@ -7,7 +7,9 @@ import torch
 import numpy as np
 import math
 import os
+import json
 
+from _core_test_backward import adiffs, RECORD_ADIFFS_TO
 from varlen_attn_torch_function import (
     varlen_attention,
     AttentionExtraArgs,
@@ -39,13 +41,20 @@ from _common_test import (
 # also out when the FORWARD is pinned to flyc, and that half was added to
 # _core_test_backward.py only -- so every fp32 varlen case asked for a kernel
 # that was never built. Importing the name is what stops the two drifting again.
-from _core_test_backward import DTYPES, SKIP_BWD, NONPOS_SCALES
+from _core_test_backward import DTYPES, SKIP_BWD, NONPOS_SCALES, AOTRITON_UT_ARCH, remove_outside
 
 FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
 
 POT_HEADDIMS = [16, 32, 64, 128, 256]
 NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
 PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241]
+
+# Same narrowing as _core_test_backward.py: gfx1100's 0.15b retune covers head
+# dims 64, 80 and 128 only.
+if AOTRITON_UT_ARCH in ('gfx1100@0.15b',):
+    POT_HEADDIMS = remove_outside(POT_HEADDIMS, low=48, high=128)
+    NPOT_HEADDIMS = remove_outside(NPOT_HEADDIMS, low=48, high=128)
+    PRIME_HEADDIMS = remove_outside(PRIME_HEADDIMS, low=48, high=128)
 
 # SEQLEN_Q = [4, 8, 64, 143, 256, 512, 1024, 2048]
 # SEQLEN_K = [4, 8, 64, 128, 256, 587, 1024, 2048]
@@ -209,8 +218,19 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
     USE_AUTOTUNE = False
     torch.manual_seed(20)
     factory = VARLEN_FACTORY[varlen_type]
+    # Same adiffs protocol as core_test_op_bwd (OOM/NAN/CPUREF/recorded entry).
+    utname = os.environ.get('PYTEST_CURRENT_TEST')
+    use_adiff_entry = adiffs.get(utname, None)
+    if use_adiff_entry == "OOM":
+        pytest.skip("[Adiffs] Skip due to known OOM.")
+    if use_adiff_entry == "NAN":
+        pytest.xfail("[Adiffs] known NAN.")
+    adiff_ref_device_policy = None
+    if use_adiff_entry == "CPUREF":
+        adiff_ref_device_policy = 'cpu'
+        use_adiff_entry = None
     ctx = factory(N_HEADS, D_HEAD, seqlens_q, seqlens_k, dtype, device='cuda')
-    ctx.create_ref_inputs()
+    ctx.create_ref_inputs(target_device_policy=adiff_ref_device_policy)
     ctx.set_require_grads(skip_dq=SKIP_DQ, skip_dk_dv=SKIP_DK_DV, skip_db=True)
     q, k, v, b = ctx.dev_tensors
     # Forward
@@ -238,7 +258,13 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
         # launched for it. `no_backward=True` keeps the forward assertion below
         # exactly the one the full path makes.
         is_allclose, adiff, _ga, _gd, tfts = ctx.validate_with_reference(
-            tri_out, [], no_backward=True, return_target_fudge_factors=True)
+            tri_out, [], no_backward=True, return_target_fudge_factors=True,
+            use_adiff_entry=use_adiff_entry)
+        if RECORD_ADIFFS_TO is not None and not is_allclose:
+            with open(RECORD_ADIFFS_TO, 'a') as f:
+                dj = { "adiff" : adiff, "grads_adiff" : [] }
+                print(utname, "\t", json.dumps(dj), file=f, flush=True, sep='')
+            pytest.xfail(f"RECORD ADIFFS {adiff=} (SKIP_BWD=1)")
         assert is_allclose, f'Forward pass {is_allclose=} {tfts=}'
         print(f'{adiff=} (SKIP_BWD=1, backward not run)')
         return
@@ -252,7 +278,12 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
             pytest.xfail("Unsupported Config in AITER")
     else:
         ctx.compute_backward(tri_out, dout)
-    is_allclose, adiff, grads_allclose, grads_adiff, tfts = ctx.validate_with_reference(tri_out, ctx.dout_tensors, return_target_fudge_factors=True)
+    is_allclose, adiff, grads_allclose, grads_adiff, tfts = ctx.validate_with_reference(tri_out, ctx.dout_tensors, return_target_fudge_factors=True, use_adiff_entry=use_adiff_entry)
+    if RECORD_ADIFFS_TO is not None and (not is_allclose or not all(grads_allclose)):
+        with open(RECORD_ADIFFS_TO, 'a') as f:
+            dj = { "adiff" : adiff, "grads_adiff" : grads_adiff }
+            print(utname, "\t", json.dumps(dj), file=f, flush=True, sep='')
+        pytest.xfail(f"RECORD ADIFFS {adiff=} {grads_adiff=}")
     torch.set_printoptions(threshold=114514, linewidth=200)
 
     # Test Forward

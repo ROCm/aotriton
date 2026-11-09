@@ -1,0 +1,49 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+#
+# Move a tuning build (installed/<arch>) from the build host to a worker host,
+# through the control host: the hosts do not reach each other. The scoped
+# counterpart of fetchbuild + deploy, for hosts whose workdir is shared with
+# another application: deploy would also overwrite the host's workers.db, config.rc
+# and aotriton.src, and this touches nothing but installed/<arch> of the host
+# workdir it is given.
+#
+#   relay_build --from <build host> --from_workdir <dir>
+#               --to <worker host> --to_workdir <dir>
+#               --arch <arch> --staging <local dir>
+#
+#   --staging   a directory on this host that holds the build in between
+#               (kept, so a second worker needs no second fetch)
+# The target's installed/<arch> becomes an exact copy (rsync --delete, only
+# inside that directory).
+
+set -euo pipefail
+
+usage() {
+    sed -n '/^#   relay_build --from/,/^# The target/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+    exit 1
+}
+
+FROM=""; FROM_WORKDIR=""; TO=""; TO_WORKDIR=""; ARCH=""; STAGING=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --from)         FROM="$2"; shift 2 ;;
+        --from_workdir) FROM_WORKDIR="$2"; shift 2 ;;
+        --to)           TO="$2"; shift 2 ;;
+        --to_workdir)   TO_WORKDIR="$2"; shift 2 ;;
+        --arch)         ARCH="$2"; shift 2 ;;
+        --staging)      STAGING="$2"; shift 2 ;;
+        --help|-h)      usage ;;
+        *) echo "Error: unknown argument: $1" >&2; usage ;;
+    esac
+done
+for v in FROM FROM_WORKDIR TO TO_WORKDIR ARCH STAGING; do
+    [ -n "${!v}" ] || { echo "Error: --$(echo "$v" | tr 'A-Z' 'a-z') is required" >&2; usage; }
+done
+
+mkdir -p "$STAGING/$ARCH"
+echo "[tune] fetching $FROM:$FROM_WORKDIR/installed/$ARCH -> $STAGING/$ARCH" >&2
+rsync -a --checksum --delete "$FROM:$FROM_WORKDIR/installed/$ARCH/" "$STAGING/$ARCH/"
+echo "[tune] pushing $STAGING/$ARCH -> $TO:$TO_WORKDIR/installed/$ARCH" >&2
+rsync -a --checksum --delete --mkpath "$STAGING/$ARCH/" "$TO:$TO_WORKDIR/installed/$ARCH/"
