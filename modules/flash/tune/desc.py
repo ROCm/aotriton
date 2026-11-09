@@ -246,7 +246,7 @@ class FlashTune(TuningDescription):
 
         # Accuracy cases below keep the small prime 3 x 5 sizes.
         im = self._clamp_memory_usage(im)
-        yield self._write_ref(im, data_root, '06_regular')
+        yield self._write_ref(im, data_root, '00_regular')
 
         gqa = dataclasses.replace(im, N_HEADS=(10, 2))
         gqa = self._clamp_memory_usage(gqa)

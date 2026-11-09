@@ -856,7 +856,7 @@ in `modules/flash/tune/entry.py`:
   wrong result.
 - **Timing** uses `benchmark_shape(seqlen_q)`, the `00_benchmark` test case.
   It is timed only; its accuracy is not checked (`TIMING_TEST`), and
-  `06_regular` is the plain `3 x 5` accuracy case.
+  `00_regular` is the plain `3 x 5` accuracy case.
 
 `batch x heads` is chosen so that `batch x heads x seqlen_q` reaches 2**17
 query rows, clamped to `[15, 1024]`, with 8 heads. GQA keeps its head ratio
