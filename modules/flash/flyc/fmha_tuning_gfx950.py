@@ -481,7 +481,7 @@ class Gfx950Knobs(FmhaKnobs):
             _GFX950_FALLBACK.merge(self)
             ._checked_modes()
             ._with_widths(meta)
-            ._with_wave_geometry()
+            ._with_wave_geometry(meta)
             ._with_occupancy_target(meta)
             ._checked_against_traits(meta)
         )
@@ -571,7 +571,7 @@ class Gfx950Knobs(FmhaKnobs):
             raise ValueError(f"kv_cache_layout must be 'linear' or 'vectorized', got {self.kv_cache_layout!r}")
         return self
 
-    def _with_wave_geometry(self):
+    def _with_wave_geometry(self, meta):
         """Decide the wave geometry and staging granule from the tile width.
 
         **The selection lives here, not in the traits constructor**, which is
@@ -619,6 +619,11 @@ class Gfx950Knobs(FmhaKnobs):
             raise ValueError("_with_wave_geometry runs after _with_widths; block_dmodel is not resolved")
         if me.block_dmodel % 64:
             return replace(me, num_waves=4, block_m=128, block_n=64, head_dim_granule=32)  # family S
+        if me.block_dmodel == 128 and meta.causal:
+            # Causal hd128 (e.g. GR00T): family B beats family A, which was tuned
+            # non-causal. 4 waves/block_m=128 -> two workgroups co-resident per CU
+            # and 2x per-lane registers; 1.36x at B=1, numerically identical.
+            return replace(me, num_waves=4, block_m=128, block_n=64, head_dim_granule=64)  # family B (causal hd128)
         if me.block_dmodel <= 128:
             return replace(me, num_waves=8, block_m=256, block_n=64, head_dim_granule=64)  # family A
         if me.block_dmodel <= 256:
