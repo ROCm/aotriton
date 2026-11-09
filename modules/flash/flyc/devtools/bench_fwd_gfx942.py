@@ -1,7 +1,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Correctness and TFLOPS of fmha_fwd_gfx942 (fmha_fwd_gfx942_xwide above hd256) against fp64.
+"""Correctness and TFLOPS of the gfx942 forward bodies (fmha_tuning_gfx942.body) against fp64.
 
     AOTRITON_FLYDSL_KERNEL_ROOT=<FlyDSL tree> python bench_fwd_gfx942.py \
         --batch 4 --heads 32 --seqlen 8192 --head_dim 128 --causal
@@ -16,10 +16,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, os.environ['AOTRITON_FLYDSL_KERNEL_ROOT'])
 
 import torch  # noqa: E402
-from fmha_fwd_gfx942 import build_fmha_fwd_gfx942  # noqa: E402
-from fmha_fwd_gfx942_xwide import build_fmha_fwd_gfx942_xwide  # noqa: E402
-
-XWIDE_MIN_HEAD_DIM = 257
+import fmha_tuning_gfx942 as tuning  # noqa: E402
 
 
 def main():
@@ -32,8 +29,8 @@ def main():
     p.add_argument('--head_dim', type=int, default=128)
     p.add_argument('--causal', action='store_true')
     p.add_argument('--dtype', default='bf16', choices=['bf16', 'f16'])
-    p.add_argument('--num_waves', type=int, default=8)
-    p.add_argument('--waves_per_eu', type=int, default=2)
+    p.add_argument('--num_waves', type=int, default=None)
+    p.add_argument('--waves_per_eu', type=int, default=None)
     p.add_argument('--block_n', type=int, default=None)
     p.add_argument('--rescale_threshold', type=float, default=0.0)
     p.add_argument('--grid_axis_order', type=int, default=None)
@@ -61,16 +58,22 @@ def main():
     o = torch.empty_like(q)
     lse = torch.empty(a.batch, a.heads, a.seqlen, dtype=torch.float32, device='cuda')
     # causal is bottom-right (causal_type 2), matching the reference below.
-    build = build_fmha_fwd_gfx942_xwide if a.head_dim >= XWIDE_MIN_HEAD_DIM else build_fmha_fwd_gfx942
-    launch = build(a.head_dim,
-                   causal_type=2 if a.causal else 0,
-                   dtype_str=a.dtype,
-                   num_waves=a.num_waves,
-                   block_n=a.block_n,
-                   rescale_threshold=a.rescale_threshold,
-                   grid_axis_order=a.grid_axis_order,
-                   bias=a.bias,
-                   waves_per_eu=a.waves_per_eu)
+    # Unset knobs keep the body's builder defaults.
+    knobs = {k: v for k, v in (('num_waves', a.num_waves), ('waves_per_eu', a.waves_per_eu)) if v is not None}
+    # Off-ladder head dims run on the next rung with padding, as dispatch does.
+    rung = tuning.rung(a.head_dim, a.head_dim)
+    if rung is None:
+        sys.exit(f'head_dim {a.head_dim} is past the gfx942 ladder {tuning.LADDER}')
+    if rung != a.head_dim:
+        knobs['padded_head'] = True
+    launch = tuning.build(rung,
+                          causal_type=2 if a.causal else 0,
+                          dtype_str=a.dtype,
+                          block_n=a.block_n,
+                          rescale_threshold=a.rescale_threshold,
+                          grid_axis_order=a.grid_axis_order,
+                          bias=a.bias,
+                          **knobs)
     lse_2d = lse.view(a.batch * a.heads, a.seqlen)
     bias = torch.randn(a.batch, a.heads, a.seqlen, sk, dtype=dt, device='cuda') if a.bias else None
 
