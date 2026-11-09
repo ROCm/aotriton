@@ -513,6 +513,27 @@ thing `attn_options.force_backend_index` sees.
 | `padded` (2) | `(B, H, Max_S, D)` | Each sequence padded to `max_seqlen`; `cu_seqlens` masks regions |
 | `strided` (3) | `(1, Σ(S+pad), H, D)` | Padding between sequences; `seq_strides` locates each sequence |
 
+## Rebuilding after a kernel edit
+
+The build does not track kernel sources: the kernel toolchain has no `gcc -MD`
+equivalent, and none is planned. After editing a kernel, `ninja install`
+silently packages the old binaries, and the library tests then run stale code.
+Clean the kernel's three build stages by hand first. For the flyc forward on
+gfx942, in the build directory:
+
+```
+rm -f v3src/flash/gpu_kernel_image.flyc_attn_fwd/*.hsaco \
+      v3src/aks2/amd-gfx942/flash/flyc_attn_fwd/*.aks2 \
+      v3src/aotriton.images/amd-gfx942/flash/flyc_attn_fwd.zip
+ninja install
+```
+
+Deleting only the `.hsaco` files is not enough: the `.aks2` archives and the
+zip are not rebuilt from them. Edits to `modules/*/aot/*.py` also need
+`cmake .` in the build directory before `ninja`. To check what got packaged,
+extract the zip entry and unpack it with `python -m python.unaks2`, then `cmp`
+it against the `.hsaco`.
+
 ## Out of scope
 
 - Code generator (`python/codegen/`, `python/template_instantiation/`,
