@@ -240,10 +240,6 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
         lds_p = lds.buf.ptr
         lds_base = fx.Index(fx.ptrtoint(lds_p))
 
-        def lds_view(off, e, align):
-            return fx.recast_iter(fx.PointerType.get(e.ir_type, fx.AddressSpace.Shared, align),
-                                  lds_p + fx.Int64(off))
-
         # The 8xD contract: a row owns ceil8(hdim) columns (numerical lessons, #11).
         row_qk = (fx.Int32(hdim_qk) + fx.Int32(7)) & fx.Int32(-8)
         row_vo = (fx.Int32(hdim_vo) + fx.Int32(7)) & fx.Int32(-8)
@@ -308,33 +304,83 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
             k_packs.append(kb)
             v_packs.append(vb)
 
-        # Row-major DMA: round i moves line i*W + wave (mod the tile's lines) of 256B;
-        # lane writes LDS byte line*256 + 4*lane, fetched from its unswizzled source.
-        def dma_offsets(row_stride_b):
+        # LDS pointers: an absolute i32 base plus a constant GEP, which the backend folds
+        # into the DS offset field (as fmha_dualwave_gfx950._lds_ptr_with_imm).
+        lds_ptr_ty = ir.Type.parse('!llvm.ptr<3>')
+        lds_base_i32 = fx.Int32(lds_base)
+
+        def lds_ptr(base_i32, imm):
+            p = llvm.inttoptr(lds_ptr_ty, raw(fx.Int32(base_i32)))
+            if imm == 0:
+                return p
+            return llvm.getelementptr(lds_ptr_ty, p, [], [imm], ir.IntegerType.get_signless(8),
+                                      llvm.GEPNoWrapFlags.inbounds)
+
+        def lds_load(base_i32, imm, ty, align, st):
+            al, noal = scope_attrs(f'st{st}')
+            return llvm.LoadOp(ty,
+                               lds_ptr(base_i32, imm),
+                               alignment=align,
+                               alias_scopes=al,
+                               noalias_scopes=noal).result
+
+        def lds_store(val, base_i32, imm, align, st):
+            al, noal = scope_attrs(f'st{st}')
+            llvm.StoreOp(val, lds_ptr(base_i32, imm), alignment=align, alias_scopes=al, noalias_scopes=noal)
+
+        wave_u = fx.Int32(rocdl.readfirstlane(fx.Int32.ir_type, fx.Int32(wave)))
+        # Row-major DMA: round i moves line L = i*W + wave (mod the tile's lines) of 256B;
+        # lane writes LDS byte 256L + 4*lane, fetched from its unswizzled source. When a
+        # line holds whole rows, the line's first row rides in soffset and the voffset
+        # depends only on L % 8, so a few VGPRs serve every round.
+        whole_rows = 256 % tr.ROW_BYTES == 0 or tr.ROW_BYTES % 256 == 0
+
+        def dma_plan(row_stride_b):
+            """Per round: (voffset VGPR, uniform first-row multiplier of the line, i.e. rows per line)."""
             voffs = []
+            cache = {}
             for i in range_constexpr(tr.DMA_ROUNDS):
-                line = (fx.Index(i * tr.NUM_WAVES) + wave) % tr.DMA_LINES
-                pb = line * 256 + lane * 4
-                row = pb // tr.ROW_BYTES
-                pc = (pb % tr.ROW_BYTES) // 16
-                ch = pc ^ tr.swz(row)
-                voffs.append(fx.Int32(row) * row_stride_b + fx.Int32(ch * 16 + pb % 16))
+                if const_expr(whole_rows and tr.DMA_LINES % tr.NUM_WAVES == 0):
+                    rpl = max(1, 256 // tr.ROW_BYTES)
+                    key = (i * tr.NUM_WAVES * rpl) % 8
+                    if key not in cache:
+                        lrow = (lane * 4) // tr.ROW_BYTES
+                        urow8 = (fx.Index(key) + wave * rpl) % 8
+                        row8 = (urow8 + lrow) % 8
+                        pc = ((lane * 4) % tr.ROW_BYTES) // 16
+                        ch = pc ^ tr.swz(row8)
+                        cache[key] = fx.Int32(lrow) * row_stride_b + fx.Int32(ch * 16 + (lane * 4) % 16)
+                    voffs.append(cache[key])
+                else:
+                    line = (fx.Index(i * tr.NUM_WAVES) + wave) % tr.DMA_LINES
+                    pb = line * 256 + lane * 4
+                    row = pb // tr.ROW_BYTES
+                    pc = (pb % tr.ROW_BYTES) // 16
+                    ch = pc ^ tr.swz(row)
+                    voffs.append(fx.Int32(row) * row_stride_b + fx.Int32(ch * 16 + pb % 16))
             return voffs
+
+        def dma_row0(i):
+            """Uniform first row of round i's line, added to the tile row in soffset."""
+            if const_expr(whole_rows and tr.DMA_LINES % tr.NUM_WAVES == 0):
+                rpl = max(1, 256 // tr.ROW_BYTES)
+                return (fx.Int32(i * tr.NUM_WAVES) + wave_u) * fx.Int32(rpl)
+            return fx.Int32(0)
 
         dma_m0 = []
         for i in range_constexpr(tr.DMA_ROUNDS):
-            line = (fx.Index(i * tr.NUM_WAVES) + wave) % tr.DMA_LINES
-            dma_m0.append(fx.Int32(rocdl.readfirstlane(fx.Int32.ir_type, fx.Int32(lds_base + line * 256))))
+            line = (fx.Int32(i * tr.NUM_WAVES) + wave_u) % fx.Int32(tr.DMA_LINES)
+            dma_m0.append(fx.Int32(rocdl.readfirstlane(fx.Int32.ir_type, lds_base_i32 + line * fx.Int32(256))))
 
         q_row_stride_b = fx.Int32(stride_q_seq) * fx.Int32(2)
         do_row_stride_b = fx.Int32(stride_do_seq) * fx.Int32(2)
-        q_dma_voff = dma_offsets(q_row_stride_b)
-        do_dma_voff = dma_offsets(do_row_stride_b)
+        q_dma_voff = dma_plan(q_row_stride_b)
+        do_dma_voff = dma_plan(do_row_stride_b)
 
         def dma(rsrc, voffs, row_stride_b, q_start, region, st):
-            soff = fx.Int32(q_start) * row_stride_b
             al, noal = scope_attrs(f'st{st}')
             for i in range_constexpr(tr.DMA_ROUNDS):
+                soff = (fx.Int32(q_start) + dma_row0(i)) * row_stride_b
                 m0 = fx.Int64(dma_m0[i] + fx.Int32(st * tr.STAGE_BYTES + region))
                 op = rocdl.raw_ptr_buffer_load_lds(rsrc,
                                                    lds_ptr_at(m0),
@@ -351,84 +397,70 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
         # Transposed tiles: unit u is q rows 4*(u // (D/2)) + [0, 4) at d columns
         # 2*(u % (D/2)) + [0, 2); threads past the last unit redo an earlier one.
         # Q^T row d holds 16 q in four 8B groups, group g at g ^ ((d / 4) % 4).
-        t_rows = []
-        t_lds = []
+        t_units = []
         for u in range_constexpr(tr.T_UNITS_PER_THREAD):
             unit = (tid + fx.Index(u * tr.BLOCK_SIZE)) % tr.T_UNITS
             g4 = unit // (tr.D // 2)
             cp = unit % (tr.D // 2)
-            t_rows.append((g4, cp))
+            lds_e = []
             for e in range_constexpr(2):
                 d = cp * 2 + fx.Index(e)
-                t_lds.append(d * 32 + ((g4 ^ ((d // 4) % 4)) * 8))
+                lds_e.append(lds_base_i32 + fx.Int32(d * 32 + ((g4 ^ ((d // 4) % 4)) * 8)))
+            t_units.append((g4, cp, lds_e))
 
         def t_voffs(row_stride_b):
-            out = []
-            for g4, cp in t_rows:
-                for r in range_constexpr(4):
-                    out.append(fx.Int32(g4 * 4 + fx.Index(r)) * row_stride_b + fx.Int32(cp * 4))
-            return out
+            return [fx.Int32(g4 * 4) * row_stride_b + fx.Int32(cp * 4) for g4, cp, _ in t_units]
 
         q_t_voff = t_voffs(q_row_stride_b)
         do_t_voff = t_voffs(do_row_stride_b)
 
         def t_load(rsrc, voffs, row_stride_b, q_start):
-            soff = fx.Int32(q_start) * row_stride_b
-            return [fx.Int32(rocdl.raw_ptr_buffer_load(fx.Int32.ir_type, rsrc, off, soff, 0)) for off in voffs]
+            out = []
+            for off in voffs:
+                for r in range_constexpr(4):
+                    soff = (fx.Int32(q_start) + fx.Int32(r)) * row_stride_b
+                    out.append(fx.Int32(rocdl.raw_ptr_buffer_load(fx.Int32.ir_type, rsrc, off, soff, 0)))
+            return out
 
         def t_store(regs, region, st):
             sel_lo = fx.Int32(0x05040100)
             sel_hi = fx.Int32(0x07060302)
-            al, noal = scope_attrs(f'st{st}')
             for u in range_constexpr(tr.T_UNITS_PER_THREAD):
                 w = regs[4 * u:4 * u + 4]
                 d0 = [fx.Int32(rocdl.perm_b32(w[1], w[0], sel_lo)), fx.Int32(rocdl.perm_b32(w[3], w[2], sel_lo))]
                 d1 = [fx.Int32(rocdl.perm_b32(w[1], w[0], sel_hi)), fx.Int32(rocdl.perm_b32(w[3], w[2], sel_hi))]
                 for e, dw in ((0, d0), (1, d1)):
-                    off = t_lds[2 * u + e] + fx.Index(st * tr.STAGE_BYTES + region)
-                    llvm.StoreOp(raw(Vec.from_elements(dw, fx.Int32)),
-                                 lds_view(off, fx.Int32, 8).llvm_ptr,
-                                 alignment=8,
-                                 alias_scopes=al,
-                                 noalias_scopes=noal)
-
-        def lds_load(off, ty, align, st):
-            al, noal = scope_attrs(f'st{st}')
-            return llvm.LoadOp(ty,
-                               lds_view(off, elem, align).llvm_ptr,
-                               alignment=align,
-                               alias_scopes=al,
-                               noalias_scopes=noal).result
+                    lds_store(raw(Vec.from_elements(dw, fx.Int32)), t_units[u][2][e], st * tr.STAGE_BYTES + region, 8, st)
 
         # Row-major read: lane row lc, logical chunk 4p + lg.
         if const_expr(tr.SWZ_WIDE):
             s2 = (lc % 8) // 4
             s01 = lc % 4
-            rm_even = lc * tr.ROW_BYTES + (lg ^ s01) * 16 + s2 * 64
-            rm_odd = lc * tr.ROW_BYTES + (lg ^ s01) * 16 + (fx.Index(1) - s2) * 64
+            rm_even = lds_base_i32 + fx.Int32(lc * tr.ROW_BYTES + (lg ^ s01) * 16 + s2 * 64)
+            rm_odd = lds_base_i32 + fx.Int32(lc * tr.ROW_BYTES + (lg ^ s01) * 16 + (fx.Index(1) - s2) * 64)
 
-            def rm_off(p):
-                return [rm_even, rm_odd][p % 2] + fx.Index(128 * (p // 2))
+            def rm_at(p):
+                return [rm_even, rm_odd][p % 2], 128 * (p // 2)
         else:
-            rm_base = lc * tr.ROW_BYTES + (lg ^ ((lc // 2) % 4)) * 16
+            rm_base = lds_base_i32 + fx.Int32(lc * tr.ROW_BYTES + (lg ^ ((lc // 2) % 4)) * 16)
 
-            def rm_off(p):
-                return rm_base + fx.Index(64 * p)
+            def rm_at(p):
+                return rm_base, 64 * p
         # Transposed read: row 16 * db + lc, group lg.
-        t_rd = lc * 32 + (lg ^ ((lc // 4) % 4)) * 8
+        t_rd = lds_base_i32 + fx.Int32(lc * 32 + (lg ^ ((lc // 4) % 4)) * 8)
 
         def rm_read(region, st, masks):
             out = []
             for p in range_constexpr(tr.DP):
-                v = lds_load(rm_off(p) + fx.Index(st * tr.STAGE_BYTES + region), v8e(), 16, st)
+                base, imm = rm_at(p)
+                v = lds_load(base, imm + st * tr.STAGE_BYTES + region, v8e(), 16, st)
                 if const_expr(p in masks):
                     v = masked8(v, masks[p])
                 out.append(v)
             return out
 
         def t_read(region, st):
-            return [lds_load(t_rd + fx.Index(st * tr.STAGE_BYTES + region + db * 512), v4e(), 8, st)
-                    for db in range(tr.DB)]
+            return [lds_load(t_rd, st * tr.STAGE_BYTES + region + db * 512, v4e(), 8, st) for db in range(tr.DB)]
 
         def gemm_d(rows, packs):
             """[q][kv] over d for each kv block: A = rows (Q or dO), B = resident K or V."""
@@ -463,13 +495,13 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
                 fx.Int64(fx.ptrtoint(Delta)) + fx.Int64(row0) * fx.Int64(4), num_records_bytes=nbytes))
             return q_rsrc, do_rsrc, lse_rsrc, delta_rsrc, fx.Int32(pitch) * fx.Int32(4)
 
-        # This lane's LSE/Delta rows: 4 * lg + [0, 4) of the tile.
+        # This lane's LSE/Delta rows: 4 * lg + [0, 4) of the tile; r rides in soffset.
         def row_loads(rsrc, pitch_b, q_start):
-            soff = fx.Int32(q_start) * pitch_b
+            voff = fx.Int32(lg * 4) * pitch_b
             return [fx.Int32(rocdl.raw_ptr_buffer_load(fx.Int32.ir_type,
                                                        rsrc,
-                                                       fx.Int32(lg * 4 + fx.Index(r)) * pitch_b,
-                                                       soff,
+                                                       voff,
+                                                       (fx.Int32(q_start) + fx.Int32(r)) * pitch_b,
                                                        0)) for r in range(4)]
 
         c_scale = fx.Float32(sm_scale) * fx.Float32(LOG2E)
@@ -529,8 +561,7 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
         if const_expr(bias):
             # (B, H, Sq, Sk), Sk contiguous; rows offset by Q's varlen offset, columns by K's.
             b_span = smax(fx.Int64(sq_i32 - fx.Int32(1)) * stride_b_seq_q + fx.Int64(k_row_off + sk_i32), fx.Int64(0))
-            b_lane = [((fx.Int32(lg * 4) + fx.Int32(r)) * fx.Int32(stride_b_seq_q) + k_row_off
-                       + fx.Int32(kv_wave + lc)) * fx.Int32(2) for r in range(4)]
+            b_lane = (fx.Int32(lg * 4) * fx.Int32(stride_b_seq_q) + k_row_off + fx.Int32(kv_wave + lc)) * fx.Int32(2)
 
         def bias_rsrc_for(head_q):
             b_elems = (fx.Int64(q_batch) * stride_b_batch + fx.Int64(head_q) * stride_b_head
@@ -540,10 +571,11 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
                 num_records_bytes=b_span * fx.Int64(2)))
 
         def bias_load(b_rsrc, q_start, b):
-            soff = fx.Int32(q_start) * fx.Int32(stride_b_seq_q) * fx.Int32(2)
-            hs = [fx.Int16(rocdl.raw_ptr_buffer_load(T.i16, b_rsrc, b_lane[r] + fx.Int32(32 * b), soff, 0))
-                  for r in range(4)]
-            v = Vec(Vec.from_elements(hs, fx.Int16).bitcast(elem))
+            halves = []
+            for r in range_constexpr(4):
+                soff = (fx.Int32(q_start) + fx.Int32(r)) * fx.Int32(stride_b_seq_q) * fx.Int32(2)
+                halves.append(fx.Int16(rocdl.raw_ptr_buffer_load(T.i16, b_rsrc, b_lane + fx.Int32(32 * b), soff, 0)))
+            v = Vec(Vec.from_elements(halves, fx.Int16).bitcast(elem))
             return [fx.Float32(v[r].to(fx.Float32)) for r in range(4)]
 
         if const_expr(dropout):
