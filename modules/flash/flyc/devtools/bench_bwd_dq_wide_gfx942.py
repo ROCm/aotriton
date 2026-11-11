@@ -50,6 +50,7 @@ def main():
     p.add_argument('--grid_axis_order', type=int, default=None)
     p.add_argument('--iters', type=int, default=20)
     p.add_argument('--no_check', action='store_true')
+    p.add_argument('--wave_m', type=int, default=None, help='query rows per wave: 32 or 16')
     p.add_argument('--bhsd', action='store_true', help='BHSD storage (default BSHD)')
     p.add_argument('--dev', action='append', default=[], help='Traits override NAME=VALUE (dev sweeps)')
     a = p.parse_args()
@@ -89,6 +90,8 @@ def main():
               padded_head=padded)
     if a.grid_axis_order is not None:
         kw['grid_axis_order'] = a.grid_axis_order
+    if a.wave_m is not None:
+        kw['wave_m'] = a.wave_m
     launch = build_dq(rung, a.dev, **kw)
 
     def run():

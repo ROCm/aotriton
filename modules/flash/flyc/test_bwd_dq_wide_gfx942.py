@@ -52,11 +52,12 @@ REL_TOL = 1e-2
 
 
 @functools.cache
-def _build(head_dim, causal_type=0, bias=False, dropout=False, padded_head=False):
+def _build(head_dim, causal_type=0, bias=False, dropout=False, padded_head=False, dtype_str="bf16"):
     from fmha_bwd_dq_gfx942_wide import build_fmha_bwd_dq_gfx942_wide
 
     return build_fmha_bwd_dq_gfx942_wide(head_dim,
                                          causal_type=causal_type,
+                                         dtype_str=dtype_str,
                                          bias=bias,
                                          dropout=dropout,
                                          padded_head=padded_head)
@@ -407,6 +408,31 @@ def test_layouts(head_dim):
     _build(head_dim)(q, k, v, do, dq, lse.view(b * h, sq), delta.view(b * h, sq), b, sq, seqlen_k=sk)
     torch.cuda.synchronize()
     _check(f"hd={head_dim} layouts", dq, ref)
+
+
+@pytest.mark.parametrize("causal", [False, True])
+@pytest.mark.parametrize("head_dim", (192, 512))
+def test_fp16(head_dim, causal):
+    """f16 inputs and outputs; dS rounds to nearest even through v_cvt_f16_f32."""
+    sq, sk = 333, 555
+    b, h = 2, 2
+    torch.manual_seed(head_dim)
+    q, k, v, do = (torch.randn(b, h, n, head_dim, device="cuda", dtype=torch.float16) for n in (sq, sk, sk, sq))
+    mask = _bottom_right(sq, sk, q.device) if causal else None
+    ref, _, lse, delta, live = _reference(q, k, v, do, head_dim ** -0.5, keep_mask=mask)
+    dq = torch.full_like(q, float("nan"))
+    _build(head_dim, causal_type=2 if causal else 0, dtype_str="f16")(q,
+                                                                     k,
+                                                                     v,
+                                                                     do,
+                                                                     dq,
+                                                                     lse.view(b * h, sq),
+                                                                     delta.view(b * h, sq),
+                                                                     b,
+                                                                     sq,
+                                                                     seqlen_k=sk)
+    torch.cuda.synchronize()
+    _check(f"hd={head_dim} f16 causal={causal}", dq, ref, live[0, 0])
 
 
 @pytest.mark.parametrize("head_dim", (192, 384))
