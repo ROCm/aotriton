@@ -100,6 +100,9 @@ class Traits:
             self.SWZ = rm_buf + t_pad > 65536
         # 'global': how many tiles ahead T's loads run.
         self.G_AHEAD = 1
+        # Passes over Q/dO: 'dkdv' at once, or 'dv' (K, dV live) then 'dk' (K, V, dK live)
+        # where K, V, dK and dV together outgrow the 512 registers.
+        self.PASSES = ('dv', 'dk') if 3 * head_dim * kv_subs // 2 > 640 else ('dkdv',)
         self.PREFETCH = 2                       # LDS operand reads in flight ahead of their MFMAs
         self.KV_VGPR = True                     # pin K, V to VGPRs
         self.TB_POS = 99                        # T-build write's place among X's spread work (99: last)
@@ -138,7 +141,7 @@ class Traits:
             self.N_VM_Y = (self.N_DMA if self.RM_SLOTS == 2 else 0) + n_ld
         assert self.LDS_BYTES <= 65536, self.LDS_BYTES
         self.CACHE_TAG = (f'BW{head_dim}_c{int(causal)}_{dtype_str}_s{kv_subs}_p{int(padded_head)}_{self.T_SRC}'
-                          f'_f{self.PREFETCH}_k{int(self.KV_VGPR)}_tb{self.TB_POS}_d{int(self.Q_DOWN)}_r{self.RM_SLOTS}_g{self.G_AHEAD}_z{int(self.SWZ)}{int(self.SIDE_LDS)}_a{self.VALU_PER_MFMA}_x{int(self.SCHED)}_t{int(self.TRACE_SUB)}_e{self.EXP}')
+                          f'_f{self.PREFETCH}_k{int(self.KV_VGPR)}_tb{self.TB_POS}_d{int(self.Q_DOWN)}_r{self.RM_SLOTS}_g{self.G_AHEAD}_z{int(self.SWZ)}{int(self.SIDE_LDS)}_{'.'.join(self.PASSES)}_a{self.VALU_PER_MFMA}_x{int(self.SCHED)}_t{int(self.TRACE_SUB)}_e{self.EXP}')
 
 
 # csrc/flyc_common.h's kFlycGridAxis*, as fmha_tuning_gfx942.
@@ -383,14 +386,21 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 out.append(row)
             return out
 
-        k_res = resident(k_rsrc, stride_k_seq, fx.Int32(hdim_qk))
-        v_res = resident(v_rsrc, stride_v_seq, fx.Int32(hdim_vo))
-        if const_expr(tr.KV_VGPR):
-            # Keep K and V out of the AGPRs, which the accumulators fill.
-            flat = pin_vgpr([x for row in k_res + v_res for x in row])
-            k_res = [[Vec(flat[t * tr.NSUB + sub]) for sub in range(tr.NSUB)] for t in range(tr.NT)]
-            n_k = tr.NT * tr.NSUB
-            v_res = [[Vec(flat[n_k + t * tr.NSUB + sub]) for sub in range(tr.NSUB)] for t in range(tr.NT)]
+        def load_res(need_v):
+            """This pass's resident K (and V)."""
+            k_res = resident(k_rsrc, stride_k_seq, fx.Int32(hdim_qk))
+            v_res = resident(v_rsrc, stride_v_seq, fx.Int32(hdim_vo)) if need_v else []
+            if const_expr(tr.KV_VGPR):
+                # Keep K and V out of the AGPRs, which the accumulators fill.
+                flat = pin_vgpr([x for row in k_res + v_res for x in row])
+                n_k = tr.NT * tr.NSUB
+                k_res = [[Vec(flat[t * tr.NSUB + sub]) for sub in range(tr.NSUB)] for t in range(tr.NT)]
+                if const_expr(need_v):
+                    v_res = [[Vec(flat[n_k + t * tr.NSUB + sub]) for sub in range(tr.NSUB)] for t in range(tr.NT)]
+            return k_res, v_res
+
+        # The pass being traced: its mode and residents.
+        cur = {}
 
         def smin(x, y):
             return (x < y).select(x, y)
@@ -537,6 +547,30 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
             op = getattr(op, 'operation', op)
             op.attributes['alias_scopes'] = al
             op.attributes['noalias_scopes'] = noal
+
+        def store_out(results, outs):
+            """Lane holds dK^T / dV^T [d = 16dt + 4gq + r][key kvw + 16sub + lc]."""
+            n_acc = tr.NDT * tr.NSUB
+            for i, which in enumerate(outs):
+                if const_expr(which):
+                    rsrc = rsrc_for(DV, k_batch, head_k, k_row_off, stride_dv_batch, stride_dv_head, stride_dv_seq,
+                                    sk_i32, row_vo)
+                else:
+                    rsrc = rsrc_for(DK, k_batch, head_k, k_row_off, stride_dk_batch, stride_dk_head, stride_dk_seq,
+                                    sk_i32, row_qk)
+                ss = fx.Index(fx.Int32(stride_dv_seq if which else stride_dk_seq))
+                row_lim = row_vo if which else row_qk
+                for dt in range_constexpr(tr.NDT):
+                    for sub in range_constexpr(tr.NSUB):
+                        acc = Vec(results[i * n_acc + dt * tr.NSUB + sub])
+                        if const_expr(not which):
+                            # dS is against the scaled scores: sm_scale lands once, here.
+                            acc = acc * fx.full(4, fx.Float32(sm_scale), fx.Float32)
+                        packed = Vec.from_elements([fx.Float32(acc[r]).to(elem) for r in range(4)], elem)
+                        kv = kvw + fx.Int32(16 * sub) + fx.Int32(lc)
+                        d = fx.Int32(16 * dt) + fx.Int32(gq * 4)
+                        ok = (kv < sk_i32) & (d < row_lim)
+                        buffer_ops.buffer_store(packed.ir_value(), rsrc, fx.Index(kv) * ss + fx.Index(d), mask=ok)
 
         def head_pass(g, accs):
             """Every q tile of query head head_k * group + g, accumulated into accs."""
@@ -706,11 +740,14 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 return out
 
             def sdp(slot, hooks=()):
-                """S and dP of the tile in RM[slot]: [v4f32] * NSUB each, q = 4gq + r, key lc."""
+                """S (and dP) of the tile in RM[slot]: [v4f32] * NSUB each, q = 4gq + r, key lc."""
+                need_v = cur['mode'] != 'dv'
                 s = [zero4] * tr.NSUB
-                dp = [zero4] * tr.NSUB
+                dp = [zero4] * tr.NSUB if need_v else []
 
                 def read(t):
+                    if const_expr(not need_v):
+                        return Vec(rm_read(slot, 0, t)), None
                     return Vec(rm_read(slot, 0, t)), Vec(rm_read(slot, 1, t))
 
                 def use(t, ops):
@@ -718,16 +755,17 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                     if const_expr(tr.PADDED):
                         c0 = fx.Int32(32 * t) + fx.Int32(gq * 8)
                         q8 = Vec(masked8(q8, c0, fx.Int32(hdim_qk)))
-                        o8 = Vec(masked8(o8, c0, fx.Int32(hdim_vo)))
+                        if const_expr(need_v):
+                            o8 = Vec(masked8(o8, c0, fx.Int32(hdim_vo)))
                     for e in range_constexpr(2):
                         sl = [4 * e, 4 * e + 1, 4 * e + 2, 4 * e + 3]
                         qa = q8.shuffle(q8, sl).ir_value()
-                        oa = o8.shuffle(o8, sl).ir_value()
                         for sub in range_constexpr(tr.NSUB):
-                            kb = k_res[t][sub]
-                            vb = v_res[t][sub]
+                            kb = cur['k'][t][sub]
                             s[sub] = mfma(qa, kb.shuffle(kb, sl).ir_value(), s[sub])
-                            dp[sub] = mfma(oa, vb.shuffle(vb, sl).ir_value(), dp[sub])
+                            if const_expr(need_v):
+                                vb = cur['v'][t][sub]
+                                dp[sub] = mfma(o8.shuffle(o8, sl).ir_value(), vb.shuffle(vb, sl).ir_value(), dp[sub])
 
                 stream(tr.NT, read, use, hooks)
                 return s, dp
@@ -737,8 +775,11 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 lse2 = [fx.Float32(x) * fx.Float32(LOG2E) for x in lse]
                 q0 = q0_of(j)
                 if const_expr(True):
+                    do_dv = cur['mode'] != 'dk'
+                    do_dk = cur['mode'] != 'dv'
                     sv = Vec(s_raw[sub]) * fx.full(4, fx.Float32(c_scale), fx.Float32)
-                    dpv = Vec(dp_raw[sub])
+                    if const_expr(do_dk):
+                        dpv = Vec(dp_raw[sub])
                     if const_expr(masked):
                         rel0 = q0 + fx.Int32(gq * 4) - band_lo[sub]
                     if const_expr(dropout):
@@ -756,7 +797,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                         if const_expr(masked):
                             live = fx.Uint32(rel0 + fx.Int32(r)) <= fx.Uint32(band_span)
                             p = live.select(p, fx.Float32(0.0))
-                        dpr = fx.Float32(dpv[r])
+                        dpr = fx.Float32(dpv[r]) if do_dk else fx.Float32(0.0)
                         p_drop = p
                         if const_expr(dropout):
                             vals = rng.u32(ph_seed, rng.grid_offset(ph_base, ph_stride, q0 + fx.Int32(gq * 4 + r), kv))
@@ -768,22 +809,28 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                             dpr = keep.select(dpr * fx.Float32(dropout_scale), fx.Float32(0.0))
                         ps.append(p_drop)
                         dss.append(p * (dpr - fx.Float32(delta[r])))
-                    out[sub] = (pack4(ps), pack4(dss))
+                    out[sub] = (pack4(ps) if do_dv else None, pack4(dss) if do_dk else None)
 
             def dvdk(dk_accs, dv_accs, p_pk, ds_pk, slot, hooks=()):
                 dk_accs = list(dk_accs)
                 dv_accs = list(dv_accs)
 
+                do_dv = cur['mode'] != 'dk'
+                do_dk = cur['mode'] != 'dv'
+
                 def read(u):
-                    return [(t_read(slot, 1, dt), t_read(slot, 0, dt)) for dt in range(2 * u, min(2 * u + 2, tr.NDT))]
+                    return [(t_read(slot, 1, dt) if do_dv else None, t_read(slot, 0, dt) if do_dk else None)
+                            for dt in range(2 * u, min(2 * u + 2, tr.NDT))]
 
                 def use(u, ops):
                     for i, (a_do, a_q) in enumerate(ops):
                         dt = 2 * u + i
                         for sub in range_constexpr(tr.NSUB):
                             k = dt * tr.NSUB + sub
-                            dv_accs[k] = mfma(a_do, p_pk[sub], dv_accs[k])
-                            dk_accs[k] = mfma(a_q, ds_pk[sub], dk_accs[k])
+                            if const_expr(do_dv):
+                                dv_accs[k] = mfma(a_do, p_pk[sub], dv_accs[k])
+                            if const_expr(do_dk):
+                                dk_accs[k] = mfma(a_q, ds_pk[sub], dk_accs[k])
 
                 stream((tr.NDT + 1) // 2, read, use, hooks)
                 return dk_accs, dv_accs
@@ -806,14 +853,19 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                         [fx.Int32(x).bitcast(fx.Float32) for x in side[:4]],
                         [fx.Int32(x).bitcast(fx.Float32) for x in side[4:]])
 
+            n_dk = n_acc if cur['mode'] != 'dv' else 0
+            n_dv = n_acc if cur['mode'] != 'dk' else 0
+            n_dp = tr.NSUB if cur['mode'] != 'dv' else 0
+
             def unpack(c):
-                o = 2 * n_acc
-                return (list(c[:n_acc]),
-                        list(c[n_acc:o]),
+                o = n_dk + n_dv
+                e = o + tr.NSUB + n_dp
+                return (list(c[:n_dk]),
+                        list(c[n_dk:o]),
                         list(c[o:o + tr.NSUB]),
-                        list(c[o + tr.NSUB:o + 2 * tr.NSUB]),
-                        list(c[o + 2 * tr.NSUB:o + 2 * tr.NSUB + n_extra_g]),
-                        list(c[o + 2 * tr.NSUB + n_extra_g:]))
+                        list(c[o + tr.NSUB:e]),
+                        list(c[e:e + n_extra_g]),
+                        list(c[e + n_extra_g:]))
 
             n_sdp = 4 * tr.NSUB * tr.NT
             n_dvdk = 2 * tr.NSUB * tr.NDT
@@ -909,7 +961,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
 
             @flyc.jit
             def finish(j, carried):
-                out = list(carried[:2 * n_acc])
+                out = list(carried[:n_dk + n_dv])
                 if j % fx.Index(2) == fx.Index(0):
                     out = iteration(j, carried, 0, True, last=True)
                 else:
@@ -959,35 +1011,19 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
             res2 = odd_tail(fx.Index(n_pairs) * 2, res1)
             return finish(fx.Index(n_loop), res2)
 
-        n_acc_all = 2 * tr.NDT * tr.NSUB
-        acc0 = [fx.full(4, 0.0, fx.Float32) for _ in range(n_acc_all)]
-        results = acc0
-        for g, carried in range(0, fx.Index(group), 1, init=acc0):
-            results = yield head_pass(fx.Int32(g), carried)
-
-        # ---- Epilogue: lane holds dK^T / dV^T [d = 16dt + 4gq + r][key kvw + 16sub + lc] ----
-        rocdl.s_waitcnt(vmcnt=0)
-        dk_rsrc = rsrc_for(DK, k_batch, head_k, k_row_off, stride_dk_batch, stride_dk_head, stride_dk_seq, sk_i32,
-                           row_qk)
-        dv_rsrc = rsrc_for(DV, k_batch, head_k, k_row_off, stride_dv_batch, stride_dv_head, stride_dv_seq, sk_i32,
-                           row_vo)
-        scale_v = fx.full(4, fx.Float32(sm_scale), fx.Float32)
         n_acc = tr.NDT * tr.NSUB
-        for which in range_constexpr(2):
-            rsrc = dv_rsrc if which else dk_rsrc
-            ss = fx.Index(fx.Int32(stride_dv_seq if which else stride_dk_seq))
-            row_lim = row_vo if which else row_qk
-            for dt in range_constexpr(tr.NDT):
-                for sub in range_constexpr(tr.NSUB):
-                    acc = Vec(results[which * n_acc + dt * tr.NSUB + sub])
-                    if const_expr(not which):
-                        # dS is against the scaled scores: sm_scale lands once, here.
-                        acc = acc * scale_v
-                    packed = Vec.from_elements([fx.Float32(acc[r]).to(elem) for r in range(4)], elem)
-                    kv = kvw + fx.Int32(16 * sub) + fx.Int32(lc)
-                    d = fx.Int32(16 * dt) + fx.Int32(gq * 4)
-                    ok = (kv < sk_i32) & (d < row_lim)
-                    buffer_ops.buffer_store(packed.ir_value(), rsrc, fx.Index(kv) * ss + fx.Index(d), mask=ok)
+        for pi in range_constexpr(len(tr.PASSES)):
+            mode = tr.PASSES[pi]
+            cur['mode'] = mode
+            cur['k'], cur['v'] = load_res(mode != 'dv')
+            outs = [w for w in (0, 1) if mode != ('dv', 'dk')[w]]     # 0: dK, 1: dV
+            acc0 = [fx.full(4, 0.0, fx.Float32) for _ in range(n_acc * len(outs))]
+            results = acc0
+            for g, carried in range(0, fx.Index(group), 1, init=acc0):
+                results = yield head_pass(fx.Int32(g), carried)
+            rocdl.s_waitcnt(vmcnt=0)
+            store_out(results, outs)
+
 
     @flyc.jit
     def launch_fmha_bwd_dkdv_gfx942_wide(
