@@ -643,11 +643,9 @@ def build_fmha_bwd_dq_gfx942(head_dim,
                 out.append(Vec.from_elements([exp2(x[r]) for r in range(16)], fx.Float32).ir_value())
             return out
 
-        def ds_packs_of(p_vals, dp_raw, kv_start):
+        def ds_packs_of(p_vals, dp_raw, keep_all):
             """dS = P * (dP - Delta), packed as GEMM3's B operand."""
             delta_v = fx.full(16, fx.Float32(delta), fx.Float32)
-            if const_expr(dropout):
-                keep_all = dropout_keep(kv_start)
             ds = []
             for n in range_constexpr(tr.NSUB):
                 dp = Vec(dp_raw[n])
@@ -683,6 +681,8 @@ def build_fmha_bwd_dq_gfx942(head_dim,
             kv = kv_base + j * tr.BLOCK_N
             # A(j)
             bias_vals = bias_load(kv, masked)
+            # Philox under GEMM1's MFMAs.
+            keep_all = dropout_keep(kv) if const_expr(dropout) else None
             s_raw = gemm_t(tile_read(tr.LDS_K_BASE, b, 'k', qk_masks), q_packs)
             # P here, under GEMM2's MFMAs; dS and its pack stay in B.
             p_vals = p_of(s_raw, kv, masked, bias_vals)
@@ -692,7 +692,7 @@ def build_fmha_bwd_dq_gfx942(head_dim,
             # B(j)
             kv_dma(kv + 2 * tr.BLOCK_N, (b + 2) % NBUF)
             rocdl.sched_barrier(0)
-            ds_packs = ds_packs_of(p_vals, dp_raw, kv)
+            ds_packs = ds_packs_of(p_vals, dp_raw, keep_all)
             if const_expr(bias and masked):
                 db_store(ds_packs, kv, True)
             if const_expr(bias and not masked):

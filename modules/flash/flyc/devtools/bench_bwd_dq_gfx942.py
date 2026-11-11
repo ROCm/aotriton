@@ -72,6 +72,7 @@ def main():
     p.add_argument('--grid_axis_order', type=int, default=None)
     p.add_argument('--lpt', type=int, default=None, help='1: longest q tiles first')
     p.add_argument('--bias', action='store_true', help='(B, H, Sq, Sk) attention bias, N(0, 1); writes dB')
+    p.add_argument('--dropout', type=float, default=0.0, help='dropout_p; timing only, --check ignores it')
     p.add_argument('--iters', type=int, default=20)
     p.add_argument('--check', action='store_true', help='compare against fp64 (slow at long sequences)')
     a = p.parse_args()
@@ -101,7 +102,7 @@ def main():
     if rung != a.head_dim:
         knobs['padded_head'] = True
     # causal is bottom-right (causal_type 2), matching the reference.
-    launch = tuning.build(rung, causal_type=2 if a.causal else 0, dtype_str=a.dtype, bias=a.bias, **knobs)
+    launch = tuning.build(rung, causal_type=2 if a.causal else 0, dtype_str=a.dtype, bias=a.bias, dropout=a.dropout > 0, **knobs)
     lse_2d = lse.view(a.batch * a.heads, a.seqlen)
     delta_2d = delta.view(a.batch * a.heads, a.seqlen)
 
@@ -119,6 +120,8 @@ def main():
                scale=sm_scale,
                bias=bias,
                dbias=dbias,
+               dropout_p=a.dropout if a.dropout > 0 else None,
+               philox_seed=1234,
                stream=torch.cuda.current_stream())
 
     run()
