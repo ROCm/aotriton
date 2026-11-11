@@ -78,7 +78,9 @@ class Traits:
         # TFLOPS (36 spills), 'v' 323 (138); 384 ties.
         self.KV_PIN = '' if padded_head else ('a' if head_dim > 384 else 'v')
         self.FRESH_BASES = True                 # per-tile opaque LDS slot bases
-        self.OPS_VGPR = False                   # keep RM operands out of AGPRs
+        # Keep RM operands out of AGPRs. hd512 sits at a register-allocation cliff, and the
+        # causal mask tips it (B2 H32 S8k: 222 with this, 135 without, 168 with K/V in VGPRs).
+        self.OPS_VGPR = causal and head_dim > 384 and not padded_head
         # Walk q tiles last to first: a causal head's blocks then all start on its last
         # tiles and share them in L2, instead of each starting at its own diagonal.
         self.Q_DOWN = causal
