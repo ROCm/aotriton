@@ -27,7 +27,7 @@ import flydsl.compiler as flyc
 import flydsl.expr as fx
 from flydsl._mlir import ir
 from flydsl._mlir.dialects import llvm
-from flydsl.expr import const_expr, gpu, range_constexpr, rocdl
+from flydsl.expr import const_expr, gpu, ktrace, range_constexpr, rocdl
 from flydsl.expr.typing import T
 from flydsl.expr.typing import Vector as Vec
 from flydsl.expr.utils.arith import _to_raw as raw
@@ -77,7 +77,11 @@ class Traits:
         self.PV_STEPS = self.BLOCK_N // 8       # MFMA k-steps of dQ^T per tile
         # Row-major K and V: an odd number of 16B chunks a row.
         chunks = head_dim // 8
-        self.RM_STRIDE = (chunks + 1 - chunks % 2) * 16
+        self.RM_PAD = 1 - chunks % 2            # 16B chunks of row padding
+        for k, v in DEV_OVERRIDES.items():
+            if k == 'RM_PAD':
+                self.RM_PAD = v
+        self.RM_STRIDE = (chunks + self.RM_PAD) * 16
         self.RM_TILE_BYTES = self.BLOCK_N * self.RM_STRIDE
         # K^T: [D][BLOCK_N + 4]; the 8B pad spreads 16 lanes over all banks.
         self.KT_STRIDE = self.BLOCK_N + 4
@@ -93,14 +97,22 @@ class Traits:
         assert self.LDS_BYTES <= 65536, self.LDS_BYTES
         self.VALU_PER_MFMA = 3                  # sched_group_barrier slot size
         self.SCHED = True                       # interleave LDS/VMEM/VALU with MFMAs
+        self.LEAD_A = 4                         # LDS reads issued ahead of the S^T/dP^T MFMAs
+        self.LEAD_B = 4                         # LDS reads issued ahead of the dQ^T MFMAs
+        self.KT_EARLY = 1                       # read all of K^T(j) before dS(j)
+        self.KT_SPREAD = 0                      # spread the K^T(j) writes over A(j)'s MFMAs
         self.PAIR_TILES = causal
+        self.SW_DIV = 8                         # row-major chunk XOR key: (row // SW_DIV) % SW_MOD
+        self.SW_MOD = 2
+        self.ABLATE = 0                         # dev timing only, wrong results: bit 0 A reads, 1 dS VALU, 2 B reads, 3 barriers, 4 LDS writes, 5 K/V loads
         for k, v in DEV_OVERRIDES.items():
             assert hasattr(self, k), k
             setattr(self, k, v)
         self.GRID_BLOCK_M = self.BLOCK_M * (2 if self.PAIR_TILES else 1)
         # The JIT cache keys on scalar closure values; the kernel references this.
         self.CACHE_TAG = (f'DQW{head_dim}_c{int(causal)}_{dtype_str}_p{int(padded_head)}'
-                          f'_a{self.VALU_PER_MFMA}_s{int(self.SCHED)}_q{int(self.PAIR_TILES)}')
+                          f'_a{self.VALU_PER_MFMA}_s{int(self.SCHED)}_q{int(self.PAIR_TILES)}'
+                          f'_la{self.LEAD_A}_lb{self.LEAD_B}_x{self.ABLATE}_sw{self.SW_DIV}.{self.SW_MOD}_rp{self.RM_PAD}_ke{self.KT_EARLY}_ks{self.KT_SPREAD}')
 
 
 def knobs(head_dim, causal):
@@ -178,9 +190,15 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
                 f'#llvm.alias_scope<id = "{n}", domain = {_LDS_DOMAIN}>' for n in names) + ']')
         return arr([name]), arr([n for n in LDS_SCOPES if n != name])
 
-    def cluster_barrier():
+    def cluster_barrier(name=None):
+        """End of a cluster; under FLYDSL_KTRACE_ENABLE=1, marks its end and the barrier release."""
         rocdl.sched_barrier(0)
-        rocdl.s_barrier()
+        if name is not None:
+            ktrace.mark(name)
+        if const_expr(not tr.ABLATE & 8):
+            rocdl.s_barrier()
+        if name is not None:
+            ktrace.mark(name + '>')
         rocdl.sched_barrier(0)
 
     def sgb(mask, n):
@@ -352,7 +370,7 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
         k_voff = fx.Int32(u_g * 4) * k_row_stride_b + fx.Int32(u_c8 * 16)
         v_voff = fx.Int32(u_g * 4) * v_row_stride_b + fx.Int32(u_c8 * 16)
         # Row-major write: rows 4g..4g+3 share swizzle key (4g / 8) % 4.
-        rm_wr = fx.Index(u_g * 4 * tr.RM_STRIDE) + (u_c8 ^ ((u_g // 2) % 4)) * 16
+        rm_wr = fx.Index(u_g * 4 * tr.RM_STRIDE) + (u_c8 ^ (((u_g * 4) // tr.SW_DIV) % tr.SW_MOD)) * 16
         kt_wr = fx.Index(tr.LDS_KT_BASE) + (u_c8 * 8 * tr.KT_STRIDE + u_g * 4) * 2
 
         def unit_mask(hdim):
@@ -370,6 +388,8 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
             v_umask = unit_mask(hdim_vo)
 
         def unit_load(rsrc, voff, row_stride_b, kv_start):
+            if const_expr(tr.ABLATE & 32):
+                return [fx.Int32(kv_start) + fx.Int32(i) for i in range(16)]
             out = []
             for r in range_constexpr(4):
                 soff = (fx.Int32(kv_start) + fx.Int32(r)) * row_stride_b
@@ -383,19 +403,19 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
             return [fx.Int32(regs[i]) & umask[i % 4] for i in range(16)]
 
         def rm_store(regs, base, scope):
-            for r in range_constexpr(4):
+            for r in range_constexpr(0 if tr.ABLATE & 16 else 4):
                 lds_store(Vec.from_elements(regs[4 * r:4 * r + 4], fx.Int32), rm_wr + base + r * tr.RM_STRIDE, 16, scope)
 
         def kt_store(regs):
             """v_perm turns the unit into 8 K^T rows of 4 keys."""
             sel = (fx.Int32(0x05040100), fx.Int32(0x07060302))
-            for d in range_constexpr(8):
+            for d in range_constexpr(0 if tr.ABLATE & 16 else 8):
                 w = [regs[4 * r + d // 2] for r in range(4)]
                 dw = [fx.Int32(rocdl.perm_b32(w[1], w[0], sel[d % 2])), fx.Int32(rocdl.perm_b32(w[3], w[2], sel[d % 2]))]
                 lds_store(Vec.from_elements(dw, fx.Int32), kt_wr + d * tr.KT_STRIDE * 2, 8, 'kt')
 
         # MFMA A-operand reads of row-major K / V: row lm, chunk 2t + lh, swizzled.
-        sw = (lm // 8) % 4
+        sw = (lm // tr.SW_DIV) % tr.SW_MOD
         rm_rd = [lm * tr.RM_STRIDE + ((lh + 2 * p) ^ sw) * 16 for p in range(2)]
         kt_rd = fx.Index(tr.LDS_KT_BASE) + (lm * tr.KT_STRIDE + lh * 4) * 2
 
@@ -614,44 +634,66 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
             n_valu_a = 16 + (32 if tr.PADDED else 0)
 
             def iteration(j, carried, masked):
-                """A(j), B(j) of KV tile j (counted from kv_base)."""
+                """A(j), B(j) of KV tile j (counted from kv_base). Carries K(j) and V(j+1) in
+                registers: K(j+1) loads in A(j) after K^T(j) is out, V(j+2) in B(j) after V(j+1)
+                is out. One set each, so the loop carries no register rotation."""
                 dq_accs = list(carried[:dt_n])
                 k_regs = list(carried[dt_n:dt_n + 16])
                 v_regs = list(carried[dt_n + 16:])
                 kv_cur = kv_base + j * tr.BLOCK_N
-                kv_next = kv_cur + tr.BLOCK_N
-                # A(j): K^T(j) from the unit, then reload it with tile j+1.
-                kt_store(k_regs)
-                rocdl.sched_barrier(0)
-                k_regs = unit_load(k_rsrc, k_voff, k_row_stride_b, kv_next)
-                v_regs = unit_load(v_rsrc, v_voff, v_row_stride_b, kv_next)
+                # A(j): K^T(j), then K(j+1) into the same registers; bias(j) first so its
+                # wait does not drain them.
+                if const_expr(not tr.KT_SPREAD):
+                    kt_store(k_regs)
                 b_vals = bias_load(kv_cur, masked)
-                s_acc = gemm_t(rm_read(tr.LDS_K_BASE, 'k'), q_packs)
-                dp_acc = gemm_t(rm_read(tr.LDS_V_BASE, 'v'), do_packs)
-                sched(tr.QK_STEPS * 2, tr.QK_STEPS, 0, 0, 0, lead=4)
+                rocdl.sched_barrier(0)
+                if const_expr(tr.KT_SPREAD):
+                    kt_store(k_regs)
+                k_regs = unit_load(k_rsrc, k_voff, k_row_stride_b, kv_cur + tr.BLOCK_N)
+                if const_expr(tr.ABLATE & 1):
+                    fake = [Vec(q_packs[2 * t]).shuffle(Vec(do_packs[2 * t]), list(range(8))).ir_value() for t in range(tr.QK_STEPS // 2)]
+                    s_acc = gemm_t(fake, q_packs)
+                    dp_acc = gemm_t(fake, do_packs)
+                else:
+                    s_acc = gemm_t(rm_read(tr.LDS_K_BASE, 'k'), q_packs)
+                    dp_acc = gemm_t(rm_read(tr.LDS_V_BASE, 'v'), do_packs)
+                sched(tr.QK_STEPS * 2, tr.QK_STEPS, 4 * tr.KT_SPREAD, 4 * tr.KT_SPREAD, 16 * tr.KT_SPREAD, lead=tr.LEAD_A)
                 rocdl.s_waitcnt(lgkmcnt=0)
-                cluster_barrier()
-                # B(j): K, V (j+1) row-major; dS(j); dQ^T += K^T(j) dS^T(j).
-                rocdl.s_waitcnt(vmcnt=0)
+                cluster_barrier('A')
+                # B(j): V(j+1) row-major, then V(j+2) into its registers; dS(j);
+                # dQ^T += K^T(j) dS^T(j); K(j+1) row-major last.
+                rm_store(unit_clean(v_regs, v_umask if tr.PADDED else None), tr.LDS_V_BASE, 'v')
+                rocdl.sched_barrier(0)
+                v_regs = unit_load(v_rsrc, v_voff, v_row_stride_b, kv_cur + 2 * tr.BLOCK_N)
+                if const_expr(tr.ABLATE & 4):
+                    kts = [[q_packs[(dt * 4 + st) % len(q_packs)] for st in range(tr.PV_STEPS)] for dt in range(tr.D_TILES)]
+                else:
+                    kts = kt_read()
+                if const_expr(tr.KT_EARLY):
+                    # The whole K^T tile lands under the dS VALU.
+                    rocdl.sched_barrier(0)
+                if const_expr(tr.ABLATE & 2):
+                    ds_packs = [pack4([Vec(s_acc)[4 * i + jj] + Vec(dp_acc)[4 * i + jj] for jj in range(4)]) for i in range(tr.PV_STEPS)]
+                else:
+                    ds_packs = ds_tile(s_acc, dp_acc, kv_cur, masked, b_vals)
+                dq_accs = gemm_dq(dq_accs, ds_packs, kts)
+                if const_expr(not tr.KT_EARLY):
+                    sched(dt_n * tr.PV_STEPS, dt_n * tr.PV_STEPS // 2, 0, 0, 0, lead=tr.LEAD_B)
+                rocdl.sched_barrier(0)
                 k_regs = unit_clean(k_regs, k_umask if tr.PADDED else None)
-                v_regs = unit_clean(v_regs, v_umask if tr.PADDED else None)
                 rm_store(k_regs, tr.LDS_K_BASE, 'k')
-                rm_store(v_regs, tr.LDS_V_BASE, 'v')
-                ds_packs = ds_tile(s_acc, dp_acc, kv_cur, masked, b_vals)
-                dq_accs = gemm_dq(dq_accs, ds_packs, kt_read())
-                sched(dt_n * tr.PV_STEPS, dt_n * tr.PV_STEPS // 2, 8, 0, 0, lead=4)
                 rocdl.s_waitcnt(lgkmcnt=0)
-                cluster_barrier()
+                cluster_barrier('B')
                 return dq_accs + k_regs + v_regs
 
-            # Prologue: K, V (tile 0) row-major; K^T(0) is written by A(0).
+            # Prologue: K, V (tile 0) row-major; K^T(0) is written by A(0); V(1) in flight.
             k_regs = unit_load(k_rsrc, k_voff, k_row_stride_b, kv_base)
             v_regs = unit_load(v_rsrc, v_voff, v_row_stride_b, kv_base)
-            rocdl.s_waitcnt(vmcnt=0)
             k_regs = unit_clean(k_regs, k_umask if tr.PADDED else None)
-            v_regs = unit_clean(v_regs, v_umask if tr.PADDED else None)
             rm_store(k_regs, tr.LDS_K_BASE, 'k')
-            rm_store(v_regs, tr.LDS_V_BASE, 'v')
+            rm_store(unit_clean(v_regs, v_umask if tr.PADDED else None), tr.LDS_V_BASE, 'v')
+            rocdl.sched_barrier(0)
+            v_regs = unit_load(v_rsrc, v_voff, v_row_stride_b, kv_base + tr.BLOCK_N)
             rocdl.s_waitcnt(lgkmcnt=0)
             cluster_barrier()
 

@@ -24,11 +24,14 @@ import fmha_tuning_gfx942 as fwd_tuning  # noqa: E402
 LADDER = (160, 192, 224, 256, 384, 512)
 
 
-def build_dq(rung, **kwargs):
-    if rung <= 256:
-        from fmha_bwd_dq_gfx942_wide import build_fmha_bwd_dq_gfx942_wide as build
-    else:
-        from fmha_bwd_dq_gfx942_xwide import build_fmha_bwd_dq_gfx942_xwide as build
+def build_dq(rung, dev, **kwargs):
+    import importlib
+
+    mod = importlib.import_module('fmha_bwd_dq_gfx942_wide' if rung <= 256 else 'fmha_bwd_dq_gfx942_xwide')
+    for item in dev:
+        name, value = item.split('=')
+        mod.DEV_OVERRIDES[name] = int(value)
+    build = getattr(mod, 'build_fmha_bwd_dq_gfx942_wide' if rung <= 256 else 'build_fmha_bwd_dq_gfx942_xwide')
     return build(rung, **kwargs)
 
 
@@ -47,6 +50,7 @@ def main():
     p.add_argument('--grid_axis_order', type=int, default=None)
     p.add_argument('--iters', type=int, default=20)
     p.add_argument('--no_check', action='store_true')
+    p.add_argument('--dev', action='append', default=[], help='Traits override NAME=VALUE (dev sweeps)')
     a = p.parse_args()
     hk = a.heads_k or a.heads
     sk = a.seqlen_k or a.seqlen
@@ -80,7 +84,7 @@ def main():
               padded_head=padded)
     if a.grid_axis_order is not None:
         kw['grid_axis_order'] = a.grid_axis_order
-    launch = build_dq(rung, **kw)
+    launch = build_dq(rung, a.dev, **kw)
 
     def run():
         launch(T(q), T(k), T(v), T(do), T(dq), lse, delta, a.batch, a.seqlen, seqlen_k=sk, bias=bias, dbias=dbias,
