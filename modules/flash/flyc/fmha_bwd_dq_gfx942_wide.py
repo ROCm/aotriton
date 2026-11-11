@@ -34,6 +34,7 @@ import flydsl.expr as fx
 from flydsl._mlir import ir
 from flydsl._mlir.dialects import llvm
 from flydsl.expr import const_expr, gpu, ktrace, range_constexpr, rocdl
+from flydsl.expr import math as fmath
 from flydsl.expr.typing import T
 from flydsl.expr.typing import Vector as Vec
 from flydsl.expr.utils.arith import _to_raw as raw
@@ -546,6 +547,7 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
             delta = fx.Float32(buffer_ops.buffer_load(delta_rsrc, q_row * lse_pitch, vec_width=1, dtype=fx.Float32))
             # Natural-base LSE; +inf (dead rows, rows past sq) makes P exactly 0.
             lse2 = q_ok.select(lse * fx.Float32(LOG2E), fx.Float32(float('inf')))
+            neg_lse2 = fx.Float32(0.0) - lse2
 
             q_first = fx.Int32(q_start)
             q_last = smin(q_first + fx.Int32(tr.BLOCK_M), sq_i32) - fx.Int32(1)
@@ -627,14 +629,18 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
 
             def ds_tile(s_acc, dp_acc, kv_start, masked, bias_vals):
                 """dS^T packs of one tile; stores dB = dS on bias builds."""
-                s_vals = [Vec(s_acc)[r] * c_scale for r in range(tr.NS)]
                 if const_expr(bias):
+                    s_vals = [Vec(s_acc)[r] * c_scale for r in range(tr.NS)]
                     # Upcast first: log2(e) in the input dtype would differ from the forward's.
                     s_vals = [s_vals[r] + fx.Float32(Vec(bias_vals[r // 4])[r % 4].to(fx.Float32)) * fx.Float32(LOG2E)
-                              for r in range(tr.NS)]
+                              - lse2 for r in range(tr.NS)]
+                else:
+                    # One fma: the exponent of S*scale - lse2, rounded once.
+                    s_vals = [fx.Float32(fmath.fma(Vec(s_acc)[r], c_scale, neg_lse2)) for r in range(tr.NS)]
                 if const_expr(masked):
+                    # After the scale, as lessons #7 requires; -inf - lse2 is -inf.
                     s_vals = mask_scores(s_vals, kv_start)
-                p = [exp2(s_vals[r] - lse2) for r in range(tr.NS)]
+                p = [exp2(s_vals[r]) for r in range(tr.NS)]
                 dp = [fx.Float32(Vec(dp_acc)[r]) for r in range(tr.NS)]
                 if const_expr(dropout):
                     # The mask and 1/(1-p) hit dP; dS uses the undropped P (lessons #9).

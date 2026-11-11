@@ -435,6 +435,30 @@ def test_fp16(head_dim, causal):
     _check(f"hd={head_dim} f16 causal={causal}", dq, ref, live[0, 0])
 
 
+@pytest.mark.parametrize("scale", [0.0, -0.3])
+@pytest.mark.parametrize("head_dim", (192, 512))
+def test_scale_sign(head_dim, scale):
+    """Zero and negative sm_scale with masked tiles: no NaN from -inf * scale (lessons #7)."""
+    b, h, sq, sk = 1, 2, 300, 200
+    q, k, v, do = _inputs((b, h, sq, head_dim), (b, h, sk, head_dim), seed=11)
+    mask = _bottom_right(sq, sk, q.device)
+    ref, _, lse, delta, live = _reference(q, k, v, do, scale, keep_mask=mask)
+    dq = torch.full_like(q, float("nan"))
+    _build(head_dim, causal_type=2)(q,
+                                    k,
+                                    v,
+                                    do,
+                                    dq,
+                                    lse.view(b * h, sq),
+                                    delta.view(b * h, sq),
+                                    b,
+                                    sq,
+                                    seqlen_k=sk,
+                                    scale=scale)
+    torch.cuda.synchronize()
+    _check(f"hd={head_dim} scale={scale}", dq, ref, live[0, 0])
+
+
 @pytest.mark.parametrize("head_dim", (192, 384))
 def test_large_logits(head_dim):
     """sm_scale 1.2 on N(0, 1): a sharp softmax, where an exponent error shows."""
