@@ -78,7 +78,7 @@ class Traits:
         self.SLOT_BYTES = 2 * self.TILE_BYTES
         self.LDS_BYTES = 4 * self.SLOT_BYTES
         assert self.LDS_BYTES <= 65536, self.LDS_BYTES
-        self.CACHE_TAG = f'v6_D{head_dim}_c{int(causal)}_{dtype_str}_w{num_waves}_kvb{kv_blocks}_p{int(padded_head)}'
+        self.CACHE_TAG = f'v7_D{head_dim}_c{int(causal)}_{dtype_str}_w{num_waves}_kvb{kv_blocks}_p{int(padded_head)}'
 
     def row_slot(self, s):
         return s * self.SLOT_BYTES
@@ -683,10 +683,13 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
         # Two waves per SIMD: the next tile's Philox runs under this tile's dV/dK
         # (B2 H32 S4k d96: 2.30 vs 4.83 ms; at one wave it does not pay).
         early = dropout and waves_per_eu >= 2
+        # One wave with dropout from d64: VALU-bound, the order is left to the
+        # scheduler (B2 H32 S8k d128: 12.88 vs 13.34 ms; d32 causal loses 7%).
+        sched_valu = 0 if dropout and not early and head_dim >= 64 else interleave_valu
 
         def interleave(n_mfma, n_other, mask):
             """Ask the scheduler for one MFMA, then `n_other` of `mask`, repeated."""
-            if const_expr(interleave_valu > 0):
+            if const_expr(sched_valu > 0):
                 for _ in range_constexpr(n_mfma):
                     rocdl.sched_group_barrier(0x008, 1, 0)
                     rocdl.sched_group_barrier(mask, n_other, 0)
@@ -735,7 +738,7 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
             qt = t_read(tb + tr.QT, f't{par}')
             lse_l2, delta = lse_delta(rows)
             p_packs, ds_packs = tile_math(sd[:tr.KVB], sd[tr.KVB:], lse_l2, delta, q_j, masked, hs, nibs)
-            interleave(n_mfma_a, interleave_valu, 0x002 | 0x400)
+            interleave(n_mfma_a, sched_valu, 0x002 | 0x400)
             rocdl.sched_barrier(0)
             # Phase B: dV/dK(j) while tile j + 1's transposed half is built in LDS.
             dk = accs[:tr.DB * tr.KVB]
