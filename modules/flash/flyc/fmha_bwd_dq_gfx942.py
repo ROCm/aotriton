@@ -166,11 +166,12 @@ def build_fmha_bwd_dq_gfx942(head_dim,
         rocdl.sched_barrier(0)
 
     def barrier_if(flag_i32):
-        """s_barrier on the waves whose wave-uniform `flag_i32` is nonzero."""
+        """s_barrier on the waves whose wave-uniform `flag_i32` is nonzero. Clobbers SCC:
+        undeclared, a live SCC across it misroutes a branch and the barriers mismatch."""
         llvm.inline_asm(ir.Type.parse('!llvm.void'),
                         [raw(flag_i32)],
                         's_cmp_eq_u32 $0, 0\n\ts_cbranch_scc1 1f\n\ts_barrier\n\t1:',
-                        's',
+                        's,~{scc}',
                         has_side_effects=True)
 
     @flyc.kernel(known_block_size=[tr.BLOCK_SIZE, 1, 1])
@@ -560,7 +561,7 @@ def build_fmha_bwd_dq_gfx942(head_dim,
                     if const_expr(masked):
                         ok = ok & (fx.Int32(kv_start) + kv_lane + fx.Int32(8 * s + e) < sk_i32)
                     off = ok.select(off, fx.Int32(0x7FFFFFFF))
-                    rocdl.raw_ptr_buffer_store(raw(fx.Int16(hs[e])), db_rsrc, off, soff, fx.Int32(0))
+                    rocdl.raw_ptr_buffer_store(raw(fx.Int16(hs[e])), db_rsrc, raw(off), raw(soff))
 
         if const_expr(dropout):
             # The Triton kernels' stream, element for element (philox.py, grid_plane).
@@ -590,14 +591,24 @@ def build_fmha_bwd_dq_gfx942(head_dim,
                           for r in range(tr.NS)]
             if const_expr(masked):
                 s_vals = mask_scores(s_vals, kv_start)
-            p = [exp2(s_vals[r] - lse2) for r in range(tr.NS)]
-            dp = [Vec(dp_raw[r // 16])[r % 16] for r in range(tr.NS)]
+            # Whole-accumulator vector math, so v_pk_* ops pair adjacent registers.
+            lse2_v = fx.full(16, fx.Float32(lse2), fx.Float32)
+            delta_v = fx.full(16, fx.Float32(delta), fx.Float32)
             if const_expr(dropout):
-                # The mask and 1/(1-p) hit dP; P stays undropped (numerical lessons, #9).
-                keep = dropout_keep(kv_start)
-                dp = [keep[r].select(fx.Float32(dp[r]) * fx.Float32(dropout_scale), fx.Float32(0.0))
-                      for r in range(tr.NS)]
-            ds = [p[r] * (fx.Float32(dp[r]) - delta) for r in range(tr.NS)]
+                keep_all = dropout_keep(kv_start)
+            ds = []
+            for n in range_constexpr(tr.NSUB):
+                x = Vec.from_elements([s_vals[16 * n + r] for r in range(16)], fx.Float32) - lse2_v
+                p = Vec.from_elements([exp2(x[r]) for r in range(16)], fx.Float32)
+                dp = Vec(dp_raw[n])
+                if const_expr(dropout):
+                    # The mask and 1/(1-p) hit dP; P stays undropped (numerical lessons, #9).
+                    keep = keep_all[16 * n:16 * n + 16]
+                    dp = Vec.from_elements([keep[r].select(fx.Float32(dp[r]) * fx.Float32(dropout_scale),
+                                                           fx.Float32(0.0)) for r in range(16)],
+                                           fx.Float32)
+                dsv = p * (dp - delta_v)
+                ds.extend(dsv[r] for r in range(16))
             return [pack4(ds[4 * i:4 * i + 4]) for i in range(tr.KV_STEPS)]
 
         # Per tile j, two clusters; waves 4..7 trail by one barrier, so an LDS buffer
