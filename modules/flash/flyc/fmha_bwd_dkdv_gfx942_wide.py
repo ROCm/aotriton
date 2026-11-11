@@ -185,10 +185,13 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
     if kv_subs is None:
         kv_subs = default_kv_subs(head_dim)
     tr = Traits(head_dim, causal_type != 0, dtype_str, kv_subs, padded_head)
+    if padded_head and bias and dropout and 'TB_POS' not in DEV_OVERRIDES:
+        # LLVM's register allocator aborts ("Overlapping insert") on bf16 hd224 here otherwise.
+        tr.TB_POS = 0
     if grid_axis_order is None:
         grid_axis_order = default_grid_axis_order(tr.CAUSAL)
     tile_fastest = grid_axis_order == GRID_AXIS_TILE_FASTEST
-    cache_tag = f'{tr.CACHE_TAG}_wpe{waves_per_eu}_g{grid_axis_order}_b{int(bias)}_d{int(dropout)}'
+    cache_tag = f'{tr.CACHE_TAG}_wpe{waves_per_eu}_g{grid_axis_order}_b{int(bias)}_d{int(dropout)}_t{tr.TB_POS}'
     elem = fx.BFloat16 if dtype_str == 'bf16' else fx.Float16
     block_kv = tr.BLOCK_KV
 
