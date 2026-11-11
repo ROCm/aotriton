@@ -30,6 +30,11 @@ def default_grid_axis_order(causal):
     return GRID_AXIS_HEAD_FASTEST
 
 
+def default_lpt(causal):
+    """Reverse the q tiles (longest first) under causal masks."""
+    return causal
+
+
 def body(head_dim):
     """Which body serves a compiled head dim."""
     return 'narrow'

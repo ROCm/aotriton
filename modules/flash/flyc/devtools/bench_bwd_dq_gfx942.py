@@ -70,6 +70,7 @@ def main():
     p.add_argument('--waves_per_eu', type=int, default=None)
     p.add_argument('--block_n', type=int, default=None)
     p.add_argument('--grid_axis_order', type=int, default=None)
+    p.add_argument('--lpt', type=int, default=None, help='1: longest q tiles first')
     p.add_argument('--bias', action='store_true', help='(B, H, Sq, Sk) attention bias, N(0, 1); writes dB')
     p.add_argument('--iters', type=int, default=20)
     p.add_argument('--check', action='store_true', help='compare against fp64 (slow at long sequences)')
@@ -91,7 +92,8 @@ def main():
     knobs = {k: v for k, v in (('num_waves', a.num_waves),
                                ('waves_per_eu', a.waves_per_eu),
                                ('block_n', a.block_n),
-                               ('grid_axis_order', a.grid_axis_order)) if v is not None}
+                               ('grid_axis_order', a.grid_axis_order),
+                               ('lpt', None if a.lpt is None else bool(a.lpt))) if v is not None}
     # Off-ladder head dims run on the next rung with padding, as dispatch does.
     rung = tuning.rung(a.head_dim, a.head_dim)
     if rung is None:

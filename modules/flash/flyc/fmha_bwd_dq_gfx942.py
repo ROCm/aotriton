@@ -97,7 +97,8 @@ def build_fmha_bwd_dq_gfx942(head_dim,
                              block_n=None,
                              waves_per_eu=2,
                              grid_axis_order=None,
-                             padded_head=False):
+                             padded_head=False,
+                             lpt=None):
     """A launcher with fmha_bwd_dq_gfx1201_kernel's call interface and kernel ABI.
 
     `causal_type` as gfx1201's: 1/2 are host sentinels, 3 is gSWA; all compile to 3.
@@ -115,7 +116,9 @@ def build_fmha_bwd_dq_gfx942(head_dim,
         grid_axis_order = tuning.default_grid_axis_order(tr.CAUSAL)
     tile_fastest = grid_axis_order == tuning.GRID_AXIS_TILE_FASTEST
     has_bias = bool(bias)
-    cache_tag = f'{tr.CACHE_TAG}_wpe{waves_per_eu}_g{grid_axis_order}_b{int(bias)}_d{int(dropout)}'
+    if lpt is None:
+        lpt = tuning.default_lpt(tr.CAUSAL)
+    cache_tag = f'{tr.CACHE_TAG}_wpe{waves_per_eu}_g{grid_axis_order}_b{int(bias)}_d{int(dropout)}_l{int(lpt)}'
     elem = fx.BFloat16 if dtype_str == 'bf16' else fx.Float16
 
     def v4e():
@@ -240,6 +243,9 @@ def build_fmha_bwd_dq_gfx942(head_dim,
         else:
             head = fx.Index(gpu.block_idx.x)
             q_tile = fx.Index(gpu.block_idx.y)
+        if const_expr(lpt):
+            # Longest first: under causal a q tile's work grows with its index.
+            q_tile = (fx.Index(max_seqlen_q) + tr.BLOCK_M - 1) // tr.BLOCK_M - fx.Index(1) - q_tile
         z_i32 = fx.Int32(gpu.block_idx.z)
         head_k = head // (fx.Index(num_head_q) // fx.Index(num_head_k))
         sq_i32, q_row_off, q_batch = fmha.decode_addressing(varlen_bits, 0, max_seqlen_q, seqinfo_q0, seqinfo_q1, z_i32)
