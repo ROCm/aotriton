@@ -93,6 +93,9 @@ class Traits:
         self.PREFETCH = 2                       # LDS operand reads in flight ahead of their MFMAs
         self.KV_VGPR = True                     # pin K, V to VGPRs
         self.TB_POS = 99                        # T-build write's place among X's spread work (99: last)
+        # Walk q tiles last to first: a causal head's blocks then all start on its last
+        # tiles and share them in L2, instead of each starting at its own diagonal.
+        self.Q_DOWN = causal
         self.VALU_PER_MFMA = 2                  # sched_group_barrier slot size
         self.SCHED = False
         self.TRACE_SUB = False                  # dev: ktrace marks inside X
@@ -112,7 +115,18 @@ class Traits:
             self.N_VM_Y = self.N_DMA
         assert self.LDS_BYTES <= 65536, self.LDS_BYTES
         self.CACHE_TAG = (f'BW{head_dim}_c{int(causal)}_{dtype_str}_s{kv_subs}_p{int(padded_head)}_{self.T_SRC}'
-                          f'_f{self.PREFETCH}_k{int(self.KV_VGPR)}_tb{self.TB_POS}_a{self.VALU_PER_MFMA}_x{int(self.SCHED)}_t{int(self.TRACE_SUB)}_e{self.EXP}')
+                          f'_f{self.PREFETCH}_k{int(self.KV_VGPR)}_tb{self.TB_POS}_d{int(self.Q_DOWN)}_a{self.VALU_PER_MFMA}_x{int(self.SCHED)}_t{int(self.TRACE_SUB)}_e{self.EXP}')
+
+
+# csrc/flyc_common.h's kFlycGridAxis*, as fmha_tuning_gfx942.
+GRID_AXIS_HEAD_FASTEST = 0
+GRID_AXIS_TILE_FASTEST = 1
+
+
+def default_grid_axis_order(causal):
+    """Tile-fastest shares a head's Q/dO stream in L2; causal blocks differ in
+    length and want head-fastest (hd192 B2 H32 S8k: 431 vs 336 TFLOPS)."""
+    return GRID_AXIS_HEAD_FASTEST if causal else GRID_AXIS_TILE_FASTEST
 
 
 def default_kv_subs(head_dim):
@@ -128,6 +142,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                                     dropout=False,
                                     kv_subs=None,
                                     waves_per_eu=1,
+                                    grid_axis_order=None,
                                     padded_head=False):
     """The gfx1201 dK/dV kernel's ABI and `_launch` interface, for wide heads."""
     host_causal_type = (1 if causal else 0) if causal_type is None else causal_type
@@ -139,7 +154,10 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
     if kv_subs is None:
         kv_subs = default_kv_subs(head_dim)
     tr = Traits(head_dim, causal_type != 0, dtype_str, kv_subs, padded_head)
-    cache_tag = f'{tr.CACHE_TAG}_wpe{waves_per_eu}_b{int(bias)}_d{int(dropout)}'
+    if grid_axis_order is None:
+        grid_axis_order = default_grid_axis_order(tr.CAUSAL)
+    tile_fastest = grid_axis_order == GRID_AXIS_TILE_FASTEST
+    cache_tag = f'{tr.CACHE_TAG}_wpe{waves_per_eu}_g{grid_axis_order}_b{int(bias)}_d{int(dropout)}'
     elem = fx.BFloat16 if dtype_str == 'bf16' else fx.Float16
 
     def v4e():
@@ -253,8 +271,12 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
         lane = tid % WAVE
         lc = lane % 16              # MFMA row/column: q row of A, key of B
         gq = lane // 16             # 4-element group of the MFMA's k axis
-        kv_tile = fx.Index(gpu.block_idx.x)
-        head_k = fx.Index(gpu.block_idx.y)
+        if const_expr(tile_fastest):
+            kv_tile = fx.Index(gpu.block_idx.x)
+            head_k = fx.Index(gpu.block_idx.y)
+        else:
+            head_k = fx.Index(gpu.block_idx.x)
+            kv_tile = fx.Index(gpu.block_idx.y)
         z_i32 = fx.Int32(gpu.block_idx.z)
         sq_i32, q_row_off, q_batch = fmha.decode_addressing(varlen_bits, 0, max_seqlen_q, seqinfo_q0, seqinfo_q1, z_i32)
         sk_i32, k_row_off, k_batch = fmha.decode_addressing(varlen_bits, 8, max_seqlen_k, seqinfo_k0, seqinfo_k1, z_i32)
@@ -365,18 +387,8 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
         t0 = alive.select(q_lo, fx.Int32(0)) // fx.Int32(BLOCK_M)
         n_tiles = alive.select(q_hi // fx.Int32(BLOCK_M) - t0 + fx.Int32(1), fx.Int32(0))
         n_loop = smax(n_tiles - fx.Int32(1), fx.Int32(0))
-        if const_expr(tr.CAUSAL):
-            # Tile j (q0 = 16 (t0 + j)) is clean iff q0 >= k_hi - win_r and q0 + 15 <= k0 + win_l.
-            lead = (smax(k_hi - win_r - fx.Int32(16) * t0, fx.Int32(0)) + fx.Int32(15)) // fx.Int32(16)
-            clean_end = smax(k0 + win_l - fx.Int32(15) - fx.Int32(16) * t0 + fx.Int32(16), fx.Int32(0)) // fx.Int32(16)
-            # Iteration j masks tile j; clean pairs start on an even j.
-            j_clean = smin(lead, n_loop)
-            j_clean = smin(j_clean + j_clean % fx.Int32(2), n_loop)
-            j_clean_end = smax(smin(clean_end, n_loop), j_clean)
-        else:
-            j_clean = fx.Int32(0)
-            j_clean_end = n_loop
-        n_pairs = (j_clean_end - j_clean) // fx.Int32(2)
+        t_last = t0 + n_loop
+        n_pairs = n_loop // fx.Int32(2)
 
         # This lane's keys see q rows [band_lo, band_lo + band_span]: one unsigned compare per element.
         # A block with no tile still runs tile 0 (prologue, finish) under an empty band.
@@ -543,6 +555,8 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 ph_base, ph_stride = rng.grid_plane(ph_off, ph_plane, max_seqlen_q, max_seqlen_k)
 
             def q0_of(j):
+                if const_expr(tr.Q_DOWN):
+                    return (t_last - fx.Int32(j)) * fx.Int32(BLOCK_M)
                 return (t0 + fx.Int32(j)) * fx.Int32(BLOCK_M)
 
             def dma_rows(j, slot):
@@ -755,7 +769,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 """X(j), Y(j); b = j % 2, known at trace time. `last`: no tile j+1."""
                 dk_accs, dv_accs, s_cur, dp_cur, g_regs, bvals = unpack(carried)
                 # X(j): S(j+1), dP(j+1); P(j), dS(j); T(j+1) ('lds') or T(j) ('global').
-                sub_marks = tr.TRACE_SUB and not masked and not last
+                sub_marks = tr.TRACE_SUB and not last
                 g_nxt = []
                 if const_expr(lds_tile):
                     lse, delta = side_read(b)
@@ -801,7 +815,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 if const_expr(not last):
                     sched(n_sdp, 2 * tr.NT, 0, 0)
                 rocdl.s_waitcnt(lgkmcnt=0)
-                cluster_barrier(None if masked else f'X{b}')
+                cluster_barrier(None if last else f'X{b}')
                 # Y(j): dV, dK of tile j; DMA RM(j+3) (and LSE/Delta(j+2)) spread over its MFMAs.
                 vm_work = []
                 if const_expr(not last):
@@ -815,25 +829,16 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                     g_nxt = anchor(g_nxt)
                     b_nxt = anchor(b_nxt)
                 rocdl.s_waitcnt(lgkmcnt=0)
-                cluster_barrier(None if masked else f'Y{b}')
+                cluster_barrier(None if last else f'Y{b}')
                 if const_expr(last):
                     return dk_accs + dv_accs
                 return dk_accs + dv_accs + s_nxt + dp_nxt + g_nxt + b_nxt
 
             @flyc.jit
-            def masked_iteration(j, carried):
-                out = list(carried)
-                if j % fx.Index(2) == fx.Index(0):
-                    out = iteration(j, carried, 0, True)
-                else:
-                    out = iteration(j, carried, 1, True)
-                return out
-
-            @flyc.jit
             def odd_tail(j, carried):
                 out = list(carried)
                 if j < fx.Index(n_loop):
-                    out = iteration(j, carried, 0, False)
+                    out = iteration(j, carried, 0, tr.CAUSAL)
                 return out
 
             @flyc.jit
@@ -870,25 +875,14 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
             rocdl.s_waitcnt(vmcnt=tr.N_VM_Y)
             cluster_barrier()
 
+            # One body for every tile: masking costs a few VALU an element, a second
+            # (masked) body costs registers. Pairs from j = 0, then at most one even j.
             init = list(accs) + s0 + dp0 + g0 + b0
-            if const_expr(not tr.CAUSAL):
-                # Every tile is clean: pairs from j = 0, then at most one even j.
-                res1 = init
-                for jp, carried in range(0, fx.Index(n_pairs), 1, init=init):
-                    mid = iteration(jp * 2, carried, 0, False)
-                    res1 = yield iteration(jp * 2 + 1, mid, 1, False)
-                res2 = odd_tail(fx.Index(n_pairs) * 2, res1)
-                return finish(fx.Index(n_loop), res2)
-            res0 = init
-            for j, carried in range(0, fx.Index(j_clean), 1, init=init):
-                res0 = yield masked_iteration(j, carried)
-            res1 = res0
-            for jp, carried in range(0, fx.Index(n_pairs), 1, init=res0):
-                mid = iteration(fx.Index(j_clean) + jp * 2, carried, 0, False)
-                res1 = yield iteration(fx.Index(j_clean) + jp * 2 + 1, mid, 1, False)
-            res2 = res1
-            for j, carried in range(fx.Index(j_clean) + fx.Index(n_pairs) * 2, fx.Index(n_loop), 1, init=res1):
-                res2 = yield masked_iteration(j, carried)
+            res1 = init
+            for jp, carried in range(0, fx.Index(n_pairs), 1, init=init):
+                mid = iteration(jp * 2, carried, 0, tr.CAUSAL or 'mask' in tr.EXP)
+                res1 = yield iteration(jp * 2 + 1, mid, 1, tr.CAUSAL or 'mask' in tr.EXP)
+            res2 = odd_tail(fx.Index(n_pairs) * 2, res1)
             return finish(fx.Index(n_loop), res2)
 
         n_acc_all = 2 * tr.NDT * tr.NSUB
@@ -1031,7 +1025,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                                          value_attrs={'rocdl.waves_per_eu': waves_per_eu,
                                                       'rocdl.flat_work_group_size':
                                                       f'{tr.BLOCK_SIZE},{tr.BLOCK_SIZE}'}).launch(
-            grid=(grid_x, fx.Index(num_head_k), grid_z),
+            grid=(grid_x, fx.Index(num_head_k), grid_z) if tile_fastest else (fx.Index(num_head_k), grid_x, grid_z),
             block=(tr.BLOCK_SIZE, 1, 1),
             stream=stream)
 
