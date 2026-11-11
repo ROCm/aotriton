@@ -502,6 +502,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
         zero4 = fx.full(4, 0.0, fx.Float32)
         if const_expr(dropout):
             rng = Philox.for_arch('gfx942')
+            assert rng.randoms_per_offset == 4
             ph_seed = fmha.philox_seed_value(philox_seed_ptr)
             ph_off = fmha.philox_offset_base(philox_offset1, philox_offset2)
         lse_tokens = fmha.lse_token_pitch(varlen_bits, 0, max_seqlen_q, seqinfo_q0, seqinfo_q1, num_seqlens)
@@ -780,6 +781,21 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 stream(tr.NT, read, use, hooks)
                 return s, dp
 
+            def keep_bits(q0, kv4):
+                """Dropout keep of (q0 + 4gq + r, kv4 + lc % 4) for r < 4: lane (lc, gq) draws row
+                4gq + lc % 4 for keys kv4 + [0, 4), and a DPP broadcast deals its quad the bits."""
+                row = q0 + fx.Int32(gq * 4) + fx.Int32(lc % 4)
+                vals = rng.u32(ph_seed, rng.grid_offset(ph_base, ph_stride, row, kv4))
+                bits = fx.Int32(0)
+                for s in range_constexpr(4):
+                    bits = bits | (fx.Int32(vals[s]) > fx.Int32(idropout_p)).select(fx.Int32(1 << s), fx.Int32(0))
+                word = fx.Int32(0)
+                for r in range_constexpr(4):
+                    got = fx.Int32(rocdl.update_dpp(T.i32, raw(fx.Int32(0)), raw(bits), 0x55 * r, 0xF, 0xF, True))
+                    word = word | (got << fx.Int32(4 * r))
+                word = word >> fx.Int32(lc % 4)
+                return [(word & fx.Int32(1 << (4 * r))) != fx.Int32(0) for r in range(4)]
+
             def softmax(s_raw, dp_raw, lse, delta, bvals, j, masked, sub, out):
                 """P (dropped, for dV) and dS packs of tile j, key column `sub`, into out[sub]."""
                 lse2 = [fx.Float32(x) * fx.Float32(LOG2E) for x in lse]
@@ -793,8 +809,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                     if const_expr(masked):
                         rel0 = q0 + fx.Int32(gq * 4) - band_lo[sub]
                     if const_expr(dropout):
-                        kv = kvw + fx.Int32(16 * sub) + fx.Int32(lc)
-                        slot = fx.Int32(lc % rng.randoms_per_offset)
+                        keep = keep_bits(q0, kvw + fx.Int32(16 * sub) + fx.Int32(4) * fx.Int32(lc // 4))
                     ps = []
                     dss = []
                     for r in range_constexpr(4):
@@ -812,13 +827,8 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                             dpr = fx.Float32(dpv[r])
                         p_drop = p
                         if const_expr(dropout):
-                            vals = rng.u32(ph_seed, rng.grid_offset(ph_base, ph_stride, q0 + fx.Int32(gq * 4 + r), kv))
-                            val = vals[0]
-                            for i in range_constexpr(1, len(vals)):
-                                val = (slot == fx.Int32(i)).select(vals[i], val)
-                            keep = fx.Int32(val) > fx.Int32(idropout_p)
-                            p_drop = keep.select(p * fx.Float32(dropout_scale), fx.Float32(0.0))
-                            dpr = keep.select(dpr * fx.Float32(dropout_scale), fx.Float32(0.0))
+                            p_drop = keep[r].select(p * fx.Float32(dropout_scale), fx.Float32(0.0))
+                            dpr = keep[r].select(dpr * fx.Float32(dropout_scale), fx.Float32(0.0))
                         ps.append(p_drop)
                         dss.append(p * (dpr - fx.Float32(delta[r])))
                     p_out = None
