@@ -593,24 +593,32 @@ def build_fmha_bwd_dq_gfx942(head_dim,
                     out.append(Vec.from_elements(got, fx.Int32).bitcast(elem).ir_value())
             return out
 
-        def db_store(ds_packs, kv_start, mode):
-            """dB = dS in the RP layout, 8 lanes to a 64-byte row segment: 8-byte stores
-            (`mode` 'dword', rows dword-aligned), else 2-byte ('short', or 'masked' at
-            keys past sk)."""
-            soff = fx.Int32(kv_start) * fx.Int32(2)
+        def db_deal(ds_packs):
+            """dS packs dealt from S^T lanes to the RP layout: [n][k] = two dwords."""
+            out = []
             for n in range_constexpr(tr.NSUB):
                 recv = []
                 for q in range_constexpr(4):
                     own = Vec(ds_packs[4 * n + q]).bitcast(fx.Int32)
                     recv.append([fx.Int32(rocdl.ds_bpermute(fx.Int32.ir_type, rp_push ^ fx.Int32(32 * q), fx.Int32(own[e])))
                                  for e in range(2)])
+                out.append([Vec.from_elements([rp_pick([recv[q][e] for q in range(4)], k) for e in range(2)], fx.Int32)
+                            for k in range(4)])
+            return out
+
+        def db_store(dealt, kv_start, mode):
+            """dB = dS from db_deal, 8 lanes to a 64-byte row segment: 8-byte stores
+            (`mode` 'dword', rows dword-aligned), else 2-byte ('short', or 'masked' at
+            keys past sk)."""
+            soff = fx.Int32(kv_start) * fx.Int32(2)
+            for n in range_constexpr(tr.NSUB):
                 for k in range_constexpr(4):
-                    words = [rp_pick([recv[q][e] for q in range(4)], k) for e in range(2)]
+                    v2 = dealt[n][k]
                     off = db_rp[k] + fx.Int32(64 * n)
                     if const_expr(mode == 'dword'):
-                        rocdl.raw_ptr_buffer_store(raw(Vec.from_elements(words, fx.Int32)), db_rsrc, raw(off), raw(soff))
+                        rocdl.raw_ptr_buffer_store(raw(v2), db_rsrc, raw(off), raw(soff))
                         continue
-                    hs = Vec.from_elements(words, fx.Int32).bitcast(fx.Int16)
+                    hs = Vec(v2).bitcast(fx.Int16)
                     for e in range_constexpr(4):
                         o = off + fx.Int32(2 * e)
                         if const_expr(mode == 'masked'):
@@ -619,11 +627,11 @@ def build_fmha_bwd_dq_gfx942(head_dim,
                         rocdl.raw_ptr_buffer_store(raw(fx.Int16(hs[e])), db_rsrc, raw(o), raw(soff))
 
         @flyc.jit
-        def db_store_clean(ds_packs, kv_start):
+        def db_store_clean(dealt, kv_start):
             if db_aligned:
-                db_store(ds_packs, kv_start, 'dword')
+                db_store(dealt, kv_start, 'dword')
             else:
-                db_store(ds_packs, kv_start, 'short')
+                db_store(dealt, kv_start, 'short')
 
         if const_expr(dropout):
             # The Triton kernels' stream, element for element (philox.py, grid_plane).
@@ -633,13 +641,19 @@ def build_fmha_bwd_dq_gfx942(head_dim,
             ph_plane = z_i32 * fx.Int32(num_head_q) + fx.Int32(head)
             ph_base, ph_stride = rng.grid_plane(ph_off, ph_plane, max_seqlen_q, max_seqlen_k)
 
+            # grid_offset(row, col) = ph_base + row*stride + col/4; tiles start on a
+            # multiple of 4 keys, so this lane's part is loop-invariant.
+            ph_lane = rng.grid_offset(ph_base, ph_stride, fx.Int32(q_row), fx.Int32(lh * 4))
+
         def dropout_keep(kv_start):
-            """Keep flags in S^T order: each 4-key group is one Philox call."""
+            """dP's dropout factor, 1/(1-p) or 0, in S^T order: each 4-key group is one
+            Philox call. Floats, not i1: 16 masks would take 32 SGPRs and spill."""
             keep = []
+            tile = ph_lane + fx.Int64(fx.Int32(kv_start) // fx.Int32(4))
             for g in range_constexpr(tr.NS // 4):
-                col = fx.Int32(kv_start) + kv_lane + fx.Int32(32 * (g // 4) + 8 * (g % 4))
-                vals = rng.u32(ph_seed, rng.grid_offset(ph_base, ph_stride, fx.Int32(q_row), col))
-                keep.extend(fx.Int32(v) > fx.Int32(idropout_p) for v in vals)
+                vals = rng.u32(ph_seed, tile + fx.Int64((32 * (g // 4) + 8 * (g % 4)) // 4))
+                keep.extend((fx.Int32(v) > fx.Int32(idropout_p)).select(fx.Float32(dropout_scale), fx.Float32(0.0))
+                            for v in vals)
             return keep
 
         def pair_op(xs, c, op):
@@ -657,8 +671,14 @@ def build_fmha_bwd_dq_gfx942(head_dim,
             # Scale once in fp32, as the forward: P must be the forward's P bit for bit.
             s_vals = pair_op([Vec(s_raw[r // 16])[r % 16] for r in range(tr.NS)], c_scale, lambda x, c: x * c)
             if const_expr(bias):
-                s_vals = [s_vals[r] + fx.Float32(Vec(bias_vals[r // 4])[r % 4].to(fx.Float32)) * fx.Float32(LOG2E)
-                          for r in range(tr.NS)]
+                l2 = fx.full(2, fx.Float32(LOG2E), fx.Float32)
+                out = []
+                for i in range_constexpr(tr.NS // 2):
+                    b2 = Vec.from_elements([fx.Float32(Vec(bias_vals[i // 2])[2 * (i % 2) + e].to(fx.Float32))
+                                            for e in range(2)], fx.Float32)
+                    v2 = Vec.from_elements([s_vals[2 * i], s_vals[2 * i + 1]], fx.Float32) + b2 * l2
+                    out.extend([v2[0], v2[1]])
+                s_vals = out
             if const_expr(masked):
                 s_vals = mask_scores(s_vals, kv_start)
             x = pair_op(s_vals, lse2, lambda x, c: x - c)
@@ -670,7 +690,7 @@ def build_fmha_bwd_dq_gfx942(head_dim,
             dp = [fx.Float32(Vec(dp_raw[r // 16])[r % 16]) for r in range(tr.NS)]
             if const_expr(dropout):
                 # The mask and 1/(1-p) hit dP; P stays undropped (numerical lessons, #9).
-                dp = [keep_all[r].select(dp[r] * fx.Float32(dropout_scale), fx.Float32(0.0)) for r in range(tr.NS)]
+                dp = [dp[r] * keep_all[r] for r in range(tr.NS)]
             dpd = pair_op(dp, delta, lambda x, c: x - c)
             ds = []
             for i in range_constexpr(tr.NS // 2):
@@ -719,16 +739,18 @@ def build_fmha_bwd_dq_gfx942(head_dim,
             if const_expr(bias):
                 # The vmcnt counts bias(j+1)'s loads: keep them above it.
                 rocdl.sched_barrier(0)
-            rocdl.s_waitcnt(vmcnt=n_bias)
+            # Newer than DMA(j+1): dB(j-1)'s >= 4*NSUB stores (or, at j = 0, bias(0)'s
+            # loads), then bias(j+1)'s; dB need not land yet.
+            rocdl.s_waitcnt(vmcnt=2 * n_bias)
             cluster_barrier()
             # B(j)
             kv_dma(kv + 2 * tr.BLOCK_N, (b + 2) % NBUF)
             rocdl.sched_barrier(0)
             ds_packs = ds_packs_of(p_vals, dp_raw, keep_all)
             if const_expr(bias and masked):
-                db_store(ds_packs, kv, 'masked')
+                db_store(db_deal(ds_packs), kv, 'masked')
             if const_expr(bias and not masked):
-                db_store_clean(ds_packs, kv)
+                db_store_clean(db_deal(ds_packs), kv)
             dq_accs = gemm3(dq_accs, ds_packs, b)
             cluster_barrier()
             return dq_accs + bias_next
