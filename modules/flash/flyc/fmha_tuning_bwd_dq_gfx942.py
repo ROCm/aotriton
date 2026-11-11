@@ -26,12 +26,14 @@ def default_block_n(head_dim):
 
 
 def default_grid_axis_order(causal):
-    """Head-fastest everywhere until csrc/flyc_bwd_dq.cc serves TILE_FASTEST."""
+    """Head-fastest: tile-fastest measured no better (B2 H32 S8k d128: 518 either
+    way; causal 315 vs 444), and csrc/flyc_bwd_dq.cc does not serve it."""
     return GRID_AXIS_HEAD_FASTEST
 
 
 def default_lpt(causal):
-    """Reverse the q tiles (longest first) under causal masks."""
+    """Longest q tiles first under causal masks (B2 H32 S8k causal: d128 444 -> 471,
+    d64 367 -> 418 TFLOPS)."""
     return causal
 
 
@@ -63,4 +65,5 @@ def knobs(head_dim, causal):
                 num_waves=8,
                 block_n=default_block_n(head_dim),
                 waves_per_eu=2,
+                lpt=default_lpt(causal),
                 GRID_AXIS_ORDER=default_grid_axis_order(causal))
