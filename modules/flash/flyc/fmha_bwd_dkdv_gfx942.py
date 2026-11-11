@@ -4,14 +4,18 @@
 """dK/dV backward for gfx942, FlyDSL, head dims 32-128.
 
 The forward loop transposed: each wave keeps 16*kv_blocks rows of K and V in
-VGPRs and accumulates dK^T and dV^T there, while 16-row Q/dO tiles stream
+registers and accumulates dK^T and dV^T there, while 16-row Q/dO tiles stream
 through LDS. With v_mfma_f32_16x16x16, S = Q.K^T comes out as one kv column
 and four consecutive q rows per lane, which is exactly the B operand of the
 q-contracted dV^T = dO^T.P and dK^T = Q^T.dS, so P and dS need no repacking.
 
-gfx942 has no LDS transpose read, so each stage holds Q and dO twice: row-major
-(DMA, for the d-contracted S and dP) and transposed (VGPR load + v_perm +
-ds_write, for the q-contracted dV and dK).
+gfx942 has no LDS transpose read, so LDS holds Q and dO twice: row-major (DMA,
+for the d-contracted S and dP) and transposed (built in LDS from the row-major
+tile by ds_read + v_perm + ds_write, for the q-contracted dV and dK).
+
+Software pipeline, one wave per SIMD: iteration j runs S/dP of tile j+1 on the
+MFMA pipe while the softmax of tile j runs on the VALU, then dV/dK of tile j
+while tile j+1's transposed half is built; tile j+2's DMA is in flight.
 """
 
 import flydsl.compiler as flyc
