@@ -1,26 +1,32 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Flash attention backward dQ (and dB) for gfx942 at head dims 160..256, FlyDSL.
+"""Flash attention backward dQ (and dB) for gfx942 at head dims 160..512, FlyDSL.
 
-The gfx942 wide forward's geometry (fmha_fwd_gfx942_wide.py): 4 waves x 32 query
-rows on v_mfma_f32_32x32x8, one wave per SIMD (512 VGPR+AGPR a lane). Per KV tile
-of 32 keys a wave runs three GEMMs, all in the forward's transposed form:
+4 waves, one per SIMD (512 VGPR+AGPR a lane), each owning WAVE_M query rows for
+the whole KV loop. Per KV tile a wave runs three GEMMs, all in the forward's
+transposed form (fmha_fwd_gfx942_wide.py):
     S^T  = K . Q^T         A = K rows (LDS),   B = Q^T (registers)
     dP^T = V . dO^T        A = V rows (LDS),   B = dO^T (registers)
     dQ^T += K^T . dS^T     A = K^T (LDS),      B = dS^T, the S^T accumulator repacked
-so dS needs no shuffle and dQ^T lands in the forward's O^T layout. Q^T, dO^T and
-dQ^T stay in registers: D/4 + D/4 + D/2 = 256 a lane at hd256.
-
+so dS needs no shuffle and dQ^T lands in the forward's O^T layout. Two geometries,
+one code path (accumulator value r is row 4G*(r//4) + 4*group + r%4, G = 64/WAVE_M):
+    WAVE_M 32, 32x32x8 MFMA, 32-key tiles   head dims <= 256
+    WAVE_M 16, 16x16x16 MFMA, 16-key tiles  384, 512: Q^T + dO^T + dQ^T is D/2 = 256 a lane
 K is needed both ways and gfx942 has no LDS transpose read, so K and V come in
-through VGPRs, a tile ahead: K is written row-major and, a cluster later, as K^T
-(v_perm + ds_write_b64, the forward's V^T path); V row-major. Single buffers
-(52 KB at hd256), two barrier-separated clusters per tile:
-    A(j): write K^T(j); load K, V (j+1); S^T(j), dP^T(j)
-    B(j): write K, V (j+1); dS(j); dQ^T += K^T(j) . dS^T(j)
+through VGPRs: K is written row-major and, a cluster later, as K^T (v_perm +
+ds_write_b64, the forward's V^T path); V row-major. Single buffers (52 KB at
+hd256 and hd512), two barrier-separated clusters per tile:
+    A(j): write K^T(j); load K(j+1); S^T(j), dP^T(j)
+    B(j): write V(j+1); load V(j+2); read K^T(j); dS(j); dQ^T += K^T(j) dS^T(j);
+          write K(j+1)
 Row-major rows are padded to an odd number of 16B chunks and the chunk index is
-XORed with (row / 8) % 4, so both the 4-row unit writes and the MFMA reads are
-bank-conflict free. Causal blocks run q tiles g and T-1-g (PAIR_TILES).
+XORed with a row key measured conflict-free for the MFMA reads. Causal blocks run
+q tiles g and T-1-g (PAIR_TILES).
+
+The kernel runs at the 750 W cap (~1460 MHz at hd192); its MFMA utilization at
+that clock is ~49%. Moving traffic to hide latency (two register sets, two K^T
+buffers, spread writes) measured slower: it raised power and lowered the clock.
 """
 
 import flydsl.compiler as flyc
@@ -42,7 +48,6 @@ _LDS_DOMAIN = '#llvm.alias_scope_domain<id = "fmha_bwd_dq_gfx942_wide.lds">'
 LDS_SCOPES = ('k', 'v', 'kt')
 LOG2E = 1.4426950408889634
 WAVE = 64
-WAVE_M = 32         # query rows per wave: the N of the 32x32x8 MFMA
 # csrc/flyc_common.h's kFlycGridAxis*.
 GRID_AXIS_HEAD_FASTEST = 0
 GRID_AXIS_TILE_FASTEST = 1
@@ -59,9 +64,15 @@ SG_DS_WRITE = 0x200
 class Traits:
     """Compile-time shape of one kernel."""
 
-    def __init__(self, head_dim, causal, dtype_str, padded_head=False):
-        assert head_dim % 32 == 0 and 64 <= head_dim <= 256, head_dim
+    def __init__(self, head_dim, causal, dtype_str, padded_head=False, wave_m=None):
+        # Query rows per wave, the N of the MFMA: 32 on 32x32x8, or 16 on 16x16x16,
+        # which halves the loop-invariant Q^T + dO^T + dQ^T to fit hd384/512.
+        wave_m = (32 if head_dim <= 256 else 16) if wave_m is None else wave_m
+        assert wave_m in (16, 32), wave_m
+        assert head_dim % 32 == 0 and 64 <= head_dim <= (256 if wave_m == 32 else 512), head_dim
         self.D = head_dim
+        self.WAVE_M = wave_m
+        self.G = WAVE // wave_m                 # lane groups: lane = group * WAVE_M + row
         self.PADDED = padded_head
         # Columns below PAD_FLOOR are real in every call this build serves.
         self.PAD_FLOOR = 0 if padded_head else head_dim
@@ -69,12 +80,14 @@ class Traits:
         self.DTYPE = dtype_str
         self.NUM_WAVES = 4
         self.BLOCK_SIZE = self.NUM_WAVES * WAVE
-        self.BLOCK_M = self.NUM_WAVES * WAVE_M
-        self.BLOCK_N = 32
-        self.NS = 16                            # S^T values per lane
-        self.QK_STEPS = head_dim // 8           # MFMA k-steps of S^T and dP^T
-        self.D_TILES = head_dim // 32           # 32-row tiles of dQ^T
-        self.PV_STEPS = self.BLOCK_N // 8       # MFMA k-steps of dQ^T per tile
+        self.BLOCK_M = self.NUM_WAVES * wave_m
+        # One S^T MFMA tile per KV tile; accumulator value r is key / dQ^T row
+        # 4G*(r//4) + 4*group + r%4.
+        self.BLOCK_N = wave_m
+        self.NS = wave_m * wave_m // WAVE       # S^T values per lane
+        self.QK_STEPS = head_dim // (4 * self.G)    # MFMA k-steps of S^T and dP^T
+        self.D_TILES = head_dim // wave_m       # wave_m-row tiles of dQ^T
+        self.PV_STEPS = self.BLOCK_N // (4 * self.G)    # MFMA k-steps of dQ^T per tile
         # Row-major K and V: an odd number of 16B chunks a row.
         chunks = head_dim // 8
         self.RM_PAD = 1 - chunks % 2            # 16B chunks of row padding
@@ -93,34 +106,37 @@ class Traits:
         self.LDS_K_BASE = 0
         self.LDS_V_BASE = self.RM_TILE_BYTES
         self.LDS_KT_BASE = 2 * self.RM_TILE_BYTES
-        self.LDS_BYTES = self.LDS_KT_BASE + self.KT_TILE_BYTES
-        assert self.LDS_BYTES <= 65536, self.LDS_BYTES
         self.VALU_PER_MFMA = 3                  # sched_group_barrier slot size
         self.SCHED = True                       # interleave LDS/VMEM/VALU with MFMAs
         self.LEAD_A = 4                         # LDS reads issued ahead of the S^T/dP^T MFMAs
         self.LEAD_B = 4                         # LDS reads issued ahead of the dQ^T MFMAs
         self.KT_EARLY = 1                       # read all of K^T(j) before dS(j)
-        self.KT_SPREAD = 0                      # spread the K^T(j) writes over A(j)'s MFMAs
         self.PAIR_TILES = causal
-        self.SW_DIV = 8                         # row-major chunk XOR key: (row // SW_DIV) % SW_MOD
-        self.SW_MOD = 2
+        # Row-major chunk XOR key (row // SW_DIV) % SW_MOD; measured conflict-free
+        # (SQ_LDS_BANK_CONFLICT) for the MFMA reads with the 1-chunk row pad.
+        self.SW_DIV, self.SW_MOD = (8, 2) if wave_m == 32 else (4, 4)
         self.ABLATE = 0                         # dev timing only, wrong results: bit 0 A reads, 1 dS VALU, 2 B reads, 3 barriers, 4 LDS writes, 5 K/V loads
         for k, v in DEV_OVERRIDES.items():
             assert hasattr(self, k), k
             setattr(self, k, v)
+        assert self.SW_MOD <= self.G, 'the read key must stay inside the lane group bits'
+        self.LDS_BYTES = self.LDS_KT_BASE + self.KT_TILE_BYTES
+        assert self.LDS_BYTES <= 65536, self.LDS_BYTES
         self.GRID_BLOCK_M = self.BLOCK_M * (2 if self.PAIR_TILES else 1)
         # The JIT cache keys on scalar closure values; the kernel references this.
-        self.CACHE_TAG = (f'DQW{head_dim}_c{int(causal)}_{dtype_str}_p{int(padded_head)}'
+        self.CACHE_TAG = (f'DQW{head_dim}_m{wave_m}_c{int(causal)}_{dtype_str}_p{int(padded_head)}'
                           f'_a{self.VALU_PER_MFMA}_s{int(self.SCHED)}_q{int(self.PAIR_TILES)}'
-                          f'_la{self.LEAD_A}_lb{self.LEAD_B}_x{self.ABLATE}_sw{self.SW_DIV}.{self.SW_MOD}_rp{self.RM_PAD}_ke{self.KT_EARLY}_ks{self.KT_SPREAD}')
+                          f'_la{self.LEAD_A}_lb{self.LEAD_B}_x{self.ABLATE}_sw{self.SW_DIV}.{self.SW_MOD}_rp{self.RM_PAD}_ke{self.KT_EARLY}')
 
 
 def knobs(head_dim, causal):
     """Default build of one functional, as a JSON-able dict; `block_m` (rows per
     grid block) and `GRID_AXIS_ORDER` are what the C++ grid_calculator reads."""
-    return dict(block_m=256 if causal else 128,
+    wave_m = 32 if head_dim <= 256 else 16
+    return dict(block_m=4 * wave_m * (2 if causal else 1),
+                wave_m=wave_m,
                 num_waves=4,
-                block_n=32,
+                block_n=wave_m,
                 waves_per_eu=1,
                 GRID_AXIS_ORDER=GRID_AXIS_TILE_FASTEST)
 
@@ -132,10 +148,11 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
                                   bias=False,
                                   dropout=False,
                                   num_waves=4,
-                                  block_n=32,
+                                  block_n=None,
                                   waves_per_eu=1,
                                   grid_axis_order=None,
-                                  padded_head=False):
+                                  padded_head=False,
+                                  wave_m=None):
     """The gfx1201 dQ kernel's ABI and `_launch` interface, for wide heads."""
     host_causal_type = (1 if causal else 0) if causal_type is None else causal_type
     if host_causal_type not in (0, 1, 2, 3):
@@ -143,9 +160,9 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
     causal_type = 0 if host_causal_type == 0 else 3
     if bias and causal_type:
         raise ValueError('bias with a causal mask is not served (aot/_common.py flash_disabled)')
-    if num_waves != 4 or block_n != 32:
-        raise ValueError(f'the wide dQ body runs 4 waves and 32-key tiles, got {num_waves}, {block_n}')
-    tr = Traits(head_dim, causal_type != 0, dtype_str, padded_head)
+    tr = Traits(head_dim, causal_type != 0, dtype_str, padded_head, wave_m)
+    if num_waves != 4 or block_n not in (None, tr.BLOCK_N):
+        raise ValueError(f'this body runs 4 waves and {tr.BLOCK_N}-key tiles, got {num_waves}, {block_n}')
     if grid_axis_order is None:
         grid_axis_order = GRID_AXIS_TILE_FASTEST
     tile_fastest = grid_axis_order == GRID_AXIS_TILE_FASTEST
@@ -159,17 +176,21 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
     def v8e():
         return Vec.make_type(8, elem)
 
-    def v16f():
-        return Vec.make_type(16, fx.Float32)
+    def vacc():
+        return Vec.make_type(tr.NS, fx.Float32)
 
     @fx.struct
     class Smem:
         buf: fx.Array[fx.Int8, tr.LDS_BYTES, 16]
 
     def mfma(a, b, c):
+        if const_expr(tr.WAVE_M == 16):
+            if const_expr(tr.DTYPE == 'bf16'):
+                return rocdl.mfma_f32_16x16x16bf16_1k(vacc(), [Vec(a).bitcast(fx.Int16), Vec(b).bitcast(fx.Int16), c])
+            return rocdl.mfma_f32_16x16x16f16(vacc(), [a, b, c])
         if const_expr(tr.DTYPE == 'bf16'):
-            return rocdl.mfma_f32_32x32x8bf16_1k(v16f(), [Vec(a).bitcast(fx.Int16), Vec(b).bitcast(fx.Int16), c])
-        return rocdl.mfma_f32_32x32x8f16(v16f(), [a, b, c])
+            return rocdl.mfma_f32_32x32x8bf16_1k(vacc(), [Vec(a).bitcast(fx.Int16), Vec(b).bitcast(fx.Int16), c])
+        return rocdl.mfma_f32_32x32x8f16(vacc(), [a, b, c])
 
     def exp2(x):
         return fx.Float32(rocdl.exp2(T.f32, raw(x)))
@@ -276,8 +297,8 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
         tid = fx.Index(gpu.thread_idx.x)
         wave = tid // WAVE
         lane = tid % WAVE
-        lm = lane % 32
-        lh = lane // 32
+        lm = lane % tr.WAVE_M
+        lh = lane // tr.WAVE_M                  # lane group
         if const_expr(tile_fastest):
             g_tile = fx.Index(gpu.block_idx.x)
             head = fx.Index(gpu.block_idx.y)
@@ -416,19 +437,19 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
 
         # MFMA A-operand reads of row-major K / V: row lm, chunk 2t + lh, swizzled.
         sw = (lm // tr.SW_DIV) % tr.SW_MOD
-        rm_rd = [lm * tr.RM_STRIDE + ((lh + 2 * p) ^ sw) * 16 for p in range(2)]
+        rm_rd = lm * tr.RM_STRIDE + (lh ^ sw) * 16
         kt_rd = fx.Index(tr.LDS_KT_BASE) + (lm * tr.KT_STRIDE + lh * 4) * 2
 
         def rm_read(base, scope):
-            return [lds_load(rm_rd[t % 2] + base + (t // 2) * 64, v8e(), 16, scope) for t in range(tr.QK_STEPS // 2)]
+            return [lds_load(rm_rd + base + t * tr.G * 16, v8e(), 16, scope) for t in range(tr.QK_STEPS // 2)]
 
         def kt_read():
-            return [[lds_load(kt_rd + (32 * dt * tr.KT_STRIDE + 8 * st) * 2, v4e(), 8, 'kt')
+            return [[lds_load(kt_rd + (tr.WAVE_M * dt * tr.KT_STRIDE + 4 * tr.G * st) * 2, v4e(), 8, 'kt')
                      for st in range(tr.PV_STEPS)] for dt in range(tr.D_TILES)]
 
         def gemm_t(a8s, b_packs):
             """S^T-shaped product of a row-major tile and a register operand."""
-            s = fx.full(16, 0.0, fx.Float32)
+            s = fx.full(tr.NS, 0.0, fx.Float32)
             for t in range_constexpr(tr.QK_STEPS // 2):
                 a8 = Vec(a8s[t])
                 s = mfma(a8.shuffle(a8, [0, 1, 2, 3]).ir_value(), b_packs[2 * t], s)
@@ -492,12 +513,12 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
         for q_pass in range_constexpr(len(q_tiles)):
             q_tile = q_tiles[q_pass]
             q_start = q_tile * tr.BLOCK_M
-            q_row = q_start + wave * WAVE_M + lm
+            q_row = q_start + wave * tr.WAVE_M + lm
             q_ok = q_row < sq
 
             def col_mask(t, hdim):
-                """Dword masks keeping this lane's columns 16t + 8lh + [0, 8) below hdim."""
-                c0 = fx.Int32(16 * t) + fx.Int32(lh * 8)
+                """Dword masks keeping this lane's columns 8Gt + 8lh + [0, 8) below hdim."""
+                c0 = fx.Int32(8 * tr.G * t) + fx.Int32(lh * 8)
                 words = []
                 for w in range_constexpr(4):
                     lo = (c0 + fx.Int32(2 * w) < fx.Int32(hdim)).select(fx.Int32(0xFFFF), fx.Int32(0))
@@ -506,12 +527,12 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
                 return Vec.from_elements(words, fx.Int32)
 
             def preload(rsrc, row_stride, hdim):
-                """B^T packs: k-step 2t+e reads d = 16t + 8*lh + 4e + [0, 4)."""
+                """B^T packs: k-step 2t+e reads d = 8Gt + 8*lh + 4e + [0, 4)."""
                 packs = []
                 for t in range_constexpr(tr.QK_STEPS // 2):
-                    off = q_row * row_stride + fx.Index(16 * t) + lh * 8
+                    off = q_row * row_stride + fx.Index(8 * tr.G * t) + lh * 8
                     v8 = buffer_ops.buffer_load(rsrc, off, vec_width=8, dtype=elem)
-                    if const_expr(16 * t + 16 > tr.PAD_FLOOR):
+                    if const_expr(8 * tr.G * t + 8 * tr.G > tr.PAD_FLOOR):
                         # Slack columns may hold NaN, and 0 * NaN is NaN.
                         v8 = Vec(v8).bitcast(fx.Int32) & col_mask(t, hdim)
                         v8 = Vec(v8).bitcast(elem).ir_value()
@@ -546,11 +567,11 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
             band_span = _empty.select(fx.Int32(0), _hi - _lo)
 
             def mask_scores(s_vals, kv_start):
-                # Lane value r is KV row 8*(r//4) + 4*lh + r%4.
+                # Lane value r is KV row 4G*(r//4) + 4*lh + r%4.
                 rel0 = fx.Int32(kv_start) + kv_lane - band_lo
                 out = []
                 for r in range_constexpr(tr.NS):
-                    rel = rel0 + fx.Int32(8 * (r // 4) + r % 4)
+                    rel = rel0 + fx.Int32(4 * tr.G * (r // 4) + r % 4)
                     out.append((fx.Uint32(rel) > fx.Uint32(band_span)).select(c_neg_inf, s_vals[r]))
                 return out
 
@@ -583,11 +604,11 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
                 out = []
                 for g in range_constexpr(tr.NS // 4):
                     if const_expr(exact):
-                        off = b_byte + fx.Int32(8 * g * 2)
+                        off = b_byte + fx.Int32(4 * tr.G * g * 2)
                         hs = [rocdl.raw_ptr_buffer_load(T.i16, b_rsrc, off + fx.Int32(2 * e), soff, 0) for e in range(4)]
                         out.append(Vec.from_elements([fx.Int16(h) for h in hs], fx.Int16).bitcast(elem).ir_value())
                         continue
-                    off = b_lane + fx.Int32(8 * g * 2)
+                    off = b_lane + fx.Int32(4 * tr.G * g * 2)
                     dw = Vec(rocdl.raw_ptr_buffer_load(Vec.make_type(3, fx.Int32), b_rsrc, off, soff, 0))
                     words = [fx.Int32(llvm.call_intrinsic(T.i32, 'llvm.fshr.i32',
                                                           [raw(dw[w + 1]), raw(dw[w]), raw(b_shift)], [], []))
@@ -599,7 +620,7 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
                 """Keep flags in S^T order: each 4-key group is one Philox call."""
                 keep = []
                 for g in range_constexpr(tr.NS // 4):
-                    col = fx.Int32(kv_start) + kv_lane + fx.Int32(8 * g)
+                    col = fx.Int32(kv_start) + kv_lane + fx.Int32(4 * tr.G * g)
                     vals = rng.u32(ph_seed, rng.grid_offset(ph_base, ph_stride, fx.Int32(q_row), col))
                     keep.extend(fx.Int32(v) > fx.Int32(idropout_p) for v in vals)
                 return keep
@@ -623,15 +644,14 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
                 if const_expr(bias):
                     soff = fx.Int32(kv_start)
                     for r in range_constexpr(tr.NS):
-                        col = fx.Int32(kv_start) + kv_lane + fx.Int32(8 * (r // 4) + r % 4)
+                        col = fx.Int32(kv_start) + kv_lane + fx.Int32(4 * tr.G * (r // 4) + r % 4)
                         buffer_ops.buffer_store(fx.Float32(ds[r]).to(elem),
                                                 db_rsrc,
-                                                db_lane + soff + fx.Int32(8 * (r // 4) + r % 4),
+                                                db_lane + soff + fx.Int32(4 * tr.G * (r // 4) + r % 4),
                                                 mask=db_ok & (col < sk_i32))
                 return [pack4(ds[4 * i:4 * i + 4]) for i in range(tr.PV_STEPS)]
 
             dt_n = tr.D_TILES
-            n_valu_a = 16 + (32 if tr.PADDED else 0)
 
             def iteration(j, carried, masked):
                 """A(j), B(j) of KV tile j (counted from kv_base). Carries K(j) and V(j+1) in
@@ -643,12 +663,9 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
                 kv_cur = kv_base + j * tr.BLOCK_N
                 # A(j): K^T(j), then K(j+1) into the same registers; bias(j) first so its
                 # wait does not drain them.
-                if const_expr(not tr.KT_SPREAD):
-                    kt_store(k_regs)
+                kt_store(k_regs)
                 b_vals = bias_load(kv_cur, masked)
                 rocdl.sched_barrier(0)
-                if const_expr(tr.KT_SPREAD):
-                    kt_store(k_regs)
                 k_regs = unit_load(k_rsrc, k_voff, k_row_stride_b, kv_cur + tr.BLOCK_N)
                 if const_expr(tr.ABLATE & 1):
                     fake = [Vec(q_packs[2 * t]).shuffle(Vec(do_packs[2 * t]), list(range(8))).ir_value() for t in range(tr.QK_STEPS // 2)]
@@ -657,7 +674,7 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
                 else:
                     s_acc = gemm_t(rm_read(tr.LDS_K_BASE, 'k'), q_packs)
                     dp_acc = gemm_t(rm_read(tr.LDS_V_BASE, 'v'), do_packs)
-                sched(tr.QK_STEPS * 2, tr.QK_STEPS, 4 * tr.KT_SPREAD, 4 * tr.KT_SPREAD, 16 * tr.KT_SPREAD, lead=tr.LEAD_A)
+                sched(tr.QK_STEPS * 2, tr.QK_STEPS, 0, 0, 0, lead=tr.LEAD_A)
                 rocdl.s_waitcnt(lgkmcnt=0)
                 cluster_barrier('A')
                 # B(j): V(j+1) row-major, then V(j+2) into its registers; dS(j);
@@ -697,7 +714,7 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
             rocdl.s_waitcnt(lgkmcnt=0)
             cluster_barrier()
 
-            init = [fx.full(16, 0.0, fx.Float32) for _ in range(dt_n)] + k_regs + v_regs
+            init = [fx.full(tr.NS, 0.0, fx.Float32) for _ in range(dt_n)] + k_regs + v_regs
             res0 = init
             for j, carried in range(fx.Index(0), r_lead, 1, init=init):
                 res0 = yield iteration(j, carried, True)
@@ -709,15 +726,16 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
                 res2 = yield iteration(j, carried, True)
 
             # dQ = sm_scale * dQ^T, rounded to nearest even.
-            sc = fx.full(16, fx.Float32(sm_scale), fx.Float32)
+            sc = fx.full(tr.NS, fx.Float32(sm_scale), fx.Float32)
             for dt in range_constexpr(dt_n):
                 o = Vec(res2[dt]) * sc
-                for i in range_constexpr(4):
+                for i in range_constexpr(tr.NS // 4):
                     vals = [o[4 * i + jj] for jj in range(4)]
                     packed = Vec.from_elements([fx.Float32(x).to(elem) for x in vals], elem)
-                    d = fx.Index(32 * dt + 8 * i) + lh * 4
+                    d0 = tr.WAVE_M * dt + 4 * tr.G * i
+                    d = fx.Index(d0) + lh * 4
                     ok = q_ok
-                    if const_expr(32 * dt + 8 * i + 8 > tr.PAD_FLOOR):
+                    if const_expr(d0 + 4 * tr.G > tr.PAD_FLOOR):
                         ok = ok & (fx.Int32(d) < row_qk)
                     buffer_ops.buffer_store(packed.ir_value(), dq_rsrc, q_row * dq_row_stride + d, mask=ok)
 

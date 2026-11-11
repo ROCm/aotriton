@@ -2,7 +2,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""fmha_bwd_dq_gfx942_wide (head dims 160..256), JIT, against fp64.
+"""fmha_bwd_dq_gfx942_wide (head dims 160..512), JIT, against fp64.
 
 dQ (and dB) from torch's LSE and Delta, so this tests the dQ kernel alone:
 gSWA windows with both principal diagonals, GQA, varlen and LSE layouts, bias
@@ -45,7 +45,7 @@ from test_fwd_principal_diagonal_gfx942 import (  # noqa: E402
     _keep_mask,
 )
 
-HEAD_DIMS = (160, 192, 224, 256)
+HEAD_DIMS = (160, 192, 224, 256, 384, 512)
 DTYPE = torch.bfloat16
 # Relative to the largest reference magnitude of the call.
 REL_TOL = 1e-2
@@ -282,7 +282,7 @@ def test_varlen(head_dim, layout, lse_layout):
 
 @pytest.mark.parametrize("with_db", [True, False])
 @pytest.mark.parametrize("shape", [(300, 777), (301, 1001), (1, 1001), (128, 64)])
-@pytest.mark.parametrize("head_dim", (160, 256))
+@pytest.mark.parametrize("head_dim", (160, 256, 512))
 def test_bias(head_dim, shape, with_db):
     """dB = dS. Odd pitches start bias rows mid-dword; an odd slab ends mid-dword.
     A bias that needs no gradient passes a null dB with zero strides."""
@@ -322,7 +322,7 @@ def test_bias(head_dim, shape, with_db):
 
 @pytest.mark.parametrize("causal", [False, True])
 @pytest.mark.parametrize("shape", [(300, 777), (777, 300)])
-@pytest.mark.parametrize("head_dim", (192, 256))
+@pytest.mark.parametrize("head_dim", (192, 256, 384))
 def test_dropout(head_dim, shape, causal):
     """The mask must be the Triton kernels': offset = base + plane*sq*stride + row*stride + col//4."""
     sq, sk = shape
@@ -360,7 +360,7 @@ def test_dropout(head_dim, shape, causal):
 
 # (rung, hdim_qk, hdim_vo): primes and odd sizes above the rung below, and QK != VO.
 PADDED = [(160, 149, 149), (192, 179, 179), (224, 211, 211), (256, 241, 241), (192, 192, 128), (160, 24, 152),
-          (256, 256, 200), (256, 136, 256)]
+          (256, 256, 200), (256, 136, 256), (384, 263, 263), (384, 384, 300), (512, 449, 449), (512, 392, 512)]
 
 
 @pytest.mark.parametrize("causal", [False, True])
@@ -393,7 +393,7 @@ def test_padded_head(rung, hqk, hvo, causal):
     _check(f"rung={rung} hqk={hqk} hvo={hvo} causal={causal}", dq, ref, live[0, 0])
 
 
-@pytest.mark.parametrize("head_dim", (160, 256))
+@pytest.mark.parametrize("head_dim", (160, 256, 512))
 def test_layouts(head_dim):
     """Every tensor its own layout: BSHD Q and dQ, BHSD K, transposed-batch V and dO."""
     b, h, sq, sk = 2, 3, 200, 333
@@ -409,7 +409,7 @@ def test_layouts(head_dim):
     _check(f"hd={head_dim} layouts", dq, ref)
 
 
-@pytest.mark.parametrize("head_dim", (192,))
+@pytest.mark.parametrize("head_dim", (192, 384))
 def test_large_logits(head_dim):
     """sm_scale 1.2 on N(0, 1): a sharp softmax, where an exponent error shows."""
     b, h, sq, sk = 1, 2, 256, 512

@@ -27,11 +27,11 @@ LADDER = (160, 192, 224, 256, 384, 512)
 def build_dq(rung, dev, **kwargs):
     import importlib
 
-    mod = importlib.import_module('fmha_bwd_dq_gfx942_wide' if rung <= 256 else 'fmha_bwd_dq_gfx942_xwide')
+    mod = importlib.import_module('fmha_bwd_dq_gfx942_wide')
     for item in dev:
         name, value = item.split('=')
         mod.DEV_OVERRIDES[name] = int(value)
-    build = getattr(mod, 'build_fmha_bwd_dq_gfx942_wide' if rung <= 256 else 'build_fmha_bwd_dq_gfx942_xwide')
+    build = mod.build_fmha_bwd_dq_gfx942_wide
     return build(rung, **kwargs)
 
 
@@ -50,6 +50,7 @@ def main():
     p.add_argument('--grid_axis_order', type=int, default=None)
     p.add_argument('--iters', type=int, default=20)
     p.add_argument('--no_check', action='store_true')
+    p.add_argument('--bhsd', action='store_true', help='BHSD storage (default BSHD)')
     p.add_argument('--dev', action='append', default=[], help='Traits override NAME=VALUE (dev sweeps)')
     a = p.parse_args()
     hk = a.heads_k or a.heads
@@ -63,6 +64,10 @@ def main():
     # BSHD storage, passed as BHSD views.
     q = torch.randn(a.batch, a.seqlen, a.heads, a.head_dim, dtype=dt, device='cuda')
     k = torch.randn(a.batch, sk, hk, a.head_dim, dtype=dt, device='cuda')
+    if a.bhsd:
+        # BHSD storage behind the same BSHD-shaped views.
+        q = q.transpose(1, 2).contiguous().transpose(1, 2)
+        k = k.transpose(1, 2).contiguous().transpose(1, 2)
     v = torch.randn_like(k)
     do = torch.randn_like(q)
     o = torch.empty_like(q)
