@@ -1,7 +1,8 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""TFLOPS (and an fp64 spot check) of the gfx942 dK/dV bodies for head dims 160..512.
+"""TFLOPS (and an fp64 spot check) of the gfx942 dK/dV bodies for head dims 160..512:
+the body fmha_tuning_bwd_dkdv_gfx942 routes the rung to, or --body.
 
 dK/dV FLOPs are 4 GEMMs: 8 * B * H * pairs * D, with pairs halved (roughly) by causal.
 LSE and Delta come from torch, so the time is the kernel's alone.
@@ -23,9 +24,12 @@ import torch  # noqa: E402
 LADDER = (160, 192, 224, 256, 384, 512)
 
 
-def build(rung, **kw):
-    from fmha_bwd_dkdv_gfx942_wide import build_fmha_bwd_dkdv_gfx942_wide
-    return build_fmha_bwd_dkdv_gfx942_wide(rung, **kw)
+def build(rung, body=None, **kw):
+    import importlib
+
+    import fmha_tuning_bwd_dkdv_gfx942 as tuning
+    source, _, builder = tuning.BODIES[body or tuning.body(rung)]
+    return getattr(importlib.import_module(source[:-3]), builder)(rung, **kw)
 
 
 def side_inputs(q, k, v, do, sm_scale, causal, bias):
@@ -85,6 +89,7 @@ def main():
     p.add_argument('--bias', action='store_true', help='(B, H, Sq, Sk) attention bias, N(0, 1)')
     p.add_argument('--dropout_p', type=float, default=0.0)
     p.add_argument('--kv_subs', type=int, default=None)
+    p.add_argument('--body', choices=('wide', 'xwide'), default=None, help='default: the tuning module\'s')
     p.add_argument('--grid_axis_order', type=int, default=None)
     p.add_argument('--iters', type=int, default=20)
     p.add_argument('--no_check', action='store_true')
@@ -96,6 +101,7 @@ def main():
         sys.exit(f'head_dim {a.head_dim} is past the gfx942 dK/dV ladder {LADDER}')
     kw = {k: v for k, v in (('kv_subs', a.kv_subs), ('grid_axis_order', a.grid_axis_order)) if v is not None}
     launch = build(rung,
+                   body=a.body,
                    causal_type=2 if a.causal else 0,
                    bias=a.bias,
                    dropout=a.dropout_p > 0,

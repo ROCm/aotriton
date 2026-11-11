@@ -2,7 +2,9 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""fmha_bwd_dkdv_gfx942_wide (head dims 160..512), JIT, against fp64.
+"""The gfx942 dK/dV bodies for head dims 160..512 (fmha_bwd_dkdv_gfx942_wide at
+160-192, fmha_bwd_dkdv_gfx942_xwide at 224-512, as the tuning module routes them),
+JIT, against fp64.
 
 gSWA windows with both principal diagonals (L negative, R past seqlen_k, key
 columns no row sees), causal and GQA, varlen and LSE layouts, bias, dropout
@@ -47,7 +49,7 @@ from test_fwd_principal_diagonal_gfx942 import (  # noqa: E402
 )
 
 HEAD_DIMS = (160, 192, 224, 256)
-# 384 and 512 run fewer cases: same body, single RM buffer, two passes at 512.
+# 384 and 512 run fewer cases; 512 streams each tile as two column halves.
 XWIDE = (384, 512)
 DTYPE = torch.bfloat16
 # Max abs error against fp64, relative to the reference's max magnitude (floored at 1):
@@ -56,15 +58,24 @@ REL_TOL = 1e-2
 
 
 @functools.cache
-def _build(head_dim, causal_type=0, bias=False, dropout=False, padded_head=False, kv_subs=None):
-    from fmha_bwd_dkdv_gfx942_wide import build_fmha_bwd_dkdv_gfx942_wide
+def _build(head_dim, causal_type=0, bias=False, dropout=False, padded_head=False, kv_subs=None, body=None):
+    """The body the tuning module routes head_dim to, or `body`."""
+    import importlib
 
-    return build_fmha_bwd_dkdv_gfx942_wide(head_dim,
-                                           causal_type=causal_type,
-                                           bias=bias,
-                                           dropout=dropout,
-                                           padded_head=padded_head,
-                                           kv_subs=kv_subs)
+    import fmha_tuning_bwd_dkdv_gfx942 as tuning
+
+    body = body or tuning.body(head_dim)
+    source, _, builder = tuning.BODIES[body]
+    return getattr(importlib.import_module(source[:-3]), builder)(head_dim,
+                                                                 causal_type=causal_type,
+                                                                 bias=bias,
+                                                                 dropout=dropout,
+                                                                 padded_head=padded_head,
+                                                                 kv_subs=kv_subs)
+
+
+# Non-default builds test_dense also runs: (body, kv_subs) per head dim.
+ALT = {192: ('wide', 1), 224: ('wide', 2), 256: ('xwide', 2)}
 
 
 def _reference(q, k, v, do, scale, keep_mask=None, bias=None, keep=None, p=0.0):
@@ -160,14 +171,15 @@ def _bottom_right(sq, sk, device):
     return j <= i + (sk - sq)
 
 
-@pytest.mark.parametrize("kv_subs", [None, 1])
+@pytest.mark.parametrize("alt", [False, True])
 @pytest.mark.parametrize("causal", [False, True])
 @pytest.mark.parametrize("shape", [(300, 777), (777, 300), (1, 1001), (1000, 1000)])
 @pytest.mark.parametrize("head_dim", HEAD_DIMS + XWIDE)
-def test_dense(head_dim, shape, causal, kv_subs):
+def test_dense(head_dim, shape, causal, alt):
     """Full attention and bottom-right causal (`causal_type=2`), GQA 2:1 summed per key head."""
-    if kv_subs is not None and head_dim != 192:
-        pytest.skip("the other kv_subs runs at one rung")
+    if alt and head_dim not in ALT:
+        pytest.skip("no alternative build at this rung")
+    body, kv_subs = ALT[head_dim] if alt else (None, None)
     sq, sk = shape
     b, h, hk = 2, 4, 2
     torch.manual_seed(sq + sk + head_dim)
@@ -180,7 +192,7 @@ def test_dense(head_dim, shape, causal, kv_subs):
                                     do,
                                     head_dim ** -0.5,
                                     keep_mask=keep)
-    dk, dv = _run(_build(head_dim, causal_type=2 if causal else 0, kv_subs=kv_subs),
+    dk, dv = _run(_build(head_dim, causal_type=2 if causal else 0, kv_subs=kv_subs, body=body),
                   q,
                   k,
                   v,
@@ -191,7 +203,7 @@ def test_dense(head_dim, shape, causal, kv_subs):
                   sq,
                   sk)
     dead = ~keep.any(dim=0) if causal else None
-    tag = f"hd={head_dim} {shape} causal={causal} kv_subs={kv_subs}"
+    tag = f"hd={head_dim} {shape} causal={causal} alt={ALT.get(head_dim) if alt else None}"
     _check(f"dV {tag}", dv, _fold(rv, hk), dead)
     _check(f"dK {tag}", dk, _fold(rk, hk), dead)
 
@@ -320,7 +332,7 @@ def test_varlen(head_dim, layout, lse_layout):
 
 
 @pytest.mark.parametrize("shape", [(300, 777), (301, 1001), (1, 1001)])
-@pytest.mark.parametrize("head_dim", (160, 256, 384))
+@pytest.mark.parametrize("head_dim", (160, 224, 256, 384, 512))
 def test_bias(head_dim, shape):
     """A (B, H, Sq, Sk) bias, odd pitches included; bias magnitudes up to ~16."""
     sq, sk = shape
@@ -347,7 +359,7 @@ def test_bias(head_dim, shape):
 
 @pytest.mark.parametrize("causal", [False, True])
 @pytest.mark.parametrize("shape", [(300, 777), (777, 300)])
-@pytest.mark.parametrize("head_dim", (192, 256, 512))
+@pytest.mark.parametrize("head_dim", (192, 224, 256, 384, 512))
 def test_dropout(head_dim, shape, causal):
     """The forward's mask: offset = base + plane*sq*stride + row*stride + col//4."""
     sq, sk = shape
