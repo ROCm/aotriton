@@ -569,8 +569,9 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
         j_clean_end = smax(smin(smax(clean_end, fx.Index(1)) - fx.Index(1), n_loop), j_clean)
 
         if const_expr(bias):
+            # Both varlen offsets sit in the base, so the range covers the slab (as gfx1201).
             b_elems = (fx.Int64(q_batch) * stride_b_batch + fx.Int64(head) * stride_b_head
-                       + fx.Int64(q_row_off) * stride_b_seq_q)
+                       + fx.Int64(q_row_off) * stride_b_seq_q + fx.Int64(k_row_off))
             # Rows of an odd-pitch bias start mid-dword: each lane funnel-shifts its
             # 4 keys out of 3 aligned dwords.
             b_addr = fx.Int64(fx.ptrtoint(B)) + b_elems * fx.Int64(2)
@@ -579,7 +580,7 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
             b_rsrc = rocdl.get_buffer_rsrc(buffer_ops.create_buffer_resource_from_addr(
                 b_addr - fx.Int64(b_mis),
                 num_records_bytes=b_span * fx.Int64(2) + fx.Int64(b_mis)))
-            b_byte = b_mis + (fx.Int32(q_row) * fx.Int32(stride_b_seq_q) + k_row_off + fx.Int32(lg * 4)) * fx.Int32(2)
+            b_byte = b_mis + (fx.Int32(q_row) * fx.Int32(stride_b_seq_q) + fx.Int32(lg * 4)) * fx.Int32(2)
             b_lane = b_byte & fx.Int32(-4)
             b_shift = (b_byte & fx.Int32(3)) * fx.Int32(8)
 

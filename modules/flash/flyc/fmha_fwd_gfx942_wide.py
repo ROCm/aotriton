@@ -496,7 +496,7 @@ def build_fmha_fwd_gfx942_wide(head_dim,
             if const_expr(bias):
                 # (B, H, Sq, Sk), Sk contiguous; rows offset by Q's varlen offset, columns by K's.
                 b_elems = (fx.Int64(q_batch) * stride_b_batch + fx.Int64(head) * stride_b_head
-                           + fx.Int64(q_row_off) * stride_b_seq_q)
+                           + fx.Int64(q_row_off) * stride_b_seq_q + fx.Int64(k_row_off))
                 # Odd-pitch rows start mid-dword: align the base down, funnel-shift per lane.
                 b_addr = fx.Int64(fx.ptrtoint(B)) + b_elems * fx.Int64(2)
                 b_mis = fx.Int32(b_addr & fx.Int64(3))
@@ -505,7 +505,7 @@ def build_fmha_fwd_gfx942_wide(head_dim,
                 b_rsrc = rocdl.get_buffer_rsrc(buffer_ops.create_buffer_resource_from_addr(
                     b_addr - fx.Int64(b_mis),
                     num_records_bytes=b_span * fx.Int64(2) + fx.Int64(b_mis)))
-                b_byte = b_mis + (fx.Int32(q_row) * fx.Int32(stride_b_seq_q) + k_row_off + kv_lane) * fx.Int32(2)
+                b_byte = b_mis + (fx.Int32(q_row) * fx.Int32(stride_b_seq_q) + kv_lane) * fx.Int32(2)
                 b_lane = b_byte & fx.Int32(-4)
                 b_shift = (b_byte & fx.Int32(3)) * fx.Int32(8)
 

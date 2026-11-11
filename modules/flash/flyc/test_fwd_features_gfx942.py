@@ -135,6 +135,34 @@ def test_varlen(head_dim, layout, lse_layout):
         _check(f"hd={head_dim} {layout} {lse_layout} seq{z}=({sq},{sk})", oz, lz, ref, ref_lse)
 
 
+@pytest.mark.parametrize("head_dim", (64, 128, 192, 512))
+def test_varlen_bias(head_dim):
+    """Packed bias (1, H, sum(Sq), sum(Sk)): sequence z reads its own [q_off:, k_off:] block."""
+    import fmha_tuning_gfx942 as tuning
+
+    h = 2
+    lq = [a for a, _ in SEQS]
+    lk = [b for _, b in SEQS]
+    cu_q = torch.tensor([0] + list(np.cumsum(lq)), device="cuda", dtype=torch.int32)
+    cu_k = torch.tensor([0] + list(np.cumsum(lk)), device="cuda", dtype=torch.int32)
+    tq, tk = sum(lq), sum(lk)
+    torch.manual_seed(head_dim + 1)
+    q = torch.randn(1, h, tq, head_dim, device="cuda", dtype=DTYPE)
+    k = torch.randn(1, h, tk, head_dim, device="cuda", dtype=DTYPE)
+    v = torch.randn_like(k)
+    bias = torch.randn(1, h, tq, tk, device="cuda", dtype=DTYPE)
+    varlen = abi.varlen_compact(cu_q, cu_k, max(lq), max(lk), lse_tokens=tq, lse_layout=abi.VARLEN_LSE_LAYOUT_HT)
+    lse = torch.full((h, tq), float("nan"), device="cuda")
+    out = torch.full_like(q, float("nan"))
+    launch = tuning.build(head_dim, bias=True)
+    launch(q, k, v, out, 1, max(lq), seqlen_k=max(lk), num_seqlens=len(SEQS), lse=lse, varlen=varlen, bias=bias)
+    torch.cuda.synchronize()
+    for z, (sq, sk) in enumerate(SEQS):
+        qs, ks = slice(cu_q[z], cu_q[z + 1]), slice(cu_k[z], cu_k[z + 1])
+        ref, ref_lse = _reference(q[0, :, qs], k[0, :, ks], v[0, :, ks], head_dim ** -0.5, bias=bias[0, :, qs, ks])
+        _check(f"hd={head_dim} seq{z}=({sq},{sk})", out[0, :, qs], lse[:, qs], ref, ref_lse)
+
+
 @pytest.mark.parametrize("shape", [(300, 777), (301, 1001), (1, 1001), (500, 500)])
 @pytest.mark.parametrize("head_dim", HEAD_DIMS)
 def test_bias(head_dim, shape):
