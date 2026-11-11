@@ -64,6 +64,7 @@ from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
 import flydsl.expr as fx
+from flydsl._mlir import ir
 from flydsl._mlir.dialects import arith
 
 __all__ = [
@@ -74,6 +75,7 @@ __all__ = [
     "Word",
     "U64",
     "default_width",
+    "default_wide_mul",
     "randoms_per_offset",
     "philox_4x",
     "philox_u32",
@@ -143,6 +145,25 @@ def default_width(arch: str | None = None) -> PhiloxWidth:
     return _WIDTH_BY_ARCH.get(base, _FALLBACK_WIDTH)
 
 
+# How a width-32 round forms its u32 x u32 products. Not part of the stream:
+# both forms give the same bits. "wide" is one zero-extended 64-bit multiply
+# per product (one `v_mad_u64_u32` for low and high), "split" is
+# `mului_extended` (`v_mul_lo_u32` + `v_mul_hi_u32`).
+# gfx942, B2 H32 S4k fwd d128 dropout 0.2: 2.19 ms split, 1.88 ms wide.
+_WIDE_MUL_BY_ARCH = {
+    "gfx942": True,
+}
+
+
+def default_wide_mul(arch: str | None = None) -> bool:
+    """Whether `arch` forms Philox products with one 64-bit multiply."""
+    if arch is None:
+        from flydsl.runtime.device import get_rocm_arch
+
+        arch = get_rocm_arch()
+    return _WIDE_MUL_BY_ARCH.get(str(arch).split(":")[0], False)
+
+
 # Weyl-sequence key increments and round multipliers. The 32-bit values are the
 # original Philox-4x32 constants (golden ratio / sqrt(3) fractions); the 64-bit
 # ones are their 64-bit counterparts. Both match Triton's table.
@@ -208,6 +229,18 @@ def _mul_hi(a: Word, b: Word, width: PhiloxWidth) -> Word:
     return _ty(width)(op.high)
 
 
+def _mul_wide32(a: fx.Int32, b: fx.Int32) -> tuple[fx.Int32, fx.Int32]:
+    """(low, high) of a u32 x u32 product via one zero-extended 64-bit multiply.
+
+    The bits of `_mul_lo` and `_mul_hi`; LLVM lowers it to one `v_mad_u64_u32`.
+    """
+    i32 = ir.IntegerType.get_signless(32)
+    i64 = ir.IntegerType.get_signless(64)
+    p = arith.muli(arith.extui(i64, fx.as_ir_value(a)), arith.extui(i64, fx.as_ir_value(b)))
+    hi = arith.shrui(p, arith.constant(i64, 32))
+    return fx.Int32(arith.trunci(i32, p)), fx.Int32(arith.trunci(i32, hi))
+
+
 def philox_4x(
     c0: Word,
     c1: Word,
@@ -217,6 +250,7 @@ def philox_4x(
     k1: Word,
     width: PhiloxWidth = 32,
     n_rounds: int = DEFAULT_ROUNDS,
+    wide_mul: bool = False,
 ) -> tuple[Word, Word, Word, Word]:
     """`n_rounds` Philox rounds over counter `(c0..c3)` and key `(k0, k1)`.
 
@@ -226,6 +260,9 @@ def philox_4x(
     The round is Triton's verbatim, and the ordering matters: `c1` and `c3` are
     computed from the *pre-round* `_c0`/`_c2`, so the temporaries are not an
     optimisation to remove.
+
+    `wide_mul` (width 32 only) forms each product's halves with one 64-bit
+    multiply; same output, different instructions (`_WIDE_MUL_BY_ARCH`).
     """
     _check_width(width)
     if n_rounds < 1:
@@ -234,10 +271,17 @@ def philox_4x(
     KA, KB = _const(width, "KEY_A"), _const(width, "KEY_B")
     for _ in range(n_rounds):
         _c0, _c2 = c0, c2
-        c0 = _xor(_xor(_mul_hi(B, _c2, width), c1, width), k0, width)
-        c2 = _xor(_xor(_mul_hi(A, _c0, width), c3, width), k1, width)
-        c1 = _mul_lo(B, _c2, width)
-        c3 = _mul_lo(A, _c0, width)
+        if wide_mul and width == 32:
+            lo_b, hi_b = _mul_wide32(_c2, B)
+            lo_a, hi_a = _mul_wide32(_c0, A)
+            c0 = _xor(_xor(hi_b, c1, width), k0, width)
+            c2 = _xor(_xor(hi_a, c3, width), k1, width)
+            c1, c3 = lo_b, lo_a
+        else:
+            c0 = _xor(_xor(_mul_hi(B, _c2, width), c1, width), k0, width)
+            c2 = _xor(_xor(_mul_hi(A, _c0, width), c3, width), k1, width)
+            c1 = _mul_lo(B, _c2, width)
+            c3 = _mul_lo(A, _c0, width)
         k0 = _add(k0, KA, width)
         k1 = _add(k1, KB, width)
     return c0, c1, c2, c3
@@ -248,6 +292,7 @@ def philox_u32(
     offset: U64,
     width: PhiloxWidth = 32,
     n_rounds: int = DEFAULT_ROUNDS,
+    wide_mul: bool = False,
 ) -> list[fx.Int32]:
     """`randoms_per_offset(width)` uniform u32 values from a 64-bit `(seed, offset)`.
 
@@ -269,7 +314,7 @@ def philox_u32(
         lo, hi = _split64(off64)
         klo, khi = _split64(seed64)
         zero = fx.Int32(0)
-        return list(philox_4x(lo, hi, zero, zero, klo, khi, 32, n_rounds))
+        return list(philox_4x(lo, hi, zero, zero, klo, khi, 32, n_rounds, wide_mul))
     words = philox_4x(off64, fx.Int64(0), fx.Int64(0), fx.Int64(0), seed64, fx.Int64(0), 64, n_rounds)
     out = []
     for w in words:
@@ -362,6 +407,8 @@ class Philox:
 
     width: PhiloxWidth = 32
     n_rounds: int = DEFAULT_ROUNDS
+    # Instruction choice only; the stream does not depend on it.
+    wide_mul: bool = False
 
     def __post_init__(self) -> None:
         _check_width(self.width)
@@ -371,7 +418,7 @@ class Philox:
     @classmethod
     def for_arch(cls, arch: str | None = None, n_rounds: int = DEFAULT_ROUNDS) -> "Philox":
         """The measured default for `arch` (current device if omitted)."""
-        return cls(width=default_width(arch), n_rounds=n_rounds)
+        return cls(width=default_width(arch), n_rounds=n_rounds, wide_mul=default_wide_mul(arch))
 
     @property
     def randoms_per_offset(self) -> int:
@@ -384,11 +431,11 @@ class Philox:
 
     def u32(self, seed: U64, offset: U64) -> list[fx.Int32]:
         """`randoms_per_offset` uniform u32 values from a 64-bit seed/offset."""
-        return philox_u32(seed, offset, self.width, self.n_rounds)
+        return philox_u32(seed, offset, self.width, self.n_rounds, self.wide_mul)
 
     def words(self, c0: Word, c1: Word, c2: Word, c3: Word, k0: Word, k1: Word) -> tuple[Word, Word, Word, Word]:
         """The raw round function, for callers packing the counter themselves."""
-        return philox_4x(c0, c1, c2, c3, k0, k1, self.width, self.n_rounds)
+        return philox_4x(c0, c1, c2, c3, k0, k1, self.width, self.n_rounds, self.wide_mul)
 
     def span_u32(self, seed: U64, first_offset: U64, count: int) -> list[fx.Int32]:
         """`count` consecutive randoms, starting at `first_offset`'s slot 0.

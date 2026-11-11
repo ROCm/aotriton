@@ -78,7 +78,7 @@ class Traits:
         self.SLOT_BYTES = 2 * self.TILE_BYTES
         self.LDS_BYTES = 4 * self.SLOT_BYTES
         assert self.LDS_BYTES <= 65536, self.LDS_BYTES
-        self.CACHE_TAG = f'v5_D{head_dim}_c{int(causal)}_{dtype_str}_w{num_waves}_kvb{kv_blocks}_p{int(padded_head)}'
+        self.CACHE_TAG = f'v7_D{head_dim}_c{int(causal)}_{dtype_str}_w{num_waves}_kvb{kv_blocks}_p{int(padded_head)}'
 
     def row_slot(self, s):
         return s * self.SLOT_BYTES
@@ -609,28 +609,39 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
 
         if const_expr(dropout):
             # The Triton kernels' stream (philox.py, grid_plane): offset(row, col) =
-            # base + row * stride + col // 4, the element at slot col % 4. Lane l draws
-            # (q = l % 16, kv group l / 16) of a 16x16 block; ds_bpermute deals the bits.
+            # base + row * stride + col // 4, the element at slot col % 4. Lane (lg, lc)
+            # draws q row 4lg + lc % 4, keys 4 * (lc // 4) + [0, 4) of a 16x16 block, so
+            # each lane quad holds the 4x4 block its S rows need: a DPP broadcast deals it.
             rng = Philox.for_arch('gfx942')
             ph_seed = fmha.philox_seed_value(philox_seed_ptr)
             ph_off = fmha.philox_offset_base(philox_offset1, philox_offset2)
-            keep_src = [fx.Int32((lg * 4 + fx.Index(r) + (lc // 4) * 16) * 4) for r in range(4)]
-            keep_shift = fx.Int32(lc % 4)
+            ph_q = fx.Int32(lg * 4 + lc % 4)
+            ph_col = fx.Int32(kv_wave) + fx.Int32((lc // 4) * 4)
+            keep_bit = fx.Int32(1) << fx.Int32(lc % 4)
 
-        def dropout_keep(ph_base, ph_stride, q_start, b):
-            q = fx.Int32(q_start) + fx.Int32(lc)
-            col = fx.Int32(kv_wave) + fx.Int32(16 * b) + fx.Int32(lg * 4)
-            vals = rng.u32(ph_seed, rng.grid_offset(ph_base, ph_stride, q, col))
-            bits = fx.Int32(0)
-            for i in range_constexpr(4):
-                bits = bits | (fx.Int32(vals[i]) > fx.Int32(idropout_p)).select(fx.Int32(1 << i), fx.Int32(0))
+        def dropout_nibs(hs, q_start):
+            """Per kv block, this lane's 4 keep bits of tile q_start."""
+            if const_expr(not dropout):
+                return []
+            ph_tile = hs['ph_lane'] + fx.Int64(q_start) * hs['ph_stride']
+            nibs = []
+            for b in range_constexpr(tr.KVB):
+                vals = rng.u32(ph_seed, ph_tile + fx.Int64(4 * b))
+                bits = [(fx.Int32(vals[i]) > fx.Int32(idropout_p)).select(fx.Int32(1 << i), fx.Int32(0))
+                        for i in range(4)]
+                nibs.append((bits[0] | bits[1]) | (bits[2] | bits[3]))
+            return nibs
+
+        def dropout_keep(nib):
+            """Keep flags of S rows r = 0..3 of a block, from the quad's nibbles."""
             keep = []
             for r in range_constexpr(4):
-                got = fx.Int32(rocdl.ds_bpermute(fx.Int32.ir_type, keep_src[r], bits))
-                keep.append(((got >> keep_shift) & fx.Int32(1)) != fx.Int32(0))
+                # quad_perm [r, r, r, r]: row r's nibble, from lane r of the quad.
+                got = fx.Int32(rocdl.update_dpp(fx.Int32.ir_type, raw(fx.Int32(0)), raw(nib), 0x55 * r, 0xF, 0xF, True))
+                keep.append((got & keep_bit) != fx.Int32(0))
             return keep
 
-        def tile_math(s_accs, dp_accs, lse_l2, delta, q_start, masked, hs):
+        def tile_math(s_accs, dp_accs, lse_l2, delta, q_start, masked, hs, nibs):
             """P and dS packs per kv block, from S, dP and this tile's rows."""
             c_scale_v = fx.full(4, fx.Float32(c_scale), fx.Float32)
             lse_v = Vec.from_elements(lse_l2, fx.Float32)
@@ -650,9 +661,10 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
                 p = [exp2(e[r]) for r in range(4)]
                 dp = Vec(dp_accs[b])
                 if const_expr(dropout):
-                    keep = dropout_keep(hs['ph_base'], hs['ph_stride'], q_start, b)
+                    keep = dropout_keep(nibs[b])
                     dsc = fx.Float32(dropout_scale)
-                    p_drop = [keep[r].select(p[r] * dsc, fx.Float32(0.0)) for r in range(4)]
+                    # 1/(1-p) of P joins dV at the store.
+                    p_drop = [keep[r].select(p[r], fx.Float32(0.0)) for r in range(4)]
                     dp_vals = [keep[r].select(dp[r] * dsc, fx.Float32(0.0)) for r in range(4)]
                     dpd = Vec.from_elements(dp_vals, fx.Float32) - delta_v
                 else:
@@ -667,10 +679,17 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
         n_sd = 2 * tr.KVB
         n_mfma_a = 2 * tr.KVB * 2 * tr.DP
         n_mfma_b = 2 * tr.DB * tr.KVB
+        N_ROWS = 8
+        # Two waves per SIMD: the next tile's Philox runs under this tile's dV/dK
+        # (B2 H32 S4k d96: 2.30 vs 4.83 ms; at one wave it does not pay).
+        early = dropout and waves_per_eu >= 2
+        # One wave with dropout from d64: VALU-bound, the order is left to the
+        # scheduler (B2 H32 S8k d128: 12.88 vs 13.34 ms; d32 causal loses 7%).
+        sched_valu = 0 if dropout and not early and head_dim >= 64 else interleave_valu
 
         def interleave(n_mfma, n_other, mask):
             """Ask the scheduler for one MFMA, then `n_other` of `mask`, repeated."""
-            if const_expr(interleave_valu > 0):
+            if const_expr(sched_valu > 0):
                 for _ in range_constexpr(n_mfma):
                     rocdl.sched_group_barrier(0x008, 1, 0)
                     rocdl.sched_group_barrier(mask, n_other, 0)
@@ -703,8 +722,12 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
             `par` = j % 2, known at trace time."""
             accs = list(carried[:n_acc])
             sd = list(carried[n_acc:n_acc + n_sd])
-            rows = list(carried[n_acc + n_sd:])
+            rows = list(carried[n_acc + n_sd:n_acc + n_sd + N_ROWS])
             q_j = q_base + j * BM
+            if const_expr(early):
+                nibs = list(carried[n_acc + n_sd + N_ROWS:])
+            else:
+                nibs = dropout_nibs(hs, q_j)
             # Phase A: S/dP(j + 1) on the MFMA pipe while P/dS(j) runs on the VALU.
             rows_next = rows_load(hs, q_j + BM)
             rows_dma(hs, q_j + 2 * BM, par)
@@ -714,8 +737,8 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
             dot = t_read(tb + tr.DOT, f't{par}')
             qt = t_read(tb + tr.QT, f't{par}')
             lse_l2, delta = lse_delta(rows)
-            p_packs, ds_packs = tile_math(sd[:tr.KVB], sd[tr.KVB:], lse_l2, delta, q_j, masked, hs)
-            interleave(n_mfma_a, interleave_valu, 0x002 | 0x400)
+            p_packs, ds_packs = tile_math(sd[:tr.KVB], sd[tr.KVB:], lse_l2, delta, q_j, masked, hs, nibs)
+            interleave(n_mfma_a, sched_valu, 0x002 | 0x400)
             rocdl.sched_barrier(0)
             # Phase B: dV/dK(j) while tile j + 1's transposed half is built in LDS.
             dk = accs[:tr.DB * tr.KVB]
@@ -727,11 +750,14 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
                 for b in range_constexpr(tr.KVB):
                     dk[db * tr.KVB + b] = mfma(qt[db], ds_packs[b], dk[db * tr.KVB + b])
             t_build(1 - par, 1 - par)
+            nibs_next = []
+            if const_expr(early):
+                nibs_next = dropout_nibs(hs, q_j + BM)
             interleave(n_mfma_b, 1, 0x002 | 0x200)
             rocdl.sched_barrier(0)
             rocdl.s_waitcnt(0)
             cluster_barrier()
-            return dk + dv + sd_next + rows_next
+            return dk + dv + sd_next + rows_next + nibs_next
 
         init = [fx.full(4, 0.0, fx.Float32) for _ in range(n_acc)]
         res_h = init
@@ -743,7 +769,8 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
                 hs['b_rsrc'] = bias_rsrc_for(head_q)
             if const_expr(dropout):
                 plane = z_i32 * fx.Int32(num_head_q) + fx.Int32(head_q)
-                hs['ph_base'], hs['ph_stride'] = rng.grid_plane(ph_off, plane, max_seqlen_q, max_seqlen_k)
+                ph_base, hs['ph_stride'] = rng.grid_plane(ph_off, plane, max_seqlen_q, max_seqlen_k)
+                hs['ph_lane'] = rng.grid_offset(ph_base, hs['ph_stride'], ph_q, ph_col)
 
             @flyc.jit
             def masked_iteration(j, carried):
@@ -768,6 +795,8 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
             rocdl.s_waitcnt(0)
             cluster_barrier()
             init_t = list(accs_h) + sd0 + rows0
+            if const_expr(early):
+                init_t = init_t + dropout_nibs(hs, q_base)
             r0 = init_t
             for j, carried in range(0, j_clean, 1, init=init_t):
                 r0 = yield masked_iteration(j, carried)
@@ -793,6 +822,8 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
                 d = fx.Index(16 * db) + lg * 4
                 dk_v = Vec(res_h[db * tr.KVB + b]) * scale_v
                 dv_v = Vec(res_h[tr.DB * tr.KVB + db * tr.KVB + b])
+                if const_expr(dropout):
+                    dv_v = dv_v * fx.full(4, fx.Float32(dropout_scale), fx.Float32)
                 ok_k = row_ok
                 ok_v = row_ok
                 if const_expr(16 * db + 16 > tr.PAD_FLOOR):

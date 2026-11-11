@@ -584,13 +584,15 @@ def build_fmha_fwd_gfx942_wide(head_dim,
                 fmha.philox_report(philox_seed_output, philox_offset_output, ph_seed, ph_off)
                 ph_plane = z_i32 * fx.Int32(num_head_q) + fx.Int32(head)
                 ph_base, ph_stride = rng.grid_plane(ph_off, ph_plane, max_seqlen_q, max_seqlen_k)
+                # Columns kv_start + kv_lane + 8k are multiples of 4: offsets add, hoisted per row.
+                ph_row = rng.grid_offset(ph_base, ph_stride, fx.Int32(q_row), kv_lane)
 
             def dropout_keep(kv_start):
                 """Keep flags in S^T order: each 4-key group is one Philox call."""
                 keep = []
+                ph_tile = ph_row + fx.Int64(fx.Int32(kv_start) >> fx.Int32(2))
                 for g in range_constexpr(tr.NS // 4):
-                    col = fx.Int32(kv_start) + kv_lane + fx.Int32(32 * (g // 4) + 8 * (g % 4))
-                    vals = rng.u32(ph_seed, rng.grid_offset(ph_base, ph_stride, fx.Int32(q_row), col))
+                    vals = rng.u32(ph_seed, ph_tile + fx.Int64((32 * (g // 4) + 8 * (g % 4)) // 4))
                     keep.extend(fx.Int32(v) > fx.Int32(idropout_p) for v in vals)
                 return keep
 
