@@ -281,8 +281,8 @@ def test_varlen(head_dim, layout, lse_layout):
         _check(f"hd={head_dim} {layout} {lse_layout} seq{z}={SEQS[z]}", dq[qs], ref)
 
 
-@pytest.mark.parametrize("with_db", [True, False])
-@pytest.mark.parametrize("shape", [(300, 777), (301, 1001), (1, 1001), (128, 64)])
+@pytest.mark.parametrize("with_db", ["padded", "contiguous", "none"])
+@pytest.mark.parametrize("shape", [(300, 777), (301, 1001), (1, 1001), (128, 64), (200, 512)])
 @pytest.mark.parametrize("head_dim", (160, 256, 512))
 def test_bias(head_dim, shape, with_db):
     """dB = dS. Odd pitches start bias rows mid-dword; an odd slab ends mid-dword.
@@ -293,9 +293,12 @@ def test_bias(head_dim, shape, with_db):
     bias = torch.randn(b, h, sq, sk, device="cuda", dtype=DTYPE)
     ref, ref_ds, lse, delta, _ = _reference(q, k, v, do, head_dim ** -0.5, bias=bias)
     dq = torch.full_like(q, float("nan"))
-    if with_db:
+    if with_db == "padded":
         # Its own layout, padded rows, to catch borrowed strides and row overruns.
         dbias = torch.full((b, h, sq, sk + 5), float("nan"), device="cuda", dtype=DTYPE)[..., :sk]
+    elif with_db == "contiguous":
+        # 8B-aligned groups when sk % 4 == 0: the vector store path.
+        dbias = torch.full((b, h, sq, sk), float("nan"), device="cuda", dtype=DTYPE)
     else:
         # All-zero (batch, head, row) strides: the kernel must not store.
         dbias = torch.full((sk,), float("nan"), device="cuda", dtype=DTYPE).as_strided((b, h, sq, sk), (0, 0, 0, 1))
@@ -313,11 +316,12 @@ def test_bias(head_dim, shape, with_db):
                                 dbias=dbias)
     torch.cuda.synchronize()
     _check(f"hd={head_dim} bias {shape} dQ", dq, ref)
-    if with_db:
+    if with_db != "none":
         _check(f"hd={head_dim} bias {shape} dB", dbias, ref_ds)
+    if with_db == "padded":
         base = dbias.as_strided((b, h, sq, sk + 5), dbias.stride())
         assert bool(torch.isnan(base[..., sk:]).all()), "dB written past seqlen_k"
-    else:
+    elif with_db == "none":
         assert bool(torch.isnan(dbias).all()), "dB stored with all-zero dB strides"
 
 

@@ -504,9 +504,12 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
             db_elems = (fx.Int64(q_batch) * stride_db_batch + fx.Int64(head) * stride_db_head
                         + fx.Int64(q_row_off) * stride_db_seq_q)
             db_span = smax(fx.Int64(sq_i32 - fx.Int32(1)) * stride_db_seq_q + fx.Int64(sk_i32), fx.Int64(0))
-            db_rsrc = buffer_ops.create_buffer_resource_from_addr(
-                fx.Int64(fx.ptrtoint(DB)) + db_elems * fx.Int64(2),
-                num_records_bytes=db_span * fx.Int64(2))
+            db_addr = fx.Int64(fx.ptrtoint(DB)) + db_elems * fx.Int64(2)
+            db_rsrc = buffer_ops.create_buffer_resource_from_addr(db_addr, num_records_bytes=db_span * fx.Int64(2))
+            # Clean tiles store 8B groups when every group starts 8B-aligned.
+            db_fast = (((db_addr & fx.Int64(7)) == fx.Int64(0))
+                       & ((fx.Int64(stride_db_seq_q) & fx.Int64(3)) == fx.Int64(0))
+                       & ((k_row_off & fx.Int32(3)) == fx.Int32(0)))
             store_db = ((fx.Int64(stride_db_batch) != fx.Int64(0))
                         | (fx.Int64(stride_db_head) != fx.Int64(0))
                         | (fx.Int64(stride_db_seq_q) != fx.Int64(0)))
@@ -627,6 +630,16 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
                     keep.extend(fx.Int32(v) > fx.Int32(idropout_p) for v in vals)
                 return keep
 
+            def db_store_scalar(packs, base, kv_start):
+                """One element at a time: a dB row may start mid-dword and end mid-group."""
+                for r in range_constexpr(tr.NS):
+                    rel = 4 * tr.G * (r // 4) + r % 4
+                    col = fx.Int32(kv_start) + kv_lane + fx.Int32(rel)
+                    buffer_ops.buffer_store(Vec(packs[r // 4])[r % 4],
+                                            db_rsrc,
+                                            base + fx.Int32(rel),
+                                            mask=db_ok & (col < sk_i32))
+
             def ds_tile(s_acc, dp_acc, kv_start, masked, bias_vals):
                 """dS^T packs of one tile; stores dB = dS on bias builds."""
                 if const_expr(bias):
@@ -647,15 +660,19 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
                     keep = dropout_keep(kv_start)
                     dp = [keep[r].select(dp[r] * fx.Float32(dropout_scale), fx.Float32(0.0)) for r in range(tr.NS)]
                 ds = [p[r] * (dp[r] - delta) for r in range(tr.NS)]
+                packs = [pack4(ds[4 * i:4 * i + 4]) for i in range(tr.PV_STEPS)]
                 if const_expr(bias):
-                    soff = fx.Int32(kv_start)
-                    for r in range_constexpr(tr.NS):
-                        col = fx.Int32(kv_start) + kv_lane + fx.Int32(4 * tr.G * (r // 4) + r % 4)
-                        buffer_ops.buffer_store(fx.Float32(ds[r]).to(elem),
-                                                db_rsrc,
-                                                db_lane + soff + fx.Int32(4 * tr.G * (r // 4) + r % 4),
-                                                mask=db_ok & (col < sk_i32))
-                return [pack4(ds[4 * i:4 * i + 4]) for i in range(tr.PV_STEPS)]
+                    # dB = dS as rounded for the MFMA. Group i is 4 contiguous keys.
+                    base = db_lane + fx.Int32(kv_start)
+                    if const_expr(masked):
+                        db_store_scalar(packs, base, kv_start)
+                    else:
+                        if db_fast:
+                            for i in range_constexpr(tr.PV_STEPS):
+                                buffer_ops.buffer_store(packs[i], db_rsrc, base + fx.Int32(4 * tr.G * i), mask=db_ok)
+                        else:
+                            db_store_scalar(packs, base, kv_start)
+                return packs
 
             dt_n = tr.D_TILES
 
