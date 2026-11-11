@@ -77,6 +77,7 @@ def main():
     p.add_argument('--kv_blocks', type=int, default=None)
     p.add_argument('--waves_per_eu', type=int, default=None)
     p.add_argument('--grid_axis_order', type=int, default=None)
+    p.add_argument('--interleave_valu', type=int, default=None)
     p.add_argument('--iters', type=int, default=20)
     p.add_argument('--check', action='store_true', help='compare with fp64 (small shapes only)')
     a = p.parse_args()
@@ -88,7 +89,7 @@ def main():
         sys.exit(f'head_dim {a.head_dim} is past the ladder {tuning.LADDER}')
     from fmha_bwd_dkdv_gfx942 import build_fmha_bwd_dkdv_gfx942
 
-    knobs = {n: getattr(a, n) for n in ('num_waves', 'kv_blocks', 'waves_per_eu', 'grid_axis_order')
+    knobs = {n: getattr(a, n) for n in ('num_waves', 'kv_blocks', 'waves_per_eu', 'grid_axis_order', 'interleave_valu')
              if getattr(a, n) is not None}
     launch = build_fmha_bwd_dkdv_gfx942(rung,
                                         causal_type=2 if a.causal else 0,

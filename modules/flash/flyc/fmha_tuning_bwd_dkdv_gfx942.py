@@ -29,12 +29,17 @@ def default_num_waves(head_dim):
 
 def default_kv_blocks(head_dim):
     """16-row kv blocks each wave keeps resident: K, V, dK^T and dV^T cost
-    3 * 16 * kv_blocks * head_dim / 64 VGPRs, about 192 at the default."""
-    return {32: 4, 64: 4, 96: 2, 128: 2}[head_dim]
+    3 * 16 * kv_blocks * head_dim / 64 registers."""
+    return {32: 4, 64: 2, 96: 2, 128: 2}[head_dim]
 
 
 def default_waves_per_eu(head_dim):
-    return 2
+    return 1
+
+
+def default_interleave_valu(head_dim):
+    """VALU ops the scheduler is asked to place after each S/dP MFMA; 0 leaves it free."""
+    return 3
 
 
 def default_grid_axis_order(causal):
