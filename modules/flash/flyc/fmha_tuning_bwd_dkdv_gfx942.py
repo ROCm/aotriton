@@ -29,11 +29,14 @@ def default_num_waves(head_dim):
 
 def default_kv_blocks(head_dim):
     """16-row kv blocks each wave keeps resident: K, V, dK^T and dV^T cost
-    3 * 16 * kv_blocks * head_dim / 64 registers."""
-    return {32: 4, 64: 2, 96: 2, 128: 2}[head_dim]
+    3 * 16 * kv_blocks * head_dim / 64 registers. 2 is best or tied at every rung
+    (B2 H32 S8k, TFLOPS at 1/2/3/4: d32 -/332/-/287, d64 -/465/342/384,
+    d96 -/410/416/410, d128 -/448/310/309)."""
+    return 2
 
 
 def default_waves_per_eu(head_dim):
+    """One wave per SIMD: at d128 the resident set alone is 192 of 256 registers."""
     return 1
 
 
@@ -43,7 +46,9 @@ def default_interleave_valu(head_dim):
 
 
 def default_grid_axis_order(causal):
-    return GRID_AXIS_TILE_FASTEST
+    """Causal: head-fastest launches every head's long low-kv tiles first (B2 H32 S8k
+    d128: 434 vs 331 TFLOPS); otherwise tile-fastest shares Q/dO in L2 (448 vs 438)."""
+    return GRID_AXIS_HEAD_FASTEST if causal else GRID_AXIS_TILE_FASTEST
 
 
 def block_kv(num_waves, kv_blocks):
