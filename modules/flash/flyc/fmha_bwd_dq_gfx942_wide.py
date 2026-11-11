@@ -491,8 +491,9 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
 
         if const_expr(bias):
             # (B, H, Sq, Sk), Sk contiguous; rows offset by Q's varlen offset, columns by K's.
+            # Both offsets sit in the base, so the range covers the slab (as gfx1201).
             b_elems = (fx.Int64(q_batch) * stride_b_batch + fx.Int64(head) * stride_b_head
-                       + fx.Int64(q_row_off) * stride_b_seq_q)
+                       + fx.Int64(q_row_off) * stride_b_seq_q + fx.Int64(k_row_off))
             # Odd-pitch rows start mid-dword: align the base down, funnel-shift per lane.
             b_addr = fx.Int64(fx.ptrtoint(B)) + b_elems * fx.Int64(2)
             b_mis = fx.Int32(b_addr & fx.Int64(3))
@@ -502,14 +503,13 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
                 num_records_bytes=b_span * fx.Int64(2) + fx.Int64(b_mis)))
             # dB: its own strides; an all-zero triple means the caller wants no dB.
             db_elems = (fx.Int64(q_batch) * stride_db_batch + fx.Int64(head) * stride_db_head
-                        + fx.Int64(q_row_off) * stride_db_seq_q)
+                        + fx.Int64(q_row_off) * stride_db_seq_q + fx.Int64(k_row_off))
             db_span = smax(fx.Int64(sq_i32 - fx.Int32(1)) * stride_db_seq_q + fx.Int64(sk_i32), fx.Int64(0))
             db_addr = fx.Int64(fx.ptrtoint(DB)) + db_elems * fx.Int64(2)
             db_rsrc = buffer_ops.create_buffer_resource_from_addr(db_addr, num_records_bytes=db_span * fx.Int64(2))
             # Clean tiles store 8B groups when every group starts 8B-aligned.
             db_fast = (((db_addr & fx.Int64(7)) == fx.Int64(0))
-                       & ((fx.Int64(stride_db_seq_q) & fx.Int64(3)) == fx.Int64(0))
-                       & ((k_row_off & fx.Int32(3)) == fx.Int32(0)))
+                       & ((fx.Int64(stride_db_seq_q) & fx.Int64(3)) == fx.Int64(0)))
             store_db = ((fx.Int64(stride_db_batch) != fx.Int64(0))
                         | (fx.Int64(stride_db_head) != fx.Int64(0))
                         | (fx.Int64(stride_db_seq_q) != fx.Int64(0)))
@@ -594,10 +594,10 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
             r_clean = smax(smin(clean_end, n_tiles), r_lead)
 
             if const_expr(bias):
-                b_byte = b_mis + (fx.Int32(q_row) * fx.Int32(stride_b_seq_q) + k_row_off + kv_lane) * fx.Int32(2)
+                b_byte = b_mis + (fx.Int32(q_row) * fx.Int32(stride_b_seq_q) + kv_lane) * fx.Int32(2)
                 b_lane = b_byte & fx.Int32(-4)
                 b_shift = (b_byte & fx.Int32(3)) * fx.Int32(8)
-                db_lane = fx.Int32(q_row) * fx.Int32(stride_db_seq_q) + k_row_off + kv_lane
+                db_lane = fx.Int32(q_row) * fx.Int32(stride_db_seq_q) + kv_lane
                 db_ok = q_ok & store_db
 
             def bias_load(kv_start, exact):

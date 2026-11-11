@@ -325,6 +325,49 @@ def test_bias(head_dim, shape, with_db):
         assert bool(torch.isnan(dbias).all()), "dB stored with all-zero dB strides"
 
 
+@pytest.mark.parametrize("head_dim", (192, 512))
+def test_varlen_bias(head_dim):
+    """Packed bias and dB (1, H, sum(Sq), sum(Sk)): sequence z owns its [q_off:, k_off:] block."""
+    h = 2
+    lq = [a for a, _ in SEQS]
+    lk = [c for _, c in SEQS]
+    cu_q = torch.tensor([0] + list(np.cumsum(lq)), device="cuda", dtype=torch.int32)
+    cu_k = torch.tensor([0] + list(np.cumsum(lk)), device="cuda", dtype=torch.int32)
+    tq, tk = sum(lq), sum(lk)
+    q, k, v, do = _inputs((1, h, tq, head_dim), (1, h, tk, head_dim), seed=head_dim + 1)
+    bias = torch.randn(1, h, tq, tk, device="cuda", dtype=DTYPE)
+    dbias = torch.full_like(bias, float("nan"))
+    varlen = abi.varlen_compact(cu_q, cu_k, max(lq), max(lk), lse_tokens=tq, lse_layout=abi.VARLEN_LSE_LAYOUT_HT)
+    lse = torch.zeros(h, tq, device="cuda")
+    delta = torch.zeros_like(lse)
+    refs = []
+    for z in range(len(SEQS)):
+        qs, ks = slice(int(cu_q[z]), int(cu_q[z + 1])), slice(int(cu_k[z]), int(cu_k[z + 1]))
+        ref, ref_ds, lz, dz, _ = _reference(q[0, :, qs], k[0, :, ks], v[0, :, ks], do[0, :, qs], head_dim ** -0.5,
+                                            bias=bias[0, :, qs, ks])
+        lse[:, qs], delta[:, qs] = lz, dz
+        refs.append((qs, ks, ref, ref_ds))
+    dq = torch.full_like(q, float("nan"))
+    _build(head_dim, bias=True)(q,
+                                k,
+                                v,
+                                do,
+                                dq,
+                                lse,
+                                delta,
+                                1,
+                                max(lq),
+                                seqlen_k=max(lk),
+                                num_seqlens=len(SEQS),
+                                varlen=varlen,
+                                bias=bias,
+                                dbias=dbias)
+    torch.cuda.synchronize()
+    for z, (qs, ks, ref, ref_ds) in enumerate(refs):
+        _check(f"hd={head_dim} varlen bias seq{z} dQ", dq[0, :, qs], ref)
+        _check(f"hd={head_dim} varlen bias seq{z} dB", dbias[0, :, qs, ks], ref_ds)
+
+
 @pytest.mark.parametrize("causal", [False, True])
 @pytest.mark.parametrize("shape", [(300, 777), (777, 300)])
 @pytest.mark.parametrize("head_dim", (192, 256, 384))
