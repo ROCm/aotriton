@@ -586,8 +586,8 @@ def build_fmha_bwd_dq_gfx942(head_dim,
                 keep.extend(fx.Int32(v) > fx.Int32(idropout_p) for v in vals)
             return keep
 
-        def ds_packs_of(s_raw, dp_raw, kv_start, masked, bias_vals):
-            """dS = P * (dP - Delta), packed as GEMM3's B operand."""
+        def p_of(s_raw, kv_start, masked, bias_vals):
+            """P = exp2(sm_scale*log2e*S + log2e*bias - lse2), [v16f32] * NSUB."""
             # Scale once in fp32, as the forward: P must be the forward's P bit for bit.
             c_scale_v = fx.full(16, fx.Float32(c_scale), fx.Float32)
             scaled = [Vec(sr) * c_scale_v for sr in s_raw]
@@ -599,13 +599,19 @@ def build_fmha_bwd_dq_gfx942(head_dim,
                 s_vals = mask_scores(s_vals, kv_start)
             # Whole-accumulator vector math, so v_pk_* ops pair adjacent registers.
             lse2_v = fx.full(16, fx.Float32(lse2), fx.Float32)
+            out = []
+            for n in range_constexpr(tr.NSUB):
+                x = Vec.from_elements([s_vals[16 * n + r] for r in range(16)], fx.Float32) - lse2_v
+                out.append(Vec.from_elements([exp2(x[r]) for r in range(16)], fx.Float32).ir_value())
+            return out
+
+        def ds_packs_of(p_vals, dp_raw, kv_start):
+            """dS = P * (dP - Delta), packed as GEMM3's B operand."""
             delta_v = fx.full(16, fx.Float32(delta), fx.Float32)
             if const_expr(dropout):
                 keep_all = dropout_keep(kv_start)
             ds = []
             for n in range_constexpr(tr.NSUB):
-                x = Vec.from_elements([s_vals[16 * n + r] for r in range(16)], fx.Float32) - lse2_v
-                p = Vec.from_elements([exp2(x[r]) for r in range(16)], fx.Float32)
                 dp = Vec(dp_raw[n])
                 if const_expr(dropout):
                     # The mask and 1/(1-p) hit dP; P stays undropped (numerical lessons, #9).
@@ -613,13 +619,13 @@ def build_fmha_bwd_dq_gfx942(head_dim,
                     dp = Vec.from_elements([keep[r].select(fx.Float32(dp[r]) * fx.Float32(dropout_scale),
                                                            fx.Float32(0.0)) for r in range(16)],
                                            fx.Float32)
-                dsv = p * (dp - delta_v)
+                dsv = Vec(p_vals[n]) * (dp - delta_v)
                 ds.extend(dsv[r] for r in range(16))
             return [pack4(ds[4 * i:4 * i + 4]) for i in range(tr.KV_STEPS)]
 
         # Per tile j, two clusters; waves 4..7 trail by one barrier, so an LDS buffer
         # is safe two clusters after its last reader / its producer's wait:
-        #   A(j): GEMM1+GEMM2 read k/v[j%3]; waits DMA(j+1)
+        #   A(j): GEMM1+GEMM2 read k/v[j%3]; P; waits DMA(j+1)
         #   B(j): DMA(j+2) -> k/v[(j+2)%3]; dS; GEMM3 reads k[j%3]
         # Unrolled by three so buffer indices (and alias scopes) are constants.
         group_b = fx.Int32(rocdl.readfirstlane(fx.Int32.ir_type,
@@ -640,13 +646,15 @@ def build_fmha_bwd_dq_gfx942(head_dim,
             # A(j)
             bias_vals = bias_load(kv, masked)
             s_raw = gemm_t(tile_read(tr.LDS_K_BASE, b, 'k', qk_masks), q_packs)
+            # P here, under GEMM2's MFMAs; dS and its pack stay in B.
+            p_vals = p_of(s_raw, kv, masked, bias_vals)
             dp_raw = gemm_t(tile_read(tr.LDS_V_BASE, b, 'v', vo_masks), do_packs)
             rocdl.s_waitcnt(vmcnt=0)
             cluster_barrier()
             # B(j)
             kv_dma(kv + 2 * tr.BLOCK_N, (b + 2) % NBUF)
             rocdl.sched_barrier(0)
-            ds_packs = ds_packs_of(s_raw, dp_raw, kv, masked, bias_vals)
+            ds_packs = ds_packs_of(p_vals, dp_raw, kv)
             if const_expr(bias):
                 db_store(ds_packs, kv, masked)
             dq_accs = gemm3(dq_accs, ds_packs, b)
