@@ -35,6 +35,7 @@ def main():
     p.add_argument('--rescale_threshold', type=float, default=0.0)
     p.add_argument('--grid_axis_order', type=int, default=None)
     p.add_argument('--bias', action='store_true', help='(B, H, Sq, Sk) attention bias, N(0, 1)')
+    p.add_argument('--dropout_p', type=float, default=0.0, help='dropout probability, timing only')
     p.add_argument('--iters', type=int, default=20)
     p.add_argument('--no_check', action='store_true')
     p.add_argument('--dist', default='normal', choices=['normal', 'uniform', 'sharp'],
@@ -73,9 +74,13 @@ def main():
                           rescale_threshold=a.rescale_threshold,
                           grid_axis_order=a.grid_axis_order,
                           bias=a.bias,
+                          dropout=a.dropout_p > 0,
                           **knobs)
     lse_2d = lse.view(a.batch * a.heads, a.seqlen)
     bias = torch.randn(a.batch, a.heads, a.seqlen, sk, dtype=dt, device='cuda') if a.bias else None
+    extra = {}
+    if a.dropout_p > 0:
+        extra.update(dropout_p=a.dropout_p, philox_seed=1234, philox_offset2=0)
 
     def run():
         # BSHD storage, passed as BHSD-shaped views.
@@ -89,10 +94,13 @@ def main():
                scale=sm_scale,
                lse=lse_2d,
                bias=bias,
-               stream=torch.cuda.current_stream())
+               stream=torch.cuda.current_stream(),
+               **extra)
 
     run()
     torch.cuda.synchronize()
+    if not a.no_check and extra:
+        sys.exit('--dropout_p is timing only: pass --no_check; the tests cover the mask')
     if not a.no_check:
         # fp64 reference from the same bf16/f16 inputs; the checks follow
         # docs/attention-kernel-numerical-error-lessons.

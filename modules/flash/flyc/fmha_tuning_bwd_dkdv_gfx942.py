@@ -39,8 +39,9 @@ def default_kv_blocks(head_dim):
 
 def default_waves_per_eu(head_dim):
     """One wave per SIMD: at d128 the resident set alone is 192 of 256 registers,
-    and two waves per SIMD at d64 measured the same."""
-    return 1
+    and two waves per SIMD at d64 measured the same. d96 takes two (B2 H32 S8k:
+    6.55 vs 7.84 ms, dropout 0.2 9.0 vs 10.8; causal S4k 1.14 vs 1.05)."""
+    return 2 if head_dim == 96 else 1
 
 
 def default_interleave_valu(head_dim):
