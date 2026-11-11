@@ -270,11 +270,13 @@ def test_bias(head_dim, shape):
 @pytest.mark.parametrize("causal", [False, True])
 @pytest.mark.parametrize("shape", [(300, 777), (777, 300)])
 @pytest.mark.parametrize("head_dim", (192, 256))
-def test_dropout(head_dim, shape, causal):
+# 2**32 - 100003: the counter's low word wraps inside the planes.
+@pytest.mark.parametrize("off2", [77, 2**32 - 100003])
+def test_dropout(head_dim, shape, causal, off2):
     """The mask must be the Triton kernels': offset = base + plane*sq*stride + row*stride + col//4."""
     sq, sk = shape
     b, h, p = 2, 3, 0.3
-    seed, off1, off2 = 0x123456789ABCDEF0, 1000, 77
+    seed, off1 = 0x123456789ABCDEF0, 1000
     torch.manual_seed(sq * sk)
     q = torch.randn(b, h, sq, head_dim, device="cuda", dtype=DTYPE)
     k = torch.randn(b, h, sk, head_dim, device="cuda", dtype=DTYPE)

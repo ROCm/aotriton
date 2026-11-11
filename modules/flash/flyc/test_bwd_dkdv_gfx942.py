@@ -392,12 +392,14 @@ def _philox_4x32_10(seed, offsets):
 
 @pytest.mark.parametrize("causal", [False, True])
 @pytest.mark.parametrize("shape", [(300, 777), (257, 519), (777, 300)])
-@pytest.mark.parametrize("head_dim", (64, 128))
-def test_dropout(head_dim, shape, causal):
+@pytest.mark.parametrize("head_dim", (32, 64, 96, 128))
+# 2**32 - 100003: the counter's low word wraps inside the planes.
+@pytest.mark.parametrize("off2", [77, 2**32 - 100003])
+def test_dropout(head_dim, shape, causal, off2):
     """The forward's mask: offset = base + plane*sq*stride + row*stride + col//4, word col % 4."""
     sq, sk = shape
     b, h, hk, p = 2, 4, 2, 0.3
-    seed, off1, off2 = 0x123456789ABCDEF0, 1000, 77
+    seed, off1 = 0x123456789ABCDEF0, 1000
     dt = torch.bfloat16
     _seed(head_dim, shape, causal, "dropout")
     q = _rand(b, h, sq, head_dim)

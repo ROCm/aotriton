@@ -33,7 +33,7 @@ lone spill would cost a vmcnt(0) that drains the K DMA every tile.
 import flydsl.compiler as flyc
 import flydsl.expr as fx
 from flydsl._mlir import ir
-from flydsl._mlir.dialects import llvm
+from flydsl._mlir.dialects import arith, llvm
 from flydsl.expr import const_expr, gpu, range_constexpr, rocdl
 from flydsl.expr.typing import T
 from flydsl.expr.typing import Vector as Vec
@@ -647,14 +647,21 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
             fmha.philox_report(philox_seed_output, philox_offset_output, ph_seed, ph_off)
             ph_plane = z_i32 * fx.Int32(num_head_q) + fx.Int32(head)
             ph_base, ph_stride = rng.grid_plane(ph_off, ph_plane, max_seqlen_q, max_seqlen_k)
+            # The wave's part of the offset is uniform; the lane adds row * stride + col // 4.
+            ph_wave = rng.grid_offset(ph_base, ph_stride, fx.Int32(q_start) + wave_s * fx.Int32(WAVE_M), 0)
+            ph_stride32 = fx.Int32(ph_stride)
+
+        def zext64(x):
+            return fx.Int64(arith.extui(T.i64, raw(fx.Int32(x))))
 
         def softmax_tail(s_vals, m_new, corr, l_old, kv_start):
             p = [exp2(s_vals[i] - m_new) for i in range(4)]
             l_new = l_old * corr + ((p[0] + p[1]) + (p[2] + p[3]))
             if const_expr(dropout):
                 # l sums P before the mask; 1/(1-p) joins 1/l at the end.
-                col = fx.Int32(kv_start) + kv_lane()
-                vals = rng.u32(ph_seed, rng.grid_offset(ph_base, ph_stride, row_now(), col))
+                # One v_mad_u64_u32: zero-extended row * stride + col // 4.
+                lane_off = zext64(lane_field(0, 4)) * zext64(ph_stride32) + zext64(lane_field(4, 2))
+                vals = rng.u32(ph_seed, ph_wave + fx.Int64(fx.Int32(kv_start) >> fx.Int32(2)) + lane_off)
                 p = [(fx.Int32(vals[i]) > fx.Int32(idropout_p)).select(p[i], fx.Float32(0.0)) for i in range(4)]
             return pack_p(p), l_new
 
