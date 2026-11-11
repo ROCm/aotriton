@@ -170,11 +170,11 @@ def build_fmha_fwd_gfx942(head_dim,
         rocdl.sched_barrier(0)
 
     def barrier_if(flag_i32):
-        """s_barrier on the waves whose wave-uniform `flag_i32` is nonzero."""
+        """s_barrier on the waves whose wave-uniform `flag_i32` is nonzero; clobbers SCC."""
         llvm.inline_asm(ir.Type.parse('!llvm.void'),
                         [raw(flag_i32)],
                         's_cmp_eq_u32 $0, 0\n\ts_cbranch_scc1 1f\n\ts_barrier\n\t1:',
-                        's',
+                        's,~{scc}',
                         has_side_effects=True)
 
     @flyc.kernel(known_block_size=[tr.BLOCK_SIZE, 1, 1])

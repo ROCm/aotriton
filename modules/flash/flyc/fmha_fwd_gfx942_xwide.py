@@ -318,7 +318,7 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
             return fx.Int32(llvm.inline_asm(T.i32,
                                             [raw(k_m0)],
                                             f's_add_u32 $0, $1, {const}',
-                                            '=s,s',
+                                            '=s,s,~{scc}',
                                             has_side_effects=True))
 
         def k_dma(kv_start, buf):

@@ -494,7 +494,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
             return fx.Int32(llvm.inline_asm(T.i32,
                                             [raw(fx.Int32(base))],
                                             f's_add_u32 $0, $1, {const}',
-                                            '=s,s',
+                                            '=s,s,~{scc}',
                                             has_side_effects=True))
         zero4 = fx.full(4, 0.0, fx.Float32)
         if const_expr(dropout):
