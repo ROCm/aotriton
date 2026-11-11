@@ -2,7 +2,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""fmha_bwd_dkdv_gfx942_wide (head dims 160..256), JIT, against fp64.
+"""fmha_bwd_dkdv_gfx942_wide (head dims 160..512), JIT, against fp64.
 
 gSWA windows with both principal diagonals (L negative, R past seqlen_k, key
 columns no row sees), causal and GQA, varlen and LSE layouts, bias, dropout
@@ -47,6 +47,8 @@ from test_fwd_principal_diagonal_gfx942 import (  # noqa: E402
 )
 
 HEAD_DIMS = (160, 192, 224, 256)
+# 384 and 512 run fewer cases: same body, single RM buffer, two passes at 512.
+XWIDE = (384, 512)
 DTYPE = torch.bfloat16
 # Max abs error against fp64, relative to the reference's max magnitude (floored at 1):
 # bf16 inputs and bf16 P/dS operands leave a few 1e-3.
@@ -121,9 +123,11 @@ def _run(fn, q, k, v, do, lse, delta, b, sq, sk, **kw):
 @pytest.mark.parametrize("p", sorted(PRINCIPAL_DIAGONAL))
 @pytest.mark.parametrize("window_name", list(WINDOWS))
 @pytest.mark.parametrize("shape_name", list(DENSE_SHAPES))
-@pytest.mark.parametrize("head_dim", HEAD_DIMS)
+@pytest.mark.parametrize("head_dim", HEAD_DIMS + XWIDE)
 def test_window(head_dim, shape_name, window_name, p):
     """gSWA (`causal_type=3`) windows measured from either principal diagonal."""
+    if head_dim in XWIDE and (p or window_name not in ("4_4", "neg1_3", "sentinel_br")):
+        pytest.skip("a window subset at the extra-wide rungs")
     sq, sk = DENSE_SHAPES[shape_name]
     window = WINDOWS[window_name]
     b, h = 2, 2
@@ -159,7 +163,7 @@ def _bottom_right(sq, sk, device):
 @pytest.mark.parametrize("kv_subs", [None, 1])
 @pytest.mark.parametrize("causal", [False, True])
 @pytest.mark.parametrize("shape", [(300, 777), (777, 300), (1, 1001), (1000, 1000)])
-@pytest.mark.parametrize("head_dim", HEAD_DIMS)
+@pytest.mark.parametrize("head_dim", HEAD_DIMS + XWIDE)
 def test_dense(head_dim, shape, causal, kv_subs):
     """Full attention and bottom-right causal (`causal_type=2`), GQA 2:1 summed per key head."""
     if kv_subs is not None and head_dim != 192:
@@ -257,7 +261,7 @@ SEQS = ((1, 300), (64, 320), (130, 130), (300, 37), (37, 200))
 
 @pytest.mark.parametrize("lse_layout", ["ht", "th"])
 @pytest.mark.parametrize("layout", ["compact", "padded"])
-@pytest.mark.parametrize("head_dim", HEAD_DIMS)
+@pytest.mark.parametrize("head_dim", HEAD_DIMS + XWIDE)
 def test_varlen(head_dim, layout, lse_layout):
     """Compact packs sequences into (1, H, T, D); padded keeps (B, H, max, D). GQA 2:1."""
     h, hk = 4, 2
@@ -316,7 +320,7 @@ def test_varlen(head_dim, layout, lse_layout):
 
 
 @pytest.mark.parametrize("shape", [(300, 777), (301, 1001), (1, 1001)])
-@pytest.mark.parametrize("head_dim", (160, 256))
+@pytest.mark.parametrize("head_dim", (160, 256, 384))
 def test_bias(head_dim, shape):
     """A (B, H, Sq, Sk) bias, odd pitches included; bias magnitudes up to ~16."""
     sq, sk = shape
@@ -343,7 +347,7 @@ def test_bias(head_dim, shape):
 
 @pytest.mark.parametrize("causal", [False, True])
 @pytest.mark.parametrize("shape", [(300, 777), (777, 300)])
-@pytest.mark.parametrize("head_dim", (192, 256))
+@pytest.mark.parametrize("head_dim", (192, 256, 512))
 def test_dropout(head_dim, shape, causal):
     """The forward's mask: offset = base + plane*sq*stride + row*stride + col//4."""
     sq, sk = shape
@@ -382,7 +386,7 @@ def test_dropout(head_dim, shape, causal):
 
 # (rung, hdim_qk, hdim_vo): primes and odd sizes above the rung below, and QK != VO.
 PADDED = [(160, 149, 149), (192, 179, 179), (224, 211, 211), (256, 241, 241), (192, 192, 128), (160, 24, 152),
-          (256, 256, 200)]
+          (256, 256, 200), (384, 301, 301), (512, 449, 449), (512, 512, 392)]
 
 
 @pytest.mark.parametrize("causal", [False, True])
@@ -420,7 +424,7 @@ def test_padded_head(rung, hqk, hvo, causal):
     _check(f"dK {tag}", dk, rk)
 
 
-@pytest.mark.parametrize("head_dim", HEAD_DIMS)
+@pytest.mark.parametrize("head_dim", HEAD_DIMS + XWIDE)
 def test_one_signed_unbiased(head_dim):
     """U[0, 1) inputs: a truncated P biases dV (numerical lessons, #16); bound eps/8.
 

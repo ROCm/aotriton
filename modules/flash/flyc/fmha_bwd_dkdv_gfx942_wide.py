@@ -1,10 +1,11 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""dK/dV backward for gfx942 at head dims 160..256, FlyDSL.
+"""dK/dV backward for gfx942 at head dims 160..512, FlyDSL.
 
 K and V stay in registers; Q and dO stream past through LDS in 16-row tiles.
-v_mfma_f32_16x16x16, four waves (one a SIMD), each owning 16 * KV_SUBS keys:
+v_mfma_f32_16x16x16, four waves (one a SIMD), each owning 16 * KV_SUBS keys
+(32 up to head dim 224, 16 beyond: 1.5 * D registers spill past 224):
 
     S[q][kv]    = Q . K^T      A = Q  (LDS, row-major)   B = K (registers)
     dP[q][kv]   = dO . V^T     A = dO (LDS, row-major)   B = V (registers)
@@ -12,12 +13,13 @@ v_mfma_f32_16x16x16, four waves (one a SIMD), each owning 16 * KV_SUBS keys:
     dK^T[d][kv] += Q^T . dS    A = Q^T  (LDS, d-major)   B = dS
 
 gfx942 has no LDS transpose read, so each Q/dO tile lives in LDS twice: RM
-(row-major, filled by buffer_load...lds DMA, double-buffered) and T (q-major
-per d, filled through VGPRs with v_perm, single-buffered). Each tile is two
-barrier-separated clusters:
-    X(j): S(j+1), dP(j+1) from RM; P(j), dS(j) on the VALU; T <- tile j
-    Y(j): dV, dK += tile j from T; DMA RM(j+3); load tile j+1 for T
-At head dim 256 and KV_SUBS 2 the accumulators take 256 registers and K, V 128.
+(row-major, by buffer_load...lds DMA) and T (q-major per d, through VGPRs and
+v_perm). Each tile is two barrier-separated clusters:
+    X(j): S(j+1), dP(j+1) from RM; P(j), dS(j) on the VALU; T(j+1) built from RM
+    Y(j): dV, dK += tile j from T; DMA RM(j+3)
+Up to 256 RM and T are both double-buffered ('lds' T source; packed and XOR
+swizzled at 256). At 384/512 T is loaded again from global into one T buffer
+beside one RM buffer, and at 512 the dV and dK halves run as two passes.
 """
 
 import flydsl.compiler as flyc
@@ -104,7 +106,9 @@ class Traits:
         # where K, V, dK and dV together outgrow the 512 registers.
         self.PASSES = ('dv', 'dk') if 3 * head_dim * kv_subs // 2 > 640 else ('dkdv',)
         self.PREFETCH = 2                       # LDS operand reads in flight ahead of their MFMAs
-        self.KV_VGPR = True                     # pin K, V to VGPRs
+        # Pin K, V to VGPRs; padded builds leave LLVM free (with both masks the pin
+        # can leave the register allocator no solution, and it aborts).
+        self.KV_VGPR = not padded_head
         self.TB_POS = 99                        # T-build write's place among X's spread work (99: last)
         # Walk q tiles last to first: a causal head's blocks then all start on its last
         # tiles and share them in L2, instead of each starting at its own diagonal.
@@ -186,6 +190,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
     tile_fastest = grid_axis_order == GRID_AXIS_TILE_FASTEST
     cache_tag = f'{tr.CACHE_TAG}_wpe{waves_per_eu}_g{grid_axis_order}_b{int(bias)}_d{int(dropout)}'
     elem = fx.BFloat16 if dtype_str == 'bf16' else fx.Float16
+    block_kv = tr.BLOCK_KV
 
     def v4e():
         return Vec.make_type(4, elem)
@@ -389,7 +394,9 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
         def load_res(need_v):
             """This pass's resident K (and V)."""
             k_res = resident(k_rsrc, stride_k_seq, fx.Int32(hdim_qk))
-            v_res = resident(v_rsrc, stride_v_seq, fx.Int32(hdim_vo)) if need_v else []
+            v_res = []
+            if const_expr(need_v):
+                v_res = resident(v_rsrc, stride_v_seq, fx.Int32(hdim_vo))
             if const_expr(tr.KV_VGPR):
                 # Keep K and V out of the AGPRs, which the accumulators fill.
                 flat = pin_vgpr([x for row in k_res + v_res for x in row])
@@ -743,7 +750,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 """S (and dP) of the tile in RM[slot]: [v4f32] * NSUB each, q = 4gq + r, key lc."""
                 need_v = cur['mode'] != 'dv'
                 s = [zero4] * tr.NSUB
-                dp = [zero4] * tr.NSUB if need_v else []
+                dp = [zero4] * (tr.NSUB if need_v else 0)
 
                 def read(t):
                     if const_expr(not need_v):
@@ -797,7 +804,9 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                         if const_expr(masked):
                             live = fx.Uint32(rel0 + fx.Int32(r)) <= fx.Uint32(band_span)
                             p = live.select(p, fx.Float32(0.0))
-                        dpr = fx.Float32(dpv[r]) if do_dk else fx.Float32(0.0)
+                        dpr = fx.Float32(0.0)
+                        if const_expr(do_dk):
+                            dpr = fx.Float32(dpv[r])
                         p_drop = p
                         if const_expr(dropout):
                             vals = rng.u32(ph_seed, rng.grid_offset(ph_base, ph_stride, q0 + fx.Int32(gq * 4 + r), kv))
@@ -809,7 +818,13 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                             dpr = keep.select(dpr * fx.Float32(dropout_scale), fx.Float32(0.0))
                         ps.append(p_drop)
                         dss.append(p * (dpr - fx.Float32(delta[r])))
-                    out[sub] = (pack4(ps) if do_dv else None, pack4(dss) if do_dk else None)
+                    p_out = None
+                    ds_out = None
+                    if const_expr(do_dv):
+                        p_out = pack4(ps)
+                    if const_expr(do_dk):
+                        ds_out = pack4(dss)
+                    out[sub] = (p_out, ds_out)
 
             def dvdk(dk_accs, dv_accs, p_pk, ds_pk, slot, hooks=()):
                 dk_accs = list(dk_accs)
@@ -819,8 +834,16 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 do_dk = cur['mode'] != 'dv'
 
                 def read(u):
-                    return [(t_read(slot, 1, dt) if do_dv else None, t_read(slot, 0, dt) if do_dk else None)
-                            for dt in range(2 * u, min(2 * u + 2, tr.NDT))]
+                    out = []
+                    for dt in range_constexpr(2 * u, min(2 * u + 2, tr.NDT)):
+                        a_do = None
+                        a_q = None
+                        if const_expr(do_dv):
+                            a_do = t_read(slot, 1, dt)
+                        if const_expr(do_dk):
+                            a_q = t_read(slot, 0, dt)
+                        out.append((a_do, a_q))
+                    return out
 
                 def use(u, ops):
                     for i, (a_do, a_q) in enumerate(ops):
@@ -1080,7 +1103,9 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
         stride_b_seq_q: fx.Int64,
         stream: fx.Stream = fx.Stream(None),
     ):
-        grid_x = (fx.Index(max_seqlen_k) + tr.BLOCK_KV - 1) // tr.BLOCK_KV
+        # Scalars, not traits fields: the JIT cache keys on scalar closure values.
+        _ = cache_tag
+        grid_x = (fx.Index(max_seqlen_k) + block_kv - 1) // block_kv
         grid_z = (fx.Int32(num_seqlens) != fx.Int32(0)).select(fx.Index(num_seqlens), fx.Index(batch_size))
         fmha_bwd_dkdv_gfx942_wide_kernel(Q,
                                          K,
