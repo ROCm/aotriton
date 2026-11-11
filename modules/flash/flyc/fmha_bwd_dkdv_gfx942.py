@@ -165,8 +165,8 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
     def scope_attrs(name):
         """LDS alias scopes; without them LLVM waits vmcnt(0) for any DMA before any LDS read."""
         def arr(names):
-            return ir.Attribute.parse('[' + ', '.join(
-                f'#llvm.alias_scope<id = "{n}", domain = {_LDS_DOMAIN}>' for n in names) + ']')
+            scopes = [f'#llvm.alias_scope<id = "{n}", domain = {_LDS_DOMAIN}>' for n in names]
+            return ir.Attribute.parse('[' + ', '.join(scopes) + ']')
         return arr([name]), arr([n for n in LDS_SCOPES if n != name])
 
     def cluster_barrier():
@@ -324,7 +324,11 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
             p = llvm.inttoptr(lds_ptr_ty, raw(fx.Int32(base_i32)))
             if imm == 0:
                 return p
-            return llvm.getelementptr(lds_ptr_ty, p, [], [imm], ir.IntegerType.get_signless(8),
+            return llvm.getelementptr(lds_ptr_ty,
+                                      p,
+                                      [],
+                                      [imm],
+                                      ir.IntegerType.get_signless(8),
                                       llvm.GEPNoWrapFlags.inbounds)
 
         def lds_load(base_i32, imm, ty, align, scope):
@@ -485,9 +489,24 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
         lse_tokens = fmha.lse_token_pitch(varlen_bits, 0, max_seqlen_q, seqinfo_q0, seqinfo_q1, num_seqlens)
 
         def head_state(head_q):
-            q_rsrc = raw_rsrc(rsrc_for(Q, q_batch, head_q, q_row_off, stride_q_batch, stride_q_head, stride_q_seq, sq, row_qk))
-            do_rsrc = raw_rsrc(rsrc_for(DO, q_batch, head_q, q_row_off, stride_do_batch, stride_do_head, stride_do_seq,
-                                        sq, row_vo))
+            q_rsrc = raw_rsrc(rsrc_for(Q,
+                                       q_batch,
+                                       head_q,
+                                       q_row_off,
+                                       stride_q_batch,
+                                       stride_q_head,
+                                       stride_q_seq,
+                                       sq,
+                                       row_qk))
+            do_rsrc = raw_rsrc(rsrc_for(DO,
+                                        q_batch,
+                                        head_q,
+                                        q_row_off,
+                                        stride_do_batch,
+                                        stride_do_head,
+                                        stride_do_seq,
+                                        sq,
+                                        row_vo))
             row0, pitch = fmha.lse_row_addressing(varlen_bits,
                                                   fx.Index(q_batch),
                                                   head_q,
@@ -495,10 +514,11 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
                                                   lse_tokens,
                                                   fx.Index(q_row_off))
             nbytes = fx.Int64(sq * pitch) * fx.Int64(4)
-            lse_rsrc = raw_rsrc(buffer_ops.create_buffer_resource_from_addr(
-                fx.Int64(fx.ptrtoint(LSE)) + fx.Int64(row0) * fx.Int64(4), num_records_bytes=nbytes))
-            delta_rsrc = raw_rsrc(buffer_ops.create_buffer_resource_from_addr(
-                fx.Int64(fx.ptrtoint(Delta)) + fx.Int64(row0) * fx.Int64(4), num_records_bytes=nbytes))
+            row0_b = fx.Int64(row0) * fx.Int64(4)
+            lse_rsrc = raw_rsrc(buffer_ops.create_buffer_resource_from_addr(fx.Int64(fx.ptrtoint(LSE)) + row0_b,
+                                                                            num_records_bytes=nbytes))
+            delta_rsrc = raw_rsrc(buffer_ops.create_buffer_resource_from_addr(fx.Int64(fx.ptrtoint(Delta)) + row0_b,
+                                                                              num_records_bytes=nbytes))
             return q_rsrc, do_rsrc, lse_rsrc, delta_rsrc, fx.Int32(pitch) * fx.Int32(4)
 
         # This lane's LSE/Delta rows: 4 * lg + [0, 4) of the tile; r rides in soffset.
@@ -572,9 +592,8 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
         def bias_rsrc_for(head_q):
             b_elems = (fx.Int64(q_batch) * stride_b_batch + fx.Int64(head_q) * stride_b_head
                        + fx.Int64(q_row_off) * stride_b_seq_q)
-            return raw_rsrc(buffer_ops.create_buffer_resource_from_addr(
-                fx.Int64(fx.ptrtoint(B)) + b_elems * fx.Int64(2),
-                num_records_bytes=b_span * fx.Int64(2)))
+            b_addr = fx.Int64(fx.ptrtoint(B)) + b_elems * fx.Int64(2)
+            return raw_rsrc(buffer_ops.create_buffer_resource_from_addr(b_addr, num_records_bytes=b_span * fx.Int64(2)))
 
         def bias_load(b_rsrc, q_start, b):
             halves = []
@@ -836,6 +855,8 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
         stream: fx.Stream = fx.Stream(None),
     ):
         n_kv = (fx.Index(max_seqlen_k) + tr.BLOCK_N - 1) // tr.BLOCK_N
+        value_attrs = {'rocdl.waves_per_eu': waves_per_eu,
+                       'rocdl.flat_work_group_size': f'{tr.BLOCK_SIZE},{tr.BLOCK_SIZE}'}
         grid_z = (fx.Int32(num_seqlens) != fx.Int32(0)).select(fx.Index(num_seqlens), fx.Index(batch_size))
         fmha_bwd_dkdv_gfx942_kernel(Q,
                                     K,
@@ -887,8 +908,7 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
                                     stride_b_batch,
                                     stride_b_head,
                                     stride_b_seq_q,
-                                    value_attrs={'rocdl.waves_per_eu': waves_per_eu,
-                                                 'rocdl.flat_work_group_size': f'{tr.BLOCK_SIZE},{tr.BLOCK_SIZE}'}).launch(
+                                    value_attrs=value_attrs).launch(
             grid=(n_kv, fx.Index(num_head_k), grid_z) if tile_fastest else (fx.Index(num_head_k), n_kv, grid_z),
             block=(tr.BLOCK_SIZE, 1, 1),
             stream=stream)

@@ -319,8 +319,21 @@ def test_varlen(head_dim, layout, lse_layout, window):
         refs.append((r, live))
     dk = torch.full_like(k, float("nan"))
     dv = torch.full_like(v, float("nan"))
-    fn(q, k, v, do, dk, dv, lse, delta, batch, max(lq), seqlen_k=max(lk), num_seqlens=nseq, scale=scale,
-       window=window, varlen=varlen)
+    fn(q,
+       k,
+       v,
+       do,
+       dk,
+       dv,
+       lse,
+       delta,
+       batch,
+       max(lq),
+       seqlen_k=max(lk),
+       num_seqlens=nseq,
+       scale=scale,
+       window=window,
+       varlen=varlen)
     torch.cuda.synchronize()
     for z, (sq, sk) in enumerate(SEQS):
         (r, live) = refs[z]
@@ -403,7 +416,15 @@ def test_dropout(head_dim, shape, causal):
     scale = head_dim ** -0.5
     dk_r, dv_r, dk_f, dv_f, lse, delta = _reference(q, k, v, do, scale, dt, live=live, keep=keep, p=p)
     fn = _build(head_dim, causal_type=3 if causal else 0, dropout=True)
-    dk, dv = _run_dense(fn, q, k, v, do, scale, lse, delta, window=window,
+    dk, dv = _run_dense(fn,
+                        q,
+                        k,
+                        v,
+                        do,
+                        scale,
+                        lse,
+                        delta,
+                        window=window,
                         dropout_p=p,
                         philox_seed=seed,
                         philox_offset1=torch.tensor([off1], dtype=torch.int64, device="cuda"),
@@ -447,8 +468,18 @@ def test_padded_head(rung, hqk, hvo, causal):
     scale = hqk ** -0.5
     dk_r, dv_r, dk_f, dv_f, lse, delta = _reference(q, k, v, do, scale, dt, live=live)
     fn = _build(rung, causal_type=3 if causal else 0, padded_head=True)
-    fn(q, k, v, do, dk, dv, lse.reshape(b * h, sq).contiguous(), delta.reshape(b * h, sq).contiguous(), b, sq,
-       seqlen_k=sk, window=window)
+    fn(q,
+       k,
+       v,
+       do,
+       dk,
+       dv,
+       lse.reshape(b * h, sq).contiguous(),
+       delta.reshape(b * h, sq).contiguous(),
+       b,
+       sq,
+       seqlen_k=sk,
+       window=window)
     torch.cuda.synchronize()
     unseen = None if live is None else ~live.any(0)
     tag = f"rung={rung} hqk={hqk} hvo={hvo} causal={causal}"

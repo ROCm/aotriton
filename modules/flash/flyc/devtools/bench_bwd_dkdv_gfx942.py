@@ -119,8 +119,20 @@ def main():
     dv = torch.full_like(v, float('nan'))
 
     def run():
-        launch(q, k, v, do, dk, dv, lse2, delta2, a.batch, a.seqlen, seqlen_k=sk, scale=scale,
-               stream=torch.cuda.current_stream(), **extra)
+        launch(q,
+               k,
+               v,
+               do,
+               dk,
+               dv,
+               lse2,
+               delta2,
+               a.batch,
+               a.seqlen,
+               seqlen_k=sk,
+               scale=scale,
+               stream=torch.cuda.current_stream(),
+               **extra)
 
     run()
     torch.cuda.synchronize()
