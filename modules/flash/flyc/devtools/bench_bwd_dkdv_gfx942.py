@@ -80,6 +80,8 @@ def main():
     p.add_argument('--interleave_valu', type=int, default=None)
     p.add_argument('--iters', type=int, default=20)
     p.add_argument('--check', action='store_true', help='compare with fp64 (small shapes only)')
+    p.add_argument('--bias', action='store_true', help='(B, H, Sq, Sk) bias, timing only')
+    p.add_argument('--dropout_p', type=float, default=0.0, help='dropout probability, timing only')
     a = p.parse_args()
     hk = a.heads_k or a.heads
     sk = a.seqlen_k or a.seqlen
@@ -93,6 +95,8 @@ def main():
              if getattr(a, n) is not None}
     launch = build_fmha_bwd_dkdv_gfx942(rung,
                                         causal_type=2 if a.causal else 0,
+                                        bias=a.bias,
+                                        dropout=a.dropout_p > 0,
                                         dtype_str=a.dtype,
                                         padded_head=rung != a.head_dim,
                                         **knobs)
@@ -106,15 +110,22 @@ def main():
     lse, delta = lse_delta(q, k, v, do, scale, keep)
     lse2 = lse.view(a.batch * a.heads, a.seqlen)
     delta2 = delta.view(a.batch * a.heads, a.seqlen)
+    extra = {}
+    if a.bias:
+        extra['bias'] = torch.randn(a.batch, a.heads, a.seqlen, sk, device='cuda', dtype=dt)
+    if a.dropout_p > 0:
+        extra.update(dropout_p=a.dropout_p, philox_seed=1234, philox_offset2=0)
     dk = torch.full_like(k, float('nan'))
     dv = torch.full_like(v, float('nan'))
 
     def run():
         launch(q, k, v, do, dk, dv, lse2, delta2, a.batch, a.seqlen, seqlen_k=sk, scale=scale,
-               stream=torch.cuda.current_stream())
+               stream=torch.cuda.current_stream(), **extra)
 
     run()
     torch.cuda.synchronize()
+    if a.check and extra:
+        sys.exit('--check covers neither --bias nor --dropout_p; the tests do')
     if a.check:
         rdk, rdv = reference(q, k, v, do, scale, keep)
         for name, got, ref in (('dK', dk, rdk), ('dV', dv, rdv)):
