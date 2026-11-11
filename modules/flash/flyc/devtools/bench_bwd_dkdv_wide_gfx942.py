@@ -24,11 +24,8 @@ LADDER = (160, 192, 224, 256, 384, 512)
 
 
 def build(rung, **kw):
-    if rung <= 256:
-        from fmha_bwd_dkdv_gfx942_wide import build_fmha_bwd_dkdv_gfx942_wide
-        return build_fmha_bwd_dkdv_gfx942_wide(rung, **kw)
-    from fmha_bwd_dkdv_gfx942_xwide import build_fmha_bwd_dkdv_gfx942_xwide
-    return build_fmha_bwd_dkdv_gfx942_xwide(rung, **kw)
+    from fmha_bwd_dkdv_gfx942_wide import build_fmha_bwd_dkdv_gfx942_wide
+    return build_fmha_bwd_dkdv_gfx942_wide(rung, **kw)
 
 
 def side_inputs(q, k, v, do, sm_scale, causal, bias):

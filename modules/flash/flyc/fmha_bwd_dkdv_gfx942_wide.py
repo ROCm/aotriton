@@ -153,8 +153,9 @@ def default_grid_axis_order(causal):
 
 
 def default_kv_subs(head_dim):
-    """Keys per wave / 16: 32 keys halve the LDS and global traffic per FLOP."""
-    return 2
+    """Keys per wave / 16: 32 keys halve the LDS and global traffic per FLOP, but
+    hold 1.5 * D registers, which spills past 224 (hd256: 93 vs 372 TFLOPS)."""
+    return 2 if head_dim <= 224 else 1
 
 
 def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
