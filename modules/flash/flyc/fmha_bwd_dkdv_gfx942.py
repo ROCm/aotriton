@@ -62,9 +62,9 @@ class Traits:
         # Row-major tiles XOR their 16B chunks so 8 lanes reading 8 rows hit 8
         # bank groups: by row % 8 for 128B-multiple rows, else by (row / 2) % 4.
         self.SWZ_WIDE = self.ROW_BYTES % 128 == 0
-        # Transposed unit: 4 q rows x 2 d columns, one dword load per row.
+        # Transposed unit: 4 q rows x 2 d columns of Q or dO, one dword per row.
         self.T_UNITS = (BM // 4) * (head_dim // 2)
-        self.T_UNITS_PER_THREAD = -(-self.T_UNITS // self.BLOCK_SIZE)
+        self.T_UNITS_PER_THREAD = -(-2 * self.T_UNITS // self.BLOCK_SIZE)
         # Two rings of two slots: rows (Q and dO row-major) and transposed (Q^T, dO^T).
         # Tile j's rows are read one iteration before its transposed half.
         self.QR = 0
@@ -74,7 +74,7 @@ class Traits:
         self.SLOT_BYTES = 2 * self.TILE_BYTES
         self.LDS_BYTES = 4 * self.SLOT_BYTES
         assert self.LDS_BYTES <= 65536, self.LDS_BYTES
-        self.CACHE_TAG = f'v3_D{head_dim}_c{int(causal)}_{dtype_str}_w{num_waves}_kvb{kv_blocks}_p{int(padded_head)}'
+        self.CACHE_TAG = f'v5_D{head_dim}_c{int(causal)}_{dtype_str}_w{num_waves}_kvb{kv_blocks}_p{int(padded_head)}'
 
     def row_slot(self, s):
         return s * self.SLOT_BYTES
@@ -405,43 +405,38 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
                 op.attributes['alias_scopes'] = al
                 op.attributes['noalias_scopes'] = noal
 
-        # Transposed tiles: unit u is q rows 4*(u // (D/2)) + [0, 4) at d columns
-        # 2*(u % (D/2)) + [0, 2); threads past the last unit redo an earlier one.
-        # Q^T row d holds 16 q in four 8B groups, group g at g ^ ((d / 4) % 4).
+        # Transposed tiles, built in LDS from the row-major ones (gfx942 has no transpose
+        # read). Unit u of Q then dO is q rows 4*g4 + [0, 4) at d columns 2*cp + [0, 2);
+        # threads past the last unit redo an earlier one. Q^T row d holds 16 q in four
+        # 8B groups, group g at g ^ ((d / 4) % 4).
         t_units = []
         for u in range_constexpr(tr.T_UNITS_PER_THREAD):
-            unit = (tid + fx.Index(u * tr.BLOCK_SIZE)) % tr.T_UNITS
+            ui = (tid + fx.Index(u * tr.BLOCK_SIZE)) % (2 * tr.T_UNITS)
+            region = (ui // tr.T_UNITS) * tr.TILE_BYTES
+            unit = ui % tr.T_UNITS
             g4 = unit // (tr.D // 2)
             cp = unit % (tr.D // 2)
-            lds_e = []
+            src = []
+            for r in range_constexpr(4):
+                row = g4 * 4 + fx.Index(r)
+                src.append(lds_base_i32 + fx.Int32(region + row * tr.ROW_BYTES + ((cp // 4) ^ tr.swz(row)) * 16
+                                                   + (cp % 4) * 4))
+            dst = []
             for e in range_constexpr(2):
                 d = cp * 2 + fx.Index(e)
-                lds_e.append(lds_base_i32 + fx.Int32(d * 32 + ((g4 ^ ((d // 4) % 4)) * 8)))
-            t_units.append((g4, cp, lds_e))
+                dst.append(lds_base_i32 + fx.Int32(region + d * 32 + (g4 ^ ((d // 4) % 4)) * 8))
+            t_units.append((src, dst))
 
-        def t_voffs(row_stride_b):
-            return [fx.Int32(g4 * 4) * row_stride_b + fx.Int32(cp * 4) for g4, cp, _ in t_units]
-
-        q_t_voff = t_voffs(q_row_stride_b)
-        do_t_voff = t_voffs(do_row_stride_b)
-
-        def t_load(rsrc, voffs, row_stride_b, q_start):
-            out = []
-            for off in voffs:
-                for r in range_constexpr(4):
-                    soff = (fx.Int32(q_start) + fx.Int32(r)) * row_stride_b
-                    out.append(fx.Int32(rocdl.raw_ptr_buffer_load(fx.Int32.ir_type, rsrc, off, soff, 0)))
-            return out
-
-        def t_store(regs, region, scope):
+        def t_build(rows_slot, t_slot):
+            """Q^T and dO^T of the tile in rows slot `rows_slot`, into transposed slot `t_slot`."""
             sel_lo = fx.Int32(0x05040100)
             sel_hi = fx.Int32(0x07060302)
-            for u in range_constexpr(tr.T_UNITS_PER_THREAD):
-                w = regs[4 * u:4 * u + 4]
+            for src, dst in t_units:
+                w = [fx.Int32(lds_load(a, tr.row_slot(rows_slot), T.i32, 4, f'r{rows_slot}')) for a in src]
                 d0 = [fx.Int32(rocdl.perm_b32(w[1], w[0], sel_lo)), fx.Int32(rocdl.perm_b32(w[3], w[2], sel_lo))]
                 d1 = [fx.Int32(rocdl.perm_b32(w[1], w[0], sel_hi)), fx.Int32(rocdl.perm_b32(w[3], w[2], sel_hi))]
                 for e, dw in ((0, d0), (1, d1)):
-                    lds_store(raw(Vec.from_elements(dw, fx.Int32)), t_units[u][2][e], region, 8, scope)
+                    lds_store(raw(Vec.from_elements(dw, fx.Int32)), dst[e], tr.t_slot(t_slot), 8, f't{t_slot}')
 
         # Row-major read: lane row lc, logical chunk 4p + lg.
         if const_expr(tr.SWZ_WIDE):
@@ -647,7 +642,6 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
 
         n_acc = 2 * tr.DB * tr.KVB
         n_sd = 2 * tr.KVB
-        n_t = 4 * tr.T_UNITS_PER_THREAD
         n_mfma_a = 2 * tr.KVB * 2 * tr.DP
         n_mfma_b = 2 * tr.DB * tr.KVB
 
@@ -666,15 +660,6 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
             base = tr.row_slot(slot)
             dma(hs['q_rsrc'], q_dma_voff, q_row_stride_b, q_start, base + tr.QR, f'r{slot}')
             dma(hs['do_rsrc'], do_dma_voff, do_row_stride_b, q_start, base + tr.DOR, f'r{slot}')
-
-        def t_loads(hs, q_start):
-            return (t_load(hs['q_rsrc'], q_t_voff, q_row_stride_b, q_start)
-                    + t_load(hs['do_rsrc'], do_t_voff, do_row_stride_b, q_start))
-
-        def t_publish(regs, slot):
-            base = tr.t_slot(slot)
-            t_store(regs[:n_t], base + tr.QT, f't{slot}')
-            t_store(regs[n_t:2 * n_t], base + tr.DOT, f't{slot}')
 
         def gemm_sdp(slot):
             """S and dP accumulators of the tile in rows slot `slot`."""
@@ -698,7 +683,6 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
             rows = list(carried[n_acc + n_sd:])
             q_j = q_base + j * BM
             # Phase A: S/dP(j + 1) on the MFMA pipe while P/dS(j) runs on the VALU.
-            t_next = t_loads(hs, q_j + BM)
             rows_next = rows_load(hs, q_j + BM)
             rows_dma(hs, q_j + 2 * BM, par)
             sd_next = gemm_sdp(1 - par)
@@ -710,7 +694,7 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
             p_packs, ds_packs = tile_math(sd[:tr.KVB], sd[tr.KVB:], lse_l2, delta, q_j, masked, hs)
             interleave(n_mfma_a, interleave_valu, 0x002 | 0x400)
             rocdl.sched_barrier(0)
-            # Phase B: dV/dK(j) while tile j + 1's transposed half goes to LDS.
+            # Phase B: dV/dK(j) while tile j + 1's transposed half is built in LDS.
             dk = accs[:tr.DB * tr.KVB]
             dv = accs[tr.DB * tr.KVB:]
             for db in range_constexpr(tr.DB):
@@ -719,7 +703,7 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
             for db in range_constexpr(tr.DB):
                 for b in range_constexpr(tr.KVB):
                     dk[db * tr.KVB + b] = mfma(qt[db], ds_packs[b], dk[db * tr.KVB + b])
-            t_publish(t_next, 1 - par)
+            t_build(1 - par, 1 - par)
             interleave(n_mfma_b, 1, 0x002 | 0x200)
             rocdl.sched_barrier(0)
             rocdl.s_waitcnt(0)
@@ -748,12 +732,12 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
                 return out
 
             # Prologue: rows of tiles 0 and 1, transposed tile 0, S/dP(0).
-            t0_regs = t_loads(hs, q_base)
             rows0 = rows_load(hs, q_base)
             rows_dma(hs, q_base, 0)
             rows_dma(hs, q_base + BM, 1)
             rocdl.s_waitcnt(0)
-            t_publish(t0_regs, 0)
+            cluster_barrier()
+            t_build(0, 0)
             rocdl.s_waitcnt(0)
             cluster_barrier()
             sd0 = gemm_sdp(0)
