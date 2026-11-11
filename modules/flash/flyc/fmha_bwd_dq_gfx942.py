@@ -527,10 +527,16 @@ def build_fmha_bwd_dq_gfx942(head_dim,
             db_elems = (fx.Int64(q_batch) * stride_db_batch + fx.Int64(head) * stride_db_head
                         + fx.Int64(q_row_off) * stride_db_seq_q)
             db_span = smax(fx.Int64(sq_i32 - fx.Int32(1)) * stride_db_seq_q + fx.Int64(sk_i32), fx.Int64(0))
+            db_addr = fx.Int64(fx.ptrtoint(DB)) + db_elems * fx.Int64(2)
             db_rsrc = rocdl.get_buffer_rsrc(buffer_ops.create_buffer_resource_from_addr(
-                fx.Int64(fx.ptrtoint(DB)) + db_elems * fx.Int64(2),
+                db_addr,
                 num_records_bytes=store_db.select(db_span * fx.Int64(2), fx.Int64(0))))
+            # Rows start on a dword: clean tiles store whole dwords.
+            db_aligned = (((db_addr & fx.Int64(3)) == fx.Int64(0))
+                          & ((fx.Int64(stride_db_seq_q) & fx.Int64(1)) == fx.Int64(0)))
             db_lane = (fx.Int32(q_row) * fx.Int32(stride_db_seq_q) + kv_lane) * fx.Int32(2)
+            db_half = (fx.Int32(q_row) * fx.Int32(stride_db_seq_q) + fx.Int32(lh * (tr.BLOCK_N // 2))) * fx.Int32(2)
+            swap_addr = fx.Int32(lane ^ fx.Index(32)) * fx.Int32(4)
 
         def bias_load(kv_start, exact):
             """This lane's bias for one KV tile, in S^T order: 4 keys per 8-key group.
@@ -568,6 +574,38 @@ def build_fmha_bwd_dq_gfx942(head_dim,
                         ok = ok & (fx.Int32(kv_start) + kv_lane + fx.Int32(8 * s + e) < sk_i32)
                     off = ok.select(off, fx.Int32(0x7FFFFFFF))
                     rocdl.raw_ptr_buffer_store(raw(fx.Int16(hs[e])), db_rsrc, raw(off), raw(soff))
+
+        def db_store_dwords(ds_packs, kv_start):
+            """Lanes l and l^32 swap halves, so each holds BLOCK_N/2 contiguous keys of
+            its row and stores 16 bytes at a time."""
+            half = tr.KV_STEPS // 2
+            own = [Vec(pk).bitcast(fx.Int32) for pk in ds_packs]
+            low = lh == fx.Index(0)
+            recv = []
+            for i in range_constexpr(half):
+                words = []
+                for w in range_constexpr(2):
+                    send = low.select(fx.Int32(own[half + i][w]), fx.Int32(own[i][w]))
+                    words.append(fx.Int32(rocdl.ds_bpermute(fx.Int32.ir_type, swap_addr, send)))
+                recv.append(words)
+            chunks = []
+            for i in range_constexpr(half):
+                for w in range_constexpr(2):
+                    chunks.append(low.select(fx.Int32(own[i][w]), recv[i][w]))
+                for w in range_constexpr(2):
+                    chunks.append(low.select(recv[i][w], fx.Int32(own[half + i][w])))
+            soff = fx.Int32(kv_start) * fx.Int32(2)
+            for c in range_constexpr(len(chunks) // 4):
+                off = q_ok.select(db_half + fx.Int32(16 * c), fx.Int32(0x7FFFFFFF))
+                v4 = Vec.from_elements(chunks[4 * c:4 * c + 4], fx.Int32)
+                rocdl.raw_ptr_buffer_store(raw(v4), db_rsrc, raw(off), raw(soff))
+
+        @flyc.jit
+        def db_store_clean(ds_packs, kv_start):
+            if db_aligned:
+                db_store_dwords(ds_packs, kv_start)
+            else:
+                db_store(ds_packs, kv_start, False)
 
         if const_expr(dropout):
             # The Triton kernels' stream, element for element (philox.py, grid_plane).
@@ -655,8 +693,10 @@ def build_fmha_bwd_dq_gfx942(head_dim,
             kv_dma(kv + 2 * tr.BLOCK_N, (b + 2) % NBUF)
             rocdl.sched_barrier(0)
             ds_packs = ds_packs_of(p_vals, dp_raw, kv)
-            if const_expr(bias):
-                db_store(ds_packs, kv, masked)
+            if const_expr(bias and masked):
+                db_store(ds_packs, kv, True)
+            if const_expr(bias and not masked):
+                db_store_clean(ds_packs, kv)
             dq_accs = gemm3(dq_accs, ds_packs, b)
             cluster_barrier()
             return dq_accs
