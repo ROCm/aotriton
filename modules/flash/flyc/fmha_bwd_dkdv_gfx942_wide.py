@@ -40,9 +40,9 @@ LOG2E = 1.4426950408889634
 WAVE = 64
 NUM_WAVES = 4
 BLOCK_M = 16            # q rows per tile: the N of the 16x16x16 MFMA
-# T layout: chunk (dt, g) holds d = 16dt + [0, 16), q = 4g + [0, 4), 8B per d.
-T_G_STRIDE = 144        # 128B + 16B pad: T writes hit 8 distinct bank quads
-T_DT_STRIDE = 4 * T_G_STRIDE
+# T layout: row (dt, g) holds d = 16dt + [0, 16), q = 4g + [0, 4), 8B per d; rows are
+# 144B apart (16B pad: T writes hit 8 bank quads), or 128B with 16B chunks XORed by g.
+T_G_PAD = 144
 SIDE_BYTES = 512        # LSE then Delta of one tile, 256B per DMA issue
 OOB_VOFF = 0x7FFFFFF0   # a voffset past any range: the load returns 0
 # sched_group_barrier masks
@@ -61,7 +61,7 @@ class Traits:
     """Compile-time shape of one kernel."""
 
     def __init__(self, head_dim, causal, dtype_str, kv_subs, padded_head=False):
-        assert head_dim % 32 == 0 and 64 <= head_dim <= 256, head_dim
+        assert head_dim % 32 == 0 and 64 <= head_dim <= 512, head_dim
         assert kv_subs in (1, 2), kv_subs
         self.D = head_dim
         self.PADDED = padded_head
@@ -73,23 +73,33 @@ class Traits:
         self.BLOCK_SIZE = NUM_WAVES * WAVE
         self.NT = head_dim // 32                # 16B RM reads per tensor and tile, two k-steps each
         self.NDT = head_dim // 16               # 16-row d tiles of dK^T / dV^T
-        # RM rows an odd number of 16B chunks apart: conflict-free b128 reads.
+        # RM rows an odd number of 16B chunks apart (conflict-free b128 reads), or, when
+        # LDS is short (SWZ), packed with chunk c of row r at c ^ (r % 8); T likewise.
         chunks = head_dim // 8
-        self.RM_STRIDE = (chunks + 1 - chunks % 2) * 16
-        self.RM_TENSOR = BLOCK_M * self.RM_STRIDE
-        self.RM_BUF = 2 * self.RM_TENSOR        # Q then dO
-        self.T_TENSOR = self.NDT * T_DT_STRIDE
+        rm_pad = (chunks + 1 - chunks % 2) * 16
         self.ROW_BYTES = head_dim * 2
         # RM DMA: 256B per issue; the last issue of a row ends on its last byte.
         self.SEGS = tuple(range(0, self.ROW_BYTES - 256, 256)) + (self.ROW_BYTES - 256,)
         self.N_DMA = 2 * (BLOCK_M // NUM_WAVES) * len(self.SEGS)   # per wave and tile
         # T units: 4 q rows x 8 d of one tensor; waves 0-1 take Q, 2-3 dO.
         self.UNITS = head_dim // 2
-        assert self.UNITS <= 2 * WAVE, self.UNITS
+        self.U_PER_THREAD = -(-self.UNITS // (2 * WAVE))
         # Where T comes from: 'lds' transposes the RM tile already in LDS into a
-        # double-buffered T (LSE and Delta DMA'd beside it); 'global' loads the
-        # tile again into VGPRs for a single T, which is all 64 KB holds at 256.
-        self.T_SRC = 'lds' if 2 * self.RM_BUF + 2 * (2 * self.T_TENSOR + SIDE_BYTES) <= 65536 else 'global'
+        # double-buffered T; 'global' loads the tile again into VGPRs for a single T.
+        # LSE/Delta are DMA'd beside T (SIDE_LDS) or loaded into VGPRs a tile ahead.
+        rm_buf = 2 * BLOCK_M * rm_pad
+        t_pad = 2 * self.NDT * 4 * T_G_PAD
+        packed = 2 * BLOCK_M * self.ROW_BYTES  # an RM or T buffer without padding
+        if 2 * rm_buf + 2 * (t_pad + SIDE_BYTES) <= 65536:
+            self.T_SRC, self.SWZ, self.SIDE_LDS, self.RM_SLOTS = 'lds', False, True, 2
+        elif 4 * packed <= 65536:
+            self.T_SRC, self.SWZ, self.SIDE_LDS, self.RM_SLOTS = 'lds', True, False, 2
+        else:
+            self.T_SRC, self.SIDE_LDS = 'global', False
+            self.RM_SLOTS = 2 if 2 * rm_buf + t_pad <= 65536 else 1
+            self.SWZ = rm_buf + t_pad > 65536
+        # 'global': how many tiles ahead T's loads run.
+        self.G_AHEAD = 1
         self.PREFETCH = 2                       # LDS operand reads in flight ahead of their MFMAs
         self.KV_VGPR = True                     # pin K, V to VGPRs
         self.TB_POS = 99                        # T-build write's place among X's spread work (99: last)
@@ -103,19 +113,32 @@ class Traits:
         for k, v in DEV_OVERRIDES.items():
             assert hasattr(self, k), k
             setattr(self, k, v)
+        self.RM_STRIDE = self.ROW_BYTES if self.SWZ else rm_pad
+        self.RM_TENSOR = BLOCK_M * self.RM_STRIDE
+        self.RM_BUF = 2 * self.RM_TENSOR        # Q then dO
+        self.T_GS = 128 if self.SWZ else T_G_PAD
+        self.T_DTS = 4 * self.T_GS
+        self.T_TENSOR = self.NDT * self.T_DTS
+        if self.SWZ:
+            assert head_dim % 128 == 0, head_dim
         self.LDS_RM = 0
-        self.LDS_T = 2 * self.RM_BUF
         if self.T_SRC == 'lds':
-            self.T_SLOT = 2 * self.T_TENSOR + SIDE_BYTES
+            assert self.RM_SLOTS == 2
+            self.LDS_T = 2 * self.RM_BUF
+            self.T_SLOT = 2 * self.T_TENSOR + (SIDE_BYTES if self.SIDE_LDS else 0)
             self.LDS_BYTES = self.LDS_T + 2 * self.T_SLOT
-            self.N_VM_Y = self.N_DMA + 2        # VMEM ops a Y cluster issues
+            # VMEM a Y cluster issues after the RM DMA it must see land a tile later.
+            self.N_VM_Y = self.N_DMA + (2 if self.SIDE_LDS else 0)
         else:
+            self.LDS_T = self.RM_SLOTS * self.RM_BUF
             self.T_SLOT = 0
             self.LDS_BYTES = self.LDS_T + 2 * self.T_TENSOR
-            self.N_VM_Y = self.N_DMA
+            n_ld = 4 * self.U_PER_THREAD + 8 if self.G_AHEAD == 2 else 0
+            # RM double: Y(j)'s DMA is waited a tile later; single: by its own end.
+            self.N_VM_Y = (self.N_DMA if self.RM_SLOTS == 2 else 0) + n_ld
         assert self.LDS_BYTES <= 65536, self.LDS_BYTES
         self.CACHE_TAG = (f'BW{head_dim}_c{int(causal)}_{dtype_str}_s{kv_subs}_p{int(padded_head)}_{self.T_SRC}'
-                          f'_f{self.PREFETCH}_k{int(self.KV_VGPR)}_tb{self.TB_POS}_d{int(self.Q_DOWN)}_a{self.VALU_PER_MFMA}_x{int(self.SCHED)}_t{int(self.TRACE_SUB)}_e{self.EXP}')
+                          f'_f{self.PREFETCH}_k{int(self.KV_VGPR)}_tb{self.TB_POS}_d{int(self.Q_DOWN)}_r{self.RM_SLOTS}_g{self.G_AHEAD}_z{int(self.SWZ)}{int(self.SIDE_LDS)}_a{self.VALU_PER_MFMA}_x{int(self.SCHED)}_t{int(self.TRACE_SUB)}_e{self.EXP}')
 
 
 # csrc/flyc_common.h's kFlycGridAxis*, as fmha_tuning_gfx942.
@@ -406,27 +429,39 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
             band_lo = [empty.select(fx.Int32(-(1 << 30)), fx.Int32(0))] * tr.NSUB
 
         # ---- Per-lane LDS offsets ----
-        rm_rd = fx.Index(tr.LDS_RM) + lc * tr.RM_STRIDE + gq * 16
-        t_rd = fx.Index(tr.LDS_T) + gq * T_G_STRIDE + lc * 8
+        # RM read t: row lc, chunk 4t + gq (XORed by lc % 8 under SWZ: two bases by t's parity).
+        if const_expr(tr.SWZ):
+            rm_rd = [fx.Index(tr.LDS_RM) + lc * tr.RM_STRIDE + ((fx.Index(4 * e) + gq) ^ (lc % 8)) * 16
+                     for e in range(2)]
+            t_rd = fx.Index(tr.LDS_T) + gq * tr.T_GS + (((lc // 2) ^ gq) * 16) + (lc % 2) * 8
+        else:
+            rm_rd = [fx.Index(tr.LDS_RM) + lc * tr.RM_STRIDE + gq * 16] * 2
+            t_rd = fx.Index(tr.LDS_T) + gq * tr.T_GS + lc * 8
         lds_tile = tr.T_SRC == 'lds'
 
         def rm_read(slot, tensor, t):
-            return lds_load(rm_rd + (slot * tr.RM_BUF + tensor * tr.RM_TENSOR + 64 * t), v8e(), 16, f'rm{slot}')
+            off = slot * tr.RM_BUF + tensor * tr.RM_TENSOR + (128 * (t // 2) if tr.SWZ else 64 * t)
+            return lds_load(rm_rd[t % 2] + off, v8e(), 16, f'rm{slot}')
 
         def t_read(slot, tensor, dt):
-            return lds_load(t_rd + (slot * tr.T_SLOT + tensor * tr.T_TENSOR + dt * T_DT_STRIDE), v4e(), 8, f't{slot}')
+            return lds_load(t_rd + (slot * tr.T_SLOT + tensor * tr.T_TENSOR + dt * tr.T_DTS), v4e(), 8, f't{slot}')
 
         # T units: waves 0-1 Q, 2-3 dO; unit i = (g = i % 4, c8 = i // 4), extra threads redo one.
         t_tensor = wave_s // fx.Int32(2)
         is_do = t_tensor == fx.Int32(1)
-        unit = (tid % (2 * WAVE)) % tr.UNITS
-        u_g = unit % 4
-        u_c8 = unit // 4
-        t_wr = (fx.Index(tr.LDS_T) + fx.Index(t_tensor) * tr.T_TENSOR + (u_c8 // 2) * T_DT_STRIDE
-                + u_g * T_G_STRIDE + (u_c8 % 2) * 64)
-        # The unit's rows in RM, for the 'lds' T source.
-        t_src = fx.Index(tr.LDS_RM) + fx.Index(t_tensor) * tr.RM_TENSOR + u_g * (4 * tr.RM_STRIDE) + u_c8 * 16
+        units = [(tid % (2 * WAVE) + fx.Index(2 * WAVE * u)) % tr.UNITS for u in range(tr.U_PER_THREAD)]
+        u_g = [x % 4 for x in units]
+        u_c8 = [x // 4 for x in units]
+        t_wr = [fx.Index(tr.LDS_T) + fx.Index(t_tensor) * tr.T_TENSOR + (c8 // 2) * tr.T_DTS + g * tr.T_GS
+                + (c8 % 2) * 64 for g, c8 in zip(u_g, u_c8)]
+        # The unit's four rows in RM, for the 'lds' T source.
+        t_src = [fx.Index(tr.LDS_RM) + fx.Index(t_tensor) * tr.RM_TENSOR + (u_g[0] * 4 + rr) * tr.RM_STRIDE
+                 + ((u_c8[0] ^ ((u_g[0] * 4 + rr) % 8)) if tr.SWZ else u_c8[0]) * 16 for rr in range(4)]
         side_rd = fx.Index(tr.LDS_T + 2 * tr.T_TENSOR) + gq * 16
+        # DMA voffset of row 4w + i: its dword, its 16B chunk XORed by the row under SWZ.
+        if const_expr(tr.SWZ):
+            dma_voffs = [(fx.Int32(lane // 4) ^ ((wave_s * fx.Int32(4) + fx.Int32(i)) & fx.Int32(7))) * fx.Int32(16)
+                         + fx.Int32(lane % 4) * fx.Int32(4) for i in range(BLOCK_M // NUM_WAVES)]
 
         c_scale = fx.Float32(sm_scale) * fx.Float32(LOG2E)
         sel_lo = fx.Int32(0x05040100)
@@ -519,7 +554,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 u_rsrc = rocdl.get_buffer_rsrc(buffer_ops.create_buffer_resource_from_addr(
                     is_do.select(do_base, q_base), num_records_bytes=is_do.select(do_span, q_span)))
                 u_rs_b = is_do.select(do_rs_b, q_rs_b)
-                u_voff = fx.Int32(u_g * 4) * u_rs_b + fx.Int32(u_c8 * 16)
+                u_voff = [fx.Int32(g * 4) * u_rs_b + fx.Int32(c8 * 16) for g, c8 in zip(u_g, u_c8)]
 
             lse_row0, lse_pitch = fmha.lse_row_addressing(varlen_bits,
                                                           fx.Index(q_batch),
@@ -533,11 +568,9 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 fx.Int64(fx.ptrtoint(LSE)) + fx.Int64(lse_row0) * fx.Int64(4), num_records_bytes=side_bytes))
             delta_rsrc = rocdl.get_buffer_rsrc(buffer_ops.create_buffer_resource_from_addr(
                 fx.Int64(fx.ptrtoint(Delta)) + fx.Int64(lse_row0) * fx.Int64(4), num_records_bytes=side_bytes))
-            if const_expr(lds_tile):
-                # Side DMA: lane L < 16 copies row q0 + L; the rest read 0.
-                side_voff = (lane < fx.Index(BLOCK_M)).select(fx.Int32(lane) * pitch_b, fx.Int32(OOB_VOFF))
-            else:
-                side_voff = fx.Int32(gq * 4) * pitch_b
+            # Side DMA: lane L < 16 copies row q0 + L; the rest read 0. VGPR side: rows 4gq + r.
+            side_dma_voff = (lane < fx.Index(BLOCK_M)).select(fx.Int32(lane) * pitch_b, fx.Int32(OOB_VOFF))
+            side_voff = fx.Int32(gq * 4) * pitch_b
 
             if const_expr(bias):
                 b_elems = (fx.Int64(q_batch) * stride_b_batch + fx.Int64(head_q) * stride_b_head
@@ -575,7 +608,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                                 set_scopes(rocdl.raw_ptr_buffer_load_lds(rsrc,
                                                                          lds_ptr_at(m0),
                                                                          fx.Int32(4),
-                                                                         dma_voff,
+                                                                         dma_voffs[i] if tr.SWZ else dma_voff,
                                                                          soff,
                                                                          fx.Int32(seg),
                                                                          fx.Int32(0)),
@@ -595,7 +628,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                     set_scopes(rocdl.raw_ptr_buffer_load_lds(rsrc,
                                                              lds_ptr_at(m0),
                                                              fx.Int32(4),
-                                                             side_voff,
+                                                             side_dma_voff,
                                                              soff,
                                                              fx.Int32(0),
                                                              fx.Int32(0)),
@@ -609,35 +642,40 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 return [lse[r] for r in range(4)], [dlt[r] for r in range(4)]
 
             def unit_load(j):
-                """This thread's T unit of tile j from global: 4 rows x 4 dwords."""
+                """This thread's T units of tile j from global: 4 rows x 4 dwords each."""
                 q0 = q0_of(j)
                 out = []
-                for rr in range_constexpr(4):
-                    soff = (q0 + fx.Int32(rr)) * u_rs_b
-                    w4 = Vec(rocdl.raw_ptr_buffer_load(Vec.make_type(4, fx.Int32), u_rsrc, u_voff, soff, 0))
-                    out.extend(w4[i] for i in range(4))
+                for u in range_constexpr(tr.U_PER_THREAD):
+                    for rr in range_constexpr(4):
+                        soff = (q0 + fx.Int32(rr)) * u_rs_b
+                        w4 = Vec(rocdl.raw_ptr_buffer_load(Vec.make_type(4, fx.Int32), u_rsrc, u_voff[u], soff, 0))
+                        out.extend(w4[i] for i in range(4))
                 return out
 
             def t_write(regs, slot):
                 al, noal = scope_attrs(f't{slot}')
-                for k in range_constexpr(4):
-                    dw = []
-                    for e in (2 * k, 2 * k + 1):
-                        w = [regs[4 * r + e // 2] for r in range(4)]
-                        sel = sel_hi if e % 2 else sel_lo
-                        dw += [fx.Int32(rocdl.perm_b32(w[1], w[0], sel)), fx.Int32(rocdl.perm_b32(w[3], w[2], sel))]
-                    llvm.StoreOp(raw(Vec.from_elements(dw, fx.Int32)),
-                                 lds_view(t_wr + (slot * tr.T_SLOT + 16 * k), fx.Int32, 16).llvm_ptr,
-                                 alignment=16,
-                                 alias_scopes=al,
-                                 noalias_scopes=noal)
+                for u in range_constexpr(len(regs) // 16):
+                    for k in range_constexpr(4):
+                        dw = []
+                        for e in (2 * k, 2 * k + 1):
+                            w = [regs[16 * u + 4 * r + e // 2] for r in range(4)]
+                            sel = sel_hi if e % 2 else sel_lo
+                            dw += [fx.Int32(rocdl.perm_b32(w[1], w[0], sel)), fx.Int32(rocdl.perm_b32(w[3], w[2], sel))]
+                        if const_expr(tr.SWZ):
+                            at = t_wr[u] + slot * tr.T_SLOT + (fx.Index(k) ^ u_g[u]) * 16
+                        else:
+                            at = t_wr[u] + (slot * tr.T_SLOT + 16 * k)
+                        llvm.StoreOp(raw(Vec.from_elements(dw, fx.Int32)),
+                                     lds_view(at, fx.Int32, 16).llvm_ptr,
+                                     alignment=16,
+                                     alias_scopes=al,
+                                     noalias_scopes=noal)
 
             def t_build_read(slot):
                 """This thread's unit of RM[slot], for T[slot]."""
                 out = []
                 for rr in range_constexpr(4):
-                    w4 = Vec(lds_load(t_src + (slot * tr.RM_BUF + rr * tr.RM_STRIDE), Vec.make_type(4, fx.Int32), 16,
-                                      f'rm{slot}'))
+                    w4 = Vec(lds_load(t_src[rr] + slot * tr.RM_BUF, Vec.make_type(4, fx.Int32), 16, f'rm{slot}'))
                     out.extend(w4[i] for i in range(4))
                 return out
 
@@ -751,7 +789,21 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
 
             t_slot_of = (0, 1) if lds_tile else (0, 0)
             n_acc = tr.NDT * tr.NSUB
-            n_extra_g = 0 if lds_tile else 24       # 'global': T unit and LSE/Delta registers
+            n_gs = 16 * tr.U_PER_THREAD + 8          # 'global': one tile's T units and LSE/Delta
+            n_extra_g = n_gs * tr.G_AHEAD
+            if const_expr(lds_tile):
+                n_extra_g = 0 if tr.SIDE_LDS else 8
+            # RM slot of tile t, and the tile Y(j) DMAs: three ahead double-buffered, two single.
+            rm_slot = (0, 1) if tr.RM_SLOTS == 2 else (0, 0)
+            dma_ahead = 3 if tr.RM_SLOTS == 2 else 2
+
+            def g_split(regs):
+                """T units, LSE, Delta of one 'global' register set."""
+                n_u = 16 * tr.U_PER_THREAD
+                side = regs[n_u:n_gs]
+                return (regs[:n_u],
+                        [fx.Int32(x).bitcast(fx.Float32) for x in side[:4]],
+                        [fx.Int32(x).bitcast(fx.Float32) for x in side[4:]])
 
             def unpack(c):
                 o = 2 * n_acc
@@ -771,18 +823,21 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 # X(j): S(j+1), dP(j+1); P(j), dS(j); T(j+1) ('lds') or T(j) ('global').
                 sub_marks = tr.TRACE_SUB and not last
                 g_nxt = []
-                if const_expr(lds_tile):
+                if const_expr(lds_tile and tr.SIDE_LDS):
                     lse, delta = side_read(b)
+                elif const_expr(lds_tile):
+                    lse = [fx.Int32(x).bitcast(fx.Float32) for x in g_regs[:4]]
+                    delta = [fx.Int32(x).bitcast(fx.Float32) for x in g_regs[4:8]]
+                    if const_expr(not last):
+                        g_nxt = side_load(j + 1)
                 else:
-                    # Y(j-1) is done with T. Tile j+1's loads get a whole tile.
+                    # Y(j-1) is done with T. G_AHEAD 1 loads tile j+1 here; 2 loaded it in Y(j-1).
+                    u_regs, lse, delta = g_split(g_regs[:n_gs])
                     if const_expr('not' not in tr.EXP):
-                        t_write(g_regs[:16], 0)
-                    side = g_regs[16:]
-                    lse = [fx.Int32(x).bitcast(fx.Float32) for x in side[:4]]
-                    delta = [fx.Int32(x).bitcast(fx.Float32) for x in side[4:]]
+                        t_write(u_regs, 0)
                     if const_expr(not last and 'nol' in tr.EXP):
                         g_nxt = g_regs
-                    elif const_expr(not last):
+                    elif const_expr(not last and tr.G_AHEAD == 1):
                         g_nxt = unit_load(j + 1) + side_load(j + 1)
                 b_nxt = []
                 if const_expr(not last):
@@ -802,7 +857,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                     units = t_build_read(1 - b)
                     work.insert(min(tr.TB_POS, len(work)), lambda: t_write(units, 1 - b))
                 if const_expr(not last):
-                    s_nxt, dp_nxt = sdp(1 - b, work)
+                    s_nxt, dp_nxt = sdp(rm_slot[1 - b], work)
                 else:
                     for w in work:
                         w()
@@ -818,15 +873,25 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 cluster_barrier(None if last else f'X{b}')
                 # Y(j): dV, dK of tile j; DMA RM(j+3) (and LSE/Delta(j+2)) spread over its MFMAs.
                 vm_work = []
+                pend = {}
                 if const_expr(not last):
-                    vm_work = dma_rows(j + 3, 1 - b)
-                    if const_expr(lds_tile):
+                    vm_work = dma_rows(j + dma_ahead, rm_slot[1 - b])
+                    if const_expr(lds_tile and tr.SIDE_LDS):
                         vm_work.append(lambda: side_dma(j + 2, b))
+                    elif const_expr(tr.G_AHEAD == 2 and 'nol' not in tr.EXP):
+                        # After the DMA: the in-order vmcnt then gives these a tile and a half.
+                        def far_loads():
+                            rocdl.sched_barrier(0)
+                            pend['g'] = unit_load(j + 2) + side_load(j + 2)
+                        vm_work.append(far_loads)
                 dk_accs, dv_accs = dvdk(dk_accs, dv_accs, p_pk, ds_pk, t_slot_of[b], vm_work)
                 if const_expr(not last):
                     sched(n_dvdk, 2 * tr.NDT, 0, tr.N_DMA)
                     rocdl.s_waitcnt(vmcnt=tr.N_VM_Y)
-                    g_nxt = anchor(g_nxt)
+                    if const_expr(not lds_tile and tr.G_AHEAD == 2 and 'nol' not in tr.EXP):
+                        g_nxt = anchor(g_regs[n_gs:]) + pend['g']
+                    else:
+                        g_nxt = anchor(g_nxt)
                     b_nxt = anchor(b_nxt)
                 rocdl.s_waitcnt(lgkmcnt=0)
                 cluster_barrier(None if last else f'Y{b}')
@@ -854,24 +919,32 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
             rocdl.s_waitcnt(vmcnt=0)
             cluster_barrier()
             dma(0, 0)
-            if const_expr(lds_tile):
+            if const_expr(lds_tile and tr.SIDE_LDS):
                 side_dma(0, 0)
                 g0 = []
+            elif const_expr(lds_tile):
+                g0 = side_load(0)
             else:
                 g0 = unit_load(0) + side_load(0)
             b0 = bias_load(0)
             rocdl.sched_barrier(0)
-            dma(1, 1)
-            rocdl.s_waitcnt(vmcnt=tr.N_DMA)
+            if const_expr(tr.RM_SLOTS == 2):
+                dma(1, 1)
+                rocdl.s_waitcnt(vmcnt=tr.N_DMA)
+            else:
+                rocdl.s_waitcnt(vmcnt=0)
             cluster_barrier()
             s0, dp0 = sdp(0)
             if const_expr(lds_tile):
                 t_write(t_build_read(0), 0)
             rocdl.s_waitcnt(lgkmcnt=0)
             cluster_barrier()
-            dma(2, 0)
-            if const_expr(lds_tile):
+            dma(dma_ahead - 1, rm_slot[(dma_ahead - 1) % 2])
+            if const_expr(lds_tile and tr.SIDE_LDS):
                 side_dma(1, 1)
+            elif const_expr(tr.G_AHEAD == 2):
+                rocdl.sched_barrier(0)
+                g0 = g0 + unit_load(1) + side_load(1)
             rocdl.s_waitcnt(vmcnt=tr.N_VM_Y)
             cluster_barrier()
 
