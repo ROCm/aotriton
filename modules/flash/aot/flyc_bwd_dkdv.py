@@ -42,9 +42,13 @@ FLYC_BWD_DKDV_HEAD_DIMS = frozenset({16, 32, 48, 64, 80, 96, 128, 160, 192, 224,
 # per the forward's note on that rung (the same tuple, same ruling).
 FLYC_GFX950_BWD_DKDV_HEAD_DIMS = frozenset({32, 64, 96, 128, 160, 192, 224, 256, 384, 512})
 
+# gfx942's ladder, from fmha_tuning_bwd_dkdv_gfx942.LADDER, a literal for the same reason.
+FLYC_GFX942_BWD_DKDV_HEAD_DIMS = frozenset({32, 64, 96, 128, 160, 192, 224, 256, 384, 512})
+
 _FLYC_BWD_DKDV_HEAD_DIMS_BY_ARCH = {
     'gfx1201': FLYC_BWD_DKDV_HEAD_DIMS,
     'gfx950': FLYC_GFX950_BWD_DKDV_HEAD_DIMS,
+    'gfx942': FLYC_GFX942_BWD_DKDV_HEAD_DIMS,
 }
 
 
@@ -342,6 +346,32 @@ def flyc_bwd_dkdv(arch, choices, hints):
         # 'block_kv' knob, so grid_calculator() reads one key regardless
         # of arch (see flyc_bwd_dkdv.cc).
         return build, asdict(knobs)
+
+    elif arch == 'gfx942':
+        # Same flydsl-free-at-call-time rule as above; the kernel ABI is gfx1201's.
+        import fmha_tuning_bwd_dkdv_gfx942 as tuning
+
+        tile = choices.BLOCK_DMODEL
+        causal_type = choices.CAUSAL_TYPE
+        dtype_str = 'bf16' if '*bf16' in choices.arg('Q') else 'f16'
+        bias = bool(choices.BIAS_TYPE)
+        dropout = bool(choices.ENABLE_DROPOUT)
+        padded_head = bool(choices.PADDED_HEAD)
+        knobs = tuning.knobs(tile, causal_type != 0)
+
+        def build():
+            """Deferred: imports flydsl, so only `aotriton.flyc_compile` calls it."""
+            return tuning.build(tile,
+                                knobs,
+                                causal_type=causal_type,
+                                dtype_str=dtype_str,
+                                bias=bias,
+                                dropout=dropout,
+                                padded_head=padded_head)
+
+        # Two bodies by head dim; block_kv and GRID_AXIS_ORDER feed grid_calculator().
+        build.flyc_source, build.flyc_kernel_name, _ = tuning.BODIES[tuning.body(tile)]
+        return build, knobs
 
     else:
         assert False, f'flyc_bwd_dkdv: no builder branch for arch {arch!r}'

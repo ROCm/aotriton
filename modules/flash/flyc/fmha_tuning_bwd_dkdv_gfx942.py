@@ -1,20 +1,21 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Knobs of the gfx942 dK/dV backward (fmha_bwd_dkdv_gfx942.py), head dims 32-128.
+"""Knobs of the gfx942 dK/dV backward: fmha_bwd_dkdv_gfx942.py (head dims 32-128)
+and fmha_bwd_dkdv_gfx942_wide.py (160-512).
 
 flydsl-free: the AOT description calls it from the code generator, which has
 no flydsl. The builder takes its defaults from here, so the two cannot drift.
 """
 
-# The compiled head dims this body serves; an off-ladder head dim runs padded
-# on the next rung.
-LADDER = (32, 64, 96, 128)
+# The compiled head dims; an off-ladder head dim runs padded on the next rung.
+LADDER = (32, 64, 96, 128, 160, 192, 224, 256, 384, 512)
 
-# Source file, @flyc.kernel name and builder, for the AOT description.
-SOURCE = 'fmha_bwd_dkdv_gfx942.py'
-KERNEL_NAME = 'fmha_bwd_dkdv_gfx942_kernel'
-BUILDER = 'build_fmha_bwd_dkdv_gfx942'
+# (source file, @flyc.kernel name, builder) per body, for the AOT description.
+BODIES = {
+    'narrow': ('fmha_bwd_dkdv_gfx942.py', 'fmha_bwd_dkdv_gfx942_kernel', 'build_fmha_bwd_dkdv_gfx942'),
+    'wide': ('fmha_bwd_dkdv_gfx942_wide.py', 'fmha_bwd_dkdv_gfx942_wide_kernel', 'build_fmha_bwd_dkdv_gfx942_wide'),
+}
 
 # csrc/flyc_common.h's kFlycGridAxis*.
 GRID_AXIS_HEAD_FASTEST = 0
@@ -52,6 +53,16 @@ def default_grid_axis_order(causal):
     return GRID_AXIS_HEAD_FASTEST if causal else GRID_AXIS_TILE_FASTEST
 
 
+def body(head_dim):
+    """Which body serves a compiled head dim."""
+    return 'narrow' if head_dim <= 128 else 'wide'
+
+
+def default_kv_subs(head_dim):
+    """Wide body: 16-key groups per wave; 2 spills past head dim 224."""
+    return 2 if head_dim <= 224 else 1
+
+
 def block_kv(num_waves, kv_blocks):
     """KV rows per workgroup: what the grid's tile axis divides max_seqlen_k by."""
     return num_waves * kv_blocks * BLOCK_ROWS
@@ -69,6 +80,12 @@ def knobs(head_dim, causal):
     reads. `GRID_AXIS_ORDER` is passed to the builder as `grid_axis_order`."""
     if head_dim not in LADDER:
         raise ValueError(f'head_dim {head_dim} is not on the gfx942 dK/dV ladder {LADDER}')
+    if body(head_dim) == 'wide':
+        subs = default_kv_subs(head_dim)
+        return dict(kv_subs=subs,
+                    waves_per_eu=1,
+                    block_kv=block_kv(4, subs),
+                    GRID_AXIS_ORDER=default_grid_axis_order(causal))
     nw = default_num_waves(head_dim)
     kvb = default_kv_blocks(head_dim)
     return dict(num_waves=nw,
@@ -86,6 +103,7 @@ def build(head_dim, knob_dict=None, **kwargs):
 
     kw = dict(kwargs)
     if knob_dict is not None:
-        kw.update({k: knob_dict[k] for k in ('num_waves', 'kv_blocks', 'waves_per_eu', 'interleave_valu')})
+        kw.update({k: v for k, v in knob_dict.items() if k not in ('block_kv', 'GRID_AXIS_ORDER')})
         kw['grid_axis_order'] = knob_dict['GRID_AXIS_ORDER']
-    return getattr(importlib.import_module(SOURCE[:-3]), BUILDER)(head_dim, **kw)
+    source, _, builder = BODIES[body(head_dim)]
+    return getattr(importlib.import_module(source[:-3]), builder)(head_dim, **kw)
