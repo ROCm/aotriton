@@ -11,9 +11,10 @@ no flydsl. The builder takes its defaults from here, so the two cannot drift.
 # on the next rung.
 LADDER = (32, 64, 96, 128)
 
-# Source file and @flyc.kernel name, for the AOT description.
+# Source file, @flyc.kernel name and builder, for the AOT description.
 SOURCE = 'fmha_bwd_dkdv_gfx942.py'
 KERNEL_NAME = 'fmha_bwd_dkdv_gfx942_kernel'
+BUILDER = 'build_fmha_bwd_dkdv_gfx942'
 
 # csrc/flyc_common.h's kFlycGridAxis*.
 GRID_AXIS_HEAD_FASTEST = 0
@@ -30,13 +31,13 @@ def default_num_waves(head_dim):
 def default_kv_blocks(head_dim):
     """16-row kv blocks each wave keeps resident: K, V, dK^T and dV^T cost
     3 * 16 * kv_blocks * head_dim / 64 registers. 2 is best or tied at every rung
-    (B2 H32 S8k, TFLOPS at 1/2/3/4: d32 -/332/-/287, d64 -/465/342/384,
-    d96 -/410/416/410, d128 -/448/310/309)."""
+    (B2 H32 S8k); 3 and 4 run out of registers at d128 and lose at d64 too."""
     return 2
 
 
 def default_waves_per_eu(head_dim):
-    """One wave per SIMD: at d128 the resident set alone is 192 of 256 registers."""
+    """One wave per SIMD: at d128 the resident set alone is 192 of 256 registers,
+    and two waves per SIMD at d64 measured the same."""
     return 1
 
 
@@ -63,8 +64,9 @@ def rung(hdim_qk, hdim_vo):
 
 
 def knobs(head_dim, causal):
-    """The build of one functional, as a JSON-able dict. `block_kv` and
-    `GRID_AXIS_ORDER` are what the C++ grid_calculator reads."""
+    """The build of one functional, as a JSON-able dict: the builder's keyword
+    arguments plus `block_kv` and `GRID_AXIS_ORDER`, which the C++ grid_calculator
+    reads. `GRID_AXIS_ORDER` is passed to the builder as `grid_axis_order`."""
     if head_dim not in LADDER:
         raise ValueError(f'head_dim {head_dim} is not on the gfx942 dK/dV ladder {LADDER}')
     nw = default_num_waves(head_dim)
@@ -72,5 +74,18 @@ def knobs(head_dim, causal):
     return dict(num_waves=nw,
                 kv_blocks=kvb,
                 waves_per_eu=default_waves_per_eu(head_dim),
+                interleave_valu=default_interleave_valu(head_dim),
                 block_kv=block_kv(nw, kvb),
                 GRID_AXIS_ORDER=default_grid_axis_order(causal))
+
+
+def build(head_dim, knob_dict=None, **kwargs):
+    """The builder, with `knob_dict` (a `knobs()` result) applied; flydsl is imported
+    only here, never at module scope."""
+    import importlib
+
+    kw = dict(kwargs)
+    if knob_dict is not None:
+        kw.update({k: knob_dict[k] for k in ('num_waves', 'kv_blocks', 'waves_per_eu', 'interleave_valu')})
+        kw['grid_axis_order'] = knob_dict['GRID_AXIS_ORDER']
+    return getattr(importlib.import_module(SOURCE[:-3]), BUILDER)(head_dim, **kw)
