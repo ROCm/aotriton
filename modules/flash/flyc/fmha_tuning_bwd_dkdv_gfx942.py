@@ -1,8 +1,8 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Knobs of the gfx942 dK/dV backward: fmha_bwd_dkdv_gfx942.py (head dims 32-128)
-and fmha_bwd_dkdv_gfx942_wide.py (160-512).
+"""Knobs of the gfx942 dK/dV backward: fmha_bwd_dkdv_gfx942.py (head dims 32-128),
+fmha_bwd_dkdv_gfx942_wide.py (160-192) and fmha_bwd_dkdv_gfx942_xwide.py (224-512).
 
 flydsl-free: the AOT description calls it from the code generator, which has
 no flydsl. The builder takes its defaults from here, so the two cannot drift.
@@ -15,6 +15,7 @@ LADDER = (32, 64, 96, 128, 160, 192, 224, 256, 384, 512)
 BODIES = {
     'narrow': ('fmha_bwd_dkdv_gfx942.py', 'fmha_bwd_dkdv_gfx942_kernel', 'build_fmha_bwd_dkdv_gfx942'),
     'wide': ('fmha_bwd_dkdv_gfx942_wide.py', 'fmha_bwd_dkdv_gfx942_wide_kernel', 'build_fmha_bwd_dkdv_gfx942_wide'),
+    'xwide': ('fmha_bwd_dkdv_gfx942_xwide.py', 'fmha_bwd_dkdv_gfx942_xwide_kernel', 'build_fmha_bwd_dkdv_gfx942_xwide'),
 }
 
 # csrc/flyc_common.h's kFlycGridAxis*.
@@ -54,12 +55,20 @@ def default_grid_axis_order(causal):
 
 
 def body(head_dim):
-    """Which body serves a compiled head dim."""
-    return 'narrow' if head_dim <= 128 else 'wide'
+    """Which body serves a compiled head dim. xwide's role-split teams win from 224
+    (B2 H32 S8k dense/causal TFLOPS, wide -> xwide): 224 333/328 -> 448/438,
+    256 371/366 -> 464/444; they lose at 192 (446 -> 423) and 160 (418 -> 403)."""
+    if head_dim <= 128:
+        return 'narrow'
+    return 'wide' if head_dim <= 192 else 'xwide'
 
 
 def default_kv_subs(head_dim):
-    """Wide body: 16-key groups per wave; 2 spills past head dim 224."""
+    """16-key columns per wave (wide) or per team (xwide).
+    wide: 2 spills past head dim 224. xwide: a wave holds 0.375 * D * kv_subs
+    registers of state; 4 at <= 256 (256 B2 H32 S8k: 464 vs 397 at 2), 2 above."""
+    if body(head_dim) == 'xwide':
+        return 4 if head_dim <= 256 else 2
     return 2 if head_dim <= 224 else 1
 
 
@@ -85,6 +94,13 @@ def knobs(head_dim, causal):
         return dict(kv_subs=subs,
                     waves_per_eu=1,
                     block_kv=block_kv(4, subs),
+                    GRID_AXIS_ORDER=default_grid_axis_order(causal))
+    if body(head_dim) == 'xwide':
+        # Two teams of two waves, each team owning 16 * kv_subs keys.
+        subs = default_kv_subs(head_dim)
+        return dict(kv_subs=subs,
+                    waves_per_eu=1,
+                    block_kv=block_kv(2, subs),
                     GRID_AXIS_ORDER=default_grid_axis_order(causal))
     nw = default_num_waves(head_dim)
     kvb = default_kv_blocks(head_dim)
