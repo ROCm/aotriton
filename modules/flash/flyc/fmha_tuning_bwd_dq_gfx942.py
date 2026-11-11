@@ -1,18 +1,20 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Knobs of the gfx942 backward dQ/dB kernel (fmha_bwd_dq_gfx942.py).
+"""Knobs of the gfx942 backward dQ/dB kernels: fmha_bwd_dq_gfx942.py (head dims
+32-128) and fmha_bwd_dq_gfx942_wide.py (160-512).
 
 flydsl-free, like fmha_tuning_gfx942.py: the code generator imports it.
 The builder takes its defaults from here, so the two cannot drift.
 """
 
-# Head dims served by fmha_bwd_dq_gfx942.py; wider rungs live in another body.
-LADDER = (32, 64, 96, 128)
+# The compiled head dims; an off-ladder head dim runs padded on the next rung.
+LADDER = (32, 64, 96, 128, 160, 192, 224, 256, 384, 512)
 
 # (source file, @flyc.kernel name, builder) per body.
 BODIES = {
     'narrow': ('fmha_bwd_dq_gfx942.py', 'fmha_bwd_dq_gfx942_kernel', 'build_fmha_bwd_dq_gfx942'),
+    'wide': ('fmha_bwd_dq_gfx942_wide.py', 'fmha_bwd_dq_gfx942_wide_kernel', 'build_fmha_bwd_dq_gfx942_wide'),
 }
 
 # csrc/flyc_common.h's kFlycGridAxis*.
@@ -39,7 +41,7 @@ def default_lpt(causal):
 
 def body(head_dim):
     """Which body serves a compiled head dim."""
-    return 'narrow'
+    return 'narrow' if head_dim <= 128 else 'wide'
 
 
 def rung(hdim_qk, hdim_vo):
@@ -61,9 +63,25 @@ def knobs(head_dim, causal):
     block) and `GRID_AXIS_ORDER` are what the C++ grid_calculator reads."""
     if head_dim not in LADDER:
         raise ValueError(f'head_dim {head_dim} is not on the gfx942 dQ ladder {LADDER}')
+    if body(head_dim) == 'wide':
+        # 32 query rows per wave up to 256, 16 above; a causal block pairs two q tiles.
+        wave_m = 32 if head_dim <= 256 else 16
+        return dict(block_m=4 * wave_m * (2 if causal else 1),
+                    wave_m=wave_m,
+                    num_waves=4,
+                    block_n=wave_m,
+                    waves_per_eu=1,
+                    GRID_AXIS_ORDER=GRID_AXIS_TILE_FASTEST)
     return dict(block_m=256,
                 num_waves=8,
                 block_n=default_block_n(head_dim),
                 waves_per_eu=2,
                 lpt=default_lpt(causal),
                 GRID_AXIS_ORDER=default_grid_axis_order(causal))
+
+
+def builder_kwargs(knob_dict):
+    """A `knobs()` result as the builder's keyword arguments."""
+    kw = {k: v for k, v in knob_dict.items() if k not in ('block_m', 'GRID_AXIS_ORDER')}
+    kw['grid_axis_order'] = knob_dict['GRID_AXIS_ORDER']
+    return kw

@@ -86,9 +86,7 @@ FlycBwdDqContext::flyc_padded_head() const {
 // no derivation on the description side.
 //
 // As in the forward, the axis order is read from perf() rather than
-// assumed -- both arches' descriptions put HEAD_FASTEST in the knobs for
-// this kernel today, but the switch below is what makes that a fact this
-// function checks rather than one it silently depends on.
+// assumed: gfx942's wide dQ asks for TILE_FASTEST, every other build HEAD_FASTEST.
 dim3
 FlycBwdDqContext::grid_calculator() const {
   const auto row = classify(*params);
@@ -109,8 +107,8 @@ FlycBwdDqContext::grid_calculator() const {
     case kFlycGridAxisHeadFastest:
       return dim3 { num_head_q, num_q_tiles, nseq_idx };
     case kFlycGridAxisTileFastest:
-      AOTRITON_LOG(LOG_ERROR, "flyc dq grid_calculator: TILE_FASTEST is not implemented for this kernel");
-      throw std::runtime_error("flyc dq grid_calculator: unsupported GRID_AXIS_ORDER (TILE_FASTEST)");
+      // gfx942's wide dQ: a head's q tiles run together and share K/V in L2.
+      return dim3 { num_q_tiles, num_head_q, nseq_idx };
   }
   throw std::runtime_error("flyc dq grid_calculator: unreachable GRID_AXIS_ORDER");
 }
