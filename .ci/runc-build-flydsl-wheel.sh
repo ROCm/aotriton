@@ -237,11 +237,14 @@ export FLY_REBUILD=1
 # a cmake step that does not set its own.
 export CMAKE_BUILD_PARALLEL_LEVEL="${JOBS}"
 
-mkdir -p "${OUTPUT_DIR}"
+# Built into scratch, NOT into OUTPUT_DIR: OUTPUT_DIR is the host's wheel
+# cache, and anything that lands there is a hit for every later run. A wheel
+# that fails the checks below must never reach it.
+#
 # --no-deps: FlyDSL declares no runtime requirements today, and if it gains
-# some we still want exactly one wheel in the output directory, because that
-# directory is a cache the host half globs.
-python -m pip wheel . --no-deps -w "${OUTPUT_DIR}"
+# some we still want exactly one wheel to publish.
+DIST_DIR="${BUILD_DIR}/dist"
+python -m pip wheel . --no-deps -w "${DIST_DIR}"
 
 # The cp tag is not cosmetic: AOTriton's CMake refuses a --flydsl_wheel whose
 # ABI does not match the build venv, so a wheel that came out tagged for a
@@ -250,9 +253,18 @@ python -m pip wheel . --no-deps -w "${OUTPUT_DIR}"
 # Neither is the manylinux tag. setup.py swallows a failed `auditwheel repair`
 # and leaves the unrepaired wheel in place, so the platform tag is the only
 # sign that repair ran. Same check as FlyDSL's scripts/build_wheels.sh.
-if ! ls "${OUTPUT_DIR}"/flydsl-*+*"${SHORT}"*-"${ABI_TAG}"-"${ABI_TAG}"-manylinux_*.whl; then
-  echo "Error: no manylinux FlyDSL wheel in ${OUTPUT_DIR}; auditwheel repair did not run or failed." >&2
+WHEEL=$(ls "${DIST_DIR}"/flydsl-*+*"${SHORT}"*-"${ABI_TAG}"-"${ABI_TAG}"-manylinux_*.whl 2>/dev/null | head -n1)
+if [ -z "${WHEEL}" ]; then
+  echo "Error: no manylinux FlyDSL wheel in ${DIST_DIR}; auditwheel repair did not run or failed." >&2
   echo "An unrepaired wheel lacks libmlir_apfloat_wrappers and fails to load." >&2
-  ls -1 "${OUTPUT_DIR}" >&2 || true
+  ls -1 "${DIST_DIR}" >&2 || true
   exit 1
 fi
+
+# Copied under a dot-name, then renamed: the cache globs flydsl-*, so a copy
+# cut short never looks like a wheel.
+mkdir -p "${OUTPUT_DIR}"
+WHEEL_NAME="$(basename "${WHEEL}")"
+cp "${WHEEL}" "${OUTPUT_DIR}/.${WHEEL_NAME}.tmp"
+mv "${OUTPUT_DIR}/.${WHEEL_NAME}.tmp" "${OUTPUT_DIR}/${WHEEL_NAME}"
+ls "${OUTPUT_DIR}/${WHEEL_NAME}"

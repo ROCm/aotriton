@@ -302,6 +302,14 @@ scl enable gcc-toolset-13 -- bash /tmp/runc-build-flydsl-wheel.sh \
   file:///mirror "$COMMIT" "/cache/llvm/${LLVM_TARBALL_NAME}" /cache/wheels \
   "$VERSION_SUFFIX" /scratch/build "$JOBS"
 EOF
+# CHECKED: this script has no `set -e`, and the container only publishes a
+# wheel that passed its checks, so the glob below would otherwise find either
+# nothing or a wheel left by an earlier run, and report it as this build.
+BUILD_STATUS=$?
+if [[ "${BUILD_STATUS}" -ne 0 ]]; then
+  echo "Error: the FlyDSL wheel build for ${RESOLVED:0:8} failed (exit ${BUILD_STATUS}); see the log above." >&2
+  exit 1
+fi
 
 HIT="$(cached_wheel "${RESOLVED}")"
 if [[ -z "${HIT}" ]]; then
