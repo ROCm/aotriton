@@ -45,7 +45,7 @@ Options:
          --python <X.Y>     CPython to build for. Default 3.11. flydsl wheels
                             are ABI specific, so this is part of the cache key.
            --rocm <ver>     TheRock version for the build image. Default
-                            10.2.0a20260918, the newest in the release suite's
+                            10.1.0, the newest release in the release suite's
                             list. FlyJitRuntime links HIP but AOTriton never
                             launches through it, so this does not affect the
                             kernels the wheel produces.
@@ -64,7 +64,7 @@ LLVM_TARBALL=""
 VERSION_SUFFIX=""
 PAT_ENVIRON=""
 PYVER="3.11"
-ROCMVER="10.2.0a20260918"
+ROCMVER="10.1.0"
 JOBS=""
 while [[ "$1" == --* ]]; do
   # `shift 2` with one argument left FAILS WITHOUT SHIFTING, so $1 never changes
