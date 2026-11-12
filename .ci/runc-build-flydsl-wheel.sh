@@ -166,9 +166,18 @@ echo "Building against LLVM: ${LLVM_NAME}"
 # to be on PATH, not importable. The PyPI package ships the executable, which
 # is how auditwheel gets it too, and keeps the base image free of an EPEL
 # dependency for one tool.
+#
+# auditwheel is not optional either, though FlyDSL's setup.py treats it as
+# such: its bdist_wheel runs `auditwheel repair` only if the executable is on
+# PATH, and otherwise prints a warning and ships the raw linux_x86_64 wheel.
+# That wheel is broken. MLIR's libmlir_c_runner_utils.so, which FlyDSL copies
+# into flydsl/_mlir/_mlir_libs, carries a DT_NEEDED on
+# libmlir_apfloat_wrappers.so.<ver> that nothing else puts in the wheel;
+# repair is what grafts it into flydsl.libs/, as in FlyDSL's own releases.
 NANOBIND_VERSION="${NANOBIND_VERSION:-2.12.0}"
-python -m pip install "nanobind==${NANOBIND_VERSION}" numpy pybind11 patchelf
+python -m pip install "nanobind==${NANOBIND_VERSION}" numpy pybind11 patchelf auditwheel
 command -v patchelf >/dev/null || { echo "Error: patchelf is not on PATH after install." >&2; exit 1; }
+command -v auditwheel >/dev/null || { echo "Error: auditwheel is not on PATH after install." >&2; exit 1; }
 
 # --- Version ---
 # FlyDSL's default version for a non-release build is <base>.dev<commit count>,
@@ -222,4 +231,13 @@ python -m pip wheel . --no-deps -w "${OUTPUT_DIR}"
 # The cp tag is not cosmetic: AOTriton's CMake refuses a --flydsl_wheel whose
 # ABI does not match the build venv, so a wheel that came out tagged for a
 # different interpreter is a failure here, not three steps later.
-ls "${OUTPUT_DIR}"/flydsl-*+*"${SHORT}"*"${ABI_TAG}"*.whl
+#
+# Neither is the manylinux tag. setup.py swallows a failed `auditwheel repair`
+# and leaves the unrepaired wheel in place, so the platform tag is the only
+# sign that repair ran. Same check as FlyDSL's scripts/build_wheels.sh.
+if ! ls "${OUTPUT_DIR}"/flydsl-*+*"${SHORT}"*-"${ABI_TAG}"-"${ABI_TAG}"-manylinux_*.whl; then
+  echo "Error: no manylinux FlyDSL wheel in ${OUTPUT_DIR}; auditwheel repair did not run or failed." >&2
+  echo "An unrepaired wheel lacks libmlir_apfloat_wrappers and fails to load." >&2
+  ls -1 "${OUTPUT_DIR}" >&2 || true
+  exit 1
+fi
