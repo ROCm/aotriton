@@ -16,10 +16,11 @@
 #                    Extracted here and handed to FlyDSL as MLIR_PATH.
 #   <output_dir>     where the .whl is written.
 #   <version_suffix> appended inside the local version segment, after the git
-#                    hash: <base>+git<sha8><version_suffix>, e.g. ".aotriton0.14"
-#                    giving 0.3.1+git421935cc.aotriton0.14. Same idea as
-#                    TRITON_WHEEL_VERSION_SUFFIX, spelled for FlyDSL's own
-#                    FLYDSL_PACKAGE_VERSION_OVERRIDE.
+#                    hash: <base>+git<sha8><version_suffix>.p<patches>, e.g.
+#                    ".aotriton0.14" giving 0.3.1+git421935cc.aotriton0.14.p2.
+#                    Same idea as TRITON_WHEEL_VERSION_SUFFIX, spelled for
+#                    FlyDSL's own FLYDSL_PACKAGE_VERSION_OVERRIDE. .p<patches>
+#                    is the number of patches applied below, always present.
 #   <build_dir>      scratch root for this run; the checkout and the extracted
 #                    LLVM live here. Defaults to a fresh mktemp -d.
 #   <jobs>           advisory only, see CMAKE_BUILD_PARALLEL_LEVEL below.
@@ -121,7 +122,6 @@ if [ -z "${BASE_VERSION}" ]; then
   echo "in FlyDSL ${SHORT}. The declaration is gone or has changed shape." >&2
   exit 1
 fi
-export FLYDSL_PACKAGE_VERSION_OVERRIDE="${BASE_VERSION}+git${SHORT}${VERSION_SUFFIX}"
 
 # --- Patch: per FlyDSL version ---
 # AOTRITON_FLYDSL_PATCH_DIR is mounted by the host half and holds one
@@ -138,6 +138,7 @@ export FLYDSL_PACKAGE_VERSION_OVERRIDE="${BASE_VERSION}+git${SHORT}${VERSION_SUF
 # configure-time "hip not found" three minutes later, or worse a wheel linked
 # against the wrong ROCm.
 FLYDSL_PATCH_DIR=""
+PATCH_COUNT=0
 if [ -n "${AOTRITON_FLYDSL_PATCH_DIR:-}" ]; then
   FLYDSL_PATCH_DIR="${AOTRITON_FLYDSL_PATCH_DIR}/${BASE_VERSION}"
   if [ ! -d "${FLYDSL_PATCH_DIR}" ]; then
@@ -154,8 +155,12 @@ if [ -n "${FLYDSL_PATCH_DIR}" ]; then
       echo "Rebase it onto that commit, or drop it if FlyDSL has taken the change." >&2
       exit 1
     fi
+    PATCH_COUNT=$((PATCH_COUNT + 1))
   done
 fi
+# .p<count> is the last component of the local version, and the wheel cache's
+# readers (.ci/common-flydsl.sh) check it against .ci/flydsl-patch/<version>/.
+export FLYDSL_PACKAGE_VERSION_OVERRIDE="${BASE_VERSION}+git${SHORT}${VERSION_SUFFIX}.p${PATCH_COUNT}"
 
 # dlpack and tvm-ffi are submodules FlyDSL's CMake include()s headers from.
 # scripts/build.sh initialises them itself, but only by probing for one header;

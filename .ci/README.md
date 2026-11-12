@@ -307,9 +307,11 @@ needed**.
 `.ci/flydsl-patch/<version>/*.patch` is applied to the checkout first, where
 `<version>` is the checkout's `__version__` from `python/flydsl/__init__.py`. It is read
 inside the container because the host half only has a SHA. A version without a
-directory is built unpatched. The wheel cache key counts the patches across all version
-directories, since the host cannot tell which one applies. Only `0.3.1/` exists today,
-with two patches; 0.4.2 carries both fixes upstream:
+directory is built unpatched. The wheel's local version ends in `.p<N>`, the number of
+patches applied; a cached wheel is a hit only while `N` still equals the patch count of
+its own version's directory, so adding a patch for one version rebuilds only that
+version's wheels. Cached wheels must also be manylinux-tagged (`auditwheel repair`
+ran). Only `0.3.1/` exists today, with two patches; 0.4.2 carries both fixes upstream:
 
 * `lib/Runtime/ROCm/CMakeLists.txt` searches `/opt/rocm*` for HIP, which a TheRock
   root is not (a site-packages directory named by `rocm-sdk path --root`); the
