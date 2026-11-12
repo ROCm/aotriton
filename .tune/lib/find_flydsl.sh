@@ -102,7 +102,7 @@ find_flydsl_llvm_tarball() {
 # All five matter, and a wheel missing any one of them is a different wheel:
 # the FlyDSL commit and the LLVM commit are what was compiled and what it was
 # compiled against (the wrong LLVM miscompiles register spills and returns
-# wrong numbers rather than failing); .ci/flydsl-patch/ is part of what the
+# wrong numbers rather than failing); .ci/flydsl-patch/*/ is part of what the
 # wheel IS, so its count is in the name; and CMakeLists.txt makes a cp-tag
 # mismatch a FATAL_ERROR.
 #
@@ -126,7 +126,7 @@ flydsl_wheel_glob() {
     echo "Error: third_party/flydsl-llvm.txt does not pin a commit SHA." >&2
     return 1
   fi
-  patches=$(ls "$aotriton_root"/.ci/flydsl-patch/*.patch 2>/dev/null | wc -l)
+  patches=$(ls "$aotriton_root"/.ci/flydsl-patch/*/*.patch 2>/dev/null | wc -l)
   read -r major minor <<< "$(get_aotriton_major_minor "$aotriton_root")"
   printf 'flydsl-*+git%s.aotriton%s.%s.llvm%s.p%s-*cp%s*.whl' \
     "${flydsl_sha:0:8}" "$major" "$minor" "$llvm_sha12" "$patches" "${pyver//./}"

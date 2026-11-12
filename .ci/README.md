@@ -304,7 +304,12 @@ REQUIRED)` under its only backend -- for a HIP launcher AOTriton never uses
 (`COMPILE_ONLY=1`), so the ROCm version does not affect the kernels and **no GPU is
 needed**.
 
-`.ci/flydsl-patch/*.patch` is applied to the checkout first. Two today:
+`.ci/flydsl-patch/<version>/*.patch` is applied to the checkout first, where
+`<version>` is the checkout's `__version__` from `python/flydsl/__init__.py`. It is read
+inside the container because the host half only has a SHA. A version without a
+directory is built unpatched. The wheel cache key counts the patches across all version
+directories, since the host cannot tell which one applies. Only `0.3.1/` exists today,
+with two patches; 0.4.2 carries both fixes upstream:
 
 * `lib/Runtime/ROCm/CMakeLists.txt` searches `/opt/rocm*` for HIP, which a TheRock
   root is not (a site-packages directory named by `rocm-sdk path --root`); the

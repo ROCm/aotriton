@@ -152,12 +152,17 @@ else
   echo "different LLVMs." >&2
   exit 1
 fi
-# The patches in .ci/flydsl-patch/ are part of what the wheel IS -- one of them
-# moves a build requirement -- so their count goes in the name. Adding a patch
-# must not return the wheel built before it. (A count, not a digest: editing a
-# patch in place still collides. Bump nothing and rebuild by hand if you do
-# that.)
-FLYDSL_PATCH_COUNT="$(ls "${SCRIPT_DIR}"/flydsl-patch/*.patch 2>/dev/null | wc -l)"
+# The patches in .ci/flydsl-patch/<version>/ are part of what the wheel IS --
+# one of them moves a build requirement -- so their count goes in the name.
+# Adding a patch must not return the wheel built before it. (A count, not a
+# digest: editing a patch in place still collides. Bump nothing and rebuild by
+# hand if you do that.)
+#
+# Counted across EVERY version directory, not just the one this commit will
+# use: which one applies is decided inside the container from the checkout's
+# __version__, and a SHA alone does not say. Over-counting only costs a
+# rebuild of wheels for other versions when a patch is added.
+FLYDSL_PATCH_COUNT="$(ls "${SCRIPT_DIR}"/flydsl-patch/*/*.patch 2>/dev/null | wc -l)"
 # Appended INSIDE the local version segment, after the git hash and after any
 # caller --version_suffix:
 # <base>+git<flydsl sha8><suffix>.llvm<llvm sha12>.p<patches>.
@@ -254,8 +259,9 @@ fi
 # tag has to match the venv that will install it.
 #
 # ROCm comes from TheRock rather than dnf packages because that is what the
-# rest of AOTriton targets, and .ci/flydsl-patch/ teaches FlyDSL's CMake to
-# find it -- a TheRock root is a site-packages directory, not /opt/rocm.
+# rest of AOTriton targets. FlyDSL 0.4.2 finds it through ROCM_PATH / rocm-sdk
+# on its own; for 0.3.1, .ci/flydsl-patch/0.3.1/ teaches its CMake to -- a
+# TheRock root is a site-packages directory, not /opt/rocm.
 FLYDSL_DOCKER_IMAGE="aotriton:buildenv-rocm${ROCMVER}-py${PYVER}"
 if [ -z "$(docker images -q "${FLYDSL_DOCKER_IMAGE}" 2>/dev/null)" ]; then
   # The index has to follow the version: theRock.Dockerfile's own default is a

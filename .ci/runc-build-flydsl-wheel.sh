@@ -93,18 +93,60 @@ git -C "${SRC_DIR}" remote add origin "${FLYDSL_SOURCE}"
 git -C "${SRC_DIR}" fetch --depth=1 origin "${COMMIT}"
 git -C "${SRC_DIR}" checkout -f "${COMMIT}"
 
-# --- Patch: teach FlyDSL's ROCm runtime about ROCM_PATH ---
-# lib/Runtime/ROCm/CMakeLists.txt searches /opt/rocm* only, which a TheRock
-# (rocm-sdk) install is not. AOTRITON_FLYDSL_PATCH_DIR is mounted by the host
-# half; a run without it (a caller invoking this script directly against a
-# classical /opt/rocm) simply skips the patch.
+# --- Version ---
+# FlyDSL's default version for a non-release build is <base>.dev<commit count>,
+# which a --depth=1 checkout renders as ".dev1" for every commit -- useless as
+# a cache key. FLYDSL_PACKAGE_VERSION_OVERRIDE is FlyDSL's own supported hook
+# for release automation; use it to embed the commit the way Triton's
+# +git<hash8> does, so the wheel filename identifies what is in it.
+#
+# Read before patching: the base version is also what selects the patch set
+# below.
+BASE_VERSION=$(python3 - "${SRC_DIR}/python/flydsl/__init__.py" <<'PY'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+m = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', text, re.MULTILINE)
+# Nothing printed when the declaration is missing or has changed shape: the
+# caller turns an empty value into an error. A stand-in like "0.0.0" would
+# publish a wheel whose version names neither what is in it nor the fact that
+# the version could not be read.
+if m:
+    # A base that already carries a local segment cannot take ours; drop theirs
+    # rather than emit a PEP 440-invalid double '+'.
+    print(m.group(1).split("+")[0])
+PY
+)
+if [ -z "${BASE_VERSION}" ]; then
+  echo "Error: could not read __version__ from python/flydsl/__init__.py" >&2
+  echo "in FlyDSL ${SHORT}. The declaration is gone or has changed shape." >&2
+  exit 1
+fi
+export FLYDSL_PACKAGE_VERSION_OVERRIDE="${BASE_VERSION}+git${SHORT}${VERSION_SUFFIX}"
+
+# --- Patch: per FlyDSL version ---
+# AOTRITON_FLYDSL_PATCH_DIR is mounted by the host half and holds one
+# subdirectory per FlyDSL base version (e.g. 0.3.1/), matched exactly against
+# BASE_VERSION above. The version is read here, from the checkout, because the
+# host half only has a SHA and cannot tell which release line it belongs to.
+# A version without a subdirectory needs no patches: 0.4.2 already finds HIP
+# through ROCM_PATH / rocm-sdk and bounds nanobind below 3 itself. A run
+# without AOTRITON_FLYDSL_PATCH_DIR (a caller invoking this script directly
+# against a classical /opt/rocm) skips patching altogether.
 #
 # `git apply` and NOT `|| true`: a patch that stopped applying means FlyDSL
 # moved the code it edits, and silently building without it gives a
 # configure-time "hip not found" three minutes later, or worse a wheel linked
 # against the wrong ROCm.
+FLYDSL_PATCH_DIR=""
 if [ -n "${AOTRITON_FLYDSL_PATCH_DIR:-}" ]; then
-  for patch in "${AOTRITON_FLYDSL_PATCH_DIR}"/*.patch; do
+  FLYDSL_PATCH_DIR="${AOTRITON_FLYDSL_PATCH_DIR}/${BASE_VERSION}"
+  if [ ! -d "${FLYDSL_PATCH_DIR}" ]; then
+    echo "No AOTriton patches for FlyDSL ${BASE_VERSION}."
+    FLYDSL_PATCH_DIR=""
+  fi
+fi
+if [ -n "${FLYDSL_PATCH_DIR}" ]; then
+  for patch in "${FLYDSL_PATCH_DIR}"/*.patch; do
     [ -e "${patch}" ] || continue
     echo "Applying $(basename "${patch}")"
     if ! git -C "${SRC_DIR}" apply "${patch}"; then
@@ -178,33 +220,6 @@ NANOBIND_VERSION="${NANOBIND_VERSION:-2.12.0}"
 python -m pip install "nanobind==${NANOBIND_VERSION}" numpy pybind11 patchelf auditwheel
 command -v patchelf >/dev/null || { echo "Error: patchelf is not on PATH after install." >&2; exit 1; }
 command -v auditwheel >/dev/null || { echo "Error: auditwheel is not on PATH after install." >&2; exit 1; }
-
-# --- Version ---
-# FlyDSL's default version for a non-release build is <base>.dev<commit count>,
-# which a --depth=1 checkout renders as ".dev1" for every commit -- useless as
-# a cache key. FLYDSL_PACKAGE_VERSION_OVERRIDE is FlyDSL's own supported hook
-# for release automation; use it to embed the commit the way Triton's
-# +git<hash8> does, so the wheel filename identifies what is in it.
-BASE_VERSION=$(python3 - <<'PY'
-import pathlib, re
-text = pathlib.Path("python/flydsl/__init__.py").read_text(encoding="utf-8")
-m = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', text, re.MULTILINE)
-# Nothing printed when the declaration is missing or has changed shape: the
-# caller turns an empty value into an error. A stand-in like "0.0.0" would
-# publish a wheel whose version names neither what is in it nor the fact that
-# the version could not be read.
-if m:
-    # A base that already carries a local segment cannot take ours; drop theirs
-    # rather than emit a PEP 440-invalid double '+'.
-    print(m.group(1).split("+")[0])
-PY
-)
-if [ -z "${BASE_VERSION}" ]; then
-  echo "Error: could not read __version__ from python/flydsl/__init__.py" >&2
-  echo "in FlyDSL ${SHORT}. The declaration is gone or has changed shape." >&2
-  exit 1
-fi
-export FLYDSL_PACKAGE_VERSION_OVERRIDE="${BASE_VERSION}+git${SHORT}${VERSION_SUFFIX}"
 
 # --- Build ---
 # FLY_BUILD_DIR must stay relative to the repo root: setup.py rejects a path
