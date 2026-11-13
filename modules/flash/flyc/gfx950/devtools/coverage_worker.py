@@ -91,11 +91,21 @@ TIME_MEM_CAP = 40 * 2**30
 TIME_ROUNDS = 7
 TIME_SAMPLE_SECONDS = 2e-3
 TIME_MAX_PER_SAMPLE = 100
-# The split backward's Triton `bwd_preprocess` (AOTriton's, not flyc) forms
-# element offsets in 32 bits: once O holds 2**31 elements or more it computes a
-# wrong delta silently, or faults when the wrapped address is unmapped
-# (measured at hd128, Sq=1000, Sk=16: 0 bad rows at B=1040, 819095 at B=1100,
-# illegal address at B=2097). Backward timing batches stay below it.
+# Backward timing batches keep O below 2**31 elements. **This is a limitation of
+# this JIT harness, not a product bug; do not re-report it as one.**
+#
+# The split backward JIT-compiles AOTriton's Triton `bwd_preprocess` and passes
+# its strides as Python ints, which Triton types as i32 whenever they fit. Its
+# `batch * stride_oz` offset product is then formed in 32 bits and wraps past
+# 2**31: at Sq=1000, H=16, hd128 `stride_oz` is 2,048,000, which wraps at batch
+# 1049. Measured at hd128, Sq=1000, Sk=16: 0 bad rows at B=1040, 819095 at
+# B=1100 (a silently wrong delta), an illegal-address fault at B=2097.
+#
+# The AOT build declares strides as hidden `u64:8` arguments
+# (`python/template_instantiation/builder/kernel.py:59`), so the shipped kernel
+# forms 64-bit offsets. Verified: on a B=1100 run (O = 2.25e9 elements) the AOT
+# `triton_split` and `flyc` backwards give dQ/dK/dV for the last 4 batch entries
+# identical (max diff 0.0) to running those 4 entries alone.
 INT32_ELEMS = 2**31
 
 OUT = None  # records file
@@ -407,13 +417,16 @@ class Problem:
         self.k = padded((B, H, Tk), hd, dt)
         self.v = padded((B, H, Tk), hd, dt)
         self.do = padded((B, H, Tq), hd, dt) if need_bwd else None
-        # Packed-varlen bias: rows follow Q's packing, columns are each
-        # sequence's own KV index (0..sk_z). The forward requires the last
-        # axis to be the packed total Tk, the split dK/dV launcher requires
-        # max_seqlen_k ("not packed"): a contract mismatch, recorded by the
-        # sweep. Each kernel is given the width its launcher accepts.
-        bias_w = sk if (layout == "varlen" and group["kernel"] == "bwd") else Tk
-        self.bias = torch.randn(B, H, Tq, bias_w, device="cuda", dtype=dt) if group["feature"] == "bias" else None
+        # One bias for every kernel, per the varlen bias contract (the Triton
+        # kernels'; `ParityKernelContext._score_slab_byte_base`): rows and
+        # columns are local to each sequence, and the batch slot follows the Q
+        # side's decode. The packed layout here has a STACKED Q side, so all
+        # sequences share slot 0 and each reads its top-left
+        # `seqlen_q[z] x seqlen_k[z]` corner of a `(1, H, sq, sk)` bias.
+        if group["feature"] == "bias":
+            self.bias = torch.randn(B, H, sq, sk, device="cuda", dtype=dt)
+        else:
+            self.bias = None
         self.dropout = group["feature"] == "dropout"
 
     def kw(self):
@@ -461,8 +474,9 @@ class Problem:
         self.ref_live = torch.zeros(B, H, self.Tq, dtype=torch.bool, device="cuda")
         for b, q0, sq, k0, sk, z in self.segments:
             qs, ks = slice(q0, q0 + sq), slice(k0, k0 + sk)
-            bias = self.bias[b, :, qs, 0:sk] if (self.bias is not None and self.layout == "varlen") else (
-                self.bias[b, :, qs, ks] if self.bias is not None else None)
+            # Local rows and columns in both layouts; `b` is the batch slot,
+            # which is 0 for every sequence of the packed layout.
+            bias = self.bias[b, :, 0:sq, 0:sk] if self.bias is not None else None
             o, lse, dq, dk, dv = reference(self.q[b, :, qs],
                                            self.k[b, :, ks],
                                            self.v[b, :, ks],

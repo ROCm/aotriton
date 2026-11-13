@@ -54,6 +54,7 @@ from dataclasses import fields as dataclass_fields
 from dataclasses import replace
 
 import fmha_utils as fmha
+from fmha_utils import VARLEN_STACKED
 from fmha_utils import MaskedAxis
 from .traits import BF16_BYTES as _ELEM_BYTES
 from .traits import DMA_BYTES as _ACCESS_BYTES
@@ -582,6 +583,41 @@ def _bias_slab_num_records_bytes(seqlen_q, seqlen_kv, stride_b_seq_q, elem_bytes
     loose = seqlen_q * fx.Index(stride_b_seq_q) * fx.Index(elem_bytes)
     tight = (seqlen_q * fx.Index(stride_b_seq_q) - fx.Index(stride_b_seq_q) + seqlen_kv) * fx.Index(elem_bytes)
     return arith.minui(as_mlir_value(tight), as_mlir_value(loose))
+
+
+def check_score_tensor(name, t, varlen, batch_size, num_head_q, max_seqlen_q, max_seqlen_k, dtype):
+    """Host check for a bias or dB tensor against the varlen bias contract.
+
+    The shape is `(1 if the Q side is STACKED else batch_size, num_head_q,
+    max_seqlen_q, max_seqlen_k)`, whatever the VarlenBits mode: the kernel
+    addresses `t[batch_index, h, i, j]` with `i`, `j` local to the sequence and
+    `batch_index` the Q side's decode. `ParityKernelContext.
+    _score_slab_byte_base` states the contract and cites the Triton kernels it
+    follows. Under a dense word the two maxima are the call's `seqlen_q` and
+    `seqlen_k`, so this is the familiar `(B, H, Sq, Sk)`.
+
+    Exact rather than at-least, on every axis: a STACKED Q side reads slot 0
+    for every sequence, so a caller who allocated one slot per sequence
+    believes something the kernel does not do, and only refusing tells them.
+
+    `max_seqlen_*` are the decode's MAX fallbacks, i.e. what `varlen_args`
+    returns -- under a `seqused_k` layout that is the slot capacity, not the
+    longest used length.
+    """
+    stacked_q = varlen is not None and int(varlen["bits"]) & VARLEN_STACKED
+    want = (1 if stacked_q else int(batch_size), int(num_head_q), int(max_seqlen_q), int(max_seqlen_k))
+    if tuple(t.shape) != want:
+        layout = "STACKED Q side: one slot shared by every sequence" if stacked_q else "one slot per batch entry"
+        raise ValueError(
+            f"{name} must be (slots, num_heads_q, max_seqlen_q, max_seqlen_k) = {want} ({layout}); "
+            f"got {tuple(t.shape)}. Rows and columns are local to each sequence -- a varlen {name} "
+            f"is never packed -- and the batch slot follows the Q side's VarlenBits decode, as in "
+            f"AOTriton's Triton kernels."
+        )
+    if t.stride(3) != 1:
+        raise ValueError(f"{name} needs a contiguous seqlen_k axis; strides are {tuple(t.stride())}")
+    if t.dtype != dtype:
+        raise ValueError(f"{name} must have Q's dtype ({dtype}), got {t.dtype}")
 
 
 def _slab_span_elems(rows, stride_seq, hdim):
@@ -1773,6 +1809,46 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         elems = batch_idx * fx.Index(s0) + head_idx * fx.Index(s1) + row_off * fx.Index(s2)
         return elems * fx.Index(self.traits.BF16_BYTES)
 
+    def _score_slab_byte_base(self, s0, s1, head_idx):
+        """Byte offset of this workgroup's bias (or dB) slab: batch and head only.
+
+        **A bias is addressed by local coordinates, never by a token origin.**
+        This is AOTriton's varlen bias contract, and the Triton kernels are its
+        reference. Element `(i, j)` of sequence `z`'s scores, for query head
+        `h`, is
+
+            B[batch_index(z), h, i, j]    0 <= i < seqlen_q[z], 0 <= j < seqlen_k[z]
+
+        where `batch_index` is the **Q side's** VarlenBits decode -- `z` for a
+        BATCHED Q side, 0 for a STACKED one (`varlen_bits.py:200`) -- and the
+        row and column are the query and key indices *within the sequence*.
+        Neither `q_row_off` nor `kv_row_off` takes part, under any mode:
+
+        - forward: `B + batch_index*stride_bz + off_h_q*stride_bh +
+          offs_m*stride_bm` (`fwd_kernel.py:397`), columns `start_N + OFFS_N`
+          (`fwd_kernel_inner.py:155`);
+        - dK/dV, dQ and fused: `B + off_h_q*stride_bh + batch_index*stride_bz`
+          (`bwd_kernel_dk_dv.py:275`, `bwd_kernel_dq.py:249`,
+          `bwd_kernel_fuse.py:243,482`), local rows and columns in
+          `bwd_inner_dk_dv.py:161`, `bwd_inner_dq.py:142`,
+          `bwd_inner_fuse.py:178`;
+        - dB, the same slab of the gradient: `bwd_kernel_dq.py:262`,
+          `bwd_kernel_fuse.py:246`, stored by `bwd_inner_dq.py:201`.
+
+        So the bias is `(1 if Q is STACKED else N, Hq, max_seqlen_q,
+        max_seqlen_k)` and a STACKED Q side shares slot 0 between all its
+        sequences, each reading the top-left `seqlen_q[z] x seqlen_k[z]` corner.
+        Under a dense word the row origin is 0 anyway, which is why the dense
+        callers never saw a difference.
+
+        The forward and the split backward used to fold `q_row_off` in here, as
+        if the bias were Q-shaped: a packed Q then wanted a bias with `total_q`
+        rows, and since the two launchers checked different column extents no
+        single varlen bias was accepted by both.
+        """
+        elems = self.batch_idx * fx.Index(s0) + head_idx * fx.Index(s1)
+        return elems * fx.Index(self.traits.BF16_BYTES)
+
     def _slab_view(self, tensor, s0, s1, s2, row_off, head_idx, rows, hdim, batch_idx=None):
         """A buffer view over one (batch, head) slab, bounded at its last element.
 
@@ -1871,9 +1947,10 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         self.kv_gmem_elem_offset = fx.Index(0)
 
         if const_expr(traits.BIAS_TYPE):
-            # Same slab shape as Q, which is the point: bias is indexed by
-            # (batch, head, q_row, kv_col), so the varlen row origin and the
-            # head fold into the base exactly as Q's do, and what remains per
+            # Bias is indexed by (batch, head, q_row, kv_col) with the row and
+            # column *local to the sequence*: the batch slot and the head fold
+            # into the base, the varlen row origin does not -- see
+            # `_score_slab_byte_base` for the contract -- and what remains per
             # access is `q_row * stride_b_seq_q + col`.
             #
             # A raw resource rather than a `_slab_view`: the reads here are
@@ -1893,13 +1970,7 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
                     self.seqlen_q_v, self.seqlen_kv_v, self.stride_b_seq_q, traits.BF16_BYTES
                 ),
                 base_byte_offset=as_mlir_value(
-                    self._slab_byte_base(
-                        self.stride_b_batch,
-                        self.stride_b_head,
-                        self.stride_b_seq_q,
-                        self.q_row_off,
-                        self.q_head_idx,
-                    )
+                    self._score_slab_byte_base(self.stride_b_batch, self.stride_b_head, self.q_head_idx)
                 ),
             )
         self.q_div = self._slab_view(

@@ -136,6 +136,7 @@ from .dualwave_helpers import (
     ParitySoftmaxHelper,
     traits_cache_key,
     ParityStoreHelper,
+    check_score_tensor,
     wire_ptr,
     wire_view,
 )
@@ -1662,14 +1663,6 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
             raise ValueError("this build has bias=True and requires a (batch, num_heads, seqlen_q, seqlen_k) tensor")
         if bias is not None and not traits.BIAS_TYPE:
             raise ValueError("this build was not compiled for bias; pass bias=True in FmhaInputMetadata")
-        if bias is not None:
-            if bias.shape[3] != K.shape[2] or bias.shape[2] != Q.shape[2]:
-                raise ValueError(
-                    f"bias must be (batch, num_heads, seqlen_q, seqlen_k); got {tuple(bias.shape)} "
-                    f"against seqlen_q={Q.shape[2]}, seqlen_k={K.shape[2]}"
-                )
-            if bias.stride(3) != 1:
-                raise ValueError(f"bias needs a contiguous seqlen_k axis; strides are {tuple(bias.stride())}")
         bias_t = bias if bias is not None else O
         bias_st = tuple(int(x) for x in bias.stride()[:3]) if bias is not None else (0, 0, 0)
 
@@ -1711,6 +1704,11 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         # belongs launches N programs over a 1-batch tensor and every one of
         # them addresses a plausible row.
         _vl = fmha.varlen_args(STRIDES_CONSTEXPR, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
+        # The bias is checked against the decode's max lengths, not Q's or K's
+        # token extents: its rows and columns are local to each sequence, and
+        # its batch slot follows the Q side's decode. See `check_score_tensor`.
+        if bias is not None:
+            check_score_tensor("bias", bias, varlen, batch_size, num_head_q, _vl[5], _vl[6], Q.dtype)
 
         return (
             # Six pointers, not six tensors. `wire_ptr` types each one from the

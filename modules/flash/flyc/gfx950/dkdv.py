@@ -139,6 +139,7 @@ from .dualwave_helpers import (
     _score_column_runs,
     _slab_span_elems,
     _v_imm_lo,
+    check_score_tensor,
     exp2_wait_state,
     mfma_operand_wait_state,
     wire_ptr,
@@ -776,14 +777,14 @@ class BwdDkDvKernelContext(ParityKernelContext):
         # The bias is `(batch, q head, q row, kv col)`, so it moves with the
         # query head too -- but only its base does. The bound is a function of
         # the two sequence lengths and the row stride, none of which are the
-        # head's, so it is computed once here.
+        # head's, so it is computed once here. Its rows and columns are local
+        # to the sequence, so unlike Q's slab the base carries no row origin;
+        # see `_score_slab_byte_base`.
         if const_expr(self.traits.BIAS_TYPE):
             self.bias_num_records_bytes = _bias_slab_num_records_bytes(
                 self.seqlen_q_v, self.seqlen_kv_v, self.stride_b_seq_q, self.traits.BF16_BYTES
             )
-            self.bias_base0_bytes = self._slab_byte_base(
-                self.stride_b_batch, self.stride_b_head, self.stride_b_seq_q, self.q_row_off, head0
-            )
+            self.bias_base0_bytes = self._score_slab_byte_base(self.stride_b_batch, self.stride_b_head, head0)
             self.bias_head_step_bytes = fx.Index(self.stride_b_head) * elem_bytes
 
     def bind_q_head(self, g):
@@ -2554,39 +2555,10 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         if bias is not None and not traits.BIAS_TYPE:
             raise ValueError("this build was not compiled for bias; pass bias=True in FmhaInputMetadata")
         if bias is not None:
-            # **The bias follows Q on the query axis**, which is what the
-            # addressing already does: the descriptor folds in `q_row_off` and
-            # the head exactly as Q's slab does, so the shape rule is "match Q"
-            # rather than a second layout to keep in step. Dense that reads as
-            # `(b, h, seqlen_q, seqlen_k)`; under a packed varlen it reads as
-            # `(1, h, total_q, max_seqlen_k)`, and under `varlen_padded` -- a
-            # real batch axis -- it is the dense shape again. All three fall
-            # out of one check, which is why it is written this way.
-            #
-            # The KV axis is *not* packed: it has no stride of its own (slot 3
-            # is contiguous by contract), so each sequence's row spans
-            # `seqlen_k` columns from 0 and the column index is the
-            # within-sequence KV row the kernel already computes.
-            if bias.shape[0] != Q.shape[0] or bias.shape[2] != Q.shape[2]:
-                raise ValueError(
-                    f"bias must share Q's batch and query-token extents; got {tuple(bias.shape)} "
-                    f"against q {tuple(Q.shape)}. Under a packed varlen that means "
-                    f"(1, num_heads, total_q, max_seqlen_k)."
-                )
-            if bias.shape[3] != seqlen_k:
-                raise ValueError(
-                    f"bias's last axis is the KV column and is not packed: it must be seqlen_k "
-                    f"({seqlen_k}), got {bias.shape[3]}"
-                )
-            if bias.shape[1] != num_head_q:
-                raise ValueError(
-                    f"bias carries the *query* head count ({num_head_q}); got {bias.shape[1]}. The bias "
-                    "shifts the scores, and there is one score matrix per q head even under GQA."
-                )
-            if bias.stride(3) != 1:
-                raise ValueError(f"bias needs a contiguous seqlen_k axis; strides are {tuple(bias.stride())}")
-            if bias.dtype != Q.dtype:
-                raise ValueError(f"bias must have Q's dtype ({Q.dtype}), got {bias.dtype}")
+            # Rows and columns local to each sequence, batch slot from the Q
+            # side's decode -- the forward's contract and Triton's; see
+            # `check_score_tensor`.
+            check_score_tensor("bias", bias, varlen, batch_size, num_head_q, _vl[5], _vl[6], Q.dtype)
         # The sentinel is a real tensor whose contents are never read: every
         # use is behind `const_expr(traits.BIAS_TYPE)`, so a build without bias
         # emits no load at all. That is what makes `bias=None` bitwise

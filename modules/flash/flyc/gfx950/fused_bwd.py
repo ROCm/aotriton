@@ -107,6 +107,7 @@ from fmha_utils import MaskedAxis
 from .dualwave_helpers import (
     _ds_read_tr16_b64_imm,
     _slab_span_elems,
+    check_score_tensor,
     traits_cache_key,
     wire_ptr,
     wire_view,
@@ -1619,8 +1620,9 @@ def build_fmha_bwd_fused_gfx950_module_primary(meta, knobs):
             raise ValueError("this build has bias=True and requires a (batch, num_heads, seqlen_q, seqlen_k) tensor")
         if bias is not None and not traits.BIAS_TYPE:
             raise ValueError("this build was not compiled for bias")
-        if bias is not None and (bias.stride(3) != 1 or bias.dtype != Q.dtype):
-            raise ValueError("bias needs a contiguous seqlen_k axis and Q's dtype")
+        if bias is not None:
+            # The split backward's contract; see `check_score_tensor`.
+            check_score_tensor("bias", bias, varlen, batch_size, num_head_q, _vl[5], _vl[6], Q.dtype)
         bias_t = bias if bias is not None else DK
         bias_st = tuple(int(x) for x in bias.stride()[:3]) if bias is not None else (0, 0, 0)
         return (
