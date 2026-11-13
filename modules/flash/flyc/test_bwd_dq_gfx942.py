@@ -295,6 +295,59 @@ def test_varlen(head_dim, layout, lse_layout, causal_type):
         _check(f"hd={head_dim} {layout} {lse_layout} ct={causal_type} seq{z}=({sq},{sk})", dqz, refs[z][0], refs[z][4])
 
 
+VARLEN_BIAS_SEQS = ((1, 300), (64, 320), (130, 130), (300, 37), (37, 200))
+
+
+@pytest.mark.parametrize("head_dim", (64, 128))
+def test_varlen_bias(head_dim):
+    """Packed bias and dB (1, H, sum(Sq), sum(Sk)): sequence z owns its [q_off:, k_off:] block."""
+    h = 2
+    lq = [a for a, _ in VARLEN_BIAS_SEQS]
+    lk = [c for _, c in VARLEN_BIAS_SEQS]
+    cu_q = torch.cumsum(torch.tensor([0] + lq), 0).to(device="cuda", dtype=torch.int32)
+    cu_k = torch.cumsum(torch.tensor([0] + lk), 0).to(device="cuda", dtype=torch.int32)
+    tq, tk = sum(lq), sum(lk)
+    torch.manual_seed(head_dim + 1)
+    q = torch.randn(1, h, tq, head_dim, device="cuda", dtype=DTYPE)
+    k = torch.randn(1, h, tk, head_dim, device="cuda", dtype=DTYPE)
+    v = torch.randn_like(k)
+    do = torch.randn_like(q)
+    bias = torch.randn(1, h, tq, tk, device="cuda", dtype=DTYPE)
+    dbias = torch.full_like(bias, float("nan"))
+    varlen = abi.varlen_compact(cu_q, cu_k, max(lq), max(lk), lse_tokens=tq, lse_layout=abi.VARLEN_LSE_LAYOUT_HT)
+    lse = torch.zeros(h, tq, device="cuda")
+    delta = torch.zeros_like(lse)
+    refs = []
+    for z, (sq, sk) in enumerate(VARLEN_BIAS_SEQS):
+        qs, ks = slice(int(cu_q[z]), int(cu_q[z + 1])), slice(int(cu_k[z]), int(cu_k[z + 1]))
+        keep = _keep_mask(0, None, 0, sq, sk)
+        dq_ref, ds_ref, lz, dz, _ = _reference(q[0, :, qs], k[0, :, ks], v[0, :, ks], do[0, :, qs], head_dim ** -0.5,
+                                               keep, bias=bias[0, :, qs, ks])
+        lse[:, qs], delta[:, qs] = lz, dz
+        refs.append((qs, ks, dq_ref, ds_ref))
+    dq = torch.full_like(q, float("nan"))
+    _build(head_dim, bias=True)(q,
+                                k,
+                                v,
+                                do,
+                                dq,
+                                lse,
+                                delta,
+                                1,
+                                max(lq),
+                                seqlen_k=max(lk),
+                                num_seqlens=len(VARLEN_BIAS_SEQS),
+                                varlen=varlen,
+                                bias=bias,
+                                dbias=dbias)
+    torch.cuda.synchronize()
+    for z, (qs, ks, dq_ref, ds_ref) in enumerate(refs):
+        _check(f"hd={head_dim} varlen bias seq{z} dQ", dq[0, :, qs], dq_ref)
+        err = (dbias[0, :, qs, ks].double() - ds_ref).abs().max().item()
+        tol = 2 ** -8 * max(1.0, ds_ref.abs().max().item())
+        assert err <= tol, f"hd={head_dim} varlen bias seq{z}: dB off by {err:.3e}"
+
+
 @pytest.mark.parametrize("shape", [(300, 777), (301, 1001), (1, 1001), (500, 500), (257, 64)])
 @pytest.mark.parametrize("head_dim", (64, 128))
 def test_bias(head_dim, shape):
