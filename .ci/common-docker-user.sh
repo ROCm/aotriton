@@ -12,6 +12,25 @@
 # default to /, which is not writable; /tmp is.
 DOCKER_USER_ARGS=(--user "$(id -u):$(id -g)" -e HOME=/tmp)
 
+# Fail unless everything under each <dir> is writable by the host user.
+#
+# For the host directories bind-mounted into the containers. Runs from before
+# the containers stopped running as root left root-owned files in them, and a
+# container would otherwise fail on one only after hours of building.
+function require_writable() {
+  local dir
+  local blocked
+  for dir in "$@"; do
+    blocked=$(find "${dir}" ! -writable -print -quit)
+    if [[ -n "${blocked}" ]]; then
+      echo "Error: ${blocked} is not writable by $(id -un), and the CI containers run as that user." >&2
+      echo "Files left by earlier root runs can be reclaimed once with:" >&2
+      echo "  sudo chown -R $(id -u):$(id -g) ${dir}" >&2
+      return 1
+    fi
+  done
+}
+
 # Make <volume> writable by the host user, running <image> to do it.
 #
 # A new docker volume is root-owned, and so is everything a container wrote

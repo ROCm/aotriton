@@ -118,6 +118,7 @@ FLYDSL_ORIGIN="${FLYDSL_ORIGIN:-${FLYDSL_DEFAULT_ORIGIN}}"
 
 mkdir -p "${WHEEL_OUTPUT_DIR}"
 WHEEL_OUTPUT_DIR="$(realpath "${WHEEL_OUTPUT_DIR}")"
+require_writable "${WHEEL_OUTPUT_DIR}" || exit 1
 
 # --- The LLVM half is the CALLER's ---
 # This script does not build LLVM. Its caller resolves the pin and hands the

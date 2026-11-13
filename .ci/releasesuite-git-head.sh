@@ -276,6 +276,7 @@ OUTPUT_DIR="$1"
 CACHE_DIR="${OUTPUT_DIR}/.cache"
 WHEEL_CACHE_DIR="${CACHE_DIR}/wheels"
 mkdir -p "${WHEEL_CACHE_DIR}" "${CACHE_DIR}/pip"
+require_writable "${OUTPUT_DIR}" || exit 1
 
 # Determine Triton hashes to build (shared with .tune).
 # Command substitution, not process substitution: `readarray < <(...)` reports

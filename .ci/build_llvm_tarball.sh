@@ -113,6 +113,7 @@ fi
 
 mkdir -p "${TARBALL_OUTPUT_DIR}"
 TARBALL_OUTPUT_DIR="$(realpath "${TARBALL_OUTPUT_DIR}")"
+require_writable "${TARBALL_OUTPUT_DIR}" || exit 1
 
 # The tarball name carries a distro slug (the aotriton:base-py* family is
 # AlmaLinux 8) because .ci/triton-patch/docker-script-build.sh's LLVM filenames

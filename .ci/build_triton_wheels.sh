@@ -52,6 +52,7 @@ fi
 TRITON_GIT_ORIGIN="${TRITON_GIT_ORIGIN:-https://github.com/ROCm/triton}"
 
 mkdir -p "${WHEEL_OUTPUT_DIR}"
+require_writable "${WHEEL_OUTPUT_DIR}" || exit 1
 
 # hash_origin/hash_pat_environ are each called once per NEEDED_HASHES entry
 # from up to 3 separate loops below (the PAT pre-check, the mirror-sync
