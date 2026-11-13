@@ -20,13 +20,16 @@
 # Container prerequisites:
 #   Mounts:
 #     /mirror        — bare AOTriton git mirror (read-only); the source is
-#                      cloned from it into /src/aotriton at the requested commit
+#                      cloned from it into AOTRITON_SOURCE_PATH at the
+#                      requested commit
 #     /output        — destination for output tar archives
 #     /cache         — shared cache; /cache/wheels holds pre-built Triton wheels,
 #                      /cache/aotriton-common the common archive that a
 #                      `common` target writes and a `runtime` target reads
 #   Environment variables:
 #     AOTRITON_GIT_COMMIT    — commit to check out from /mirror
+#     AOTRITON_SOURCE_PATH   — where the source is checked out, e.g.
+#                              /scratch/src/aotriton. Emptied first.
 #     AOTRITON_BUILD_PATH    — build directory, e.g. /scratch/build/aotriton
 #                              Recommended: mount /scratch as tmpfs with exec flag
 #                              and sufficient memory to hold the full build tree.
@@ -91,6 +94,9 @@ fi
 if [ -z "${AOTRITON_INSTALL_PREFIX}" ]; then
   echo "Error: AOTRITON_INSTALL_PREFIX is not set." >&2; exit 1
 fi
+if [ -z "${AOTRITON_SOURCE_PATH}" ]; then
+  echo "Error: AOTRITON_SOURCE_PATH is not set." >&2; exit 1
+fi
 export AOTRITON_INSTALL_PATH="${AOTRITON_INSTALL_PREFIX}/aotriton"
 
 # --- Materialize the AOTriton source from the local mirror ---
@@ -103,21 +109,14 @@ if [ -z "${AOTRITON_GIT_COMMIT}" ]; then
   echo "Error: AOTRITON_GIT_COMMIT is not set." >&2; exit 1
 fi
 git config --global --add safe.directory '*'
-rm -rf /src/aotriton
-git init /src/aotriton
-git -C /src/aotriton remote add origin file:///mirror
-git -C /src/aotriton fetch --depth=1 origin "${AOTRITON_GIT_COMMIT}"
-git -C /src/aotriton checkout -f FETCH_HEAD
-
-# pip (running as root) refuses a cache dir not owned by root and silently
-# disables caching. PIP_CACHE_DIR=/cache/pip is bind-mounted from the host
-# and owned by the host UID, so take ownership inside the container.
-if [ -n "${PIP_CACHE_DIR}" ] && [ -d "${PIP_CACHE_DIR}" ]; then
-  chown -R "$(id -u):$(id -g)" "${PIP_CACHE_DIR}" || true
-fi
+rm -rf "${AOTRITON_SOURCE_PATH}"
+git init "${AOTRITON_SOURCE_PATH}"
+git -C "${AOTRITON_SOURCE_PATH}" remote add origin file:///mirror
+git -C "${AOTRITON_SOURCE_PATH}" fetch --depth=1 origin "${AOTRITON_GIT_COMMIT}"
+git -C "${AOTRITON_SOURCE_PATH}" checkout -f FETCH_HEAD
 
 # --- Detect ROCm and HIP version ---
-GIT_SHORT=$(git -C /src/aotriton rev-parse --short=12 HEAD)
+GIT_SHORT=$(git -C "${AOTRITON_SOURCE_PATH}" rev-parse --short=12 HEAD)
 export ROCM_PATH=$(hipconfig --rocmpath)
 if [ -z "${ROCM_PATH}" ]; then
   echo "Error: ROCM_PATH is empty. hipconfig --rocmpath failed." >&2
@@ -202,9 +201,9 @@ if [[ "${ASAN_MODE}" == "ON" ]]; then
     "-DCMAKE_CXX_COMPILER=${ROCM_PATH}/llvm/bin/clang++"
   )
   # Use theRock clang directly — no scl gcc-toolset wrapper.
-  bash /src/aotriton/.ci/build-release.sh "${build_args[@]}"
+  bash "${AOTRITON_SOURCE_PATH}/.ci/build-release.sh" "${build_args[@]}"
 else
-  scl enable gcc-toolset-13 -- bash /src/aotriton/.ci/build-release.sh "${build_args[@]}"
+  scl enable gcc-toolset-13 -- bash "${AOTRITON_SOURCE_PATH}/.ci/build-release.sh" "${build_args[@]}"
 fi
 
 # --- Package (every archive must have aotriton/ as the root directory) ---

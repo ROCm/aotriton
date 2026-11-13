@@ -9,6 +9,9 @@ ARG PYVER=3.11
 # needs no extra repo enablement. PYVER values dnf already packages (e.g.
 # 3.11, 3.12) keep using the original dnf install path.
 #
+# The source build avoids `cd` (a RUN that changes directory is flagged by
+# trivy, DS-0013): `env -C` and `make -C` run each step in the source tree.
+#
 # The exact PYVER.z patch is resolved dynamically (latest listed under
 # python.org/ftp/python/) rather than pinned, so this Dockerfile never goes
 # stale -- the image tag is "-py${PYVER}" (no patch suffix), so once built,
@@ -26,14 +29,12 @@ RUN set -ex; \
       if [ -z "${pyver_full}" ]; then \
         echo "Could not resolve latest ${PYVER}.x release from python.org" >&2; exit 1; \
       fi && \
-      cd /usr/src && \
-      wget -q "https://www.python.org/ftp/python/${pyver_full}/Python-${pyver_full}.tgz" && \
-      tar xzf "Python-${pyver_full}.tgz" && \
-      cd "Python-${pyver_full}" && \
-      ./configure --with-ensurepip=install && \
-      make -j"$(nproc)" && \
-      make altinstall && \
-      cd / && rm -rf "/usr/src/Python-${pyver_full}"* && \
+      wget -q -P /usr/src "https://www.python.org/ftp/python/${pyver_full}/Python-${pyver_full}.tgz" && \
+      tar xzf "/usr/src/Python-${pyver_full}.tgz" -C /usr/src && \
+      env -C "/usr/src/Python-${pyver_full}" ./configure --with-ensurepip=install && \
+      make -C "/usr/src/Python-${pyver_full}" -j"$(nproc)" && \
+      make -C "/usr/src/Python-${pyver_full}" altinstall && \
+      rm -rf "/usr/src/Python-${pyver_full}"* && \
       update-alternatives --install /usr/bin/unversioned-python python "/usr/local/bin/python${PYVER}" 1 \
         --slave /usr/bin/python unversioned-python "/usr/local/bin/python${PYVER}" && \
       update-alternatives --install /usr/bin/python3 python3 "/usr/local/bin/python${PYVER}" 1 && \
@@ -45,5 +46,14 @@ RUN set -ex; \
       update-alternatives --set python "/usr/bin/python${PYVER}" && \
       update-alternatives --set python3 "/usr/bin/python${PYVER}"; \
     fi && \
+    dnf clean all && \
     python -m ensurepip && \
     python -m pip install cmake ninja wheel
+
+# Non-root by default, as nobody (65534), a uid that owns nothing on any
+# host. No user is created: the .ci scripts always run containers as the
+# invoking host user instead (common-docker-user.sh).
+USER 65534:65534
+
+# A build environment: nothing listens, so there is nothing to probe.
+HEALTHCHECK NONE
