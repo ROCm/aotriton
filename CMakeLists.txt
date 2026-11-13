@@ -102,7 +102,7 @@ include(cmake/LoadHIP.cmake)
 
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
 option(AOTRITON_NO_PYTHON "Disable python binding build" OFF)
-option(PYAOTRITON_ABI3 "Build pyaotriton against the Python stable ABI (abi3, Python 3.12+), so one build works with any later Python. It loads nanobind's runtime from the nanobind-backend package, which must be installed wherever pyaotriton is imported." OFF)
+option(PYAOTRITON_ABI3 "Build pyaotriton against the Python stable ABI (abi3, Python 3.12+), so one build works with any later Python. It loads nanobind's runtime from the nanobind-backend package, which must be installed wherever pyaotriton is imported. OFF builds a module specific to the build Python instead." ON)
 option(AOTRITON_ENABLE_ASAN "Enable Address Sanitizer (g++). Implies -g" OFF)
 option(AOTRITON_ENABLE_ASAN_CLANG "Enable Address Sanitizer using Clang (e.g. theRock clang++). Implies -g" OFF)
 option(AOTRITON_BUILD_FOR_TUNING "Build all GPU kernels and set -DAOTRITON_BUILD_FOR_TUNING=1 (=0 otherwise)" OFF)
