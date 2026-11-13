@@ -21,7 +21,12 @@ function require_writable() {
   local dir
   local blocked
   for dir in "$@"; do
-    blocked=$(find "${dir}" ! -writable -print -quit)
+    # A missing or untraversable directory makes find fail with nothing on
+    # stdout, which must not pass for "all writable".
+    if ! blocked=$(find "${dir}" ! -writable -print -quit); then
+      echo "Error: cannot check that ${dir} is writable; see the find error above." >&2
+      return 1
+    fi
     if [[ -n "${blocked}" ]]; then
       echo "Error: ${blocked} is not writable by $(id -un), and the CI containers run as that user." >&2
       echo "Files left by earlier root runs can be reclaimed once with:" >&2
