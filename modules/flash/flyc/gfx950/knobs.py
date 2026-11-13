@@ -67,6 +67,9 @@ class Gfx950KnobFields(FlycQKnobs):
     setprio: bool | None = None
     stagger: bool | None = None
     lpt_tile_order: bool | None = None
+    # How workgroups map to (head, q block, batch), for L2 affinity across the
+    # eight XCDs; one of `traits.XCD_MAPS`.
+    xcd_map: str | None = None
     # End the KV walk at the last live tile; see `EXACT_KV_TILES`. A speed
     # trade by sequence length, not accuracy: +69% at seqlen_k 64 and +33% at
     # 128, but 1.5-2% slower from four tiles up, so off unless `resolve` (or a

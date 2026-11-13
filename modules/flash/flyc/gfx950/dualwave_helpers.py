@@ -75,6 +75,28 @@ from flydsl.expr import math as fmath
 # is the one place that has to agree with it.
 _D_ACCESS_ELEMS = _ACCESS_BYTES // _ELEM_BYTES
 
+
+def _udiv24(a, b):
+    """`a // b` for non-negative i32 operands below 2**24.
+
+    The mask is the whole trick: it proves to LLVM that both operands fit in
+    24 bits, which selects its `v_rcp_f32`-based expansion (about ten
+    instructions) over the full 32-bit one. The caller guarantees the range.
+    """
+    mask = fx.Int32(0xFFFFFF)
+    a24 = arith.andi(as_mlir_value(fx.Int32(a)), as_mlir_value(mask))
+    b24 = arith.andi(as_mlir_value(fx.Int32(b)), as_mlir_value(mask))
+    return fx.Int32(arith.divui(a24, b24))
+
+
+# gfx950's XCD count: workgroups are dealt to XCDs round-robin on their linear
+# id, and each XCD has its own L2. See `ParityKernelContext._map_workgroup`.
+NUM_XCD = 8
+
+# Flat heads -- `(z, head)` pairs -- per chunk of the P7 order; see
+# `ParityKernelContext._lpt_order` for how 32 was chosen.
+LPT_CHUNK_HEADS = 32
+
 __all__ = [
     "ParityGemmHelper",
     "ParityKernelContext",
@@ -1133,10 +1155,11 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         self.c_sm_scale = fx.Float32(self.sm_scale_arg)
         self.c_sm_scale_log2e = fx.Float32(self.sm_scale_arg) * fx.Float32(dualwave._LOG2E)
 
-    # -- runtime head counts ---------------------------------------------
+    # -- workgroup mapping and runtime head counts -------------------------
 
     def init_thread_mapping(self):
         super().init_thread_mapping()
+        traits = self.traits
         # Re-derive the four head indices with runtime counts. The *mapping* is
         # the production one verbatim: `h_idx` is decomposed against the KV head
         # count and recomposed against the group size, which groups the Q heads
@@ -1149,7 +1172,6 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         num_head_k_i32 = fx.Int32(self.num_head_k)
         rcp_head_k = rocdl.rcp(T.f32, arith.uitofp(T.f32, as_mlir_value(num_head_k_i32)))
         gqa_group_i32, _ = _udiv_head_count(fx.Int32(self.num_head_q), num_head_k_i32, rcp_head_k)
-        group_id_i32, h_kv_idx_i32 = _udiv_head_count(fx.Int32(self.h_idx), num_head_k_i32, rcp_head_k)
         gqa_group = fx.Index(gqa_group_i32)
         # Published, because the dK/dV group loop's trip count is this same
         # quantity and `q_head_idx` -- the head that loop walks from -- is
@@ -1157,30 +1179,247 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         # trait and a kernarg drifted apart in the first place (issue 9); one
         # source is what stops them disagreeing again.
         self.gqa_group = gqa_group
-        self.h_kv_idx = fx.Index(h_kv_idx_i32)
-        self.group_id = fx.Index(group_id_i32)
+        lpt = bool(traits.LPT_TILE_ORDER and traits.CAUSAL)
+        if const_expr(getattr(traits, "XCD_MAP", "none") == "none"):
+            q_block = self.q_block_idx
+            if const_expr(lpt):
+                h_idx, q_block, z_idx = self._lpt_order(LPT_CHUNK_HEADS)
+                self.h_idx = h_idx
+                self._set_z(z_idx)
+            group_id_i32, h_kv_idx_i32 = _udiv_head_count(fx.Int32(self.h_idx), num_head_k_i32, rcp_head_k)
+            self.h_kv_idx = fx.Index(h_kv_idx_i32)
+            self.group_id = fx.Index(group_id_i32)
+        else:
+            h_kv, group, q_block, z_idx = self._map_workgroup(lpt)
+            self.h_kv_idx = h_kv
+            self.group_id = group
+            self.h_idx = group * fx.Index(self.num_head_k) + h_kv
+            self._set_z(z_idx)
         self.q_head_idx = self.h_kv_idx * gqa_group + self.group_id
         self.kv_head_idx = self.h_kv_idx
-        if const_expr(self.traits.Q_HEADS_PER_WG > 1):
+        # Both remaps above permute the grid as launched, so under GQA head
+        # packing -- `grid.x = num_head_q // Q_HEADS_PER_WG` -- they permute
+        # packed workgroups and `group_id` is a packed group slot, which this
+        # then spreads over the waves.
+        if const_expr(traits.Q_HEADS_PER_WG > 1):
             self._pack_q_heads(gqa_group)
-        if const_expr(self.traits.LPT_TILE_ORDER and self.traits.CAUSAL):
-            # P7. Longest-processing-time-first: under a causal mask q-block
-            # `i` walks about `i` KV tiles and `grid.y` issues in increasing
-            # order, so the cheapest workgroups go first and the most expensive
-            # land in the tail. Reversing the index puts them first.
-            #
-            # A bijection over the same index set, so the output is
-            # bit-identical and only the schedule moves -- which is what makes
-            # it safe as a knob. **Measured at 0.0% on gfx950** across every
-            # width and shape tried, so it ships off; with 8 XCDs and this many
-            # workgroups the tail imbalance it targets is already absorbed.
-            # gfx1201's forward kernel measures 12-16% from the same change.
-            #
-            # Folded into this override rather than added as a second one: an
-            # `init_thread_mapping` of its own silently replaced the head-index
-            # derivation above, which only shows up once the runtime head
-            # counts differ from the build's.
-            self.q_block_idx = fx.Index(gpu.grid_dim.y) - fx.Index(1) - self.q_block_idx
+        # **`q_start` is re-derived here, not just `q_block_idx`.** The base
+        # class derives `q_start` from the launch's `grid.y` before this runs,
+        # and nothing downstream reads `q_block_idx`; the first P7 reversed
+        # only the latter, so an LPT build compiled to the same ISA as a plain
+        # one and measured at the 0.0% that a no-op measures.
+        self.set_q_block(q_block)
+
+    def _lpt_order(self, chunk):
+        """`(h_idx, q block, z)` in longest-processing-time-first order (P7).
+
+        Under a causal mask q block `i` walks about `i + 1` KV tiles, and the
+        launch issues them in increasing order with the batch outermost, so
+        the most expensive blocks of the last sequence land in the tail. This
+        deals the workgroups out with the q axis reversed and made *slowest*:
+        `chunk` flat heads -- `(z, head)` pairs -- at a time, every head's
+        longest block first, then every head's next longest, and so on. Within
+        a chunk the head stays the fastest axis.
+
+        This is what closed the causal long-sequence shortfall: S=4096 at 1x
+        the reference work (B=2, H=16, 512 workgroups) went 597 -> 823 TF, the
+        4x-work shape (B=8) 761 -> 838, so the two now nearly agree. Over hdim
+        128, S 1024..8192, H 8..64 at 1x and 4x work it gains 3-42%; the cells
+        it does not gain -- 2048+ workgroups at S=1024, one wave of 256 at
+        S=8192 -- are within 1% either way.
+
+        Why each part is the way it is -- all three measured, and the first two
+        reproduce on a probe kernel that only spins, so they belong to the
+        dispatcher, not to the memory system:
+
+        - **Slowest, not just reversed.** Reversing `grid.y` in place is LPT
+          only within one batch slice; it closes most of the gap where a slice
+          fills the GPU and almost none of it at H=12 (+2% where this is +28%).
+        - **The head fastest.** gfx950 deals each XCD's workgroups to its four
+          shader engines round-robin, so an order whose cost cycles with a
+          period of four -- head-major with four q blocks -- hands one engine
+          every long block: head-major cost up to 25% at S=1024.
+        - **Chunked, not global.** A global order runs every head at the same
+          q block at once, so no two workgroups in flight share K/V; at S=1024
+          and 2048 with large batches that cost up to 8%. A chunk of 32 heads
+          keeps several blocks of each head in flight, as the launch order did,
+          and on the probe schedules as well as the global order. 64 measured
+          the same within noise except at S=1024, where it was 2-5% behind.
+
+        The last chunk takes the remainder rather than running a short one
+        alone at the end. With `chunk` a multiple of 8, a flat head runs on
+        XCD `flat % 8` for every one of its blocks, as when the head count is
+        a multiple of 8 and the grid is launched as is.
+
+        **i32 with 24-bit division** for the same reason as `_map_workgroup`;
+        past 2**24 workgroups the launch order is kept.
+        """
+        x = fx.Int32(gpu.block_idx.x)
+        y = fx.Int32(gpu.block_idx.y)
+        z = fx.Int32(gpu.block_idx.z)
+        gx = fx.Int32(gpu.grid_dim.x)
+        gy = fx.Int32(gpu.grid_dim.y)
+        gz = fx.Int32(gpu.grid_dim.z)
+        one = fx.Int32(1)
+        flat_heads = gx * gz
+        linear = x + gx * (y + gy * z)
+        chunk = fx.Int32(chunk)
+        num_chunks = flat_heads // chunk
+        last = (num_chunks > one).select(num_chunks - one, fx.Int32(0))
+        k = _udiv24(linear, chunk * gy)
+        k = (k < last).select(k, last)
+        width = (k < last).select(chunk, flat_heads - last * chunk)
+        within = linear - k * chunk * gy
+        first = k * chunk
+        level = _udiv24(within, width)
+        flat = first + within - level * width
+        z_idx = _udiv24(flat, gx)
+        h = flat - z_idx * gx
+        q_block = gy - one - level
+        # Past 2**24 workgroups the divisions are not exact: keep the launch.
+        small = flat_heads * gy < fx.Int32(1 << 24)
+        h = small.select(h, x)
+        q_block = small.select(q_block, y)
+        z_idx = small.select(z_idx, z)
+        return fx.Index(h), fx.Index(q_block), fx.Index(z_idx)
+
+    def _set_z(self, z_idx):
+        """Point the context at grid-z slot `z_idx` (a sequence, or under
+        split-K a (sequence, split) pair)."""
+        if const_expr(self.traits.SPLITK):
+            self.bz_idx = z_idx
+            self.batch_idx = z_idx // self.traits.NUM_KV_SPLITS
+            self.split_idx = z_idx % self.traits.NUM_KV_SPLITS
+        else:
+            self.batch_idx = z_idx
+
+    def set_q_block(self, q_block_idx):
+        """Point the context at q block `q_block_idx`; everything q-dependent
+        downstream (`q_row`, the causal bound, the Q/O/LSE addressing) is
+        derived from `q_start` after this."""
+        self.q_block_idx = q_block_idx
+        self.q_start = q_block_idx * self.traits.BLOCK_M
+
+    def _map_workgroup(self, lpt):
+        """`(kv head, group, q block, z)` for this workgroup under `XCD_MAP` (P8).
+
+        gfx950 dispatches workgroups to its eight XCDs round-robin on the
+        linear id `x + gx * (y + gy * z)` (checked with `s_getreg XCC_ID`), and
+        each XCD has its own L2. With the head-fastest grid, head `h` lands on
+        XCD `(h + gx * (y + gy * z)) % 8` -- one XCD per head when `gx % 8 ==
+        0`, two or more otherwise -- and that affinity decides how often a KV
+        head's K/V is fetched past L2. Every mapping here is a bijection over
+        the grid, computed from the *runtime* extents, so the output does not
+        depend on it.
+
+        **Measured, and neither is the default.** Non-causal, hdim 128, S
+        1024..8192, H 8..64 (12, 20 and 40 included), 1x and 4x the reference
+        work: `pin_heads` is within 1.5% of `none` everywhere, +0.5-1% at
+        S >= 4096 and -1.5% at S=1024; `head_slow` is -2% to -2.5% at S <= 2048.
+        So the L2 affinity is worth under 1% here. Causal, `pin_heads` without
+        P7 is up to 25% *behind*, which is the dispatch order and not the L2:
+        see `_lpt_order`.
+
+        **i32 with 24-bit division, not `fx.Index`.** The divisors are runtime
+        values, and an `index` (i64) division expands to well over a hundred
+        dependent VALU instructions. Operands below 2**24 let LLVM divide
+        through `v_rcp_f32` in about ten. A grid of 2**24 workgroups or more is
+        left as launched.
+        """
+        traits = self.traits
+        x = fx.Int32(gpu.block_idx.x)
+        y = fx.Int32(gpu.block_idx.y)
+        z = fx.Int32(gpu.block_idx.z)
+        gx = fx.Int32(gpu.grid_dim.x)
+        gy = fx.Int32(gpu.grid_dim.y)
+        gz = fx.Int32(gpu.grid_dim.z)
+        one = fx.Int32(1)
+        num_head_k = fx.Int32(self.num_head_k)
+        gqa_group = _udiv24(fx.Int32(self.num_head_q), num_head_k)
+        if const_expr(traits.Q_HEADS_PER_WG > 1):
+            # Under GQA head packing a workgroup serves `Q_HEADS_PER_WG` q
+            # heads, so a KV head has that many fewer group slots on the grid;
+            # the host guarantees the division is exact.
+            gqa_group = _udiv24(gqa_group, fx.Int32(traits.Q_HEADS_PER_WG))
+        if const_expr(traits.XCD_MAP == "head_slow"):
+            # Upstream's `XCD_SWIZZLE` (arXiv:2511.02132), with the head count
+            # read from the grid rather than a trait: q block fastest within a
+            # batch slice, so consecutive workgroups walk one head's blocks.
+            linear = x + y * gx
+            h = _udiv24(linear, gy)
+            q_block = linear - h * gy
+            if const_expr(lpt):
+                q_block = gy - one - q_block
+            group = _udiv24(h, num_head_k)
+            h_kv = h - group * num_head_k
+            return fx.Index(h_kv), fx.Index(group), fx.Index(q_block), fx.Index(z)
+        # `pin_heads`. The unit of affinity is a (z, kv head) pair -- a "flat
+        # head" -- since that is what shares K/V: all of a KV head's q heads
+        # and q blocks. Of the `F` flat heads, the `F // 8 * 8` that divide
+        # evenly are dealt whole, flat head `8k + c` to XCD `c`, so every XCD
+        # gets the same number of whole heads.
+        n_xcd = fx.Int32(NUM_XCD)
+        linear = x + gx * (y + gy * z)
+        xcd = linear % n_xcd
+        slot = linear // n_xcd
+        flat_heads = gz * num_head_k
+        whole = flat_heads // n_xcd
+        units = gqa_group * gy
+        pinned_slots = whole * units
+        in_rest = slot >= pinned_slots
+        rest_heads = flat_heads - whole * n_xcd
+        if const_expr(lpt):
+            # Under P7 the q block is the *slowest* axis on each XCD -- the LPT
+            # order, and what keeps the dispatcher's round-robin over an XCD's
+            # four shader engines from handing one engine every long block.
+            # The `F % 8` left over go round-robin after the pinned part, in
+            # the same order.
+            per_level = whole * gqa_group
+            level_p = _udiv24(slot, (per_level > fx.Int32(0)).select(per_level, one))
+            r_p = slot - level_p * per_level
+            per_level_r = rest_heads * gqa_group
+            r_lin = linear - pinned_slots * n_xcd
+            level_r = _udiv24(r_lin, (per_level_r > fx.Int32(0)).select(per_level_r, one))
+            r_r = r_lin - level_r * per_level_r
+            level = in_rest.select(level_r, level_p)
+            r = in_rest.select(r_r, r_p)
+            head_ord = _udiv24(r, gqa_group)
+            group = r - head_ord * gqa_group
+            q_block = gy - one - level
+        else:
+            # aiter's `mode 2` generalized: each XCD walks its heads one at a
+            # time, all of a head's q blocks together (group fastest, so the q
+            # heads sharing a KV head walk it in step). The `F % 8` left over
+            # cannot be dealt whole without idling XCDs, so their units are cut
+            # into eight contiguous runs, one per XCD: each such head is shared
+            # by about `8 / (F % 8)` XCDs rather than all eight. Under a causal
+            # mask a run walks its q blocks zig-zag (0, n-1, 1, n-2, ...), so its
+            # work does not depend on where the cut falls.
+            rest = rest_heads * units
+            rest_per_xcd = rest // n_xcd
+            rest_extra = rest - rest_per_xcd * n_xcd
+            rest_first = xcd * rest_per_xcd + (xcd < rest_extra).select(xcd, rest_extra)
+            unit = in_rest.select(rest_first + slot - pinned_slots, slot)
+            head_ord = _udiv24(unit, units)
+            within = unit - head_ord * units
+            q_block = _udiv24(within, gqa_group)
+            group = within - q_block * gqa_group
+            if const_expr(traits.CAUSAL):
+                half = q_block // fx.Int32(2)
+                zig = (q_block % fx.Int32(2) == fx.Int32(0)).select(half, gy - one - half)
+                q_block = in_rest.select(zig, q_block)
+        flat = in_rest.select(whole * n_xcd + head_ord, head_ord * n_xcd + xcd)
+        z_idx = _udiv24(flat, num_head_k)
+        h_kv = flat - z_idx * num_head_k
+        # Past 2**24 workgroups the divisions above are not exact: keep the
+        # grid as launched there, which is the `none` mapping.
+        small = gx * gy * gz < fx.Int32(1 << 24)
+        h_none = _udiv24(x, num_head_k)
+        h_kv = small.select(h_kv, x - h_none * num_head_k)
+        group = small.select(group, h_none)
+        q_block = small.select(q_block, y)
+        z_idx = small.select(z_idx, z)
+        return fx.Index(h_kv), fx.Index(group), fx.Index(q_block), fx.Index(z_idx)
 
     def _pack_q_heads(self, gqa_group):
         """Give each wave its own q head, so one workgroup serves several.

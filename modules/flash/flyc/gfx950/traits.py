@@ -28,7 +28,7 @@ from dataclasses import dataclass, fields
 
 from .standalone import dualwave
 
-__all__ = ["make_traits", "assert_matches_production", "ParityDualwaveTraits"]
+__all__ = ["make_traits", "assert_matches_production", "ParityDualwaveTraits", "XCD_MAPS"]
 
 
 @dataclass(frozen=True)
@@ -123,8 +123,14 @@ class ParityDualwaveTraits(dualwave.DualwaveSwpTraits):
 
     # P7. Dispatch the causal Q blocks longest-first. A bijection over the same
     # index set, so the output is bit-identical and this is purely a
-    # load-balance choice; see `ParityKernelContext.init_thread_mapping`.
+    # load-balance choice; see `ParityKernelContext._lpt_order`.
     LPT_TILE_ORDER: bool = False
+
+    # P8. How a workgroup's hardware ids map to (head, q block, batch); one of
+    # `XCD_MAPS`. Every value is a bijection over the grid, so the output is
+    # bit-identical and only which XCD runs which head moves; see
+    # `ParityKernelContext._map_workgroup`.
+    XCD_MAP: str = "none"
 
     # End each workgroup's KV walk at its last live tile instead of at the
     # even, at-least-four bound the dual-wave pipeline was written for, and
@@ -133,6 +139,12 @@ class ParityDualwaveTraits(dualwave.DualwaveSwpTraits):
     # `fwd.py`. Off, the kernel is the single padded body.
     EXACT_KV_TILES: bool = False
 
+
+# P8's values. `none` is the grid as launched (head fastest). `pin_heads` makes
+# every XCD process a fixed set of (batch, kv head) pairs, so a KV head's K/V
+# is read through one XCD's L2. `head_slow` is upstream's `XCD_SWIZZLE` with
+# runtime head counts: q block fastest, so a head's blocks spread over all XCDs.
+XCD_MAPS = ("none", "pin_heads", "head_slow")
 
 # Hardware constants. Not parameters: these are the wave, the DMA width and the
 # MFMA shape, and a build that changed one would not be this algorithm.
@@ -170,6 +182,7 @@ def make_traits(
     bias=False,
     dropout=False,
     lpt_tile_order=False,
+    xcd_map="none",
     exact_kv_tiles=False,
     dtype_str="bf16",
     waves_per_eu=2,
@@ -186,6 +199,8 @@ def make_traits(
     xcd_swizzle=False,
 ):
     """Dualwave traits for an arbitrary (waves, BLOCK_M, BLOCK_N, granule)."""
+    if xcd_map not in XCD_MAPS:
+        raise ValueError(f"xcd_map {xcd_map!r} is not one of {XCD_MAPS}")
     if window and not causal:
         # A window without the causal machinery has no masked region to apply
         # itself to, and silently dropping it would return dense attention --
@@ -418,6 +433,7 @@ def make_traits(
         BIAS_TYPE=1 if bias else 0,
         ENABLE_DROPOUT=bool(dropout),
         LPT_TILE_ORDER=bool(lpt_tile_order),
+        XCD_MAP=xcd_map,
         EXACT_KV_TILES=bool(exact_kv_tiles),
         DTYPE_STR=dtype_str,
         WAVES_PER_EU=waves_per_eu,
