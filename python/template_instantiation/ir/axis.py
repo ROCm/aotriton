@@ -102,6 +102,16 @@ class Axis:
             return c.with_rank(self.ranks[arg_name])
         return c
 
+    def with_choices(self, choices) -> 'Axis':
+        """A copy of this axis with `choices` in place of its own, and no godel
+        stride yet (strides belong to the axis set the copy joins)."""
+        return Axis(self.var_name, self.arg_names, choices, self.anchor,
+                    ranks=self.ranks,
+                    contiguous=self.contiguous,
+                    kind=self.kind,
+                    stride_of=self.stride_of,
+                    signature_name=self.signature_name)
+
     def __repr__(self):
         return (f'Axis({self.var_name!r}, args={self.arg_names}, '
                 f'radix={self.radix}, anchor={self.anchor})')

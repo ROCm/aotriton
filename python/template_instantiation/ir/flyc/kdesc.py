@@ -6,22 +6,28 @@ KernelDescription — the codegen-facing IR for a flyc (FlyDSL-compiled) kernel.
 
 Mirrors `ir/affine/kdesc.py`'s shape: a minimal `Interface` implementer that owns
 no functional space of its own — a flyc kernel inherits and filters the functional
-space of the operator that lists it as an `@ati.backend`. Built by the linker
-(`codegen/linker.py:_build_flycs`) from a `FlycDecl`; `ir/ops/infer.py` then binds
-the Operator in as `SHARED_IFACE`, which is the same object as
-`functionals_source`.
+space of the operator that lists it as an `@ati.backend`, except for marker axes
+(below). Built by the linker (`codegen/linker.py:_build_flycs`) from a
+`FlycDecl`; `ir/ops/infer.py` then binds the Operator in as `SHARED_IFACE`, which
+is the same object as `functionals_source`.
 
-`_axes_overrides` / `axes_multi` delegate to `functionals_source` so
-`Interface.gen_functionals` enumerates exactly the axes the operator does, but
-every yielded `Functional` still carries `meta_object=self` (this flyc kdesc, not
-the operator). That is what gives filepack paths, hsaco entry names and the
-`Fly.compile` KERNEL_NAME column this kernel's own NAME/FAMILY rather than the
-operator's — a flyc kernel gets its own `.aks2`, keyed by the description's name,
-rather than sharing the operator's.
+`_axes_overrides` / `axes_multi` start from `functionals_source`'s axes, so
+`Interface.gen_functionals` enumerates the operator's axes, with one exception: an
+axis named by a functional-axis MARKER (`@ati.scalar(name, options=...,
+wires_to=ati.context_helper(...))`) takes the marker's `options=` instead (see
+`_own_space`). Every yielded `Functional` still carries `meta_object=self` (this
+flyc kdesc, not the operator). That is what gives filepack paths, hsaco entry
+names and the `Fly.compile` KERNEL_NAME column this kernel's own NAME/FAMILY
+rather than the operator's — a flyc kernel gets its own `.aks2`, keyed by the
+description's name, rather than sharing the operator's.
 """
 
+from dataclasses import replace
+
+from ..axis import assign_godel
 from ..interface import Interface
 from ..context_helper import ContextHelper
+from ..typed_choice import TypedChoice
 from ..choices import ChoiceVarAbsent
 from aotriton.template_instantiation.builder import DescriptionError
 
@@ -44,10 +50,10 @@ class KernelDescription(Interface):
     """A flyc kernel built from the @ati.flyc.* stacked form. ATI-native, like
     AffineKernel: subclasses the ATI Interface base (identity surface) directly,
     no functional space of its own (inherits the operator's via
-    `functionals_source`), and no perf space of its own — every functional
-    resolves to exactly one hsaco, whose knob set is carried verbatim in the
-    entry name's `#P` section rather than chosen among candidates
-    (`ir/flyc/ksignature.py`)."""
+    `functionals_source`, bar marker axes, see `_own_space`), and no perf
+    space of its own — every functional resolves to exactly one hsaco, whose
+    knob set is carried verbatim in the entry name's `#P` section rather than
+    chosen among candidates (`ir/flyc/ksignature.py`)."""
 
     CODEGEN_MODULE = 'flyc'
     TUNE_NAME = 'flytune'
@@ -102,6 +108,9 @@ class KernelDescription(Interface):
         # an arch's functionals would be needless AST work even once that stops
         # being true.
         self._real_params_by_arch = {}
+        # (axes_all, axes_multi, godel_number), built on first use by
+        # `_own_space`, after `functionals_source` is bound.
+        self._space = None
 
     @property
     def gpu_symbol_name(self):
@@ -127,19 +136,70 @@ class KernelDescription(Interface):
     def perf_cfields(self):
         return []
 
+    def _marker_choices(self):
+        """{operator axis var_name -> TypedChoices} for each functional-axis
+        MARKER (see `context_helper_for_functional`): its `options=`, parsed
+        exactly as the builder parses any `options=` list."""
+        op = self._require_functionals_source()
+        out = {}
+        for s in self.scalars:
+            if s.type_ is not None or s.options is None:
+                continue
+            if not isinstance(s.wires_to, ContextHelper):
+                continue
+            for name in s.arg_names:
+                op_axis = op.axis_of_arg(op.real_of(name))
+                if op_axis is None:
+                    raise DescriptionError(
+                        f'flyc kernel {self.NAME!r}: marker {name!r} names no '
+                        f'functional axis of {op.NAME!r}')
+                choices = [TypedChoice.parse(v) for v in s.options]
+                ctype = op_axis.repr_typed_choice.itype
+                if any(c.itype != ctype for c in choices):
+                    raise DescriptionError(
+                        f'flyc kernel {self.NAME!r}: marker {name!r} options '
+                        f'{s.options} do not all have the C type {ctype!r} of '
+                        f'{op.NAME!r}\'s axis')
+                out[op_axis.var_name] = choices
+        return out
+
+    def _own_space(self):
+        """(axes_all, axes_multi, godel_number) of this kernel's functional space.
+
+        The operator's axes, copied, with a marker-named axis (BLOCK_DMODEL)
+        taking the marker's `options=`. Godel digits of such an axis are read
+        from the context helper (`context_helper_for_functional`), which rounds
+        the TRUE head dim up to this kernel's compiled rungs, so the digit's
+        range is this kernel's options, not the operator's ladder: the operator
+        still bins to its own axis, and a rung only this backend compiles (e.g.
+        384) still gets a functional. The disable predicate narrows per arch.
+
+        Copies, not the operator's Axis objects: `assign_godel` writes strides
+        onto the axes, and the radices may differ from the operator's."""
+        if self._space is None:
+            op_axes, _ = self._require_functionals_source()._axes_overrides()
+            marked = self._marker_choices()
+            axes_all = sorted((a.with_choices(marked.get(a.var_name, a.choices))
+                               for a in op_axes),
+                              key=lambda a: a.anchor)
+            axes_multi = [a for a in axes_all if not a.is_trivial]
+            total = assign_godel(axes_multi)
+            self._space = (axes_all, axes_multi, total)
+        return self._space
+
     def _axes_overrides(self):
-        """(axes, overrides) to enumerate over -- the operator's own, since a flyc
-        kernel has no axes of its own. `Interface.gen_functionals` uses these but
-        still stamps `meta_object=self` on every yielded Functional (see the
-        module docstring)."""
-        return self._require_functionals_source()._axes_overrides()
+        """(axes, overrides) to enumerate over: `_own_space`'s axes, the
+        operator's overrides. `Interface.gen_functionals` uses these but still
+        stamps `meta_object=self` on every yielded Functional (see the module
+        docstring)."""
+        _, overrides = self._require_functionals_source()._axes_overrides()
+        return self._own_space()[0], overrides
 
     @property
     def axes_multi(self):
-        """Delegated to functionals_source: `Functional.compact_choices` /
-        `.unified_signature` (ir/functional.py) read `meta_object.axes_multi`, and
-        meta_object is THIS kdesc once `_axes_overrides` is wired in (see above)."""
-        return self._require_functionals_source().axes_multi
+        """Read by `Functional.compact_choices` / `.unified_signature`
+        (ir/functional.py) through `meta_object.axes_multi`."""
+        return self._own_space()[1]
 
     def _require_functionals_source(self):
         assert self._functionals_source is not None, (
@@ -148,7 +208,11 @@ class KernelDescription(Interface):
         return self._functionals_source
 
     def list_functional_params(self):
-        return self._require_functionals_source().list_functional_params()
+        """The operator's TemplateParams (apparel names, baked state), each
+        re-pointed at this kernel's own copy of its axis."""
+        own = {a.var_name: a for a in self._own_space()[0]}
+        for tp in self._require_functionals_source().list_functional_params():
+            yield replace(tp, axis=own[tp.axis.var_name])
 
     @property
     def func_cfields(self):
@@ -187,17 +251,23 @@ class KernelDescription(Interface):
 
     @property
     def godel_number(self):
-        return self._require_functionals_source().godel_number
+        return self._own_space()[2]
 
     @property
     def axes_all_ordered(self):
-        return self._require_functionals_source().axes_all_ordered
+        return self._own_space()[0]
 
     def axis_of_arg(self, aname):
-        return self._require_functionals_source().axis_of_arg(aname)
+        for a in self._own_space()[0]:
+            if aname in a.arg_names:
+                return a
+        return None
 
     def axis_by_var(self, var_name):
-        return self._require_functionals_source().axis_by_var(var_name)
+        for a in self._own_space()[0]:
+            if a.var_name == var_name:
+                return a
+        return None
 
     def override_for(self, aname):
         return self._require_functionals_source().override_for(aname)
@@ -363,8 +433,9 @@ class KernelDescription(Interface):
         kernel signature (`real_param_order`, above) that are not, and never
         will be, axes of the shared operator this kdesc borrows its
         functional space from (module docstring: a flyc kdesc adds no axes
-        of its own). `functionals_source.resolved` simply has no entry for
-        them, so this cannot ask the question the Triton version asks.
+        of its own; a marker only re-chooses an existing one).
+        `functionals_source.resolved` simply has no entry for them, so this
+        cannot ask the question the Triton version asks.
 
         Instead, constexpr-ness comes straight off THIS kernel's own
         `@ati.scalar([...], options=[...])` declaration for `aname` (e.g.
