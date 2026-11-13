@@ -357,7 +357,7 @@ def flyc_bwd_dkdv(arch, choices, hints):
         bias = bool(choices.BIAS_TYPE)
         dropout = bool(choices.ENABLE_DROPOUT)
         padded_head = bool(choices.PADDED_HEAD)
-        knobs = tuning.knobs(tile, causal_type != 0)
+        knobs = tuning.knobs(tile, causal_type != 0, bias)
 
         def build():
             """Deferred: imports flydsl, so only `aotriton.flyc_compile` calls it."""

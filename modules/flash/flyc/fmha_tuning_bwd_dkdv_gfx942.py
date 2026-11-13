@@ -37,11 +37,15 @@ def default_kv_blocks(head_dim):
     return 2
 
 
-def default_waves_per_eu(head_dim):
+def default_waves_per_eu(head_dim, bias=False):
     """One wave per SIMD: at d128 the resident set alone is 192 of 256 registers,
-    and two waves per SIMD at d64 measured the same. d96 takes two (B2 H32 S8k:
-    6.55 vs 7.84 ms, dropout 0.2 9.0 vs 10.8; causal S4k 1.14 vs 1.05)."""
-    return 2 if head_dim == 96 else 1
+    and two waves per SIMD at d64 measured the same. d96 takes two except with bias.
+    B2 H32 d96, ms, one vs two waves:
+        dense S4k 2.01 / 1.74, S8k 7.82 / 6.52; dropout 0.2 S8k 11.0 / 9.0
+        causal S2k 0.32 / 0.40, S4k 1.08 / 1.17, S8k 3.84 / 3.61, S16k 14.9 / 13.1
+        bias S4k 2.64 / 6.64, S8k 10.2 / 26.4
+    Causal flips with seqlen (an input-time choice); two win where time is spent."""
+    return 2 if head_dim == 96 and not bias else 1
 
 
 def default_interleave_valu(head_dim):
@@ -84,7 +88,7 @@ def rung(hdim_qk, hdim_vo):
     return next((r for r in LADDER if r >= h), None)
 
 
-def knobs(head_dim, causal):
+def knobs(head_dim, causal, bias=False):
     """The build of one functional, as a JSON-able dict: the builder's keyword
     arguments plus `block_kv` and `GRID_AXIS_ORDER`, which the C++ grid_calculator
     reads. `GRID_AXIS_ORDER` is passed to the builder as `grid_axis_order`."""
@@ -107,7 +111,7 @@ def knobs(head_dim, causal):
     kvb = default_kv_blocks(head_dim)
     return dict(num_waves=nw,
                 kv_blocks=kvb,
-                waves_per_eu=default_waves_per_eu(head_dim),
+                waves_per_eu=default_waves_per_eu(head_dim, bias),
                 interleave_valu=default_interleave_valu(head_dim),
                 block_kv=block_kv(nw, kvb),
                 GRID_AXIS_ORDER=default_grid_axis_order(causal))

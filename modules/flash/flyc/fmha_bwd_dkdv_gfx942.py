@@ -120,7 +120,7 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
     if kv_blocks is None:
         kv_blocks = tuning.default_kv_blocks(head_dim)
     if waves_per_eu is None:
-        waves_per_eu = tuning.default_waves_per_eu(head_dim)
+        waves_per_eu = tuning.default_waves_per_eu(head_dim, bias)
     if interleave_valu is None:
         interleave_valu = tuning.default_interleave_valu(head_dim)
     tr = Traits(head_dim, causal_type != 0, dtype_str, num_waves, kv_blocks, padded_head)
