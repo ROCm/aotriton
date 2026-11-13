@@ -140,7 +140,7 @@ from .dualwave_helpers import (
     wire_view,
 )
 from fmha_meta import FmhaInputMetadata
-from .tuning_fwd import entry_plan
+from .tuning_fwd import Gfx950Knobs, entry_plan
 from .fwd_wide import (
     WideGemmHelper,
     WideKernelContext,
@@ -333,6 +333,124 @@ class _FwdGemmHelper(ParityGemmHelper):
         return self.scale_scores(super().qk(v_k, q_all_bf16, stage))
 
 
+class _FwdStoreHelper(ParityStoreHelper):
+    """O staged through the K/V LDS buffers; see `ParityStoreHelper._store_final_o_row`.
+
+    Safe in `_main_body` because every wave's last DS read of those buffers is
+    the epilogue's final `load_v`, retired with `lgkmcnt(0)` ahead of the C12
+    sync barrier, and no wave reaches `store_final_o` before passing one more
+    barrier: the stagger-closing one, which pairs group A with group B's C12
+    barrier (or, unstaggered, the plain `s_barrier` there). Every wave has
+    therefore finished reading K/V from LDS before any wave writes O into it.
+    """
+
+    O_VIA_LDS = True
+
+
+def _prologue_loads(traits, ctx, kv_gmem_to_lds, kv_lds_to_regs, q_loader, page_ids, stagger_i32, *, q_staged,
+                    prefetch_k1=True):
+    """The forward prologue up to the first QK: every load issued, K0 and Q in registers, stagger opened.
+
+    Returns `(v_k, q_all_bf16, k1_retire_n)`. The caller must execute
+    `_waitcnt_vm_n(k1_retire_n)` before its prologue-end barrier -- the one
+    group A's loop cluster 0 (`load_k(1)`) follows.
+
+    **Issue order and the vmcnt contract.** This wave issues, in order:
+
+        K0 (NUM_DMA_K) -> Q (K_STEPS_QK) -> K1 (NUM_DMA_K, if prefetch_k1) -> V0 (NUM_DMA_V)
+
+    and nothing else, so every wait counts from the back. Vector-memory loads
+    retire in issue order, so `vmcnt(n)` means "all but the last n are done":
+
+    - `vmcnt(Q + K1 + V0)` before the first barrier: K0 landed, in every wave;
+    - `vmcnt(K1 + V0)`: Q landed (staged Q is this wave's own rows, so no
+      barrier is needed before reading it from LDS);
+    - `vmcnt(V0)` (`k1_retire_n`): K1 landed.
+
+    On return, at most K1 and V0 are outstanding, in that order; for group B
+    (and unstaggered builds) only V0. The caller's loop accounting must start
+    from that. `prefetch_k1=False` drops K1 from both the issue and the counts
+    for a body that never reads tile 1; `k1_retire_n` is then a no-op.
+
+    **Why everything goes out before the first barrier.** A fresh workgroup has
+    nothing in LDS to protect, so nothing orders K1/V0 behind K0's barrier,
+    and Q is read only by the wave that loaded it. Issued after that barrier
+    instead -- as this used to -- Q's latency and K1/V0's issue back-pressure
+    sat between the barrier and the first MFMA, on the critical path of every
+    workgroup.
+
+    **Why K1 is not retired before the first QK.** The first QK reads K0 and Q
+    only. K1 must still be landed by every wave before the barrier preceding
+    the *other* group's first `load_k(1)`. Group B's extra (stagger-opening)
+    barrier pairs with group A's prologue-end barrier, so B retires K1 before
+    it; group A retires it before its prologue-end barrier (`k1_retire_n`),
+    which B's own prologue-end barrier pairs with ahead of B's `load_k(1)`. B
+    is parked at the extra barrier through A's first QK either way, so waiting
+    there costs it nothing.
+    """
+    n_k1 = ctx.NUM_DMA_K if prefetch_k1 else 0
+    after_q = n_k1 + ctx.NUM_DMA_V
+
+    if const_expr(traits.PAGED):
+        pro_pageid_0 = page_ids.async_load_split_page(0)
+        kv_gmem_to_lds.load_k_split(0, 0, page_id=pro_pageid_0)
+    else:
+        kv_gmem_to_lds.load_k_split(0, 0)
+    _sched_barrier(0)
+
+    # Q is **not scaled** -- `qk_scale` is applied to the f32 scores by
+    # `_FwdGemmHelper.qk`; see `ParityQLoader.scale_all`. Staged, this only
+    # issues the DMAs; the packs are read out of LDS once they have landed.
+    if const_expr(q_staged):
+        q_loader.issue_to_lds()
+        q_all_bf16 = None
+    else:
+        q_all_bf16 = q_loader.load_all()
+    _sched_barrier(0)
+
+    if const_expr(prefetch_k1):
+        if const_expr(traits.PAGED):
+            pro_pageid_1 = page_ids.async_load_split_page(1)
+            kv_gmem_to_lds.load_k_split(1, 1, page_id=pro_pageid_1)
+        else:
+            kv_gmem_to_lds.load_k_split(1, 1)
+    if const_expr(traits.PAGED):
+        pro_v0_pid = page_ids.async_load_split_page(0)
+        kv_gmem_to_lds.load_v_split(0, 0, page_id=pro_v0_pid)
+    else:
+        kv_gmem_to_lds.load_v_split(0, 0)
+    _sched_barrier(0)
+    _waitcnt_vm_n(traits.K_STEPS_QK + after_q)
+    _sched_barrier(0)
+    _s_barrier()
+
+    v_k = kv_lds_to_regs.load_k(0)
+    if const_expr(q_staged):
+        _sched_barrier(0)
+        _waitcnt_vm_n(after_q)
+        q_all_bf16 = q_loader.load_all()
+    _sched_barrier(0)
+    _s_waitcnt(traits.LGKMCNT_0_ONLY)
+
+    # OPEN the wave-group phase shift: one extra s_barrier on group B.
+    if const_expr(traits.DUALWAVE_SWP_ENABLE_STAGGER):
+        _waitcnt_vm_n(after_q)
+
+        @flyc.jit
+        def _retire_k1_and_extra_barrier_if_one():
+            if fx.Int32(stagger_i32) != fx.Int32(0):
+                _waitcnt_vm_n(ctx.NUM_DMA_V)
+                _sched_barrier(0)
+                _s_barrier()
+
+        _retire_k1_and_extra_barrier_if_one()
+    else:
+        _waitcnt_vm_n(ctx.NUM_DMA_V)
+        _sched_barrier(0)
+        _s_barrier()
+    return v_k, q_all_bf16, ctx.NUM_DMA_V
+
+
 _COMPILED = {}
 
 
@@ -391,12 +509,40 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
 
     _lds_elem_dtype = dualwave.dtype_to_elem_type(traits.DTYPE_STR)
 
-    if const_expr(traits.PAGED):
+    # Q staged through LDS so that its global loads are whole rows; see
+    # `ParityQLoader.issue_to_lds`. A region of its own rather than a reused
+    # one: every K/V buffer but V1 is being filled while Q is in flight. The
+    # 8-wave families cannot hold a second workgroup per CU on VGPRs alone
+    # (248 of 256 at head_dim 128), so the extra LDS costs no occupancy there;
+    # the 4-wave ones could, so they keep the register load.
+    _q_stage = None if WIDE or traits.NUM_WAVES != 8 else ParityQLoader.q_stage_layout(traits)
+    if _q_stage is not None:
+        _bt_bytes = traits.PAGED_BT_LDS_SIZE * 4 if traits.PAGED else 0
+        if traits.LDS_KV_TOTAL_SIZE * traits.BF16_BYTES + _bt_bytes + _q_stage[1] > Gfx950Knobs.LDS_CAP_BYTES:
+            _q_stage = None
+    _Q_STAGE_ELEMS = _q_stage[1] // traits.BF16_BYTES if _q_stage is not None else 0
+
+    if const_expr(traits.PAGED and _q_stage is not None):
 
         @fx.struct
         class SharedStorage:
             kv: fx.Array[_lds_elem_dtype, traits.LDS_KV_TOTAL_SIZE, 16]
             bt: fx.Array[fx.Int32, traits.PAGED_BT_LDS_SIZE, 16]
+            q: fx.Array[_lds_elem_dtype, _Q_STAGE_ELEMS, 16]
+
+    elif const_expr(traits.PAGED):
+
+        @fx.struct
+        class SharedStorage:
+            kv: fx.Array[_lds_elem_dtype, traits.LDS_KV_TOTAL_SIZE, 16]
+            bt: fx.Array[fx.Int32, traits.PAGED_BT_LDS_SIZE, 16]
+
+    elif const_expr(_q_stage is not None):
+
+        @fx.struct
+        class SharedStorage:
+            kv: fx.Array[_lds_elem_dtype, traits.LDS_KV_TOTAL_SIZE, 16]
+            q: fx.Array[_lds_elem_dtype, _Q_STAGE_ELEMS, 16]
 
     else:
 
@@ -571,6 +717,8 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         ctx.init_active_guard()
         ctx.init_lds_read_bases()
         ctx.init_dma_m0_tables()
+        if const_expr(_q_stage is not None):
+            ctx.lds_q_stage_idx = fx.Index(fx.ptrtoint(ctx.lds.q.ptr))
 
         active = ctx.active
         elem_dtype = ctx.elem_dtype
@@ -581,7 +729,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
 
         kv_gmem_to_lds = ParityKvGmemToLdsLoader(ctx)
         kv_lds_to_regs = (WideKvLdsToVgprLoader if WIDE else ParityKvLdsToVgprLoader)(ctx)
-        output_store = (WideStoreHelper if WIDE else ParityStoreHelper)(ctx)
+        output_store = (WideStoreHelper if WIDE else _FwdStoreHelper)(ctx)
         page_ids = dualwave.DualwavePageIdLoader(ctx)
         q_loader = ParityQLoader(ctx)
         gemm_helper = (WideGemmHelper if WIDE else _FwdGemmHelper)(ctx)
@@ -595,41 +743,14 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
                 _sched_barrier(0)
                 _s_barrier()
 
-            # Prologue: load K tile split_t0 -> LDS buf0, wait, and sync the workgroup.
-            if const_expr(traits.PAGED):
-                pro_pageid_0 = page_ids.async_load_split_page(0)
-                kv_gmem_to_lds.load_k_split(0, 0, page_id=pro_pageid_0)
-            else:
-                kv_gmem_to_lds.load_k_split(0, 0)
-            _s_waitcnt(0)
-            _sched_barrier(0)
-            _s_barrier()
-
-            # Load this wave's Q rows. **Not scaled** -- `qk_scale` is applied
-            # to the f32 scores by `_FwdGemmHelper.qk`; see
-            # `ParityQLoader.scale_all` for what pre-scaling Q costs.
-            q_all_bf16 = q_loader.load_all()
-
-            # Pipeline ahead: prefetch K tile1 (buf1) + V tile0 (buf0) as background
-            if const_expr(traits.PAGED):
-                pro_pageid_1 = page_ids.async_load_split_page(1)
-                kv_gmem_to_lds.load_k_split(1, 1, page_id=pro_pageid_1)
-                _pro_v0_pid = page_ids.async_load_split_page(0)
-                kv_gmem_to_lds.load_v_split(0, 0, page_id=_pro_v0_pid)
-            else:
-                kv_gmem_to_lds.load_k_split(1, 1)
-                kv_gmem_to_lds.load_v_split(0, 0)
-            v_k = kv_lds_to_regs.load_k(0)
-            _sched_barrier(0)
-            _s_waitcnt(traits.LGKMCNT_0_ONLY)
-            _waitcnt_vm_n(ctx.NUM_DMA_V)
-
-            # OPEN the wave-group phase shift: one extra s_barrier on group B
-            if const_expr(traits.DUALWAVE_SWP_ENABLE_STAGGER):
-                _stagger_extra_barrier_if_one(stagger_i32)
-            else:
-                _sched_barrier(0)
-                _s_barrier()
+            v_k, q_all_bf16, k1_retire_n = _prologue_loads(traits,
+                                                           ctx,
+                                                           kv_gmem_to_lds,
+                                                           kv_lds_to_regs,
+                                                           q_loader,
+                                                           page_ids,
+                                                           stagger_i32,
+                                                           q_staged=_q_stage is not None)
 
             # Prologue scores + first softmax pass for KV tile 0
             if const_expr(traits.PAGED):
@@ -657,6 +778,10 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
             v_s_0 = softmax_helper.sub_m(v_s_0, m_row_pro)
             v_p_0 = softmax_helper.exp2(v_s_0, 0, 16)
             pro_pageid_2 = page_ids.finish_page_id(pro_pageid_2_lds) if const_expr(traits.PAGED) else fx.Index(0)
+            # Group A's K1 retirement, deferred from before its first QK; see
+            # `_prologue_loads`. A no-op for group B and for unstaggered
+            # builds, which retired it already.
+            _waitcnt_vm_n(k1_retire_n)
             _dualwave_sync_barrier()
 
             # Software-pipelined inner loop

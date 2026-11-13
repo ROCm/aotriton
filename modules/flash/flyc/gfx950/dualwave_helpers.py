@@ -959,6 +959,54 @@ class _ParityKvStaging:
         return src_base + n_in_tile * self.stride_kv_n_v + global_d
 
 
+def _fresh_lane(lane):
+    """`lane` as an i32 the compiler cannot prove equal to any other value.
+
+    The prologue's Q staging and the epilogue's O staging derive the same
+    lane-to-(row, chunk) indices. Left visible, LLVM computes them once and
+    keeps them live from one end of the kernel to the other, across the whole
+    KV loop -- and at 248 VGPRs that is a spill (30 scratch accesses, 25%
+    slower, measured). An empty asm returning its operand makes each site
+    derive its own.
+    """
+    opaque = dualwave.llvm.inline_asm(T.i32,
+                                      [as_mlir_value(fx.Int32(lane))],
+                                      "",
+                                      "=v,0",
+                                      has_side_effects=True)
+    return fx.Int32(opaque)
+
+
+def _udiv_head_count(a, b, rcp_b):
+    """`(a // b, a % b)` for head counts: `0 <= a < 2**22`, `b >= 1`, i32.
+
+    `rcp_b` is `rcp(float(b))`, passed in so that two divisions by the same
+    `b` share it.
+
+    `fx.Index` `//` and `%` are 64-bit, and a runtime 64-bit unsigned divide is
+    the longest scalar sequence in this kernel's prologue: LLVM emits a
+    high-word test, a ~110-instruction 64-bit path that never runs for head
+    counts, and a 32-bit Newton-refined path that does. The workgroup cannot
+    issue its first load until the head indices exist, so all of it sits on
+    the critical path of every workgroup.
+
+    One float estimate is enough here. For `a < 2**22` both operands convert
+    exactly and `a * rcp(b)` is within about `2**-22` relative of `a / b`
+    (`v_rcp_f32` is 1 ulp, the multiply half an ulp), so the truncated
+    quotient is off by at most one in either direction; one signed check of
+    the remainder fixes both. Head counts are nowhere near the bound.
+    """
+    q = fx.Int32(arith.fptoui(T.i32, arith.mulf(arith.uitofp(T.f32, as_mlir_value(a)), rcp_b)))
+    r = a - q * b
+    under = r < fx.Int32(0)
+    q = fx.Int32(under.select(q - fx.Int32(1), q))
+    r = fx.Int32(under.select(r + b, r))
+    over = r >= b
+    q = fx.Int32(over.select(q + fx.Int32(1), q))
+    r = fx.Int32(over.select(r - b, r))
+    return q, r
+
+
 class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
     """Dualwave context addressing arbitrary BHSD strides, with a runtime scale."""
 
@@ -1094,16 +1142,23 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         # count and recomposed against the group size, which groups the Q heads
         # sharing a KV head. Only the operands change from constexpr to runtime,
         # so a build with matching counts schedules identically.
-        num_head_k = fx.Index(self.num_head_k)
-        gqa_group = fx.Index(self.num_head_q) // num_head_k
+        #
+        # Both divisions are by `num_head_k` and both operands are head
+        # counts, so they share one reciprocal and run in 32 bits; see
+        # `_udiv_head_count` for why not `fx.Index` `//` and `%`.
+        num_head_k_i32 = fx.Int32(self.num_head_k)
+        rcp_head_k = rocdl.rcp(T.f32, arith.uitofp(T.f32, as_mlir_value(num_head_k_i32)))
+        gqa_group_i32, _ = _udiv_head_count(fx.Int32(self.num_head_q), num_head_k_i32, rcp_head_k)
+        group_id_i32, h_kv_idx_i32 = _udiv_head_count(fx.Int32(self.h_idx), num_head_k_i32, rcp_head_k)
+        gqa_group = fx.Index(gqa_group_i32)
         # Published, because the dK/dV group loop's trip count is this same
         # quantity and `q_head_idx` -- the head that loop walks from -- is
         # derived from it two lines down. Recomputing it at the loop is how a
         # trait and a kernarg drifted apart in the first place (issue 9); one
         # source is what stops them disagreeing again.
         self.gqa_group = gqa_group
-        self.h_kv_idx = self.h_idx % num_head_k
-        self.group_id = self.h_idx // num_head_k
+        self.h_kv_idx = fx.Index(h_kv_idx_i32)
+        self.group_id = fx.Index(group_id_i32)
         self.q_head_idx = self.h_kv_idx * gqa_group + self.group_id
         self.kv_head_idx = self.h_kv_idx
         if const_expr(self.traits.LPT_TILE_ORDER and self.traits.CAUSAL):
@@ -1601,8 +1656,88 @@ class ParityQLoader(dualwave.DualwaveQLoader):
             "scores with `ParityGemmHelper.scale_scores` instead, as the Triton kernels do."
         )
 
+    # Where Q is staged in LDS, as a byte address, or None to load it straight
+    # into VGPRs. Set on the context by a kernel body that allocated the
+    # region (see `q_stage_layout`) before this loader is constructed.
+    lds_q_stage_idx = None
+
+    @staticmethod
+    def q_stage_layout(traits):
+        """`(chunks, lds_bytes)` of Q's LDS staging, or `None` if it does not apply.
+
+        `chunks` is 16-byte chunks per Q row. One DMA issue covers
+        `64 // chunks` whole rows, which is what makes it coalesced, so the
+        chunk count must divide 64; and `chunks // 2` issues -- one per 16-wide
+        K step -- must be `K_STEPS_QK`, which every wait counting Q assumes.
+        """
+        chunks = traits.K_STEPS_QK * traits.K_STEP_QK * traits.BF16_BYTES // 16
+        if traits.ROWS_PER_WAVE != 32 or 64 % chunks or chunks // 2 != traits.K_STEPS_QK:
+            return None
+        return chunks, traits.NUM_WAVES * 32 * chunks * 16
+
+    def _q_stage_geometry(self):
+        chunks, _ = self.q_stage_layout(self.traits)
+        swz = min(chunks, 16) - 1
+        wave_base = fx.Int32(self.lds_q_stage_idx) + fx.Int32(self.wave_id_uni) * fx.Int32(32 * chunks * 16)
+        return chunks, swz, wave_base
+
+    def issue_to_lds(self):
+        """DMA this wave's 32 Q rows into LDS, `64 // chunks` whole rows per issue.
+
+        The register load's layout is the MFMA's: lane `l` takes row `l % 32`,
+        16 bytes at a column set by `l // 32`, so one issue touches 32 rows x
+        32 bytes -- 32 cache lines for 1 KiB, 8x what that much data spans.
+        Measured with coalesced (wrong-layout) addresses swapped in, that alone
+        was worth +3.7% at Sq=1024 Sk=64. Here each issue reads whole rows;
+        `load_pack` then picks the MFMA layout out of LDS.
+
+        A DMA lands lane `l` at `m0 + 16 * l` and nowhere else, so the bank
+        swizzle that keeps `load_pack`'s column-wise read conflict-free is
+        applied to the *global* address instead: lane `l` fetches chunk
+        `(l % chunks) ^ (row & swz)` of its row, which is still the whole row
+        per issue, merely in a permuted order.
+
+        Same issue count as the register path, `K_STEPS_QK`, so every
+        `vmcnt` that counts Q is unchanged.
+        """
+        traits = self.traits
+        ctx = self.ctx_ref
+        ctx.init_q_row()
+        chunks, swz, wave_base = self._q_stage_geometry()
+        rows_per_issue = 64 // chunks
+        lane = _fresh_lane(self.lane)
+        chunk = lane & fx.Int32(chunks - 1)
+        row_in_issue = lane >> fx.Int32(chunks.bit_length() - 1)
+        for i in range_constexpr(traits.K_STEPS_QK):
+            row = row_in_issue + fx.Int32(i * rows_per_issue)
+            col = (chunk ^ (row & fx.Int32(swz))) << fx.Int32(3)
+            src = self.q_gmem_elem_offset + (self.wave_q_offset + fx.Index(row)) * self.stride_q_n_v + fx.Index(col)
+            dualwave._buffer_load_lds_128(self.q_div,
+                                          wave_base + fx.Int32(i * 1024),
+                                          src,
+                                          0,
+                                          _dma_atom=self.dma_atom,
+                                          _lds_ptr_ty=self.lds_ptr_ty)
+
+    def _read_staged_pack(self, ks):
+        """One MFMA-layout Q pack out of the staging area; see `issue_to_lds`."""
+        chunks, swz, wave_base = self._q_stage_geometry()
+        row = fx.Int32(self.lane_mod_32)
+        chunk = fx.Int32(ks * 2) + fx.Int32(self.lane_div_32)
+        addr = wave_base + row * fx.Int32(chunks * 16) + ((chunk ^ (row & fx.Int32(swz))) << fx.Int32(4))
+        noalias = dualwave._dualwave_lds_noalias_scopes("lds_q", self.traits.LDS_SCOPE_NAMES)
+        raw = dualwave.llvm.LoadOp(Vec.make_type(4, fx.Int32),
+                                   _lds_ptr_with_imm(addr, 0),
+                                   alignment=16,
+                                   alias_scopes=dualwave._dualwave_lds_alias_scopes("lds_q"),
+                                   noalias_scopes=noalias).result
+        return Vec(raw, (4,), fx.Int32).bitcast(self.elem_dtype).ir_value()
+
     def load_pack(self, q_row_in_block, ks):
-        pack = super().load_pack(q_row_in_block, ks)
+        if const_expr(self.lds_q_stage_idx is None):
+            pack = super().load_pack(q_row_in_block, ks)
+        else:
+            pack = self._read_staged_pack(ks)
         if const_expr(not self.PADDED_HEAD):
             return pack
         col_base = fx.Index(ks * self.traits.K_STEP_QK) + self.lane_div_32 * fx.Index(self.traits.MFMA_LANE_K)
@@ -2213,8 +2348,142 @@ class ParityStoreHelper(dualwave.DualwaveStoreHelper):
     the whole change; the 128-bit store path above it is untouched.
     """
 
+    # Whether `_store_final_o_row` may stage O through the K/V LDS buffers.
+    # See there; a kernel body opts in by subclassing.
+    O_VIA_LDS = False
+
     def _final_o_base(self, q_row):
         return q_row * self.stride_o_seq_v + self.lane_div_32 * 8
+
+    def _o_pack_words(self, v_o, dc, g):
+        """The four dwords of one 128-bit O store, in lane order.
+
+        Bit-identical to the inherited `_fused_o_128_dwords`, which builds
+        them from four `permlane32_swap`s of a register *with itself*, each
+        preceded by two copies (the swap writes both operands), then eight
+        lane-half selects. Written out, what those selects keep is
+
+            w0 = lo ? d0_a        : d0_b[l - 32]     w2 = lo ? d0_a[l + 32] : d0_b
+            w1 = lo ? d1_a        : d1_b[l - 32]     w3 = lo ? d1_a[l + 32] : d1_b
+
+        and that is exactly the pair one `v_permlane32_swap d0_a, d0_b` leaves
+        behind -- it trades the upper 32 lanes of its first operand for the
+        lower 32 of its second. So `(w0, w2)` and `(w1, w3)` are one swap each:
+        27 instructions per store become 6.
+
+        Lane `l` then holds row `l % 32`, columns
+        `dc * D_CHUNK + (2 * g + l // 32) * 8` up to 8 past that.
+        """
+        traits = self.traits
+        d0_a, d1_a = dualwave._o_pack_2dw(traits, v_o, dc, 2 * g, self.elem_dtype)
+        d0_b, d1_b = dualwave._o_pack_2dw(traits, v_o, dc, 2 * g + 1, self.elem_dtype)
+        pair_ty = dualwave.ir.Type.parse("!llvm.struct<(i32, i32)>")
+        s0 = rocdl.permlane32_swap(pair_ty, as_mlir_value(d0_a), as_mlir_value(d0_b), False, False)
+        s1 = rocdl.permlane32_swap(pair_ty, as_mlir_value(d1_a), as_mlir_value(d1_b), False, False)
+        words = [
+            dualwave.llvm.extractvalue(T.i32, s0, [0]),
+            dualwave.llvm.extractvalue(T.i32, s1, [0]),
+            dualwave.llvm.extractvalue(T.i32, s0, [1]),
+            dualwave.llvm.extractvalue(T.i32, s1, [1]),
+        ]
+        return Vec.from_elements([fx.Int32(w) for w in words], fx.Int32)
+
+    def _o_row_chunks(self):
+        """16-byte chunks per O row, or `None` if O cannot go through LDS.
+
+        Staging needs the whole O block of the workgroup -- `NUM_WAVES * 32`
+        rows -- to fit the K/V buffers it reuses, and one 64-lane read to
+        cover whole rows, so the chunk count must divide 64.
+        """
+        traits = self.traits
+        chunks = traits.D_CHUNKS * traits.D_CHUNK * traits.BF16_BYTES // 16
+        block_bytes = traits.NUM_WAVES * traits.ROWS_PER_WAVE * chunks * 16
+        if traits.ROWS_PER_WAVE != 32 or 64 % chunks or block_bytes > traits.LDS_KV_TOTAL_SIZE * traits.BF16_BYTES:
+            return None
+        return chunks
+
+    def _store_final_o_row(self, v_o, q_row):
+        """O through LDS, so that each global store writes whole rows.
+
+        The MFMA layout leaves a lane holding 16 bytes of *one row*, and the
+        other half-wave the next 16 of the same row, so a direct 128-bit store
+        writes 32 rows x 32 bytes: 32 cache lines touched per instruction, 8x
+        the 4 lines its 1 KiB fills. The epilogue is nothing but those stores
+        -- a workgroup has nothing left to overlap them with -- and they
+        retired at ~250 cycles each.
+
+        So each wave writes its 32 rows into LDS as they lie, then reads them
+        back 64 / `chunks` whole rows per instruction and stores those. Same
+        number of stores, each now fully contiguous per row.
+
+        **The LDS is the K/V buffers'**, so this is opt-in, by
+        `O_VIA_LDS`: only a kernel body that has retired every DS read of
+        them in every wave, behind a barrier, before it stores O may set it.
+        Each wave then uses its own region, and DS instructions of one wave
+        execute in order, so the write-to-read hand-off across its lanes needs
+        no barrier of its own.
+
+        The 16-byte chunk index is XOR-swizzled by the row, so that neither
+        the column-major write nor the row-major read piles a 16-lane group on
+        one bank set: rows are a power-of-two bytes apart.
+        """
+        chunks = self._o_row_chunks() if const_expr(self.O_VIA_LDS) else None
+        if const_expr(chunks is None):
+            super()._store_final_o_row(v_o, q_row)
+            return
+        traits = self.traits
+        row_bytes = chunks * 16
+        swz = min(chunks, 16) - 1
+        rows_per_read = 64 // chunks
+        wave_base = fx.Int32(self.lds_kv_base_idx) + fx.Int32(self.wave_id_uni) * fx.Int32(32 * row_bytes)
+        vec4_i32 = Vec.make_type(4, fx.Int32)
+
+        # Write: lane `l` holds row `l % 32`. Derived from a `_fresh_lane`,
+        # like the read below: these offsets equal the prologue's staged Q
+        # reads term for term, and sharing them spills.
+        lane_i32 = _fresh_lane(self.lane)
+        w_row = lane_i32 & fx.Int32(31)
+        w_half = (lane_i32 >> fx.Int32(5)) & fx.Int32(1)
+        w_row_base = wave_base + w_row * fx.Int32(row_bytes)
+        w_swz = w_row & fx.Int32(swz)
+        for dc in range_constexpr(traits.D_CHUNKS):
+            for g in range_constexpr(2):
+                chunk = fx.Int32(dc * traits.D_CHUNK * traits.BF16_BYTES // 16 + 2 * g) + w_half
+                addr = w_row_base + ((chunk ^ w_swz) << fx.Int32(4))
+                dualwave.llvm.StoreOp(as_mlir_value(self._o_pack_words(v_o, dc, g)),
+                                      _lds_ptr_with_imm(addr, 0),
+                                      alignment=16)
+
+        # Read back whole rows and store them.
+        r_chunk = lane_i32 & fx.Int32(chunks - 1)
+        r_row_in_read = lane_i32 >> fx.Int32(chunks.bit_length() - 1)
+        row0 = q_row - self.lane_mod_32
+        for it in range_constexpr(32 // rows_per_read):
+            r_row = r_row_in_read + fx.Int32(it * rows_per_read)
+            addr = wave_base + r_row * fx.Int32(row_bytes) + ((r_chunk ^ (r_row & fx.Int32(swz))) << fx.Int32(4))
+            pack = dualwave.llvm.LoadOp(vec4_i32, _lds_ptr_with_imm(addr, 0), alignment=16).result
+            col = fx.Index(r_chunk) * fx.Index(8)
+            off = (row0 + fx.Index(r_row)) * self.stride_o_seq_v + col
+            if const_expr(self.PADDED_HEAD):
+                in_range = MaskedAxis(fx.Index(self.hdim_vo)).valid(col)
+                off = fx.Index(in_range.select(fx.Index(off), self.o_oob_off))
+            dualwave._buffer_store_128(Vec(pack, (4,), fx.Int32),
+                                       off,
+                                       _o_store_reg_128=self.o_store_reg_128,
+                                       _store_atom_128=self.store_atom_128,
+                                       o_div=self.o_div)
+
+    def _store_final_o_128(self, v_o, dc, g, o_base):
+        """One direct 128-bit O store; see `_o_pack_words`.
+
+        The path for builds `_o_row_chunks` rules out of LDS staging, and the
+        one `fmha_wide_gfx950` calls for its tail.
+        """
+        dualwave._buffer_store_128(self._o_pack_words(v_o, dc, g),
+                                   self._final_o_global(o_base, dc, g),
+                                   _o_store_reg_128=self.o_store_reg_128,
+                                   _store_atom_128=self.store_atom_128,
+                                   o_div=self.o_div)
 
     def zero_o_block_if_needed(self, causal_end_raw_i32=None):
         """The inherited O zeroing, plus the LSE those same rows need.
