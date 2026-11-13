@@ -40,16 +40,15 @@ OUTDIR ?= $(HOME)/aotriton-gh-release/release/$(VERSION_DIR)/hashed
 # remote (ssh/git URLs are rewritten to https).
 ORIGIN ?= auto
 
-# Latest stable ROCm release.
-STABLE_ROCM ?= 7.2.4
-# Latest TheRock build. These are pre-release/nightlies, so use the long
-# version string. gfx1250 (Tech Preview) needs a gfx1250-capable TheRock ROCm.
-THEROCK_ROCM ?= 10.2.0a20260918
+# Latest stable ROCm release, a TheRock one. Every smoke check runs on it, so
+# it must be gfx1250-capable (gfx1250 is Tech Preview).
+STABLE_ROCM ?= 10.1.0
 
 # ASAN is supported only on gfx942 and gfx950, and only on TheRock ROCm
-# (needs TheRock clang). Its runtime ships for both 7.14 and 7.15.
+# (needs TheRock clang). ASAN_ROCM follows STABLE_ROCM until the ASAN plan,
+# currently under revision, settles which ROCm versions it supports.
 ASAN_ARCH ?= gfx942;gfx950
-ASAN_ROCM ?= 7.14.1 10.2.0a20260918
+ASAN_ROCM ?= $(STABLE_ROCM)
 ASAN_RFLAGS := $(addprefix -r ,$(ASAN_ROCM))
 
 .PHONY: check-self-test check-runtime check-gpu release-gpu release-runtime \
@@ -60,13 +59,13 @@ ASAN_RFLAGS := $(addprefix -r ,$(ASAN_ROCM))
 check-self-test:
 	bash $(CI_DIR)aotriton-self-test.sh
 
-# Smoke check: only the C++ runtime, on both the stable and TheRock ROCm.
+# Smoke check: only the C++ runtime, on the stable ROCm.
 check-runtime:
-	$(SUITE) --runtime -r $(STABLE_ROCM) -r $(THEROCK_ROCM) --origin $(ORIGIN) $(OUTDIR)
+	$(SUITE) --runtime -r $(STABLE_ROCM) --origin $(ORIGIN) $(OUTDIR)
 
 # Smoke check: only the gfx1250 GPU image (gfx1250 and gfx1250-strict share it).
 check-gpu:
-	$(SUITE) --image --arch "gfx1250;gfx1250-strict" -r $(THEROCK_ROCM) --origin $(ORIGIN) $(OUTDIR)
+	$(SUITE) --image --arch "gfx1250;gfx1250-strict" -r $(STABLE_ROCM) --origin $(ORIGIN) $(OUTDIR)
 
 # Release: all GPU images (every arch in the default AOTRITON_TARGET_ARCH).
 release-gpu:
@@ -76,19 +75,19 @@ release-gpu:
 release-runtime:
 	$(SUITE) --runtime --origin $(ORIGIN) $(OUTDIR)
 
-# Smoke check: only the ASAN C++ runtime, on the latest TheRock ROCm.
+# Smoke check: only the ASAN C++ runtime, on the stable ROCm.
 check-runtime-asan:
-	$(SUITE) --asan --runtime -r $(THEROCK_ROCM) --origin $(ORIGIN) $(OUTDIR)
+	$(SUITE) --asan --runtime -r $(STABLE_ROCM) --origin $(ORIGIN) $(OUTDIR)
 
 # Smoke check: only one ASAN GPU image (gfx942).
 check-gpu-asan:
-	$(SUITE) --asan --image --arch gfx942 -r $(THEROCK_ROCM) --origin $(ORIGIN) $(OUTDIR)
+	$(SUITE) --asan --image --arch gfx942 -r $(STABLE_ROCM) --origin $(ORIGIN) $(OUTDIR)
 
-# Release: ASAN GPU images for the supported arches on the latest TheRock ROCm.
+# Release: ASAN GPU images for the supported arches on the stable ROCm.
 release-gpu-asan:
-	$(SUITE) --asan --image --arch '$(ASAN_ARCH)' -r $(THEROCK_ROCM) --origin $(ORIGIN) $(OUTDIR)
+	$(SUITE) --asan --image --arch '$(ASAN_ARCH)' -r $(STABLE_ROCM) --origin $(ORIGIN) $(OUTDIR)
 
-# Release: the ASAN C++ runtime on every supported TheRock ROCm (7.14 and 7.15).
+# Release: the ASAN C++ runtime on every ROCm in ASAN_ROCM.
 release-runtime-asan:
 	$(SUITE) --asan --runtime $(ASAN_RFLAGS) --origin $(ORIGIN) $(OUTDIR)
 

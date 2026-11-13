@@ -23,10 +23,12 @@ usage() {
 Usage: build_flydsl_wheel.sh --wheel_output_dir <dir> --flydsl_commit <ref> [options]
 Options:
   --wheel_output_dir <dir>  Required. Wheel cache; a matching
-                            flydsl-*+git<sha8>*llvm<sha12>.p<n>-cp<XY>-*.whl here is
-                            a hit. The LLVM identity is part of the key: the pin
-                            names a moving branch, and a wheel built against the
-                            wrong LLVM miscompiles rather than fails.
+                            flydsl-<ver>+git<sha8>*llvm<sha12>.p<n>-cp<XY>-*manylinux*.whl
+                            here is a hit when <n> is the patch count of
+                            .ci/flydsl-patch/<ver>/. The LLVM identity is part of
+                            the key: the pin names a moving branch, and a wheel
+                            built against the wrong LLVM miscompiles rather than
+                            fails.
     --flydsl_commit <ref>   Required. Branch, tag or SHA in the FlyDSL
                             compiler repo. Resolved to a SHA before caching.
     --flydsl_origin <url>   Default https://github.com/ROCm/FlyDSL (public).
@@ -43,7 +45,7 @@ Options:
          --python <X.Y>     CPython to build for. Default 3.11. flydsl wheels
                             are ABI specific, so this is part of the cache key.
            --rocm <ver>     TheRock version for the build image. Default
-                            10.2.0a20260918, the newest in the release suite's
+                            10.1.0, the newest release in the release suite's
                             list. FlyJitRuntime links HIP but AOTriton never
                             launches through it, so this does not affect the
                             kernels the wheel produces.
@@ -62,7 +64,7 @@ LLVM_TARBALL=""
 VERSION_SUFFIX=""
 PAT_ENVIRON=""
 PYVER="3.11"
-ROCMVER="10.2.0a20260918"
+ROCMVER="10.1.0"
 JOBS=""
 while [[ "$1" == --* ]]; do
   # `shift 2` with one argument left FAILS WITHOUT SHIFTING, so $1 never changes
@@ -104,6 +106,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/common-git-cache.sh"
 . "${SCRIPT_DIR}/common-altwheel.sh"
 . "${SCRIPT_DIR}/common-therock.sh"
+. "${SCRIPT_DIR}/common-flydsl.sh"
 
 # The *compiler* repo, and it is public, so nothing here needs a credential by
 # default. The kernel-development fork is a different repository and is not a
@@ -152,18 +155,21 @@ else
   echo "different LLVMs." >&2
   exit 1
 fi
-# The patches in .ci/flydsl-patch/ are part of what the wheel IS -- one of them
-# moves a build requirement -- so their count goes in the name. Adding a patch
-# must not return the wheel built before it. (A count, not a digest: editing a
-# patch in place still collides. Bump nothing and rebuild by hand if you do
-# that.)
-FLYDSL_PATCH_COUNT="$(ls "${SCRIPT_DIR}"/flydsl-patch/*.patch 2>/dev/null | wc -l)"
 # Appended INSIDE the local version segment, after the git hash and after any
 # caller --version_suffix:
 # <base>+git<flydsl sha8><suffix>.llvm<llvm sha12>.p<patches>.
 # PEP 440 allows [a-z0-9.] there, and the wheel filename is what both cache
 # probes below glob against.
-WHEEL_VERSION_SUFFIX="${VERSION_SUFFIX}.llvm${LLVM_SHA}.p${FLYDSL_PATCH_COUNT}"
+#
+# .p<patches> is NOT added here. The patches in .ci/flydsl-patch/<version>/
+# are part of what the wheel IS -- one of them moves a build requirement -- so
+# their count goes in the name, and adding a patch must not return the wheel
+# built before it. (A count, not a digest: editing a patch in place still
+# collides. Bump nothing and rebuild by hand if you do that.) But which
+# <version> applies is read from the checkout inside the container, so the
+# container appends it, and the cache probes check it per wheel
+# (flydsl_pick_cached_wheel, common-flydsl.sh).
+WHEEL_VERSION_SUFFIX="${VERSION_SUFFIX}.llvm${LLVM_SHA}"
 
 # flydsl wheels are CPython-ABI specific (flydsl-...-cp313-cp313-linux_x86_64.whl)
 # and AOTriton's CMake already fails a build whose --flydsl_wheel cp tag does
@@ -173,9 +179,12 @@ WHEEL_VERSION_SUFFIX="${VERSION_SUFFIX}.llvm${LLVM_SHA}.p${FLYDSL_PATCH_COUNT}"
 ABI_TAG="$(altwheel_abi_glob "${PYVER}")"
 # Every component of the version this run would produce, in order, so a wheel
 # built from the same FlyDSL and LLVM but under a different --version_suffix is
-# a MISS rather than a silently mislabelled hit.
+# a MISS rather than a silently mislabelled hit. manylinux only: an unrepaired
+# wheel lacks libmlir_apfloat_wrappers, and the container never publishes one,
+# so any still here predate that check.
 cached_wheel() {
-  ls "${WHEEL_OUTPUT_DIR}"/flydsl-*+git"${1:0:8}${WHEEL_VERSION_SUFFIX}"-*"${ABI_TAG}"*.whl 2>/dev/null | head -n1
+  flydsl_pick_cached_wheel "${SCRIPT_DIR}/flydsl-patch" \
+    "${WHEEL_OUTPUT_DIR}"/flydsl-*+git"${1:0:8}${WHEEL_VERSION_SUFFIX}".p*-*"${ABI_TAG}"-manylinux_*.whl
 }
 
 # Cache before the FlyDSL network round-trip: a SHA needs no resolution, so a
@@ -254,8 +263,9 @@ fi
 # tag has to match the venv that will install it.
 #
 # ROCm comes from TheRock rather than dnf packages because that is what the
-# rest of AOTriton targets, and .ci/flydsl-patch/ teaches FlyDSL's CMake to
-# find it -- a TheRock root is a site-packages directory, not /opt/rocm.
+# rest of AOTriton targets. FlyDSL 0.4.2 finds it through ROCM_PATH / rocm-sdk
+# on its own; for 0.3.1, .ci/flydsl-patch/0.3.1/ teaches its CMake to -- a
+# TheRock root is a site-packages directory, not /opt/rocm.
 FLYDSL_DOCKER_IMAGE="aotriton:buildenv-rocm${ROCMVER}-py${PYVER}"
 if [ -z "$(docker images -q "${FLYDSL_DOCKER_IMAGE}" 2>/dev/null)" ]; then
   # The index has to follow the version: theRock.Dockerfile's own default is a
@@ -296,10 +306,19 @@ scl enable gcc-toolset-13 -- bash /tmp/runc-build-flydsl-wheel.sh \
   file:///mirror "$COMMIT" "/cache/llvm/${LLVM_TARBALL_NAME}" /cache/wheels \
   "$VERSION_SUFFIX" /scratch/build "$JOBS"
 EOF
+# CHECKED: this script has no `set -e`, and the container only publishes a
+# wheel that passed its checks, so the glob below would otherwise find either
+# nothing or a wheel left by an earlier run, and report it as this build.
+BUILD_STATUS=$?
+if [[ "${BUILD_STATUS}" -ne 0 ]]; then
+  echo "Error: the FlyDSL wheel build for ${RESOLVED:0:8} failed (exit ${BUILD_STATUS}); see the log above." >&2
+  exit 1
+fi
 
 HIT="$(cached_wheel "${RESOLVED}")"
 if [[ -z "${HIT}" ]]; then
-  echo "Error: build reported success but no flydsl-*+git${RESOLVED:0:8}${WHEEL_VERSION_SUFFIX}-*${ABI_TAG}*.whl appeared in ${WHEEL_OUTPUT_DIR}." >&2
+  echo "Error: build reported success but no flydsl-*+git${RESOLVED:0:8}${WHEEL_VERSION_SUFFIX}.p<n>-*${ABI_TAG}-manylinux_*.whl" >&2
+  echo "with <n> matching .ci/flydsl-patch/<version>/ appeared in ${WHEEL_OUTPUT_DIR}." >&2
   exit 1
 fi
 realpath "${HIT}"

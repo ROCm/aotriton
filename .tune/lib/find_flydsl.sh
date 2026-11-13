@@ -21,6 +21,8 @@
 #
 # Source this; do not execute it.
 
+. "$(dirname "${BASH_SOURCE[0]}")/../../.ci/common-flydsl.sh"
+
 # The SINGLE decision point for "does this tree need a locally built FlyDSL
 # wheel". Every caller asks this rather than reading a pin file itself, so the
 # policy has exactly one body to replace when it grows.
@@ -97,21 +99,23 @@ find_flydsl_llvm_tarball() {
 # The wheel name .ci/build_flydsl_wheel.sh would produce for the CURRENT pins,
 # as a glob. Every component of its cache key, in its order:
 #
-#   flydsl-*+git<flydsl sha8><version suffix>.llvm<llvm sha12>.p<patches>-*<abi>*.whl
+#   flydsl-<ver>+git<flydsl sha8><version suffix>.llvm<llvm sha12>.p<patches>-*<abi>-manylinux_*.whl
 #
 # All five matter, and a wheel missing any one of them is a different wheel:
 # the FlyDSL commit and the LLVM commit are what was compiled and what it was
 # compiled against (the wrong LLVM miscompiles register spills and returns
-# wrong numbers rather than failing); .ci/flydsl-patch/ is part of what the
-# wheel IS, so its count is in the name; and CMakeLists.txt makes a cp-tag
-# mismatch a FATAL_ERROR.
+# wrong numbers rather than failing); .ci/flydsl-patch/<ver>/ is part of what
+# the wheel IS, so its count is in the name; and CMakeLists.txt makes a cp-tag
+# mismatch a FATAL_ERROR. <patches> is left as `*` here: <ver> is only known
+# from a wheel's name, so find_flydsl_wheel checks it per candidate
+# (flydsl_pick_cached_wheel, .ci/common-flydsl.sh).
 #
 # Kept in step with that script's cached_wheel() by hand. The alternative --
 # trusting a path the prebuild recorded -- cannot notice a pin moving under it,
 # which is precisely when a stale wheel is installed and nothing says so.
 flydsl_wheel_glob() {
   local aotriton_root="$1" pyver="$2"
-  local flydsl_sha llvm_sha12 patches major minor
+  local flydsl_sha llvm_sha12 major minor
   flydsl_sha="$(flydsl_ref_from_pin "$aotriton_root")" || return 1
   llvm_sha12="$(flydsl_llvm_sha12 "$aotriton_root")" || return 1
   # Both pins must name a commit, because the cache is keyed on the RESOLVED
@@ -126,10 +130,9 @@ flydsl_wheel_glob() {
     echo "Error: third_party/flydsl-llvm.txt does not pin a commit SHA." >&2
     return 1
   fi
-  patches=$(ls "$aotriton_root"/.ci/flydsl-patch/*.patch 2>/dev/null | wc -l)
   read -r major minor <<< "$(get_aotriton_major_minor "$aotriton_root")"
-  printf 'flydsl-*+git%s.aotriton%s.%s.llvm%s.p%s-*cp%s*.whl' \
-    "${flydsl_sha:0:8}" "$major" "$minor" "$llvm_sha12" "$patches" "${pyver//./}"
+  printf 'flydsl-*+git%s.aotriton%s.%s.llvm%s.p*-*cp%s-manylinux_*.whl' \
+    "${flydsl_sha:0:8}" "$major" "$minor" "$llvm_sha12" "${pyver//./}"
 }
 
 # Print the cached FlyDSL wheel matching the current pins and Python ABI, or
@@ -140,10 +143,10 @@ find_flydsl_wheel() {
   local pyver="$3"       # X.Y, as `python --version` reports it
   local glob wheel
   glob="$(flydsl_wheel_glob "$aotriton_root" "$pyver")" || return 1
-  # Unquoted on purpose: $glob is a pattern. `|| true` because callers run under
-  # `set -euo pipefail`, where ls exiting 2 on a missing cache dir would kill
-  # them at the assignment instead of letting this return 1.
-  wheel=$(ls "$workdir/scratch/flydsl"/$glob 2>/dev/null | head -n 1) || true
+  # Unquoted on purpose: $glob is a pattern. On a miss (including a missing
+  # cache dir) the helper prints nothing and still succeeds, so callers under
+  # `set -euo pipefail` reach the `return 1` below instead of dying here.
+  wheel=$(flydsl_pick_cached_wheel "$aotriton_root/.ci/flydsl-patch" "$workdir/scratch/flydsl"/$glob)
   [ -n "$wheel" ] && [ -f "$wheel" ] || return 1
   printf '%s' "$wheel"
 }
