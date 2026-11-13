@@ -279,29 +279,27 @@ def flyc_bwd_dq(arch, choices, hints):
         return build, asdict(knobs)
 
     elif arch == 'gfx942':
-        # Same flydsl-free-at-call-time rule as above; the kernel ABI is gfx1201's.
-        import fmha_tuning_bwd_dq_gfx942 as tuning
+        # Flydsl-free here; only build() imports flydsl. The kernel ABI is gfx1201's.
+        from fmha_tuning_gfx942 import FmhaInputMetadata, knob_dict
+        from fmha_tuning_bwd_dq_gfx942 import BODIES, DqKnobs
 
-        tile = choices.BLOCK_DMODEL
-        causal_type = choices.CAUSAL_TYPE
-        dtype_str = 'bf16' if '*bf16' in choices.arg('Q') else 'f16'
-        bias = bool(choices.BIAS_TYPE)
-        dropout = bool(choices.ENABLE_DROPOUT)
-        padded_head = bool(choices.PADDED_HEAD)
-        knobs = tuning.knobs(tile, causal_type != 0)
+        meta = FmhaInputMetadata(head_dim=choices.BLOCK_DMODEL,
+                                 causal_type=choices.CAUSAL_TYPE,
+                                 dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
+                                 bias=bool(choices.BIAS_TYPE),
+                                 dropout=bool(choices.ENABLE_DROPOUT),
+                                 padded_head=bool(choices.PADDED_HEAD))
+        knobs = DqKnobs().resolve(meta)
 
-        def build():
-            """Deferred: imports flydsl, so only `aotriton.flyc_compile` calls it."""
-            return tuning.build(tile,
-                                causal_type=causal_type,
-                                dtype_str=dtype_str,
-                                bias=bias,
-                                dropout=dropout,
-                                padded_head=padded_head,
-                                **tuning.builder_kwargs(knobs))
+        def build(knobs=knobs):
+            """Deferred: imports flydsl, so only `aotriton.flyc_compile` calls it.
+            `knobs` is bound as a default: the name is rebound to the dict below."""
+            from fmha_bwd_dq_gfx942 import build_fmha_bwd_dq_gfx942_module_primary
+            return build_fmha_bwd_dq_gfx942_module_primary(meta, knobs)
 
-        # Two bodies by head dim; block_m and GRID_AXIS_ORDER feed grid_calculator().
-        build.flyc_source, build.flyc_kernel_name, _ = tuning.BODIES[tuning.body(tile)]
+        # knobs.body picks the source; block_m and GRID_AXIS_ORDER feed grid_calculator().
+        build.flyc_source, build.flyc_kernel_name, _ = BODIES[knobs.body]
+        knobs = knob_dict(knobs)  # past here `knobs` is the dict, not the dataclass
         return build, knobs
 
     else:

@@ -617,36 +617,27 @@ def flyc_attn_fwd(arch, choices, hints):
         return build, asdict(knobs)
 
     elif arch == 'gfx942':
-        # Same flydsl-free-at-call-time rule as the gfx1201 branch above. The
-        # kernel ABI is gfx1201's, so the declarations above serve it unchanged.
-        import fmha_tuning_gfx942
+        # Flydsl-free here; only build() imports flydsl. The kernel ABI is gfx1201's.
+        from fmha_tuning_gfx942 import FmhaInputMetadata, knob_dict
+        from fmha_tuning_gfx942 import BODIES, FwdKnobs
 
-        tile = choices.BLOCK_DMODEL
-        causal_type = choices.CAUSAL_TYPE
-        dtype_str = 'bf16' if '*bf16' in choices.arg('Q') else 'f16'
-        bias = bool(choices.BIAS_TYPE)
-        dropout = bool(choices.ENABLE_DROPOUT)
-        padded_head = bool(choices.PADDED_HEAD)
-        knobs = fmha_tuning_gfx942.knobs(tile, causal_type != 0)
+        meta = FmhaInputMetadata(head_dim=choices.BLOCK_DMODEL,
+                                 causal_type=choices.CAUSAL_TYPE,
+                                 dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
+                                 bias=bool(choices.BIAS_TYPE),
+                                 dropout=bool(choices.ENABLE_DROPOUT),
+                                 padded_head=bool(choices.PADDED_HEAD))
+        knobs = FwdKnobs().resolve(meta)
 
-        def build():
-            """Deferred: imports flydsl, so only `aotriton.flyc_compile` calls it."""
-            return fmha_tuning_gfx942.build(tile,
-                                            causal_type=causal_type,
-                                            dtype_str=dtype_str,
-                                            bias=bias,
-                                            dropout=dropout,
-                                            num_waves=knobs['num_waves'],
-                                            block_n=knobs['block_n'],
-                                            waves_per_eu=knobs['waves_per_eu'],
-                                            rescale_threshold=knobs['rescale_threshold'],
-                                            grid_axis_order=knobs['GRID_AXIS_ORDER'],
-                                            padded_head=padded_head)
+        def build(knobs=knobs):
+            """Deferred: imports flydsl, so only `aotriton.flyc_compile` calls it.
+            `knobs` is bound as a default: the name is rebound to the dict below."""
+            from fmha_fwd_gfx942 import build_fmha_fwd_gfx942_module_primary
+            return build_fmha_fwd_gfx942_module_primary(meta, knobs)
 
-        # Three bodies by head dim; see fmha_tuning_gfx942.LADDER.
-        source, kernel_name, _ = fmha_tuning_gfx942.BODIES[fmha_tuning_gfx942.body(tile)]
-        build.flyc_source = source
-        build.flyc_kernel_name = kernel_name
+        # knobs.body picks the source; block_m and GRID_AXIS_ORDER feed grid_calculator().
+        build.flyc_source, build.flyc_kernel_name, _ = BODIES[knobs.body]
+        knobs = knob_dict(knobs)  # past here `knobs` is the dict, not the dataclass
         return build, knobs
 
     else:

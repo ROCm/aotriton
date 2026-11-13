@@ -1048,3 +1048,13 @@ def build_fmha_bwd_dq_gfx942(head_dim,
     _launch.traits = tr
     _launch.block_m = tr.BLOCK_M
     return _launch
+
+
+def build_fmha_bwd_dq_gfx942_module_primary(meta, knobs):
+    """The body `knobs.body` names, built for a resolved (meta, knobs) pair:
+    `fmha_tuning_gfx942.FmhaInputMetadata` and `DqKnobs().resolve(meta)`."""
+    import importlib
+
+    source, _, builder = tuning.BODIES[knobs.body]
+    build_body = getattr(importlib.import_module(source[:-3]), builder)
+    return build_body(meta.head_dim, **meta.builder_kwargs(), **knobs.builder_kwargs())

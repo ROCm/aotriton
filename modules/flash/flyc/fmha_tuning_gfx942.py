@@ -7,6 +7,40 @@ flydsl-free: aot/flyc_attn_fwd.py calls it from the code generator, which has
 no flydsl. The builder takes its defaults from here, so the two cannot drift.
 """
 
+from dataclasses import asdict, dataclass, fields, replace
+
+
+@dataclass(frozen=True)
+class FmhaInputMetadata:
+    """What to compute, read off a functional's axes; shared by the forward,
+    dQ and dK/dV. `head_dim` is the compiled tile (BLOCK_DMODEL)."""
+    head_dim: int
+    causal_type: int = 0
+    dtype_str: str = 'bf16'
+    bias: bool = False
+    dropout: bool = False
+    padded_head: bool = False
+
+    def builder_kwargs(self):
+        """The functional half of every gfx942 body builder's keywords."""
+        return dict(causal_type=self.causal_type,
+                    dtype_str=self.dtype_str,
+                    bias=self.bias,
+                    dropout=self.dropout,
+                    padded_head=self.padded_head)
+
+
+def resolve_fields(knobs, policy):
+    """`knobs` with every None field taken from the `policy` dict."""
+    return replace(knobs, **{f.name: policy[f.name] for f in fields(knobs)
+                             if getattr(knobs, f.name) is None and f.name in policy})
+
+
+def knob_dict(knobs):
+    """A resolved knobs dataclass as the JSON dict recorded beside the hsaco."""
+    return {k: v for k, v in asdict(knobs).items() if v is not None}
+
+
 # The compiled head dims, served by three bodies with different register plans:
 #   narrow (fmha_fwd_gfx942.py)        <= 128: 8 waves x 32 rows, 2 waves/SIMD
 #   wide   (fmha_fwd_gfx942_wide.py)   <= 256: 4 waves x 32 rows, 1 wave/SIMD
@@ -85,3 +119,36 @@ def knobs(head_dim, causal):
                 waves_per_eu=2,
                 rescale_threshold=0.0,
                 GRID_AXIS_ORDER=default_grid_axis_order(causal))
+
+
+# The tuning keywords each body's builder takes.
+BODY_KNOBS = {
+    'narrow': ('num_waves', 'block_n', 'waves_per_eu', 'rescale_threshold'),
+    'wide': ('num_waves', 'block_n', 'waves_per_eu', 'rescale_threshold'),
+    'xwide': ('num_waves', 'block_n', 'waves_per_eu', 'rescale_threshold'),
+}
+
+
+@dataclass(frozen=True)
+class FwdKnobs:
+    """How to compute it. None means "policy decides"; `resolve` fills it in.
+    `block_m` (rows per grid block) and `GRID_AXIS_ORDER` feed the C++ grid."""
+    body: str | None = None
+    block_m: int | None = None
+    num_waves: int | None = None
+    block_n: int | None = None
+    waves_per_eu: int | None = None
+    rescale_threshold: float | None = None
+    GRID_AXIS_ORDER: int | None = None
+
+    def resolve(self, meta: FmhaInputMetadata) -> 'FwdKnobs':
+        policy = dict(knobs(meta.head_dim, meta.causal_type != 0), body=body(meta.head_dim))
+        return resolve_fields(self, policy)
+
+    def builder_kwargs(self):
+        """The tuning half of the body builder's keywords."""
+        if self.body is None:
+            raise ValueError('knobs must be resolved: call FwdKnobs().resolve(meta) first')
+        kw = {k: getattr(self, k) for k in BODY_KNOBS[self.body]}
+        kw['grid_axis_order'] = self.GRID_AXIS_ORDER
+        return kw

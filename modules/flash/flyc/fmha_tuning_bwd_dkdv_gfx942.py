@@ -9,6 +9,11 @@ flydsl-free: the AOT description calls it from the code generator, which has
 no flydsl. The builder takes its defaults from here, so the two cannot drift.
 """
 
+from dataclasses import dataclass
+
+from fmha_tuning_gfx942 import FmhaInputMetadata, resolve_fields
+
+
 # The compiled head dims; an off-ladder head dim runs padded on the next rung.
 LADDER = (32, 64, 96, 128, 160, 192, 224, 256, 384, 512)
 
@@ -145,3 +150,38 @@ def build(head_dim, knob_dict=None, **kwargs):
         kw['grid_axis_order'] = knob_dict['GRID_AXIS_ORDER']
     source, _, builder = BODIES[body(head_dim)]
     return getattr(importlib.import_module(source[:-3]), builder)(head_dim, **kw)
+
+
+# The tuning keywords each body's builder takes.
+BODY_KNOBS = {
+    'narrow': ('num_waves', 'kv_blocks', 'waves_per_eu', 'interleave_valu'),
+    'wide': ('kv_subs', 'waves_per_eu'),
+    'xwide': ('kv_subs', 'waves_per_eu'),
+    'xxwide': ('kv_subs', 'waves_per_eu'),
+}
+
+
+@dataclass(frozen=True)
+class DkdvKnobs:
+    """How to compute it. None means "policy decides"; `resolve` fills it in.
+    `block_kv` (KV rows per grid block) and `GRID_AXIS_ORDER` feed the C++ grid."""
+    body: str | None = None
+    block_kv: int | None = None
+    num_waves: int | None = None
+    kv_blocks: int | None = None
+    kv_subs: int | None = None
+    waves_per_eu: int | None = None
+    interleave_valu: int | None = None
+    GRID_AXIS_ORDER: int | None = None
+
+    def resolve(self, meta: FmhaInputMetadata) -> 'DkdvKnobs':
+        policy = dict(knobs(meta.head_dim, meta.causal_type != 0, meta.bias), body=body(meta.head_dim))
+        return resolve_fields(self, policy)
+
+    def builder_kwargs(self):
+        """The tuning half of the body builder's keywords."""
+        if self.body is None:
+            raise ValueError('knobs must be resolved: call DkdvKnobs().resolve(meta) first')
+        kw = {k: getattr(self, k) for k in BODY_KNOBS[self.body]}
+        kw['grid_axis_order'] = self.GRID_AXIS_ORDER
+        return kw

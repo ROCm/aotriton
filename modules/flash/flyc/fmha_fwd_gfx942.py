@@ -985,3 +985,13 @@ def principal_diagonal_bits(bits, principal_diagonal):
     if bits & bit and principal_diagonal != bit:
         raise ValueError("varlen['bits'] selects BOTTOM_RIGHT but principal_diagonal= selects TOP_LEFT")
     return bits | principal_diagonal
+
+
+def build_fmha_fwd_gfx942_module_primary(meta, knobs):
+    """The body `knobs.body` names, built for a resolved (meta, knobs) pair:
+    `fmha_tuning_gfx942.FmhaInputMetadata` and `FwdKnobs().resolve(meta)`."""
+    import importlib
+
+    source, _, builder = tuning.BODIES[knobs.body]
+    build_body = getattr(importlib.import_module(source[:-3]), builder)
+    return build_body(meta.head_dim, **meta.builder_kwargs(), **knobs.builder_kwargs())
