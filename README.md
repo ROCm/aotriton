@@ -28,6 +28,9 @@ LLVM from `third_party/flydsl-llvm.txt`. Image-mode builds only:
 ### Prerequisites
 
 * `python >= 3.10`
+  - Running AOTriton's code generators or bundled tools with `python -O`
+    (or `PYTHONOPTIMIZE`) is unsupported. They use `assert` for sanity checks
+    that show what went wrong, and `-O` removes those checks.
   - For `python >= 3.14`, Triton needs patch https://github.com/triton-lang/triton/commit/c44b870bdd9e1ea8933fd4057b6b59a5e6e5407b
     to fix `ast.Num` error.
 * `gcc >= 8` or `clang >= 10`
