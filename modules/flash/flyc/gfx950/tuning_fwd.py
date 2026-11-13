@@ -711,6 +711,7 @@ class Gfx950Knobs(FmhaKnobs):
             bias=meta.bias,
             dropout=meta.dropout,
             lpt_tile_order=self.lpt_tile_order,
+            exact_kv_tiles=self.exact_kv_tiles,
             dtype_str=meta.dtype_str,
             waves_per_eu=self.waves_per_eu,
             lazy_rescale=self.lazy_rescale,
@@ -801,6 +802,7 @@ _GFX950_FALLBACK = Gfx950Knobs(
     # `None`: `_with_stagger` decides from the wave count.
     stagger=None,
     lpt_tile_order=False,
+    exact_kv_tiles=False,
     paged=False,
     kv_cache_layout="linear",
     num_kv_splits=1,

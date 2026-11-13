@@ -118,6 +118,13 @@ class ParityDualwaveTraits(dualwave.DualwaveSwpTraits):
     # load-balance choice; see `ParityKernelContext.init_thread_mapping`.
     LPT_TILE_ORDER: bool = False
 
+    # End each workgroup's KV walk at its last live tile instead of at the
+    # even, at-least-four bound the dual-wave pipeline was written for, and
+    # pick one of four whole-body arms by the segment length at run time; see
+    # `ParityKernelContext._drop_padding_tiles` and the drains in
+    # `fwd.py`. Off, the kernel is the single padded body.
+    EXACT_KV_TILES: bool = False
+
 
 # Hardware constants. Not parameters: these are the wave, the DMA width and the
 # MFMA shape, and a build that changed one would not be this algorithm.
@@ -154,6 +161,7 @@ def make_traits(
     bias=False,
     dropout=False,
     lpt_tile_order=False,
+    exact_kv_tiles=False,
     dtype_str="bf16",
     waves_per_eu=2,
     daz=True,
@@ -189,6 +197,14 @@ def make_traits(
             "mask, so combining it with a positional one has no defined meaning. Fold the causal "
             "pattern into the bias tensor, or drop the bias"
         )
+    if exact_kv_tiles and (d_stages > 1 or vo_shards > 1 or num_kv_splits > 1 or paged):
+        # The wide body walks one tile at a time and has no padding to drop;
+        # split-K chunks the range in even pieces of at least four; and the
+        # paged block table is staged for exactly the padded range, which the
+        # prologue's K prefetches would read past. Refused rather than ignored,
+        # so the knobs recorded for a build say what the binary does.
+        raise ValueError("exact_kv_tiles is implemented for the dual-wave body only (no shards, stages, "
+                         "split-K or paged KV)")
     if num_waves % vo_shards:
         raise ValueError(f"vo_shards {vo_shards} must divide num_waves {num_waves}")
     # With `vo_shards` waves sharing one Q tile, the workgroup covers
@@ -381,6 +397,7 @@ def make_traits(
         BIAS_TYPE=1 if bias else 0,
         ENABLE_DROPOUT=bool(dropout),
         LPT_TILE_ORDER=bool(lpt_tile_order),
+        EXACT_KV_TILES=bool(exact_kv_tiles),
         DTYPE_STR=dtype_str,
         WAVES_PER_EU=waves_per_eu,
         DAZ=bool(daz),

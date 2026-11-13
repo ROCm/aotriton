@@ -487,6 +487,23 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
     # `CROSS_SEQLEN`, which is why that flag already gates the `v_s_1` site.
     MASK_ALL_TILES = traits.CROSS_SEQLEN or traits.WINDOW
 
+    # Whether the KV walk ends at the last live tile rather than at the base
+    # class's bound, which is rounded up to an even count of at least four --
+    # what the dual-wave pipeline's prologue, two-tile loop and three-tile
+    # epilogue used to require. The epilogue now drains any segment length
+    # (see `_drain_three` and the shorter drains after it), so a block whose
+    # KV range is one to three tiles, or any odd count, no longer computes
+    # masked padding tiles. Split-K and paged keep the padded bound; see
+    # `ParityKernelContext._drop_padding_tiles`. The wide body walks one tile
+    # at a time and is left as it was.
+    #
+    # Opt-in, by the `exact_kv_tiles` knob (`traits.EXACT_KV_TILES`), which
+    # `make_traits` refuses for the bodies above. It pays where the padding is
+    # a large share of the walk (+69% at seqlen_k 64, +33% at 128) and costs
+    # 1.5-2% at four tiles or more, where the four whole-body arms only add
+    # code; off, the kernel is the single padded body it always was.
+    EXACT_TILE_COUNT = traits.EXACT_KV_TILES
+
     # A scale baked into the build configuration. `None` means "derive it",
     # which `fmha.resolve_scale` then does from the *real* head dim rather than
     # the compiled tile -- the distinction that matters under a padded head.
@@ -713,7 +730,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         ctx.init_philox()
         ctx.init_atoms_and_lds_ptrs()
         ctx.init_dma_thread_offsets()
-        ctx.init_tile_bounds()
+        ctx.init_tile_bounds(exact_tile_count=EXACT_TILE_COUNT)
         ctx.init_active_guard()
         ctx.init_lds_read_bases()
         ctx.init_dma_m0_tables()
@@ -735,7 +752,15 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         gemm_helper = (WideGemmHelper if WIDE else _FwdGemmHelper)(ctx)
         softmax_helper = (_WideSoftmaxHelper if WIDE else _ParitySoftmaxHelper)(ctx)
 
-        def _main_body():
+        def _main_body(drain):
+            """Prologue, loop and the epilogue `drain`; see `_exact_body`.
+
+            `drain` is `_drain_three` or `_drain_two` for a segment of three
+            tiles or more, `_drain_one` or `_drain_none` for two tiles or one.
+            The last two have no loop iteration, and prefetch no K beyond what
+            their segment holds.
+            """
+            pipelined = drain is _drain_three or drain is _drain_two
             # Paged: stage the block-table row into LDS before any page-id ds_read.
             if const_expr(traits.PAGED):
                 page_ids.load_block_table_to_lds()
@@ -750,7 +775,8 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
                                                            q_loader,
                                                            page_ids,
                                                            stagger_i32,
-                                                           q_staged=_q_stage is not None)
+                                                           q_staged=_q_stage is not None,
+                                                           prefetch_k1=drain is not _drain_none)
 
             # Prologue scores + first softmax pass for KV tile 0
             if const_expr(traits.PAGED):
@@ -795,7 +821,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
             if const_expr(traits.PAGED):
                 _init_v_pid_lds = page_ids.load_page_id_lds(loop_lb - fx.Index(2))
                 kv_gmem_to_lds.load_k_split(2, 0, page_id=pro_pageid_2)
-            else:
+            elif const_expr(pipelined):
                 kv_gmem_to_lds.load_k_split(2, 0)
 
             # ============================= Main loop =============================
@@ -807,9 +833,12 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
                 init_args.append(page_ids.finish_page_id(_init_v_pid_lds))
             loop_results = init_args
             v_pid_arg_idx = 3 + traits.D_CHUNKS
+            # The one- and two-tile arms give the loop an empty range, which
+            # folds away at compile time instead of being tested at run time.
+            loop_ub = split_t_end - fx.Index(1) if const_expr(pipelined) else loop_lb
             for j, loop_args in range(
                 loop_lb,
-                split_t_end - fx.Index(1),
+                loop_ub,
                 fx.Index(2),
                 init=init_args,
             ):
@@ -971,204 +1000,39 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
             l_row = loop_results[1]
             v_o = [loop_results[2 + i] for i in range_constexpr(traits.D_CHUNKS)]
             v_p_0 = _v_vec32_to_pair(loop_results[2 + traits.D_CHUNKS])
-            if const_expr(traits.PAGED):
-                _ec0_v_pid = loop_results[v_pid_arg_idx]
+            ec0_v_pid = loop_results[v_pid_arg_idx] if const_expr(traits.PAGED) else None
+            drain_state = (m_row, l_row, v_o, v_p_0, None, ec0_v_pid)
 
-            max_m3 = split_t_end - 3
-            max_m2 = split_t_end - 2
-            max_m1 = split_t_end - 1
+            _store_o(*drain(drain_state, q_all_bf16))
 
-            # Epilogue C0
-            _s_nop(7)
-            _sched_barrier(0)
-            if const_expr(traits.PAGED):
-                kv_gmem_to_lds.load_v_tile(max_m3, 1, page_id=_ec0_v_pid)
+        def _exact_body():
+            """Pick the arm for this workgroup's segment length.
+
+            A runtime choice, uniform across the workgroup: the segment length
+            depends only on the block's position and the sequence lengths.
+
+            The branch sits *above* the prologue, so each arm is a whole body
+            with its own prologue and loop. Branching after the loop instead,
+            between drains that share one prologue and loop, is the obvious
+            shape and was measured first: any such branch, even to the
+            one-tile drain, pushed this 248-VGPR kernel into scratch spills
+            (108 to 588 bytes) and cost the long sequences a few percent. With
+            the branch at the top no value is live across it but the context,
+            and the arms each store their own O, so none has to be merged
+            either.
+            """
+            n_tiles = split_t_end - ctx.split_t0
+            if n_tiles >= fx.Index(3):
+                if (n_tiles // fx.Index(2)) * fx.Index(2) == n_tiles:
+                    _main_body(_drain_three)
+                else:
+                    _main_body(_drain_two)
+            elif n_tiles == fx.Index(2):
+                _main_body(_drain_one)
             else:
-                kv_gmem_to_lds.load_v_tile(max_m3, 1)
-            v_k = kv_lds_to_regs.load_k(1)
-            _s_waitcnt(traits.LGKMCNT_0_ONLY)
-            _waitcnt_vm_n(ctx.NUM_DMA_K + ctx.NUM_DMA_V)
-            _dualwave_sync_barrier()
+                _main_body(_drain_none)
 
-            # Epilogue C1
-            if const_expr(traits.PAGED):
-                ec2_pageid_lds = page_ids.load_page_id_lds(max_m1)
-            v_s_1 = gemm_helper.qk(v_k, q_all_bf16)
-            v_p_0 = softmax_helper.exp2(v_p_0, 16, 16)
-            l_row = softmax_helper.reduce_sum(l_row, v_p_0)
-            v_p_0 = softmax_helper.cast_p(v_p_0, max_m3 - fx.Index(1))
-            v_p_0 = _anchor_v_p(traits, v_p_0, elem_dtype=elem_dtype)
-            _sched_barrier_exp_pairs(traits, 6, 3, 5)
-            _sched_barrier_pairs(traits, 10, 5, 5)
-            ec2_pageid = page_ids.finish_page_id(ec2_pageid_lds) if const_expr(traits.PAGED) else fx.Index(0)
-            _dualwave_sync_barrier()
-
-            # Epilogue C2
-            _s_nop(7)
-            _sched_barrier(0)
-            if const_expr(traits.PAGED):
-                kv_gmem_to_lds.load_k_tile(max_m1, 1, page_id=ec2_pageid)
-            else:
-                kv_gmem_to_lds.load_k_tile(max_m1, 1)
-            v_packs_e3 = kv_lds_to_regs.load_v(0)
-            if const_expr(traits.CAUSAL):
-                v_s_1 = softmax_helper.causal_mask_prologue_if_needed(
-                    v_s_1,
-                    max_m3,
-                    kv_end_tile=max_m2,
-                )
-            else:
-                v_s_1 = softmax_helper.seq_pad_mask_if_needed(v_s_1, max_m3)
-            _s_waitcnt(traits.LGKMCNT_0_ONLY)
-            _waitcnt_vm_n(ctx.NUM_DMA_K + ctx.NUM_DMA_V)
-            _dualwave_sync_barrier()
-
-            # Epilogue C3
-            if const_expr(traits.PAGED):
-                ec4_pageid_lds = page_ids.load_page_id_lds(max_m2)
-            if const_expr(traits.DUALWAVE_SWP_SETPRIO):
-                _s_setprio(1)
-            v_o = gemm_helper.pv(v_p_0, v_packs_e3, v_o)
-            m_tile_max_e3 = softmax_helper.reduce_max(v_s_1)
-            row_max_e3, rescale_e3 = softmax_helper.rescale_from_tile_max(m_row, m_tile_max_e3)
-            m_row = row_max_e3
-            v_s_1 = softmax_helper.sub_m(v_s_1, row_max_e3)
-            v_p_1 = softmax_helper.exp2(v_s_1, 0, 16)
-            _sched_barrier_pairs(traits, 10, 5, 6)
-            _sched_barrier_exp_pairs(traits, 6, 3, 6)
-            _sched_barrier(0)
-            softmax_helper.scale_o(v_o, rescale_e3)
-            v_o = _anchor_v_o(traits, v_o)
-
-            if const_expr(traits.DUALWAVE_SWP_SETPRIO):
-                _s_setprio(0)
-            ec4_pageid = page_ids.finish_page_id(ec4_pageid_lds) if const_expr(traits.PAGED) else fx.Index(0)
-            _dualwave_sync_barrier()
-
-            # Epilogue C4
-            _s_nop(7)
-            _sched_barrier(0)
-            if const_expr(traits.PAGED):
-                kv_gmem_to_lds.load_v_tile(max_m2, 0, page_id=ec4_pageid)
-            else:
-                kv_gmem_to_lds.load_v_tile(max_m2, 0)
-            v_k = kv_lds_to_regs.load_k(0)
-            _s_waitcnt(traits.LGKMCNT_0_ONLY)
-            _waitcnt_vm_n(ctx.NUM_DMA_K + ctx.NUM_DMA_V)
-            _dualwave_sync_barrier()
-
-            # Epilogue C5
-            v_s_0 = gemm_helper.qk(v_k, q_all_bf16)
-            l_row = softmax_helper.apply_l_rescale(l_row, rescale_e3)
-            v_p_1 = softmax_helper.exp2(v_p_1, 16, 16)
-            l_row = softmax_helper.reduce_sum(l_row, v_p_1)
-            v_p_1 = softmax_helper.cast_p(v_p_1, max_m3)
-            v_p_1 = _anchor_v_p(traits, v_p_1, elem_dtype=elem_dtype)
-            _sched_barrier_exp_pairs(traits, 6, 3, 7)
-            _sched_barrier_pairs(traits, 10, 5, 7)
-            _dualwave_sync_barrier()
-
-            # Epilogue C6
-            v_packs_e7 = kv_lds_to_regs.load_v(1)
-            if const_expr(traits.CAUSAL):
-                v_s_0 = softmax_helper.causal_mask_prologue_if_needed(
-                    v_s_0,
-                    max_m2,
-                    kv_end_tile=max_m1,
-                )
-            else:
-                v_s_0 = softmax_helper.seq_pad_mask_if_needed(v_s_0, max_m2)
-            _s_waitcnt(traits.LGKMCNT_0_ONLY)
-            _waitcnt_vm_n(ctx.NUM_DMA_V)
-            _dualwave_sync_barrier()
-
-            # Epilogue C7
-            if const_expr(traits.PAGED):
-                ec8_pageid_lds = page_ids.load_page_id_lds(max_m1)
-            if const_expr(traits.DUALWAVE_SWP_SETPRIO):
-                _s_setprio(1)
-            v_o = gemm_helper.pv(v_p_1, v_packs_e7, v_o)
-            m_tile_max_e7 = softmax_helper.reduce_max(v_s_0)
-            row_max_e7, rescale_e7 = softmax_helper.rescale_from_tile_max(m_row, m_tile_max_e7)
-            m_row = row_max_e7
-            v_s_0 = softmax_helper.sub_m(v_s_0, row_max_e7)
-            v_p_0 = softmax_helper.exp2(v_s_0, 0, 16)
-            _sched_barrier_pairs(traits, 10, 5, 8)
-            _sched_barrier_exp_pairs(traits, 6, 3, 8)
-            _sched_barrier(0)
-            softmax_helper.scale_o(v_o, rescale_e7)
-            v_o = _anchor_v_o(traits, v_o)
-            if const_expr(traits.DUALWAVE_SWP_SETPRIO):
-                _s_setprio(0)
-            ec8_pageid = page_ids.finish_page_id(ec8_pageid_lds) if const_expr(traits.PAGED) else fx.Index(0)
-            _dualwave_sync_barrier()
-
-            # Epilogue C8
-            _s_nop(7)
-            _sched_barrier(0)
-            if const_expr(traits.PAGED):
-                kv_gmem_to_lds.load_v_tile(max_m1, 1, page_id=ec8_pageid)
-            else:
-                kv_gmem_to_lds.load_v_tile(max_m1, 1)
-            v_k = kv_lds_to_regs.load_k(1)
-            _s_waitcnt(traits.LGKMCNT_0_ONLY)
-            _waitcnt_vm_n(ctx.NUM_DMA_V)
-            _dualwave_sync_barrier()
-
-            # Epilogue C9
-            v_s_1 = gemm_helper.qk(v_k, q_all_bf16)
-            l_row = softmax_helper.apply_l_rescale(l_row, rescale_e7)
-            v_p_0 = softmax_helper.exp2(v_p_0, 16, 16)
-            l_row = softmax_helper.reduce_sum(l_row, v_p_0)
-            v_p_0 = softmax_helper.cast_p(v_p_0, max_m2)
-            v_p_0 = _anchor_v_p(traits, v_p_0, elem_dtype=elem_dtype)
-            _sched_barrier_exp_pairs(traits, 6, 3, 9)
-            _sched_barrier_pairs(traits, 10, 5, 9)
-            _dualwave_sync_barrier()
-
-            # Epilogue C10
-            v_packs_e11 = kv_lds_to_regs.load_v(0)
-            if const_expr(traits.CAUSAL):
-                v_s_1 = softmax_helper.causal_mask_prologue_if_needed(
-                    v_s_1,
-                    max_m1,
-                    kv_end_tile=split_t_end,
-                )
-            else:
-                v_s_1 = softmax_helper.seq_pad_mask_if_needed(v_s_1, max_m1)
-            _s_waitcnt(traits.LGKMCNT_0_ONLY)
-            _waitcnt_vm_n(0)
-            _dualwave_sync_barrier()
-
-            # Epilogue C11
-            v_o = gemm_helper.pv(v_p_0, v_packs_e11, v_o)
-            m_tile_max_e11 = softmax_helper.reduce_max(v_s_1)
-            row_max_e11, rescale_e11 = softmax_helper.rescale_from_tile_max(m_row, m_tile_max_e11)
-            m_row = row_max_e11
-            v_s_1 = softmax_helper.sub_m(v_s_1, row_max_e11)
-            v_p_1 = softmax_helper.exp2(v_s_1, 0, 16)
-            _sched_barrier_pairs(traits, 9, 6, 10)
-            _sched_barrier_exp_pairs(traits, 7, 3, 10)
-            _sched_barrier(0)
-            v_p_1 = softmax_helper.exp2(v_p_1, 16, 16)
-            l_row = softmax_helper.apply_l_rescale(l_row, rescale_e11)
-            l_row = softmax_helper.reduce_sum(l_row, v_p_1)
-            v_p_1 = softmax_helper.cast_p(v_p_1, max_m1)
-            v_p_1 = _anchor_v_p(traits, v_p_1, elem_dtype=elem_dtype)
-            _sched_barrier(0)
-            softmax_helper.scale_o(v_o, rescale_e11)
-            v_o = _anchor_v_o(traits, v_o)
-            _s_barrier()
-            _sched_barrier(0)
-
-            # Epilogue C12
-            v_packs_e13 = kv_lds_to_regs.load_v(1)
-            _s_waitcnt(traits.LGKMCNT_0_ONLY)
-            _dualwave_sync_barrier()
-
-            # Epilogue C13
-            v_o = gemm_helper.pv(v_p_1, v_packs_e13, v_o)
-
+        def _store_o(m_row, l_row, v_o):
             l_inv = softmax_helper.safe_l_inv(l_row)
             softmax_helper.scale_o(v_o, l_inv)
 
@@ -1181,6 +1045,225 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
                 output_store.store_final_o(v_o, ctx.q_row, m_row, l_row)
             else:
                 output_store.store_splitk_partial_o(v_o, m_row, l_row, ctx.q_row)
+
+        # -- Epilogue drains ------------------------------------------------
+        #
+        # The pipeline's state at the top of a drain is: tile `t`'s scores are
+        # reduced and half exponentiated (`v_p`), its V is in flight to V
+        # buffer `par`, and K of tile `t + 1` sits in K buffer `1 - par` (with
+        # K of `t + 2`, when that tile exists, in flight to buffer `par`). The
+        # prologue leaves exactly that state with `t = split_t0, par = 0`, and
+        # so does every loop iteration, two tiles further on.
+        #
+        # From there `_drain_step` retires `t` and advances to `t + 1` with the
+        # parity flipped, `_drain_tail` retires the last two tiles and
+        # `_drain_none` the last one. The three-tile drain is the epilogue this
+        # kernel always had -- C0..C3, C4..C7, C8..C13 -- and the shorter ones
+        # are its suffixes. That is what keeps their LDS hazards the ones the
+        # epilogue already gets right: every buffer is read at least two
+        # dual-wave barriers after its `vmcnt` wait, and overwritten at least
+        # two clusters after its last read, so the lagging wave group of the
+        # stagger is never a cluster short.
+        #
+        # A drain state is `(m_row, l_row, v_o, v_p, l_rescale, v_pid)`:
+        # `l_rescale` is the factor the previous step applied to O and not yet
+        # to `l_row` (None when nothing is pending), `v_pid` the page of V
+        # `t + 1` (paged builds only).
+
+        def _drain_step(st, t, par, q_all_bf16, *, k_prefetch, sched_ids):
+            """Retire tile `t`, leave tile `t + 1` half exponentiated. C0..C3.
+
+            K of `t + 2` is in flight on entry, which is what the first `vmcnt`
+            wait allows for; `k_prefetch` issues K of `t + 3` as well.
+            """
+            m_row, l_row, v_o, v_p, l_rescale, v_pid = st
+            # Load V(t+1) into the other V buffer; read K(t+1).
+            _s_nop(7)
+            _sched_barrier(0)
+            if const_expr(traits.PAGED):
+                kv_gmem_to_lds.load_v_tile(t + 1, 1 - par, page_id=v_pid)
+            else:
+                kv_gmem_to_lds.load_v_tile(t + 1, 1 - par)
+            v_k = kv_lds_to_regs.load_k(1 - par)
+            _s_waitcnt(traits.LGKMCNT_0_ONLY)
+            _waitcnt_vm_n(ctx.NUM_DMA_K + ctx.NUM_DMA_V)
+            _dualwave_sync_barrier()
+
+            # S(t+1); finish P(t).
+            if const_expr(traits.PAGED and k_prefetch):
+                k_pid_lds = page_ids.load_page_id_lds(t + 3)
+            v_s = gemm_helper.qk(v_k, q_all_bf16)
+            if const_expr(l_rescale is not None):
+                l_row = softmax_helper.apply_l_rescale(l_row, l_rescale)
+            v_p = softmax_helper.exp2(v_p, 16, 16)
+            l_row = softmax_helper.reduce_sum(l_row, v_p)
+            v_p = softmax_helper.cast_p(v_p, t)
+            v_p = _anchor_v_p(traits, v_p, elem_dtype=elem_dtype)
+            _sched_barrier_exp_pairs(traits, 6, 3, sched_ids[0])
+            _sched_barrier_pairs(traits, 10, 5, sched_ids[0])
+            if const_expr(k_prefetch):
+                k_pid = page_ids.finish_page_id(k_pid_lds) if const_expr(traits.PAGED) else fx.Index(0)
+            _dualwave_sync_barrier()
+
+            # Prefetch K(t+3) when that tile exists; read V(t); mask S(t+1).
+            if const_expr(k_prefetch):
+                _s_nop(7)
+                _sched_barrier(0)
+                if const_expr(traits.PAGED):
+                    kv_gmem_to_lds.load_k_tile(t + 3, 1 - par, page_id=k_pid)
+                else:
+                    kv_gmem_to_lds.load_k_tile(t + 3, 1 - par)
+            v_v = kv_lds_to_regs.load_v(par)
+            if const_expr(traits.CAUSAL):
+                v_s = softmax_helper.causal_mask_prologue_if_needed(
+                    v_s,
+                    t + 1,
+                    kv_end_tile=t + 2,
+                )
+            else:
+                v_s = softmax_helper.seq_pad_mask_if_needed(v_s, t + 1)
+            _s_waitcnt(traits.LGKMCNT_0_ONLY)
+            _waitcnt_vm_n(ctx.NUM_DMA_K + ctx.NUM_DMA_V if k_prefetch else ctx.NUM_DMA_V)
+            _dualwave_sync_barrier()
+
+            # O += P(t) V(t); start P(t+1).
+            if const_expr(traits.PAGED):
+                v_pid_lds = page_ids.load_page_id_lds(t + 2)
+            if const_expr(traits.DUALWAVE_SWP_SETPRIO):
+                _s_setprio(1)
+            v_o = gemm_helper.pv(v_p, v_v, v_o)
+            m_tile_max = softmax_helper.reduce_max(v_s)
+            row_max, rescale = softmax_helper.rescale_from_tile_max(m_row, m_tile_max)
+            m_row = row_max
+            v_s = softmax_helper.sub_m(v_s, row_max)
+            v_p = softmax_helper.exp2(v_s, 0, 16)
+            _sched_barrier_pairs(traits, 10, 5, sched_ids[1])
+            _sched_barrier_exp_pairs(traits, 6, 3, sched_ids[1])
+            _sched_barrier(0)
+            softmax_helper.scale_o(v_o, rescale)
+            v_o = _anchor_v_o(traits, v_o)
+            if const_expr(traits.DUALWAVE_SWP_SETPRIO):
+                _s_setprio(0)
+            v_pid = page_ids.finish_page_id(v_pid_lds) if const_expr(traits.PAGED) else None
+            _dualwave_sync_barrier()
+            return (m_row, l_row, v_o, v_p, rescale, v_pid)
+
+        def _drain_tail(st, t, par, q_all_bf16):
+            """Retire tiles `t` and `t + 1`, the last two. C8..C13."""
+            m_row, l_row, v_o, v_p, l_rescale, v_pid = st
+            # Load V(t+1); read K(t+1). No K is in flight any more.
+            _s_nop(7)
+            _sched_barrier(0)
+            if const_expr(traits.PAGED):
+                kv_gmem_to_lds.load_v_tile(t + 1, 1 - par, page_id=v_pid)
+            else:
+                kv_gmem_to_lds.load_v_tile(t + 1, 1 - par)
+            v_k = kv_lds_to_regs.load_k(1 - par)
+            _s_waitcnt(traits.LGKMCNT_0_ONLY)
+            _waitcnt_vm_n(ctx.NUM_DMA_V)
+            _dualwave_sync_barrier()
+
+            # S(t+1); finish P(t).
+            v_s = gemm_helper.qk(v_k, q_all_bf16)
+            if const_expr(l_rescale is not None):
+                l_row = softmax_helper.apply_l_rescale(l_row, l_rescale)
+            v_p = softmax_helper.exp2(v_p, 16, 16)
+            l_row = softmax_helper.reduce_sum(l_row, v_p)
+            v_p = softmax_helper.cast_p(v_p, t)
+            v_p = _anchor_v_p(traits, v_p, elem_dtype=elem_dtype)
+            _sched_barrier_exp_pairs(traits, 6, 3, 9)
+            _sched_barrier_pairs(traits, 10, 5, 9)
+            _dualwave_sync_barrier()
+
+            # Read V(t); mask S(t+1).
+            v_v = kv_lds_to_regs.load_v(par)
+            if const_expr(traits.CAUSAL):
+                v_s = softmax_helper.causal_mask_prologue_if_needed(
+                    v_s,
+                    t + 1,
+                    kv_end_tile=t + 2,
+                )
+            else:
+                v_s = softmax_helper.seq_pad_mask_if_needed(v_s, t + 1)
+            _s_waitcnt(traits.LGKMCNT_0_ONLY)
+            _waitcnt_vm_n(0)
+            _dualwave_sync_barrier()
+
+            # O += P(t) V(t); all of P(t+1).
+            v_o = gemm_helper.pv(v_p, v_v, v_o)
+            m_tile_max = softmax_helper.reduce_max(v_s)
+            row_max, rescale = softmax_helper.rescale_from_tile_max(m_row, m_tile_max)
+            m_row = row_max
+            v_s = softmax_helper.sub_m(v_s, row_max)
+            v_p = softmax_helper.exp2(v_s, 0, 16)
+            _sched_barrier_pairs(traits, 9, 6, 10)
+            _sched_barrier_exp_pairs(traits, 7, 3, 10)
+            _sched_barrier(0)
+            v_p = softmax_helper.exp2(v_p, 16, 16)
+            l_row = softmax_helper.apply_l_rescale(l_row, rescale)
+            l_row = softmax_helper.reduce_sum(l_row, v_p)
+            v_p = softmax_helper.cast_p(v_p, t + 1)
+            v_p = _anchor_v_p(traits, v_p, elem_dtype=elem_dtype)
+            _sched_barrier(0)
+            softmax_helper.scale_o(v_o, rescale)
+            v_o = _anchor_v_o(traits, v_o)
+            _s_barrier()
+            _sched_barrier(0)
+
+            # Read V(t+1).
+            v_v = kv_lds_to_regs.load_v(1 - par)
+            _s_waitcnt(traits.LGKMCNT_0_ONLY)
+            _dualwave_sync_barrier()
+
+            # O += P(t+1) V(t+1).
+            v_o = gemm_helper.pv(v_p, v_v, v_o)
+            return m_row, l_row, v_o
+
+        def _drain_three(st, q_all_bf16):
+            """An even segment of four tiles or more: the original epilogue."""
+            t = split_t_end - 4
+            st = _drain_step(st, t, 0, q_all_bf16, k_prefetch=True, sched_ids=(5, 6))
+            st = _drain_step(st, t + 1, 1, q_all_bf16, k_prefetch=False, sched_ids=(7, 8))
+            return _drain_tail(st, t + 2, 0, q_all_bf16)
+
+        def _drain_two(st, q_all_bf16):
+            """An odd segment of three tiles or more.
+
+            The loop stopped one tile later than for the even segment one
+            longer, so `t` is one tile on and still at parity 0, and K of the
+            last tile is the one in flight. This is the three-tile drain from
+            its C4, with the buffers swapped.
+            """
+            t = split_t_end - 3
+            st = _drain_step(st, t, 0, q_all_bf16, k_prefetch=False, sched_ids=(7, 8))
+            return _drain_tail(st, t + 1, 1, q_all_bf16)
+
+        def _drain_one(st, q_all_bf16):
+            """Two tiles: the prologue's and one more. The three-tile drain from its C8."""
+            return _drain_tail(st, split_t_end - 2, 0, q_all_bf16)
+
+        def _drain_none(st, _q_all_bf16):
+            """One tile, the prologue's: finish P(t), then O += P(t) V(t).
+
+            The barriers are the tail's last two clusters: V(t) is waited on,
+            then two barriers pass before any wave reads it, which is what the
+            lagging wave group of the stagger needs.
+            """
+            m_row, l_row, v_o, v_p, _l_rescale, _v_pid = st
+            v_p = softmax_helper.exp2(v_p, 16, 16)
+            l_row = softmax_helper.reduce_sum(l_row, v_p)
+            v_p = softmax_helper.cast_p(v_p, split_t_end - 1)
+            v_p = _anchor_v_p(traits, v_p, elem_dtype=elem_dtype)
+            _s_waitcnt(traits.LGKMCNT_0_ONLY)
+            _waitcnt_vm_n(0)
+            _dualwave_sync_barrier()
+            _s_barrier()
+            _sched_barrier(0)
+            v_v = kv_lds_to_regs.load_v(0)
+            _s_waitcnt(traits.LGKMCNT_0_ONLY)
+            _dualwave_sync_barrier()
+            v_o = gemm_helper.pv(v_p, v_v, v_o)
+            return m_row, l_row, v_o
 
         # head_dim > 256 runs a different algorithm, in its own file: no
         # dual-wave pipeline, D staged through LDS and sharded across waves.
@@ -1196,8 +1279,12 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
                 softmax_helper=softmax_helper,
                 output_store=output_store,
             )
+        elif const_expr(EXACT_TILE_COUNT):
+            _body = _exact_body
         else:
-            _body = _main_body
+
+            def _body():
+                _main_body(_drain_three)
 
         if const_expr(traits.CAUSAL and traits.CROSS_SEQLEN and not traits.SPLITK):
             output_store.zero_o_block_if_needed()

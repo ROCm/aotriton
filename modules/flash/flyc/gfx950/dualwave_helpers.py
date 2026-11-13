@@ -1316,8 +1316,13 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
             offset, plane, self.seq_len_v, self.seq_len_kv_v
         )
 
-    def init_tile_bounds(self, **kwargs):
+    def init_tile_bounds(self, *, exact_tile_count=False, **kwargs):
         """Resolve the window, then let the causal bound derive from it.
+
+        `exact_tile_count` ends the walk at the last tile that holds a live
+        column instead of at the base class's padded bound -- see
+        `_drop_padding_tiles`. Only a body that can drain any segment length
+        may ask for it.
 
         Here and not in `init_runtime_indices` for an ordering reason: a
         sentinel resolves against the sequence lengths, and those are not
@@ -1358,8 +1363,46 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
             self.window_left_i32 = fx.Int32(left)
             self.delta_i32 = fx.Int32(right)
         super().init_tile_bounds(**kwargs)
+        self.exact_tile_count = exact_tile_count
+        if const_expr(exact_tile_count):
+            self._drop_padding_tiles()
         if const_expr(self.traits.WINDOW and not self.traits.SPLITK):
             self._skip_dead_leading_tiles()
+
+    def _drop_padding_tiles(self):
+        """End the KV walk at the last live tile.
+
+        The base class rounds the tile count up to an even number of at least
+        four, because the dual-wave pipeline it was written for consumes two
+        tiles per iteration and its prologue plus epilogue span four. Every
+        tile added by that rounding is loaded out of bounds, masked to `-inf`
+        and contributes nothing -- but costs a full tile of MFMA and softmax.
+        At `BLOCK_N = 64` that is the work of `seqlen_k = 256` for any shorter
+        sequence, and a sixth of the work at five tiles.
+
+        This recomputes the same bound without the rounding. Clamped to one
+        tile, not zero: an empty KV range (varlen `seqlen_k = 0`) still runs
+        the prologue's one fully-masked tile and stores the zero row the
+        padded walk used to produce from four of them.
+
+        Split-K and paged keep the padded bound: split-K chunks the range in
+        even pieces of at least four, and the paged block table is staged for
+        exactly `[split_t0, split_t_end)`, which the prologue's K prefetches
+        would read past.
+        """
+        traits = self.traits
+        if traits.SPLITK or traits.PAGED:
+            raise ValueError("exact_tile_count does not support split-K or paged builds")
+        live = self.num_kv_tiles
+        if const_expr(traits.CAUSAL):
+            causal_end_i32 = fx.Int32(
+                (self.causal_end_raw_i32 > fx.Int32(0)).select(self.causal_end_raw_i32, fx.Int32(0))
+            )
+            causal_tiles = (fx.Index(causal_end_i32) + self.kv_tile_size - 1) // self.kv_tile_size
+            live = fx.Index((causal_tiles < live).select(causal_tiles, live))
+        live = fx.Index((live < fx.Index(1)).select(fx.Index(1), live))
+        self.max_num_tiles = live
+        self.split_t_end = live
 
     def _skip_dead_leading_tiles(self):
         """Start the KV walk at the window's left edge instead of at tile 0.
@@ -1390,13 +1433,20 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         first_col_i32 = fx.Int32(self.q_start) - self.window_left_i32
         first_col_i32 = fx.Int32((first_col_i32 > fx.Int32(0)).select(first_col_i32, fx.Int32(0)))
         t0 = fx.Index(first_col_i32) // fx.Index(traits.BLOCK_N)
-        # Even, because the software pipeline consumes two tiles per iteration
-        # and `split_t_end` is already even; an odd base would make the segment
-        # odd and leave the epilogue a tile short.
-        t0 = (t0 // fx.Index(2)) * fx.Index(2)
-        # The pipeline's prologue plus epilogue need four tiles to exist. The
-        # base class guarantees `max_num_tiles >= 4`, so this cannot underflow.
-        cap = self.split_t_end - fx.Index(4)
+        if const_expr(self.exact_tile_count):
+            # The body drains a segment of any length, so neither the parity
+            # nor the four-tile floor below applies; one live tile must remain.
+            # `_drop_padding_tiles` guarantees `split_t_end >= 1`.
+            cap = self.split_t_end - fx.Index(1)
+        else:
+            # Even, because the software pipeline consumes two tiles per
+            # iteration and `split_t_end` is already even; an odd base would
+            # make the segment odd and leave the epilogue a tile short.
+            t0 = (t0 // fx.Index(2)) * fx.Index(2)
+            # The pipeline's prologue plus epilogue need four tiles to exist.
+            # The base class guarantees `max_num_tiles >= 4`, so this cannot
+            # underflow.
+            cap = self.split_t_end - fx.Index(4)
         self.split_t0 = fx.Index((t0 < cap).select(t0, cap))
 
     def init_runtime_indices(self, **kwargs):
@@ -2477,7 +2527,7 @@ class ParityStoreHelper(dualwave.DualwaveStoreHelper):
         """One direct 128-bit O store; see `_o_pack_words`.
 
         The path for builds `_o_row_chunks` rules out of LDS staging, and the
-        one `fmha_wide_gfx950` calls for its tail.
+        one `fwd_wide.py` calls for its tail.
         """
         dualwave._buffer_store_128(self._o_pack_words(v_o, dc, g),
                                    self._final_o_global(o_base, dc, g),
