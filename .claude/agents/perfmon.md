@@ -174,7 +174,7 @@ If you (the agent) run inside a container, and the build node and GPU hosts are 
 
 - Never run the `-m pg` tests (`pytest -m pg`) against a database holding real data: their fixture drops and recreates the pgdef/perfmon/tune schemas. Use a dedicated disposable PostgreSQL (`AOTRITON_PG_TEST_DISPOSABLE=1` and `PG*` variables).
 - Never truncate/drop shared tables; never `initdb --recreate` a shared database.
-- Naming (CLAUDE.md): architecture identifiers only (gfx942, ...), no commercial names or aliases; no internal ticket IDs in branches or commits. Python 3.10+, `X | None` unions, underscores in argparse options, one argument per line in multi-line calls.
+- Naming (CLAUDE.md): architecture identifiers only (gfx942, ...), no commercial names or aliases; no internal ticket IDs in branches or commits. Python 3.12+, `X | None` unions, underscores in argparse options, one argument per line in multi-line calls.
 - Keep the layering: perfmon SQL only in `python/perfmon/pq/`; family knowledge in `modules/<family>/perfmon/`; the engine imports nothing from an application.
 - Keep `--external_tuning_database` (see CLAUDE.md) when touching build options.
 - Do not add `.gitignore` entries; stage explicit paths.

@@ -200,7 +200,7 @@ Tables: `FLASH$attn_fwd`, `FLASH$bwd_kernel_dk_dv`, `FLASH$bwd_kernel_dq`, `FLAS
 - PostgreSQL connections: NEVER include `dbname`; use only `host`, `port`, `user`, `password`
 - All DB operations go through a `pq` package (`aotriton.pgdef.pq` for engine tables, `aotriton.tune.pq` for tune's) — no raw SQL in `localq/` or other packages; write engine tables only through `pgdef.pq`
 - `argparse` arguments use underscores, not dashes
-- Python 3.10+ syntax (`X | Y` unions, `list[...]` generics)
+- Python 3.12+ syntax (`X | Y` unions, `list[...]` generics)
 
 ## Design reference documents
 
