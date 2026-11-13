@@ -158,6 +158,41 @@ assert (make_varlen_bits(VARLEN_SIDE_DENSE,
         & VARLEN_ADDRESSING_MASK) == 0
 
 
+def check_varlen_bias(name, t, num_seqs, num_head_q, max_seqlen_q, max_seqlen_k,
+                      gradient=False):
+    """Host check of a bias (or dB) tensor against the varlen bias contract.
+
+    For every VarlenBits mode a bias is `(num_seqs, Hq, max_seqlen_q,
+    max_seqlen_k)` and sequence `z` reads slot `z`:
+
+        B[z, h, i, j],    0 <= i < seqlen_q[z],  0 <= j < seqlen_k[z]
+
+    with `i`, `j` local to the sequence -- no Q or K token offset. This is
+    TransformerEngine/cuDNN's `bhss` bias for packed (`thd`) layouts, whose
+    batch axis is `len(cu_seqlens_q) - 1`; `num_seqs` is the launch's grid z
+    extent. A dense call (`Varlen_bits == 0`) is the familiar `(B, H, Sq, Sk)`.
+
+    Broadcast shapes (1HSS, B1SS, 11SS) are expressed with zero strides via
+    `expand()`, not with size-1 axes, so the shape check is exact and the first
+    two strides are free. A gradient refuses a zero stride where it would be
+    shared by more than one sequence or head: those would race on the same
+    rows, and the right answer is their sum.
+    """
+    want = (int(num_seqs), int(num_head_q), int(max_seqlen_q), int(max_seqlen_k))
+    if tuple(t.shape) != want:
+        raise ValueError(f'{name} must be (num_seqs, num_heads_q, max_seqlen_q, max_seqlen_k) '
+                         f'= {want}; got {tuple(t.shape)}. Broadcast with expand(), '
+                         f'not with a size-1 axis.')
+    if t.stride(3) != 1:
+        raise ValueError(f'{name} needs a contiguous seqlen_k axis; strides are {tuple(t.stride())}')
+    if gradient:
+        for axis, count, what in ((0, want[0], 'sequences'), (1, want[1], 'heads')):
+            if t.stride(axis) == 0 and count > 1:
+                raise ValueError(f'{name} has stride 0 on axis {axis} with {count} {what}: they '
+                                 f'would race on the same rows. Pass one slot per sequence and '
+                                 f'head, and reduce it afterwards.')
+
+
 @triton.jit
 def decode_addressing(Varlen_bits, BITS_SHIFT: tl.constexpr,
                       Max_seqlen, s0, s1, z):

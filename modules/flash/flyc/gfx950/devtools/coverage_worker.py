@@ -418,13 +418,13 @@ class Problem:
         self.v = padded((B, H, Tk), hd, dt)
         self.do = padded((B, H, Tq), hd, dt) if need_bwd else None
         # One bias for every kernel, per the varlen bias contract (the Triton
-        # kernels'; `ParityKernelContext._score_slab_byte_base`): rows and
-        # columns are local to each sequence, and the batch slot follows the Q
-        # side's decode. The packed layout here has a STACKED Q side, so all
-        # sequences share slot 0 and each reads its top-left
-        # `seqlen_q[z] x seqlen_k[z]` corner of a `(1, H, sq, sk)` bias.
+        # kernels'; `ParityKernelContext._score_slab_byte_base`): sequence z
+        # owns slot z of a `(num_seqs, H, max_seqlen_q, max_seqlen_k)` bias and
+        # reads its top-left `seqlen_q[z] x seqlen_k[z]` corner, rows and
+        # columns local to the sequence. Random per slot, so a kernel that
+        # reads another sequence's slot is WRONG rather than lucky.
         if group["feature"] == "bias":
-            self.bias = torch.randn(B, H, sq, sk, device="cuda", dtype=dt)
+            self.bias = torch.randn(len(self.segments), H, sq, sk, device="cuda", dtype=dt)
         else:
             self.bias = None
         self.dropout = group["feature"] == "dropout"
@@ -474,9 +474,9 @@ class Problem:
         self.ref_live = torch.zeros(B, H, self.Tq, dtype=torch.bool, device="cuda")
         for b, q0, sq, k0, sk, z in self.segments:
             qs, ks = slice(q0, q0 + sq), slice(k0, k0 + sk)
-            # Local rows and columns in both layouts; `b` is the batch slot,
-            # which is 0 for every sequence of the packed layout.
-            bias = self.bias[b, :, 0:sq, 0:sk] if self.bias is not None else None
+            # Local rows and columns in both layouts, slot `z` of the
+            # sequence (the batch entry, for the dense layout).
+            bias = self.bias[z, :, 0:sq, 0:sk] if self.bias is not None else None
             o, lse, dq, dk, dv = reference(self.q[b, :, qs],
                                            self.k[b, :, ks],
                                            self.v[b, :, ks],

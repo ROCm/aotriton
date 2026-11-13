@@ -215,6 +215,12 @@ struct AOTRITON_API attn_fwd_params {
   T4       Q;
   T4       K;
   T4       V;
+  // Varlen bias contract, every VarlenBits mode: B is (num_seqs, Hq,
+  // Max_seqlen_q, Max_seqlen_k) and sequence z reads B[z, h, i, j] with i, j
+  // local to the sequence (no token offset) -- the `bhss` bias of TE/cuDNN for
+  // packed layouts. Broadcast (1HSS, B1SS, 11SS) by passing zero batch/head
+  // strides; DB (attn_bwd_params) follows B but needs non-zero strides, since
+  // sequences or heads sharing a slot would race on it. Not checked here.
   T4       B;
   T2       A;
   float    Sm_scale;
@@ -265,6 +271,8 @@ struct AOTRITON_API attn_bwd_params {
   T4        DK;
   T4        DV;
   T4        DQ;
+  // B's shape; zero strides unsupported (unchecked): shared slots overwrite each other.
+  // For a broadcast B, pass a full-shape DB and reduce it over the broadcast axes.
   T4        DB;
   T2        L;
   mutable LT2       D;              // Lazy Tensor must be mutable

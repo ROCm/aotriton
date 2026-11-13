@@ -1605,6 +1605,8 @@ def build_fmha_bwd_fused_gfx950_module_primary(meta, knobs):
             if tuple(LSE.shape) != want:
                 raise ValueError(f"logsumexp must be {want}; got {tuple(LSE.shape)}")
         _vl = fmha.varlen_args(STRIDES_CONSTEXPR, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
+        # The grid's sequence count: the bias's batch extent.
+        num_seqs = int(num_seqlens) or int(batch_size)
         *_dp, _dp_keepalive = fmha.dropout_args(
             bool(traits.ENABLE_DROPOUT),
             dropout_p,
@@ -1622,7 +1624,7 @@ def build_fmha_bwd_fused_gfx950_module_primary(meta, knobs):
             raise ValueError("this build was not compiled for bias")
         if bias is not None:
             # The split backward's contract; see `check_score_tensor`.
-            check_score_tensor("bias", bias, varlen, batch_size, num_head_q, _vl[5], _vl[6], Q.dtype)
+            check_score_tensor("bias", bias, num_seqs, num_head_q, _vl[5], _vl[6], Q.dtype)
         bias_t = bias if bias is not None else DK
         bias_st = tuple(int(x) for x in bias.stride()[:3]) if bias is not None else (0, 0, 0)
         return (

@@ -1704,11 +1704,14 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         # belongs launches N programs over a 1-batch tensor and every one of
         # them addresses a plausible row.
         _vl = fmha.varlen_args(STRIDES_CONSTEXPR, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
+        # The grid's sequence count: the bias's batch extent.
+        num_seqs = int(num_seqlens) or int(batch_size)
         # The bias is checked against the decode's max lengths, not Q's or K's
         # token extents: its rows and columns are local to each sequence, and
-        # its batch slot follows the Q side's decode. See `check_score_tensor`.
+        # sequence z reads slot z, so its batch axis is the grid's sequence
+        # count. See `check_score_tensor`.
         if bias is not None:
-            check_score_tensor("bias", bias, varlen, batch_size, num_head_q, _vl[5], _vl[6], Q.dtype)
+            check_score_tensor("bias", bias, num_seqs, num_head_q, _vl[5], _vl[6], Q.dtype)
 
         return (
             # Six pointers, not six tensors. `wire_ptr` types each one from the

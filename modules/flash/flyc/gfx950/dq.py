@@ -1759,6 +1759,8 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         # `bits == 0`, which the decode answers with dense addressing; a dense
         # word (`fmha.varlen_dense`) differs only in bits 18:16.
         _vl = fmha.varlen_args(bool(knobs.strides_constexpr), varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
+        # The grid's sequence count: the bias and dB batch extent.
+        num_seqs = int(num_seqlens) or int(batch_size)
 
         # **`(batch * heads, tokens)`, and the shape is shared with dK/dV.**
         # Both backward kernels take the same two row tensors and read them
@@ -1798,24 +1800,12 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
             raise ValueError("this build was not compiled for dB; pass store_db=True to the knobs")
         if db is not None:
             # **dB is the bias's gradient, so it has the bias's shape and its
-            # addressing**: rows and columns local to each sequence, batch slot
-            # from the Q side's decode (`bwd_kernel_dq.py:262`). See
+            # addressing**: rows and columns local to each sequence, one slot
+            # per sequence (`bwd_kernel_dq.py`). A slot shared through a zero
+            # stride is refused: the sequences (or heads) sharing it would
+            # race on the same rows where the right answer is their sum. See
             # `check_score_tensor`.
-            check_score_tensor("dB", db, varlen, batch_size, num_head_q, _vl[5], _vl[6], Q.dtype)
-            # **A STACKED Q side has one bias slot for all its sequences**, so
-            # the gradient of that slot is the *sum* of every sequence's dS --
-            # and each sequence's workgroups store theirs over the same
-            # top-left corner instead. The result is whichever store lands
-            # last: right shape, finite, wrong. Triton's `bwd_kernel_dq` has
-            # the same race (its `DB_ptr` also ignores the sequence), so there
-            # is no reference behaviour to match, only one to refuse. One
-            # sequence has nothing to race with.
-            if varlen is not None and int(varlen["bits"]) & fmha.VARLEN_STACKED and int(num_seqlens) > 1:
-                raise ValueError(
-                    f"dB under a STACKED Q side with {int(num_seqlens)} sequences: they share bias "
-                    f"slot 0, so dB would need a sum over sequences and the kernel stores per "
-                    f"sequence instead. Pass db=None, or compute dB per sequence."
-                )
+            check_score_tensor("dB", db, num_seqs, num_head_q, _vl[5], _vl[6], Q.dtype, gradient=True)
         # **The seed and offset the forward *reported*, not what its caller
         # passed.** Under a captured graph the caller's offset is a pointer the
         # forward re-reads, so the two need not be equal -- and the mask has to
@@ -1849,7 +1839,7 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
             # believes it is being applied.
             raise ValueError("this build was not compiled for bias; pass bias=True to the builder")
         if bias is not None:
-            check_score_tensor("bias", bias, varlen, batch_size, num_head_q, _vl[5], _vl[6], Q.dtype)
+            check_score_tensor("bias", bias, num_seqs, num_head_q, _vl[5], _vl[6], Q.dtype)
         bias_t = bias if bias is not None else DQ
         # `_seq_q` is the *query* axis, matching `stride_db_seq_q` two lines
         # down and the 24 other occurrences the rename settled on. `_seq`

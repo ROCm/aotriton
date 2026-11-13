@@ -133,8 +133,9 @@ def bwd_kernel_fuse(
         if ENABLE_DROPOUT:
             philox_seed = tl.load(philox_seed_ptr)
             philox_offset_base += tl.load(philox_offset1)
-        # Q and K decode independently: batch_index covers Q, DO, DQ, L, B and
-        # DB, while k_batch_index covers K and V. num_z is N.
+        # Q and K decode independently: batch_index covers Q, DO, DQ and L,
+        # while k_batch_index covers K and V. num_z is N. B and DB take off_z:
+        # one (max_seqlen_q, max_seqlen_k) slot per sequence, local rows/cols.
         seqlen_q, q_row_off, batch_index = decode_addressing(
                 varlen_bits, 0, max_seqlen_q, seqinfo_q0, seqinfo_q1, off_z)
         seqlen_k, k_row_off, k_batch_index = decode_addressing(
@@ -240,10 +241,10 @@ def bwd_kernel_fuse(
             B_ptr_dq = 0
             DB_ptr = 0
         elif BIAS_TYPE == 1:
-            B_ptr_dq = B + off_h_q * stride_bh + batch_index * stride_bz
+            B_ptr_dq = B + off_h_q * stride_bh + off_z * stride_bz
             if (stride_dbz == 0 and stride_dbh == 0) and stride_dbm == 0:
                 store_db = False
-            DB_ptr = DB + off_h_q * stride_dbh + batch_index * stride_dbz
+            DB_ptr = DB + off_h_q * stride_dbh + off_z * stride_dbz
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
@@ -379,8 +380,9 @@ def bwd_kernel_fuse(
         num_z = tl.num_programs(2)
         offs_q = tl.arange(0, BLOCK_M)
         offs_k = start_k + tl.arange(0, BLOCK_N)
-        # Q and K decode independently: batch_index covers Q, DO, L and B, while
-        # k_batch_index covers K, V, DK and DV. num_z is N.
+        # Q and K decode independently: batch_index covers Q, DO and L, while
+        # k_batch_index covers K, V, DK and DV. num_z is N. B takes off_z: one
+        # (max_seqlen_q, max_seqlen_k) slot per sequence, local rows/cols.
         seqlen_q, q_row_off, batch_index = decode_addressing(
                 varlen_bits, 0, max_seqlen_q, seqinfo_q0, seqinfo_q1, off_z)
         seqlen_k, k_row_off, k_batch_index = decode_addressing(
@@ -479,7 +481,7 @@ def bwd_kernel_fuse(
         dropout_scale = 1.0 / (1.0 - dropout_p) if ENABLE_DROPOUT else 1.0
         for off_h_q in range(off_h_k * group_size, off_h_k * group_size + group_size):
             if BIAS_TYPE == 1:
-                B_ptr = B + off_h_q * stride_bh + batch_index * stride_bz
+                B_ptr = B + off_h_q * stride_bh + off_z * stride_bz
             off_zh = off_z * num_head_q + off_h_q * 1
             # This lower loop bound is because of the causal mask. We create a lower triangular
             # result. The upper triangular is -inf (becomes 0 when we do e^x). As such, it can

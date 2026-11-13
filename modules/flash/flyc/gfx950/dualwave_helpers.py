@@ -54,7 +54,6 @@ from dataclasses import fields as dataclass_fields
 from dataclasses import replace
 
 import fmha_utils as fmha
-from fmha_utils import VARLEN_STACKED
 from fmha_utils import MaskedAxis
 from .traits import BF16_BYTES as _ELEM_BYTES
 from .traits import DMA_BYTES as _ACCESS_BYTES
@@ -585,39 +584,57 @@ def _bias_slab_num_records_bytes(seqlen_q, seqlen_kv, stride_b_seq_q, elem_bytes
     return arith.minui(as_mlir_value(tight), as_mlir_value(loose))
 
 
-def check_score_tensor(name, t, varlen, batch_size, num_head_q, max_seqlen_q, max_seqlen_k, dtype):
+def check_score_tensor(name, t, num_seqs, num_head_q, max_seqlen_q, max_seqlen_k, dtype, gradient=False):
     """Host check for a bias or dB tensor against the varlen bias contract.
 
-    The shape is `(1 if the Q side is STACKED else batch_size, num_head_q,
-    max_seqlen_q, max_seqlen_k)`, whatever the VarlenBits mode: the kernel
-    addresses `t[batch_index, h, i, j]` with `i`, `j` local to the sequence and
-    `batch_index` the Q side's decode. `ParityKernelContext.
-    _score_slab_byte_base` states the contract and cites the Triton kernels it
-    follows. Under a dense word the two maxima are the call's `seqlen_q` and
-    `seqlen_k`, so this is the familiar `(B, H, Sq, Sk)`.
+    The shape is `(num_seqs, num_head_q, max_seqlen_q, max_seqlen_k)`,
+    whatever the VarlenBits mode: sequence `z` owns slot `z`, and the kernel
+    addresses `t[z, h, i, j]` with `i`, `j` local to the sequence. This is
+    TransformerEngine/cuDNN's `bhss` bias for packed (`thd`) layouts, whose
+    batch axis is `len(cu_seqlens_q) - 1`. `ParityKernelContext.
+    _score_slab_byte_base` states the contract on the device side. Under a
+    dense word `num_seqs` is the batch and the two maxima are the call's
+    `seqlen_q` and `seqlen_k`, so this is the familiar `(B, H, Sq, Sk)`.
 
-    Exact rather than at-least, on every axis: a STACKED Q side reads slot 0
-    for every sequence, so a caller who allocated one slot per sequence
-    believes something the kernel does not do, and only refusing tells them.
+    `num_seqs` is the launch's grid z extent: `num_seqlens` for a packed Q
+    side, `batch_size` otherwise.
+
+    **Broadcasting is a stride, not a shape.** `1HSS`, `B1SS` and `11SS`
+    biases are passed as `bias.expand(num_seqs, num_head_q, ...)`: the first
+    two axes may have any stride, 0 included, and the kernel honours it. So
+    the shape check is exact; a caller who wants one slot shared by every
+    sequence says so with a zero stride.
+
+    **A gradient refuses a zero stride where it would be shared.** With
+    `stride(0) == 0` and more than one sequence (or `stride(1) == 0` and more
+    than one head) every sequence (head) stores its own `dS` over the same
+    rows: the right answer is a sum, the kernel writes whichever store lands
+    last. The caller reduces a per-sequence dB instead.
 
     `max_seqlen_*` are the decode's MAX fallbacks, i.e. what `varlen_args`
     returns -- under a `seqused_k` layout that is the slot capacity, not the
     longest used length.
     """
-    stacked_q = varlen is not None and int(varlen["bits"]) & VARLEN_STACKED
-    want = (1 if stacked_q else int(batch_size), int(num_head_q), int(max_seqlen_q), int(max_seqlen_k))
+    want = (int(num_seqs), int(num_head_q), int(max_seqlen_q), int(max_seqlen_k))
     if tuple(t.shape) != want:
-        layout = "STACKED Q side: one slot shared by every sequence" if stacked_q else "one slot per batch entry"
         raise ValueError(
-            f"{name} must be (slots, num_heads_q, max_seqlen_q, max_seqlen_k) = {want} ({layout}); "
-            f"got {tuple(t.shape)}. Rows and columns are local to each sequence -- a varlen {name} "
-            f"is never packed -- and the batch slot follows the Q side's VarlenBits decode, as in "
-            f"AOTriton's Triton kernels."
+            f"{name} must be (num_seqs, num_heads_q, max_seqlen_q, max_seqlen_k) = {want}; "
+            f"got {tuple(t.shape)}. Sequence z reads slot z with rows and columns local to it -- "
+            f"a varlen {name} is never packed. Broadcast over sequences or heads with expand() "
+            f"(zero strides), not with a size-1 axis."
         )
     if t.stride(3) != 1:
         raise ValueError(f"{name} needs a contiguous seqlen_k axis; strides are {tuple(t.stride())}")
     if t.dtype != dtype:
         raise ValueError(f"{name} must have Q's dtype ({dtype}), got {t.dtype}")
+    if gradient:
+        for axis, count, what in ((0, want[0], "sequences"), (1, want[1], "heads")):
+            if t.stride(axis) == 0 and count > 1:
+                raise ValueError(
+                    f"{name} has stride 0 on axis {axis} with {count} {what}: they would race on "
+                    f"the same rows, and the gradient of a shared bias is their sum. Pass a "
+                    f"tensor with one slot per sequence and head, and reduce it afterwards."
+                )
 
 
 def _slab_span_elems(rows, stride_seq, hdim):
@@ -1810,43 +1827,40 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         return elems * fx.Index(self.traits.BF16_BYTES)
 
     def _score_slab_byte_base(self, s0, s1, head_idx):
-        """Byte offset of this workgroup's bias (or dB) slab: batch and head only.
+        """Byte offset of this workgroup's bias (or dB) slab: sequence and head only.
 
-        **A bias is addressed by local coordinates, never by a token origin.**
-        This is AOTriton's varlen bias contract, and the Triton kernels are its
-        reference. Element `(i, j)` of sequence `z`'s scores, for query head
-        `h`, is
+        **A bias is addressed by its own sequence slot and local coordinates,
+        never by a token origin.** This is AOTriton's varlen bias contract (the
+        `bhss` bias of TransformerEngine/cuDNN for packed layouts). Element
+        `(i, j)` of sequence `z`'s scores, for query head `h`, is
 
-            B[batch_index(z), h, i, j]    0 <= i < seqlen_q[z], 0 <= j < seqlen_k[z]
+            B[z, h, i, j]    0 <= i < seqlen_q[z], 0 <= j < seqlen_k[z]
 
-        where `batch_index` is the **Q side's** VarlenBits decode -- `z` for a
-        BATCHED Q side, 0 for a STACKED one (`varlen_bits.py:200`) -- and the
-        row and column are the query and key indices *within the sequence*.
-        Neither `q_row_off` nor `kv_row_off` takes part, under any mode:
+        whatever the VarlenBits mode: the slot is the grid's sequence index
+        (`seq_idx_i32`), not either side's batch decode, and the row and column
+        are the query and key indices *within the sequence*. Neither
+        `q_row_off` nor `kv_row_off` takes part. The Triton kernels are the
+        reference:
 
-        - forward: `B + batch_index*stride_bz + off_h_q*stride_bh +
-          offs_m*stride_bm` (`fwd_kernel.py:397`), columns `start_N + OFFS_N`
-          (`fwd_kernel_inner.py:155`);
-        - dK/dV, dQ and fused: `B + off_h_q*stride_bh + batch_index*stride_bz`
-          (`bwd_kernel_dk_dv.py:275`, `bwd_kernel_dq.py:249`,
-          `bwd_kernel_fuse.py:243,482`), local rows and columns in
-          `bwd_inner_dk_dv.py:161`, `bwd_inner_dq.py:142`,
-          `bwd_inner_fuse.py:178`;
-        - dB, the same slab of the gradient: `bwd_kernel_dq.py:262`,
-          `bwd_kernel_fuse.py:246`, stored by `bwd_inner_dq.py:201`.
+        - forward: `B + off_z*stride_bz + off_h_q*stride_bh + offs_m*stride_bm`
+          (`fwd_kernel.py`), columns `start_N + OFFS_N` (`fwd_kernel_inner.py`);
+        - dK/dV, dQ and fused: `B + off_h_q*stride_bh + off_z*stride_bz`
+          (`bwd_kernel_dk_dv.py`, `bwd_kernel_dq.py`, `bwd_kernel_fuse.py`),
+          local rows and columns in the `bwd_inner_*.py` loops;
+        - dB, the same slab of the gradient (`bwd_kernel_dq.py`,
+          `bwd_kernel_fuse.py`).
 
-        So the bias is `(1 if Q is STACKED else N, Hq, max_seqlen_q,
-        max_seqlen_k)` and a STACKED Q side shares slot 0 between all its
-        sequences, each reading the top-left `seqlen_q[z] x seqlen_k[z]` corner.
-        Under a dense word the row origin is 0 anyway, which is why the dense
-        callers never saw a difference.
+        So the bias is `(N, Hq, max_seqlen_q, max_seqlen_k)`. A bias shared by
+        sequences or heads is the same tensor with a zero `s0` / `s1` stride
+        (`expand()`), which this formula honours as is; `check_score_tensor`
+        refuses that for dB.
 
-        The forward and the split backward used to fold `q_row_off` in here, as
-        if the bias were Q-shaped: a packed Q then wanted a bias with `total_q`
-        rows, and since the two launchers checked different column extents no
-        single varlen bias was accepted by both.
+        Under a dense word `z` is the batch index, so dense callers see no
+        difference. A STACKED Q side used to take its decoded batch index
+        here, 0, so every packed sequence read slot 0; that is now
+        `bias.expand(N, ...)`.
         """
-        elems = self.batch_idx * fx.Index(s0) + head_idx * fx.Index(s1)
+        elems = fx.Index(self.seq_idx_i32) * fx.Index(s0) + head_idx * fx.Index(s1)
         return elems * fx.Index(self.traits.BF16_BYTES)
 
     def _slab_view(self, tensor, s0, s1, s2, row_off, head_idx, rows, hdim, batch_idx=None):
@@ -1948,8 +1962,8 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
 
         if const_expr(traits.BIAS_TYPE):
             # Bias is indexed by (batch, head, q_row, kv_col) with the row and
-            # column *local to the sequence*: the batch slot and the head fold
-            # into the base, the varlen row origin does not -- see
+            # column *local to the sequence*: the sequence slot and the head
+            # fold into the base, the varlen row origin does not -- see
             # `_score_slab_byte_base` for the contract -- and what remains per
             # access is `q_row * stride_b_seq_q + col`.
             #

@@ -2527,6 +2527,8 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         # whatever the layout, and a packed `num_seqlens` must agree with the
         # length array.
         _vl = fmha.varlen_args(STRIDES_CONSTEXPR, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
+        # The grid's sequence count: the bias's batch extent.
+        num_seqs = int(num_seqlens) or int(batch_size)
         # **The seed and the counter are the ones the *forward* reported**, not
         # the ones its caller passed: under graph capture the effective offset
         # is `*offset1 + offset2`, summed on the device. `fmha.dropout_args` is
@@ -2555,10 +2557,10 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         if bias is not None and not traits.BIAS_TYPE:
             raise ValueError("this build was not compiled for bias; pass bias=True in FmhaInputMetadata")
         if bias is not None:
-            # Rows and columns local to each sequence, batch slot from the Q
-            # side's decode -- the forward's contract and Triton's; see
+            # Rows and columns local to each sequence, one slot per sequence
+            # -- the forward's contract and Triton's; see
             # `check_score_tensor`.
-            check_score_tensor("bias", bias, varlen, batch_size, num_head_q, _vl[5], _vl[6], Q.dtype)
+            check_score_tensor("bias", bias, num_seqs, num_head_q, _vl[5], _vl[6], Q.dtype)
         # The sentinel is a real tensor whose contents are never read: every
         # use is behind `const_expr(traits.BIAS_TYPE)`, so a build without bias
         # emits no load at all. That is what makes `bias=None` bitwise

@@ -280,6 +280,25 @@ class VarlenCase:
         view = lse.reshape(-1)[batch * tokens * h:(batch + 1) * tokens * h]
         return view.reshape(tokens, h)[start:start + s, :].transpose(0, 1)
 
+    def new_bias(self, fill=None, seed=31):
+        """A bias (or dB) in the varlen bias contract's shape.
+
+        `(N, Hq, max_seqlen_q, max_seqlen_k)` whatever the bits: sequence `z`
+        owns slot `z`, and its rows and columns are local to it -- no token
+        offset on either side. With `fill=None` it is random per slot, so a
+        kernel that reads another sequence's slot gets a different answer.
+        """
+        shape = (self.n, self.num_head_q, self.q.max_seqlen, self.k.max_seqlen)
+        if fill is not None:
+            return torch.full(shape, fill, dtype=self.dtype, device=self.device)
+        gen = torch.Generator(device=self.device)
+        gen.manual_seed(seed)
+        return torch.randn(shape, dtype=self.dtype, device=self.device, generator=gen)
+
+    def bias_slice(self, bias, z):
+        """Sequence `z`'s live part of a bias or dB, as (Hq, seqlen_q, seqlen_k)."""
+        return bias[z, :, :self.q.seqlens[z], :self.k.seqlens[z]]
+
     def out_like_q(self, fill=float('nan')):
         """An output tensor with Q's addressing and V's head dim."""
         t = self.q.tensor
