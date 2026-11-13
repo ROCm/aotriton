@@ -90,9 +90,9 @@ else()
   message(STATUS "[AOTriton] UTF-8 input character is set for all C/C++ source files.")
 endif()
 
-set(AOTRITON_MIN_PYTHON 3.10 CACHE STRING "Minimal Python version for find_package.")
-if(AOTRITON_MIN_PYTHON VERSION_LESS "3.10")
-  message(FATAL_ERROR "Do not set AOTRITON_MIN_PYTHON lower than 3.10. The code itself does not support it.")
+set(AOTRITON_MIN_PYTHON 3.12 CACHE STRING "Minimal Python version for find_package.")
+if(AOTRITON_MIN_PYTHON VERSION_LESS "3.12")
+  message(FATAL_ERROR "AOTRITON_MIN_PYTHON is ${AOTRITON_MIN_PYTHON}, but Python 3.12 is the minimum the code supports. If this is a stale value cached by an older configure, pass -DAOTRITON_MIN_PYTHON=3.12 or use a fresh build directory.")
 endif()
 
 find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter REQUIRED)
@@ -102,7 +102,7 @@ include(cmake/LoadHIP.cmake)
 
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
 option(AOTRITON_NO_PYTHON "Disable python binding build" OFF)
-option(AOTRITON_USE_TORCH "Enable functions in python binding that requires libtorch" ON)
+option(PYAOTRITON_ABI3 "Build pyaotriton against the Python stable ABI (abi3, Python 3.12+), so one build works with any later Python. It loads nanobind's runtime from the nanobind-backend package, which must be installed wherever pyaotriton is imported. OFF builds a module specific to the build Python instead." ON)
 option(AOTRITON_ENABLE_ASAN "Enable Address Sanitizer (g++). Implies -g" OFF)
 option(AOTRITON_ENABLE_ASAN_CLANG "Enable Address Sanitizer using Clang (e.g. theRock clang++). Implies -g" OFF)
 option(AOTRITON_BUILD_FOR_TUNING "Build all GPU kernels and set -DAOTRITON_BUILD_FOR_TUNING=1 (=0 otherwise)" OFF)
@@ -270,29 +270,25 @@ endforeach()
 # Early failure for python binding
 if(NOT AOTRITON_NO_PYTHON)
   cmake_policy(SET CMP0148 NEW)  # Disable outdated FindPythonInterp/FindPythonLibs
-  find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Development REQUIRED)
+  # nanobind reads FindPython's variables, not FindPython3's. Pin FindPython to
+  # the interpreter FindPython3 already chose. Development.Module is enough to
+  # build an extension: it needs neither libpython nor an embeddable runtime.
+  set(Python_EXECUTABLE "${Python3_EXECUTABLE}")
+  find_package(Python ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter Development.Module REQUIRED)
 
   # Must use Python3_EXECUTABLE (the cmake-invoking python), NOT VENV_BIN_PYTHON.
   # Workflow: (user's python env) -> cmake & ninja -> test aotriton.
-  # pyaotriton must be ABI-compatible with the test environment, which also supplies
-  # torch (required for GPU memory and reference). VENV_DIR must never have torch.
-  # Check torch BEFORE pybind11: when a fresh env has neither installed, torch
-  # is the heavier/more consequential one to set up, so surface that error
-  # first instead of making the user fix pybind11 only to immediately hit torch.
-  if(AOTRITON_USE_TORCH)
-    message(STATUS "Python3_EXECUTABLE: ${Python3_EXECUTABLE}")
-    execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import torch; from pathlib import Path; print(str(Path(torch.__file__).parent))"
-                    OUTPUT_STRIP_TRAILING_WHITESPACE
-                    OUTPUT_VARIABLE TORCH_SITE)
-    message(STATUS "TORCH SITE: ${TORCH_SITE}")
-    find_package(Torch REQUIRED HINTS ${TORCH_SITE})
-  endif(AOTRITON_USE_TORCH)
+  # pyaotriton must be ABI-compatible with the test environment, and VENV_DIR
+  # must never have torch. Building needs no torch at all: lazy_tensor uses the
+  # libtorch stable ABI (bindings/lazy_tensor/torch_stable_min.h), and torch is
+  # only needed when pyaotriton is imported.
 
-  # heuristics to find pybind11 from python site
-  execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import pybind11; from pathlib import Path; print(str(Path(pybind11.__file__).parent / 'share' / 'cmake' / 'pybind11'))"
+  # nanobind and nanobind-backend are build dependencies of the extension
+  # (requirements.txt); ask the interpreter where nanobind's CMake files are.
+  execute_process(COMMAND "${Python3_EXECUTABLE}" -m nanobind --cmake_dir
                   OUTPUT_STRIP_TRAILING_WHITESPACE
-                  OUTPUT_VARIABLE pybind11_DIR)
-  find_package(pybind11 CONFIG REQUIRED)
+                  OUTPUT_VARIABLE nanobind_DIR)
+  find_package(nanobind CONFIG REQUIRED)
 endif()
 
 # Resolve name conflicts with suffix

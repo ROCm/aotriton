@@ -168,7 +168,7 @@ for HASH in "${NEEDED_HASHES[@]}"; do
     PAT_ENV_ARG=(-e "${pat_environ}")
   fi
 
-  docker run --network=host -i --rm \
+  docker run --user root --network=host -i --rm \
     -v "${volume}:/mirror:ro" \
     --mount "type=bind,source=$(realpath ${WHEEL_OUTPUT_DIR}),target=/cache/wheels" \
     --mount "type=bind,source=$(realpath ${SCRIPT_DIR}/runc-build-triton-wheel.sh),target=/tmp/runc-build-triton-wheel.sh,readonly" \
@@ -200,7 +200,7 @@ if [[ -n "${ALTWHEEL_YAML}" ]]; then
       continue
     fi
     index="$(altwheel_pep508_index "${WHEEL_OUTPUT_DIR}" "${req}" "${PYVER}")"
-    docker run --network=host -i --rm \
+    docker run --user root --network=host -i --rm \
       --mount "type=bind,source=$(realpath ${WHEEL_OUTPUT_DIR}),target=/cache/wheels" \
       --tmpfs "/scratch:exec" \
       -e TRITON_WHEEL_VERSION_SUFFIX="${TRITON_WHEEL_VERSION_SUFFIX}" \

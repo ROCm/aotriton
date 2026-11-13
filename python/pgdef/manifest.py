@@ -17,8 +17,8 @@ its own, and never reads a manifest it was not handed. Each application's
 manifest module calls `main(MANIFEST)`.
 
 A manifest is a nested dict of strings, lists and dicts (a Python dict rather
-than TOML because this project targets Python 3.10, which has no tomllib; and
-not config.rc, which is for the tuning infrastructure only). A dict whose keys
+than TOML, a choice made when this project still targeted Python 3.10, which
+has no tomllib; and not config.rc, which is for the tuning infrastructure only). A dict whose keys
 are category levels, with the sentinel key `*` for "any", is selected by
 `--cat_level1`. Placeholders `{arch}` and `{cat_level1}` in strings are filled
 from the command line.
