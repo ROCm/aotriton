@@ -17,9 +17,3 @@
 # This file sits beside the configured trivy.yml, so the scan uses it.
 # A .trivyignore at the repository root applies only when this file is
 # absent; the two are never merged.
-
-# DS-0002 (no non-root USER): the .ci/*.Dockerfile images are build
-# environments that run as root on purpose. The runc-*.sh scripts build under
-# `docker run`, install under /opt and /usr/local, write into bind mounts, and
-# source.Dockerfile works in /root. A non-root USER would break all of them.
-AVD-DS-0002
