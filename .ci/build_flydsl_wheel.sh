@@ -225,7 +225,7 @@ fi
 # --flydsl_commit is normally a tag (v0.3.1), which is exactly the moving-ref
 # problem the LLVM pin has: resolve it against the mirror before the wheel
 # name -- and therefore the cache key -- depends on it.
-RESOLVED=$(docker run --rm -i \
+RESOLVED=$(docker run --user root --rm -i \
   -v "${MIRROR_VOLUME}:/mirror:ro" \
   "${BASE_DOCKER_IMAGE}" \
   bash -s "${FLYDSL_COMMIT}" <<'EOF'
@@ -286,7 +286,7 @@ if [[ -n "${PAT_ENVIRON}" ]]; then
 fi
 
 # Container stdout goes to stderr; this script's stdout is the wheel path.
-docker run --network=host -i --rm \
+docker run --user root --network=host -i --rm \
   -v "${MIRROR_VOLUME}:/mirror:ro" \
   --tmpfs "/scratch:exec" \
   --mount "type=bind,source=${WHEEL_OUTPUT_DIR},target=/cache/wheels" \

@@ -431,7 +431,7 @@ function build_inside() {
   TTY_FLAGS=()
   [ ${SUITE_DEBUG} -gt 0 ] && TTY_FLAGS=(-t -e SUITE_DEBUG=1)
   set -x
-  docker run --network=host -i --rm \
+  docker run --user root --network=host -i --rm \
     -v ${MIRROR_VOLUME}:/mirror:ro \
     --mount "type=bind,source=$(realpath ${SCRIPT_DIR}/runc-manylinux-build-tar.sh),target=/tmp/runc-manylinux-build-tar.sh,readonly" \
     --mount "type=bind,source=$(realpath ${OUTPUT_DIR}),target=/output" \

@@ -63,7 +63,7 @@ function sync_mirror() {
   fi
 
   docker volume create --name "${mirror_volume}" >/dev/null
-  docker run --network=host -i --rm \
+  docker run --user root --network=host -i --rm \
     -v "${mirror_volume}:/mirror" \
     "${origin_mount[@]}" \
     "${pat_env_arg[@]}" \

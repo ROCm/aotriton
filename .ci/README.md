@@ -31,6 +31,11 @@ NOTE: ALL SCRIPTS REQUIRE **BASH**.
   `docker run`; the `runc-` half does the actual work and takes plain
   positional arguments, so a caller with no Docker (`.tune`'s worker
   container) can run it directly.
+  The `*.Dockerfile` images default to a non-root user (trivy DS-0002),
+  but the builds need root: they install under `/opt` and `/usr/local`,
+  write to root-owned volumes and bind mounts, and git rejects
+  repositories owned by another user. So every `docker run` in these
+  scripts passes `--user root`; keep doing that for new ones.
 * `common-*.sh`: a "library" script that could be sourced by other scripts.
 * `docker-script-*`: a script prepare environment inside a docker container for
   direct scripts like `build-*.sh` or `run-*.sh`

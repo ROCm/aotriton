@@ -50,5 +50,12 @@ RUN set -ex; \
     python -m ensurepip && \
     python -m pip install cmake ninja wheel
 
+# The image defaults to a non-root user. Every build script starts its container
+# with `--user root`, because the builds install under /opt and /usr/local, write
+# to root-owned volumes and bind mounts, and git rejects repositories owned by
+# another user.
+RUN useradd --create-home --uid 1000 builder
+USER builder
+
 # A build environment: nothing listens, so there is nothing to probe.
 HEALTHCHECK NONE
