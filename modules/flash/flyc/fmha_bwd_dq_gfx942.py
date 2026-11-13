@@ -552,19 +552,31 @@ def build_fmha_bwd_dq_gfx942(head_dim,
             db_off = [(pair_row[x] < sq).select((fx.Int32(pair_row[x]) * fx.Int32(stride_db_seq_q) + pair_key[x])
                                                 * fx.Int32(2),
                                                 fx.Int32(0x7FFFFFF0)) for x in range(2)]
+            # bias_issue's offsets, by access.
+            b_offs = [b_off[x] + fx.Int32(64 * n) for n in range(tr.NSUB) for x in range(2)]
+            if const_expr(tr.NSUB == 2):
+                # A 64-key tile trades once more, sub-tile 1's access with lane lm ^ 8:
+                # access (x, h) then moves whole 128-byte segments of rows
+                # 16x + 8h + lm % 8, lane lm taking sub-tile n_of[h]. Bias loads and
+                # clean dB stores use it.
+                quad_lo = (lm % 16) < fx.Index(8)
+                db_off8 = []
+                b_offs = []
+                for x in range_constexpr(2):
+                    for h in range_constexpr(2):
+                        row = q_wave + lm % 8 + 16 * x + 8 * h
+                        n_of = quad_lo.select(fx.Int32(64 * h), fx.Int32(64 - 64 * h))
+                        b_offs.append((fx.Int32(row) * fx.Int32(stride_b_seq_q) + pair_key[x]) * fx.Int32(2) + n_of)
+                        db_off8.append((row < sq).select((fx.Int32(row) * fx.Int32(stride_db_seq_q) + pair_key[x])
+                                                         * fx.Int32(2) + n_of,
+                                                         fx.Int32(0x7FFFFFF0)))
 
         def bias_issue(kv_start):
-            """Bias of one KV tile, accesses A and B of each sub-tile. Issued a tile
-            ahead of its use."""
+            """Bias of one KV tile by access (b_offs). Issued a tile ahead of its use."""
             if const_expr(not bias):
                 return []
             soff = fx.Int32(kv_start) * fx.Int32(2)
-            return [rocdl.raw_ptr_buffer_load(Vec.make_type(4, fx.Int32),
-                                              b_rsrc,
-                                              b_off[x] + fx.Int32(64 * n),
-                                              soff,
-                                              0)
-                    for n in range(tr.NSUB) for x in range(2)]
+            return [rocdl.raw_ptr_buffer_load(Vec.make_type(4, fx.Int32), b_rsrc, o, soff, 0) for o in b_offs]
 
         @flyc.jit
         def bias_tail(raws, kv_start):
@@ -577,7 +589,7 @@ def build_fmha_bwd_dq_gfx942(head_dim,
                 for p in range_constexpr(2 * tr.NSUB):
                     hs = [fx.Int32(fx.Int16(rocdl.raw_ptr_buffer_load(T.i16,
                                                                       b_rsrc,
-                                                                      b_off[p % 2] + fx.Int32(64 * (p // 2) + 2 * e),
+                                                                      b_offs[p] + fx.Int32(2 * e),
                                                                       soff,
                                                                       0))) & fx.Int32(0xFFFF)
                           for e in range(8)]
@@ -589,32 +601,56 @@ def build_fmha_bwd_dq_gfx942(head_dim,
             """x of lane ^ 16."""
             return fx.Int32(rocdl.ds_swizzle(T.i32, raw(x), raw(fx.Int32(0x401F))))
 
+        def swap8(x):
+            """x of lane ^ 8."""
+            return fx.Int32(rocdl.ds_swizzle(T.i32, raw(x), raw(fx.Int32(0x201F))))
+
+        def untrade8(words):
+            """Bias accesses (x, h) back to (n, x) of a 32-key sub-tile: undo the lane ^ 8 trade."""
+            if const_expr(tr.NSUB == 1):
+                return words
+            mine = [[quad_lo.select(words[2 * x][w], words[2 * x + 1][w]) for w in range(4)] for x in range(2)]
+            far = [[swap8(quad_lo.select(words[2 * x + 1][w], words[2 * x][w])) for w in range(4)] for x in range(2)]
+            return mine + far
+
         def bias_finish(raws):
             """bias_issue's accesses as S^T groups of 4 keys: group 4n + i holds keys
             32n + 16(i/2) + 4(i%2) + kv_lane + [0, 4)."""
             if const_expr(not bias):
                 return None
+            words = untrade8([[fx.Int32(Vec(r)[w]) for w in range(4)] for r in raws])
             out = []
             for n in range_constexpr(tr.NSUB):
-                acc = [[fx.Int32(Vec(raws[2 * n + x])[w]) for w in range(4)] for x in range(2)]
+                acc = [words[2 * n + x] for x in range(2)]
                 own = [pair_lo.select(acc[0][w], acc[1][w]) for w in range(4)]
                 far = [swap16(pair_lo.select(acc[1][w], acc[0][w])) for w in range(4)]
-                for words in (own, far):
+                for run in (own, far):
                     for h in range_constexpr(2):
-                        out.append(Vec.from_elements(words[2 * h:2 * h + 2], fx.Int32).bitcast(elem).ir_value())
+                        out.append(Vec.from_elements(run[2 * h:2 * h + 2], fx.Int32).bitcast(elem).ir_value())
             return out
 
         def db_store(ds_packs, kv_start, mode):
             """dB = dS by accesses A and B: 16 bytes a lane (`mode` 'dword', rows
             dword-aligned), else 2 ('short', or 'masked' at keys past sk)."""
             soff = fx.Int32(kv_start) * fx.Int32(2)
+            acc = []
             for n in range_constexpr(tr.NSUB):
                 own, far = [[fx.Int32(Vec(ds_packs[4 * n + 2 * p + x]).bitcast(fx.Int32)[e])
                              for x in range(2) for e in range(2)] for p in range(2)]
                 far = [swap16(w) for w in far]
+                acc.append([[pair_lo.select(own[w], far[w]) if x == 0 else pair_lo.select(far[w], own[w])
+                             for w in range(4)] for x in range(2)])
+            if const_expr(mode == 'dword' and tr.NSUB == 2):
                 for x in range_constexpr(2):
-                    v4 = Vec.from_elements([pair_lo.select(own[w], far[w]) if x == 0 else pair_lo.select(far[w], own[w])
-                                            for w in range(4)], fx.Int32)
+                    far = [swap8(w) for w in acc[1][x]]
+                    for h in range_constexpr(2):
+                        v4 = Vec.from_elements([quad_lo.select(acc[0][x][w], far[w]) if h == 0
+                                                else quad_lo.select(far[w], acc[0][x][w]) for w in range(4)], fx.Int32)
+                        rocdl.raw_ptr_buffer_store(raw(v4), db_rsrc, raw(db_off8[2 * x + h]), raw(soff))
+                return
+            for n in range_constexpr(tr.NSUB):
+                for x in range_constexpr(2):
+                    v4 = Vec.from_elements(acc[n][x], fx.Int32)
                     off = db_off[x] + fx.Int32(64 * n)
                     if const_expr(mode == 'dword'):
                         rocdl.raw_ptr_buffer_store(raw(v4), db_rsrc, raw(off), raw(soff))
