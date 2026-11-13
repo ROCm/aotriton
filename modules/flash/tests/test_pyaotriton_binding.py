@@ -62,6 +62,15 @@ def test_writes_reach_nested_members():
     assert v3.varlen_to_wire(params.varlen_bits) != 0
 
 
+def test_principal_diagonal_bit_field():
+    bits = v3.VarlenBits()
+    assert bits.principal_diagonal_choice == v3.VarlenPrincipalDiagonal.TOP_LEFT
+    wire_before = v3.varlen_to_wire(bits)
+    bits.principal_diagonal_choice = v3.VarlenPrincipalDiagonal.BOTTOM_RIGHT
+    assert bits.principal_diagonal_choice == v3.VarlenPrincipalDiagonal.BOTTOM_RIGHT
+    assert v3.varlen_to_wire(bits) != wire_before
+
+
 def test_static_constants():
     assert v3.attn_fwd_params.kVersion > 0
     assert v3.attn_bwd_params.kVersion > 0
