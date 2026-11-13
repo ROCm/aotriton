@@ -280,10 +280,12 @@ if [ -z "${WHEEL}" ]; then
   exit 1
 fi
 
-# Copied under a dot-name, then renamed: the cache globs flydsl-*, so a copy
-# cut short never looks like a wheel.
+# rsync, not cp: DIST_DIR (tmpfs) and OUTPUT_DIR (bind mount) are different
+# filesystems, so the wheel must not appear in the cache until it is complete.
+# rsync writes to a hidden, uniquely named temporary file inside OUTPUT_DIR and
+# renames it once the copy finishes, and removes it if interrupted. The cache
+# globs flydsl-*, so concurrent builds of the same wheel never expose a partial
+# one.
 mkdir -p "${OUTPUT_DIR}"
-WHEEL_NAME="$(basename "${WHEEL}")"
-cp "${WHEEL}" "${OUTPUT_DIR}/.${WHEEL_NAME}.tmp"
-mv "${OUTPUT_DIR}/.${WHEEL_NAME}.tmp" "${OUTPUT_DIR}/${WHEEL_NAME}"
-ls "${OUTPUT_DIR}/${WHEEL_NAME}"
+rsync "${WHEEL}" "${OUTPUT_DIR}/"
+ls "${OUTPUT_DIR}/$(basename "${WHEEL}")"
