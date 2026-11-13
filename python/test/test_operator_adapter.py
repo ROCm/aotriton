@@ -62,7 +62,7 @@ def test_functional_space_matches_default_backend():
 
 def test_backends_and_optune():
     op = _ati_op()
-    assert op.nbackends == 2                         # triton metro + aiter
+    assert op.nbackends == 3                         # triton metro + aiter + flyc
     assert op.fallback_backend is op.list_backends()[0]
     assert set(op.OPTUNE_KEYS) == {'Max_seqlen_q', 'Max_seqlen_k'}
 
