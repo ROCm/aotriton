@@ -89,7 +89,7 @@ def main():
     p.add_argument('--bias', action='store_true', help='(B, H, Sq, Sk) attention bias, N(0, 1)')
     p.add_argument('--dropout_p', type=float, default=0.0)
     p.add_argument('--kv_subs', type=int, default=None)
-    p.add_argument('--body', choices=('wide', 'xwide'), default=None, help='default: the tuning module\'s')
+    p.add_argument('--body', choices=('wide', 'xwide', 'xxwide'), default=None, help='default: the tuning module\'s')
     p.add_argument('--grid_axis_order', type=int, default=None)
     p.add_argument('--iters', type=int, default=20)
     p.add_argument('--no_check', action='store_true')
