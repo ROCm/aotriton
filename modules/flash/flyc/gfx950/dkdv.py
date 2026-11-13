@@ -191,6 +191,41 @@ for _e0, _c0, _w in _ROW_RUNS:
         _ROW_THRESHOLDS[_e0 + _j] = _c0 + _j
 
 
+def _park_in_vgprs(values):
+    """Each value out through one side-effecting no-op asm, in a VGPR.
+
+    The asm emits nothing (every output is tied to its input), but nothing can
+    see through it: a later use reads the asm's result, so the values are
+    computed *here* and carried in VGPRs, and no pass can sink their
+    computation -- or the kernargs it reads -- down to the use. Side-effecting
+    so that the asm itself is not sunk either; it runs once per workgroup,
+    outside every loop, so the scheduling boundary costs nothing.
+    """
+    irs = [as_mlir_value(v) for v in values]
+    n = len(irs)
+    if const_expr(n == 1):
+        return [dualwave.llvm.inline_asm(irs[0].type, irs, "", "=v,0", has_side_effects=True)]
+    ret_ty = dualwave.ir.Type.parse(f"!llvm.struct<({', '.join(str(v.type) for v in irs)})>")
+    constraints = ",".join(["=v"] * n + [str(i) for i in range(n)])
+    ret = dualwave.llvm.inline_asm(ret_ty, irs, "", constraints, has_side_effects=True)
+    return [dualwave.llvm.extractvalue(irs[i].type, ret, [i]) for i in range(n)]
+
+
+def _unpark_uniform(v):
+    """A parked wave-uniform i32 back in an SGPR, for a descriptor."""
+    return fx.Int32(dualwave.rocdl.readfirstlane(T.i32, as_mlir_value(v)))
+
+
+def _parks_stream_strides(traits, block_dmodel, padded_head):
+    """Whether the tile walk reads Q's and dO's row strides from VGPRs; see `park_strides`.
+
+    FIXME: FlyDSL#1344 workaround, for the one build it was seen in: head_dim
+    384 unpadded, f16, dropout, no bias, no causal mask. Remove with the fix.
+    """
+    feature = traits.ENABLE_DROPOUT and not traits.BIAS_TYPE and not traits.CAUSAL
+    return block_dmodel == 384 and not padded_head and traits.DTYPE_STR == "f16" and feature
+
+
 def _stream_row_read_base(traits, lane_mod_32, lane_div_32):
     """Per-lane LDS base for the row-major read of a staged tile.
 
@@ -984,14 +1019,34 @@ class BwdDkDvStreamLoader(ParityKvGmemToLdsLoader):
     lane offsets) is head-independent, so these two lines are the whole fix.
     """
 
+    # Q's and dO's row strides in VGPRs, once `park_strides` has run.
+    parked_strides = None
+
+    def park_strides(self):
+        """Carry the two row strides in VGPRs from here on. Call in the prologue.
+
+        FIXME: FlyDSL#1344 workaround. In the build `_parks_stream_strides`
+        names, the backend copies only half of the kernarg tuple holding dO's
+        row stride before re-spilling it, so every tile the walk prefetches
+        reads dO at a stale stride, i.e. out of bounds: zeros, and dK/dV lose
+        every tile past the first two.
+        """
+        ctx = self.ctx_ref
+        self.parked_strides = _park_in_vgprs([fx.Int32(ctx.stride_q_seq), fx.Int32(ctx.stride_do_seq)])
+
+    def _row_stride(self, i, kernarg):
+        if const_expr(self.parked_strides is None):
+            return kernarg
+        return fx.Index(_unpark_uniform(self.parked_strides[i]))
+
     def stage_q_tile(self, tile_idx, buf_id):
-        self.stride_kv_n_v = self.ctx_ref.stride_q_seq_v
+        self.stride_kv_n_v = self._row_stride(0, self.ctx_ref.stride_q_seq_v)
         self.k_div = self.ctx_ref.k_div
         self.dma_stage = 0
         dualwave.DualwaveKvGmemToLdsLoader.load_k(self, self.tile_start(tile_idx), buf_id)
 
     def stage_do_tile(self, tile_idx, buf_id):
-        self.stride_kv_n_v = self.ctx_ref.stride_do_seq_v
+        self.stride_kv_n_v = self._row_stride(1, self.ctx_ref.stride_do_seq_v)
         self.v_div = self.ctx_ref.v_div
         self.dma_stage = 0
         dualwave.DualwaveKvGmemToLdsLoader.load_v(self, self.tile_start(tile_idx), buf_id)
@@ -1879,6 +1934,8 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         ctx.c_dropout_scale = fx.Float32(dropout_scale)
 
         stream = BwdDkDvStreamLoader(ctx)
+        if const_expr(_parks_stream_strides(traits, BLOCK_DMODEL, PADDED_HEAD)):
+            stream.park_strides()
         if const_expr(M16):
             # The 16-row family. Same `run` signature, same barriers, same
             # prefetch discipline -- only the operand algebra differs, which is

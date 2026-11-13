@@ -99,6 +99,8 @@ from .dkdv import (
     BwdDkDvStreamReader,
     BwdDkDvTileBody,
     _masked_ks_steps,
+    _park_in_vgprs,
+    _unpark_uniform,
     bias_log2e,
     philox_keep,
 )
@@ -582,34 +584,9 @@ class FusedDqHelper(dualwave.DualwaveKernelContext):
 # (greedy-allocator live-range splitting of a partially defined 512-bit argument
 # tuple). Reproduces with FlyDSL 0.4.2 (LLVM 941a04e); not fixed by
 # llvm/llvm-project#223465. Remove
-# `FusedKvOutputs`, `_park_in_vgprs` and `PARK_OUTPUTS` (falling back to the dK/dV
-# helpers' `store_accs`) once the pinned LLVM carries a fix, and re-run the
-# 112-build dropout/bias matrix to prove it.
-
-
-def _park_in_vgprs(values):
-    """Each value out through one side-effecting no-op asm, in a VGPR.
-
-    The asm emits nothing (every output is tied to its input), but nothing can
-    see through it: a later use reads the asm's result, so the values are
-    computed *here* and carried in VGPRs, and no pass can sink their
-    computation -- or the kernargs it reads -- down to the use. Side-effecting
-    so that the asm itself is not sunk either; it runs once per workgroup,
-    outside every loop, so the scheduling boundary costs nothing.
-    """
-    irs = [as_mlir_value(v) for v in values]
-    n = len(irs)
-    if const_expr(n == 1):
-        return [dualwave.llvm.inline_asm(irs[0].type, irs, "", "=v,0", has_side_effects=True)]
-    ret_ty = dualwave.ir.Type.parse(f"!llvm.struct<({', '.join(str(v.type) for v in irs)})>")
-    constraints = ",".join(["=v"] * n + [str(i) for i in range(n)])
-    ret = dualwave.llvm.inline_asm(ret_ty, irs, "", constraints, has_side_effects=True)
-    return [dualwave.llvm.extractvalue(irs[i].type, ret, [i]) for i in range(n)]
-
-
-def _unpark_uniform(v):
-    """A parked wave-uniform i32 back in an SGPR, for a descriptor."""
-    return fx.Int32(dualwave.rocdl.readfirstlane(T.i32, as_mlir_value(v)))
+# `FusedKvOutputs` and `PARK_OUTPUTS` (falling back to the dK/dV helpers'
+# `store_accs`) once the pinned LLVM carries a fix, and re-run the 112-build
+# dropout/bias matrix to prove it. `_park_in_vgprs` lives in the dK/dV module.
 
 
 class FusedKvOutputs(dualwave.DualwaveKernelContext):
@@ -1221,7 +1198,7 @@ def build_fmha_bwd_fused_gfx950_module_primary(meta, knobs):
         # The 16-row family's output packing; the 32-row family packs inline.
         pack16 = store._pack_out if M16 else None
         # Dropout builds only; see `FusedKvOutputs` for why, and why not the rest.
-        # FIXME: compiler workaround, see the FIXME above `_park_in_vgprs`. It
+        # FIXME: compiler workaround, see the FIXME above `FusedKvOutputs`. It
         # protects only the dK/dV epilogue: scalars that stay live across the walk
         # in SGPRs (dQ strides, philox state, loop bounds) are still exposed to the
         # same defect. Costs +12% on hd32 kv128 causal f16 dropout (VGPR-bound).
