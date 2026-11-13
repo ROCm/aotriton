@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: MIT
 
 """The gfx942 dK/dV bodies for head dims 160..512 (fmha_bwd_dkdv_gfx942_wide at
-160-192, fmha_bwd_dkdv_gfx942_xwide at 224-512, as the tuning module routes them),
-JIT, against fp64.
+160-192, fmha_bwd_dkdv_gfx942_xwide at 224-256, fmha_bwd_dkdv_gfx942_xxwide at
+384-512, as the tuning module routes them), JIT, against fp64.
 
 gSWA windows with both principal diagonals (L negative, R past seqlen_k, key
 columns no row sees), causal and GQA, varlen and LSE layouts, bias, dropout
@@ -49,7 +49,7 @@ from test_fwd_principal_diagonal_gfx942 import (  # noqa: E402
 )
 
 HEAD_DIMS = (160, 192, 224, 256)
-# 384 and 512 run fewer cases; 512 streams each tile as two column halves.
+# 384 and 512 run fewer cases.
 XWIDE = (384, 512)
 DTYPE = torch.bfloat16
 # Max abs error against fp64, relative to the reference's max magnitude (floored at 1):
@@ -74,8 +74,9 @@ def _build(head_dim, causal_type=0, bias=False, dropout=False, padded_head=False
                                                                  kv_subs=kv_subs)
 
 
-# Non-default builds test_dense also runs: (body, kv_subs) per head dim.
-ALT = {192: ('wide', 1), 224: ('wide', 2), 256: ('xwide', 2)}
+# Non-default builds test_dense also runs: (body, kv_subs) per head dim. xwide at 384
+# (two whole tiles) and 512 (a ring of half-tiles); xxwide with two softmax items a wave.
+ALT = {256: [('xwide', 2)], 384: [('xwide', 2), ('xxwide', 2)], 512: [('xwide', 2), ('xxwide', 2)]}
 
 
 def _reference(q, k, v, do, scale, keep_mask=None, bias=None, keep=None, p=0.0):
@@ -171,15 +172,15 @@ def _bottom_right(sq, sk, device):
     return j <= i + (sk - sq)
 
 
-@pytest.mark.parametrize("alt", [False, True])
+@pytest.mark.parametrize("alt", [None, 0, 1])
 @pytest.mark.parametrize("causal", [False, True])
 @pytest.mark.parametrize("shape", [(300, 777), (777, 300), (1, 1001), (1000, 1000)])
 @pytest.mark.parametrize("head_dim", HEAD_DIMS + XWIDE)
 def test_dense(head_dim, shape, causal, alt):
     """Full attention and bottom-right causal (`causal_type=2`), GQA 2:1 summed per key head."""
-    if alt and head_dim not in ALT:
-        pytest.skip("no alternative build at this rung")
-    body, kv_subs = ALT[head_dim] if alt else (None, None)
+    if alt is not None and alt >= len(ALT.get(head_dim, ())):
+        pytest.skip("no such alternative build at this rung")
+    body, kv_subs = ALT[head_dim][alt] if alt is not None else (None, None)
     sq, sk = shape
     b, h, hk = 2, 4, 2
     torch.manual_seed(sq + sk + head_dim)
@@ -203,7 +204,7 @@ def test_dense(head_dim, shape, causal, alt):
                   sq,
                   sk)
     dead = ~keep.any(dim=0) if causal else None
-    tag = f"hd={head_dim} {shape} causal={causal} alt={ALT.get(head_dim) if alt else None}"
+    tag = f"hd={head_dim} {shape} causal={causal} alt={(body, kv_subs) if alt is not None else None}"
     _check(f"dV {tag}", dv, _fold(rv, hk), dead)
     _check(f"dK {tag}", dk, _fold(rk, hk), dead)
 

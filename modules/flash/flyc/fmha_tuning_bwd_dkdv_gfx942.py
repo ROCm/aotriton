@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: MIT
 
 """Knobs of the gfx942 dK/dV backward: fmha_bwd_dkdv_gfx942.py (head dims 32-128),
-fmha_bwd_dkdv_gfx942_wide.py (160-192) and fmha_bwd_dkdv_gfx942_xwide.py (224-512).
+fmha_bwd_dkdv_gfx942_wide.py (160-192), fmha_bwd_dkdv_gfx942_xwide.py (224-256) and
+fmha_bwd_dkdv_gfx942_xxwide.py (384-512).
 
 flydsl-free: the AOT description calls it from the code generator, which has
 no flydsl. The builder takes its defaults from here, so the two cannot drift.
@@ -16,6 +17,7 @@ BODIES = {
     'narrow': ('fmha_bwd_dkdv_gfx942.py', 'fmha_bwd_dkdv_gfx942_kernel', 'build_fmha_bwd_dkdv_gfx942'),
     'wide': ('fmha_bwd_dkdv_gfx942_wide.py', 'fmha_bwd_dkdv_gfx942_wide_kernel', 'build_fmha_bwd_dkdv_gfx942_wide'),
     'xwide': ('fmha_bwd_dkdv_gfx942_xwide.py', 'fmha_bwd_dkdv_gfx942_xwide_kernel', 'build_fmha_bwd_dkdv_gfx942_xwide'),
+    'xxwide': ('fmha_bwd_dkdv_gfx942_xxwide.py', 'fmha_bwd_dkdv_gfx942_xxwide_kernel', 'build_fmha_bwd_dkdv_gfx942_xxwide'),
 }
 
 # csrc/flyc_common.h's kFlycGridAxis*.
@@ -62,19 +64,27 @@ def default_grid_axis_order(causal):
 def body(head_dim):
     """Which body serves a compiled head dim. xwide's role-split teams win from 224
     (B2 H32 S8k dense/causal TFLOPS, wide -> xwide): 224 333/328 -> 448/438,
-    256 371/366 -> 464/444; they lose at 192 (446 -> 423) and 160 (418 -> 403)."""
+    256 371/366 -> 464/444; they lose at 192 (446 -> 423) and 160 (418 -> 403).
+    xxwide's teams also shard the contraction and win from 384 (xwide -> xxwide,
+    dense/causal/dropout/bias): 384 436/417/398/412 -> 452/420/405/414,
+    512 341/226/217/369 -> 423/390/372/382."""
     if head_dim <= 128:
         return 'narrow'
-    return 'wide' if head_dim <= 192 else 'xwide'
+    if head_dim <= 192:
+        return 'wide'
+    return 'xwide' if head_dim <= 256 else 'xxwide'
 
 
 def default_kv_subs(head_dim):
-    """16-key columns per wave (wide) or per team (xwide).
-    wide: 2 spills past head dim 224. xwide: a wave holds 0.375 * D * kv_subs
-    registers of state; 4 at <= 256 (256 B2 H32 S8k: 464 vs 397 at 2), 2 above."""
+    """16-key columns per wave (wide) or per team (xwide, xxwide).
+    xwide: a wave holds 0.375 * D * kv_subs registers of state; 4 at 256 (B2 H32
+    S8k: 464 vs 397 at 2). xxwide: 0.1875 * D * kv_subs; the most that does not
+    spill: 4 at 384 (452 vs 418 at 3), 3 at 512 (4 spills 462; 3: 423, 2: 390)."""
     if body(head_dim) == 'xwide':
         return 4 if head_dim <= 256 else 2
-    return 2 if head_dim <= 224 else 1
+    if body(head_dim) == 'xxwide':
+        return 4 if head_dim <= 384 else 3
+    return 2
 
 
 def block_kv(num_waves, kv_blocks):
@@ -106,6 +116,13 @@ def knobs(head_dim, causal, bias=False):
         return dict(kv_subs=subs,
                     waves_per_eu=1,
                     block_kv=block_kv(2, subs),
+                    GRID_AXIS_ORDER=default_grid_axis_order(causal))
+    if body(head_dim) == 'xxwide':
+        # One team of four waves owning 16 * kv_subs keys.
+        subs = default_kv_subs(head_dim)
+        return dict(kv_subs=subs,
+                    waves_per_eu=1,
+                    block_kv=block_kv(1, subs),
                     GRID_AXIS_ORDER=default_grid_axis_order(causal))
     nw = default_num_waves(head_dim)
     kvb = default_kv_blocks(head_dim)

@@ -1,11 +1,10 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""dK/dV backward for gfx942 at head dims 160..512, FlyDSL.
+"""dK/dV backward for gfx942 at head dims 160 and 192, FlyDSL.
 
 K and V stay in registers; Q and dO stream past through LDS in 16-row tiles.
-v_mfma_f32_16x16x16, four waves (one a SIMD), each owning 16 * KV_SUBS keys
-(32 up to head dim 224, 16 beyond: 1.5 * D registers spill past 224):
+v_mfma_f32_16x16x16, four waves (one a SIMD), each owning 16 * KV_SUBS keys:
 
     S[q][kv]    = Q . K^T      A = Q  (LDS, row-major)   B = K (registers)
     dP[q][kv]   = dO . V^T     A = dO (LDS, row-major)   B = V (registers)
@@ -17,9 +16,7 @@ gfx942 has no LDS transpose read, so each Q/dO tile lives in LDS twice: RM
 v_perm). Each tile is two barrier-separated clusters:
     X(j): S(j+1), dP(j+1) from RM; P(j), dS(j) on the VALU; T(j+1) built from RM
     Y(j): dV, dK += tile j from T; DMA RM(j+3)
-Up to 256 RM and T are both double-buffered ('lds' T source; packed and XOR
-swizzled at 256). At 384/512 T is loaded again from global into one T buffer
-beside one RM buffer, and at 512 the dV and dK halves run as two passes.
+RM and T are both double-buffered, LSE and Delta DMA'd beside T.
 """
 
 import flydsl.compiler as flyc
@@ -43,7 +40,7 @@ WAVE = 64
 NUM_WAVES = 4
 BLOCK_M = 16            # q rows per tile: the N of the 16x16x16 MFMA
 # T layout: row (dt, g) holds d = 16dt + [0, 16), q = 4g + [0, 4), 8B per d; rows are
-# 144B apart (16B pad: T writes hit 8 bank quads), or 128B with 16B chunks XORed by g.
+# 144B apart (16B pad: T writes hit 8 bank quads).
 T_G_PAD = 144
 SIDE_BYTES = 512        # LSE then Delta of one tile, 256B per DMA issue
 OOB_VOFF = 0x7FFFFFF0   # a voffset past any range: the load returns 0
@@ -63,8 +60,8 @@ class Traits:
     """Compile-time shape of one kernel."""
 
     def __init__(self, head_dim, causal, dtype_str, kv_subs, padded_head=False):
-        assert head_dim % 32 == 0 and 64 <= head_dim <= 512, head_dim
-        assert kv_subs in (1, 2), kv_subs
+        assert head_dim % 32 == 0 and 64 <= head_dim <= 192, head_dim
+        assert kv_subs == 2, kv_subs
         self.D = head_dim
         self.PADDED = padded_head
         self.CAUSAL = causal
@@ -75,10 +72,9 @@ class Traits:
         self.BLOCK_SIZE = NUM_WAVES * WAVE
         self.NT = head_dim // 32                # 16B RM reads per tensor and tile, two k-steps each
         self.NDT = head_dim // 16               # 16-row d tiles of dK^T / dV^T
-        # RM rows an odd number of 16B chunks apart (conflict-free b128 reads), or, when
-        # LDS is short (SWZ), packed with chunk c of row r at c ^ (r % 8); T likewise.
+        # RM rows an odd number of 16B chunks apart: conflict-free b128 reads.
         chunks = head_dim // 8
-        rm_pad = (chunks + 1 - chunks % 2) * 16
+        self.RM_STRIDE = (chunks + 1 - chunks % 2) * 16
         self.ROW_BYTES = head_dim * 2
         # RM DMA: 256B per issue; the last issue of a row ends on its last byte.
         self.SEGS = tuple(range(0, self.ROW_BYTES - 256, 256)) + (self.ROW_BYTES - 256,)
@@ -86,25 +82,6 @@ class Traits:
         # T units: 4 q rows x 8 d of one tensor; waves 0-1 take Q, 2-3 dO.
         self.UNITS = head_dim // 2
         self.U_PER_THREAD = -(-self.UNITS // (2 * WAVE))
-        # Where T comes from: 'lds' transposes the RM tile already in LDS into a
-        # double-buffered T; 'global' loads the tile again into VGPRs for a single T.
-        # LSE/Delta are DMA'd beside T (SIDE_LDS) or loaded into VGPRs a tile ahead.
-        rm_buf = 2 * BLOCK_M * rm_pad
-        t_pad = 2 * self.NDT * 4 * T_G_PAD
-        packed = 2 * BLOCK_M * self.ROW_BYTES  # an RM or T buffer without padding
-        if 2 * rm_buf + 2 * (t_pad + SIDE_BYTES) <= 65536:
-            self.T_SRC, self.SWZ, self.SIDE_LDS, self.RM_SLOTS = 'lds', False, True, 2
-        elif 4 * packed <= 65536:
-            self.T_SRC, self.SWZ, self.SIDE_LDS, self.RM_SLOTS = 'lds', True, False, 2
-        else:
-            self.T_SRC, self.SIDE_LDS = 'global', False
-            self.RM_SLOTS = 2 if 2 * rm_buf + t_pad <= 65536 else 1
-            self.SWZ = rm_buf + t_pad > 65536
-        # 'global': how many tiles ahead T's loads run.
-        self.G_AHEAD = 1
-        # Passes over Q/dO: 'dkdv' at once, or 'dv' (K, dV live) then 'dk' (K, V, dK live)
-        # where K, V, dK and dV together outgrow the 512 registers.
-        self.PASSES = ('dv', 'dk') if 3 * head_dim * kv_subs // 2 > 640 else ('dkdv',)
         self.PREFETCH = 2                       # LDS operand reads in flight ahead of their MFMAs
         # Pin K, V to VGPRs; padded builds leave LLVM free (with both masks the pin
         # can leave the register allocator no solution, and it aborts).
@@ -116,36 +93,24 @@ class Traits:
         self.VALU_PER_MFMA = 2                  # sched_group_barrier slot size
         self.SCHED = False
         self.TRACE_SUB = False                  # dev: ktrace marks inside X
-        self.EXP = ''                           # dev experiments (wrong results): 'not', 'nol'
+        self.EXP = ''                           # dev experiments (wrong results): 'notb', 'nosm', 'mask'
         for k, v in DEV_OVERRIDES.items():
             assert hasattr(self, k), k
             setattr(self, k, v)
-        self.RM_STRIDE = self.ROW_BYTES if self.SWZ else rm_pad
         self.RM_TENSOR = BLOCK_M * self.RM_STRIDE
         self.RM_BUF = 2 * self.RM_TENSOR        # Q then dO
-        self.T_GS = 128 if self.SWZ else T_G_PAD
-        self.T_DTS = 4 * self.T_GS
+        self.T_DTS = 4 * T_G_PAD
         self.T_TENSOR = self.NDT * self.T_DTS
-        if self.SWZ:
-            assert head_dim % 128 == 0, head_dim
         self.LDS_RM = 0
-        if self.T_SRC == 'lds':
-            assert self.RM_SLOTS == 2
-            self.LDS_T = 2 * self.RM_BUF
-            self.T_SLOT = 2 * self.T_TENSOR + (SIDE_BYTES if self.SIDE_LDS else 0)
-            self.LDS_BYTES = self.LDS_T + 2 * self.T_SLOT
-            # VMEM a Y cluster issues after the RM DMA it must see land a tile later.
-            self.N_VM_Y = self.N_DMA + (2 if self.SIDE_LDS else 0)
-        else:
-            self.LDS_T = self.RM_SLOTS * self.RM_BUF
-            self.T_SLOT = 0
-            self.LDS_BYTES = self.LDS_T + 2 * self.T_TENSOR
-            n_ld = 4 * self.U_PER_THREAD + 8 if self.G_AHEAD == 2 else 0
-            # RM double: Y(j)'s DMA is waited a tile later; single: by its own end.
-            self.N_VM_Y = (self.N_DMA if self.RM_SLOTS == 2 else 0) + n_ld
+        self.LDS_T = 2 * self.RM_BUF
+        self.T_SLOT = 2 * self.T_TENSOR + SIDE_BYTES
+        self.LDS_BYTES = self.LDS_T + 2 * self.T_SLOT
+        # VMEM a Y cluster issues after the RM DMA it must see land a tile later.
+        self.N_VM_Y = self.N_DMA + 2
         assert self.LDS_BYTES <= 65536, self.LDS_BYTES
-        self.CACHE_TAG = (f'BW{head_dim}_c{int(causal)}_{dtype_str}_s{kv_subs}_p{int(padded_head)}_{self.T_SRC}'
-                          f'_f{self.PREFETCH}_k{int(self.KV_VGPR)}_tb{self.TB_POS}_d{int(self.Q_DOWN)}_r{self.RM_SLOTS}_g{self.G_AHEAD}_z{int(self.SWZ)}{int(self.SIDE_LDS)}_{'.'.join(self.PASSES)}_a{self.VALU_PER_MFMA}_x{int(self.SCHED)}_t{int(self.TRACE_SUB)}_e{self.EXP}')
+        self.CACHE_TAG = (f'BW{head_dim}_c{int(causal)}_{dtype_str}_s{kv_subs}_p{int(padded_head)}'
+                          f'_f{self.PREFETCH}_k{int(self.KV_VGPR)}_tb{self.TB_POS}_d{int(self.Q_DOWN)}'
+                          f'_a{self.VALU_PER_MFMA}_x{int(self.SCHED)}_t{int(self.TRACE_SUB)}_e{self.EXP}')
 
 
 # csrc/flyc_common.h's kFlycGridAxis*, as fmha_tuning_gfx942.
@@ -160,9 +125,9 @@ def default_grid_axis_order(causal):
 
 
 def default_kv_subs(head_dim):
-    """Keys per wave / 16: 32 keys halve the LDS and global traffic per FLOP, but
-    hold 1.5 * D registers, which spills past 224 (hd256: 93 vs 372 TFLOPS)."""
-    return 2 if head_dim <= 224 else 1
+    """Keys per wave / 16: 32 keys halve the LDS and global traffic per FLOP, at
+    1.5 * D registers (which spills past 224)."""
+    return 2
 
 
 def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
@@ -186,7 +151,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
         kv_subs = default_kv_subs(head_dim)
     tr = Traits(head_dim, causal_type != 0, dtype_str, kv_subs, padded_head)
     if padded_head and bias and dropout and 'TB_POS' not in DEV_OVERRIDES:
-        # LLVM's register allocator aborts ("Overlapping insert") on bf16 hd224 here otherwise.
+        # LLVM's register allocator aborted ("Overlapping insert") on bf16 hd224 here otherwise.
         tr.TB_POS = 0
     if grid_axis_order is None:
         grid_axis_order = default_grid_axis_order(tr.CAUSAL)
@@ -394,22 +359,19 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 out.append(row)
             return out
 
-        def load_res(need_v):
-            """This pass's resident K (and V)."""
+        def load_res():
+            """The resident K and V."""
             k_res = resident(k_rsrc, stride_k_seq, fx.Int32(hdim_qk))
-            v_res = []
-            if const_expr(need_v):
-                v_res = resident(v_rsrc, stride_v_seq, fx.Int32(hdim_vo))
+            v_res = resident(v_rsrc, stride_v_seq, fx.Int32(hdim_vo))
             if const_expr(tr.KV_VGPR):
                 # Keep K and V out of the AGPRs, which the accumulators fill.
                 flat = pin_vgpr([x for row in k_res + v_res for x in row])
                 n_k = tr.NT * tr.NSUB
                 k_res = [[Vec(flat[t * tr.NSUB + sub]) for sub in range(tr.NSUB)] for t in range(tr.NT)]
-                if const_expr(need_v):
-                    v_res = [[Vec(flat[n_k + t * tr.NSUB + sub]) for sub in range(tr.NSUB)] for t in range(tr.NT)]
+                v_res = [[Vec(flat[n_k + t * tr.NSUB + sub]) for sub in range(tr.NSUB)] for t in range(tr.NT)]
             return k_res, v_res
 
-        # The pass being traced: its mode and residents.
+        # The residents.
         cur = {}
 
         def smin(x, y):
@@ -450,39 +412,27 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
             band_lo = [empty.select(fx.Int32(-(1 << 30)), fx.Int32(0))] * tr.NSUB
 
         # ---- Per-lane LDS offsets ----
-        # RM read t: row lc, chunk 4t + gq (XORed by lc % 8 under SWZ: two bases by t's parity).
-        if const_expr(tr.SWZ):
-            rm_rd = [fx.Index(tr.LDS_RM) + lc * tr.RM_STRIDE + ((fx.Index(4 * e) + gq) ^ (lc % 8)) * 16
-                     for e in range(2)]
-            t_rd = fx.Index(tr.LDS_T) + gq * tr.T_GS + (((lc // 2) ^ gq) * 16) + (lc % 2) * 8
-        else:
-            rm_rd = [fx.Index(tr.LDS_RM) + lc * tr.RM_STRIDE + gq * 16] * 2
-            t_rd = fx.Index(tr.LDS_T) + gq * tr.T_GS + lc * 8
-        lds_tile = tr.T_SRC == 'lds'
+        # RM read t: row lc, chunk 4t + gq.
+        rm_rd = fx.Index(tr.LDS_RM) + lc * tr.RM_STRIDE + gq * 16
+        t_rd = fx.Index(tr.LDS_T) + gq * T_G_PAD + lc * 8
 
         def rm_read(slot, tensor, t):
-            off = slot * tr.RM_BUF + tensor * tr.RM_TENSOR + (128 * (t // 2) if tr.SWZ else 64 * t)
-            return lds_load(rm_rd[t % 2] + off, v8e(), 16, f'rm{slot}')
+            return lds_load(rm_rd + (slot * tr.RM_BUF + tensor * tr.RM_TENSOR + 64 * t), v8e(), 16, f'rm{slot}')
 
         def t_read(slot, tensor, dt):
             return lds_load(t_rd + (slot * tr.T_SLOT + tensor * tr.T_TENSOR + dt * tr.T_DTS), v4e(), 8, f't{slot}')
 
         # T units: waves 0-1 Q, 2-3 dO; unit i = (g = i % 4, c8 = i // 4), extra threads redo one.
         t_tensor = wave_s // fx.Int32(2)
-        is_do = t_tensor == fx.Int32(1)
         units = [(tid % (2 * WAVE) + fx.Index(2 * WAVE * u)) % tr.UNITS for u in range(tr.U_PER_THREAD)]
         u_g = [x % 4 for x in units]
         u_c8 = [x // 4 for x in units]
-        t_wr = [fx.Index(tr.LDS_T) + fx.Index(t_tensor) * tr.T_TENSOR + (c8 // 2) * tr.T_DTS + g * tr.T_GS
+        t_wr = [fx.Index(tr.LDS_T) + fx.Index(t_tensor) * tr.T_TENSOR + (c8 // 2) * tr.T_DTS + g * T_G_PAD
                 + (c8 % 2) * 64 for g, c8 in zip(u_g, u_c8)]
-        # The unit's four rows in RM, for the 'lds' T source.
+        # The unit's four rows in RM.
         t_src = [fx.Index(tr.LDS_RM) + fx.Index(t_tensor) * tr.RM_TENSOR + (u_g[0] * 4 + rr) * tr.RM_STRIDE
-                 + ((u_c8[0] ^ ((u_g[0] * 4 + rr) % 8)) if tr.SWZ else u_c8[0]) * 16 for rr in range(4)]
+                 + u_c8[0] * 16 for rr in range(4)]
         side_rd = fx.Index(tr.LDS_T + 2 * tr.T_TENSOR) + gq * 16
-        # DMA voffset of row 4w + i: its dword, its 16B chunk XORed by the row under SWZ.
-        if const_expr(tr.SWZ):
-            dma_voffs = [(fx.Int32(lane // 4) ^ ((wave_s * fx.Int32(4) + fx.Int32(i)) & fx.Int32(7))) * fx.Int32(16)
-                         + fx.Int32(lane % 4) * fx.Int32(4) for i in range(BLOCK_M // NUM_WAVES)]
 
         c_scale = fx.Float32(sm_scale) * fx.Float32(LOG2E)
         sel_lo = fx.Int32(0x05040100)
@@ -559,10 +509,10 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
             op.attributes['alias_scopes'] = al
             op.attributes['noalias_scopes'] = noal
 
-        def store_out(results, outs):
-            """Lane holds dK^T / dV^T [d = 16dt + 4gq + r][key kvw + 16sub + lc]."""
+        def store_out(results):
+            """Lane holds dK^T / dV^T [d = 16dt + 4gq + r][key kvw + 16sub + lc]: dK first."""
             n_acc = tr.NDT * tr.NSUB
-            for i, which in enumerate(outs):
+            for i, which in enumerate((0, 1)):
                 if const_expr(which):
                     rsrc = rsrc_for(DV, k_batch, head_k, k_row_off, stride_dv_batch, stride_dv_head, stride_dv_seq,
                                     sk_i32, row_vo)
@@ -595,13 +545,6 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
             q_rsrc = rocdl.get_buffer_rsrc(buffer_ops.create_buffer_resource_from_addr(q_base, num_records_bytes=q_span))
             do_rsrc = rocdl.get_buffer_rsrc(buffer_ops.create_buffer_resource_from_addr(do_base,
                                                                                         num_records_bytes=do_span))
-            if const_expr(not lds_tile):
-                # The T unit's tensor, picked per wave.
-                u_rsrc = rocdl.get_buffer_rsrc(buffer_ops.create_buffer_resource_from_addr(
-                    is_do.select(do_base, q_base), num_records_bytes=is_do.select(do_span, q_span)))
-                u_rs_b = is_do.select(do_rs_b, q_rs_b)
-                u_voff = [fx.Int32(g * 4) * u_rs_b + fx.Int32(c8 * 16) for g, c8 in zip(u_g, u_c8)]
-
             lse_row0, lse_pitch = fmha.lse_row_addressing(varlen_bits,
                                                           fx.Index(q_batch),
                                                           head_q,
@@ -614,9 +557,8 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 fx.Int64(fx.ptrtoint(LSE)) + fx.Int64(lse_row0) * fx.Int64(4), num_records_bytes=side_bytes))
             delta_rsrc = rocdl.get_buffer_rsrc(buffer_ops.create_buffer_resource_from_addr(
                 fx.Int64(fx.ptrtoint(Delta)) + fx.Int64(lse_row0) * fx.Int64(4), num_records_bytes=side_bytes))
-            # Side DMA: lane L < 16 copies row q0 + L; the rest read 0. VGPR side: rows 4gq + r.
+            # Side DMA: lane L < 16 copies row q0 + L; the rest read 0.
             side_dma_voff = (lane < fx.Index(BLOCK_M)).select(fx.Int32(lane) * pitch_b, fx.Int32(OOB_VOFF))
-            side_voff = fx.Int32(gq * 4) * pitch_b
 
             if const_expr(bias):
                 b_elems = (fx.Int64(q_batch) * stride_b_batch + fx.Int64(head_q) * stride_b_head
@@ -654,7 +596,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                                 set_scopes(rocdl.raw_ptr_buffer_load_lds(rsrc,
                                                                          lds_ptr_at(m0),
                                                                          fx.Int32(4),
-                                                                         dma_voffs[i] if tr.SWZ else dma_voff,
+                                                                         dma_voff,
                                                                          soff,
                                                                          fx.Int32(seg),
                                                                          fx.Int32(0)),
@@ -687,17 +629,6 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 dlt = Vec(lds_load(side_rd + (slot * tr.T_SLOT + 256), v4i, 16, f's{slot}')).bitcast(fx.Float32)
                 return [lse[r] for r in range(4)], [dlt[r] for r in range(4)]
 
-            def unit_load(j):
-                """This thread's T units of tile j from global: 4 rows x 4 dwords each."""
-                q0 = q0_of(j)
-                out = []
-                for u in range_constexpr(tr.U_PER_THREAD):
-                    for rr in range_constexpr(4):
-                        soff = (q0 + fx.Int32(rr)) * u_rs_b
-                        w4 = Vec(rocdl.raw_ptr_buffer_load(Vec.make_type(4, fx.Int32), u_rsrc, u_voff[u], soff, 0))
-                        out.extend(w4[i] for i in range(4))
-                return out
-
             def t_write(regs, slot):
                 al, noal = scope_attrs(f't{slot}')
                 for u in range_constexpr(len(regs) // 16):
@@ -707,10 +638,7 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                             w = [regs[16 * u + 4 * r + e // 2] for r in range(4)]
                             sel = sel_hi if e % 2 else sel_lo
                             dw += [fx.Int32(rocdl.perm_b32(w[1], w[0], sel)), fx.Int32(rocdl.perm_b32(w[3], w[2], sel))]
-                        if const_expr(tr.SWZ):
-                            at = t_wr[u] + slot * tr.T_SLOT + (fx.Index(k) ^ u_g[u]) * 16
-                        else:
-                            at = t_wr[u] + (slot * tr.T_SLOT + 16 * k)
+                        at = t_wr[u] + (slot * tr.T_SLOT + 16 * k)
                         llvm.StoreOp(raw(Vec.from_elements(dw, fx.Int32)),
                                      lds_view(at, fx.Int32, 16).llvm_ptr,
                                      alignment=16,
@@ -723,19 +651,6 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 for rr in range_constexpr(4):
                     w4 = Vec(lds_load(t_src[rr] + slot * tr.RM_BUF, Vec.make_type(4, fx.Int32), 16, f'rm{slot}'))
                     out.extend(w4[i] for i in range(4))
-                return out
-
-            def side_load(j):
-                """LSE and Delta of tile j at q = q0 + 4gq + r, from global ('global' T source)."""
-                soff = q0_of(j) * pitch_b
-                out = []
-                for rsrc in (lse_rsrc, delta_rsrc):
-                    for r in range_constexpr(4):
-                        out.append(fx.Int32(rocdl.raw_ptr_buffer_load(fx.Int32.ir_type,
-                                                                      rsrc,
-                                                                      side_voff + fx.Int32(r) * pitch_b,
-                                                                      soff,
-                                                                      0)))
                 return out
 
             def bias_load(j):
@@ -751,14 +666,11 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 return out
 
             def sdp(slot, hooks=()):
-                """S (and dP) of the tile in RM[slot]: [v4f32] * NSUB each, q = 4gq + r, key lc."""
-                need_v = cur['mode'] != 'dv'
+                """S and dP of the tile in RM[slot]: [v4f32] * NSUB each, q = 4gq + r, key lc."""
                 s = [zero4] * tr.NSUB
-                dp = [zero4] * (tr.NSUB if need_v else 0)
+                dp = [zero4] * tr.NSUB
 
                 def read(t):
-                    if const_expr(not need_v):
-                        return Vec(rm_read(slot, 0, t)), None
                     return Vec(rm_read(slot, 0, t)), Vec(rm_read(slot, 1, t))
 
                 def use(t, ops):
@@ -766,17 +678,15 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                     if const_expr(tr.PADDED):
                         c0 = fx.Int32(32 * t) + fx.Int32(gq * 8)
                         q8 = Vec(masked8(q8, c0, fx.Int32(hdim_qk)))
-                        if const_expr(need_v):
-                            o8 = Vec(masked8(o8, c0, fx.Int32(hdim_vo)))
+                        o8 = Vec(masked8(o8, c0, fx.Int32(hdim_vo)))
                     for e in range_constexpr(2):
                         sl = [4 * e, 4 * e + 1, 4 * e + 2, 4 * e + 3]
                         qa = q8.shuffle(q8, sl).ir_value()
                         for sub in range_constexpr(tr.NSUB):
                             kb = cur['k'][t][sub]
                             s[sub] = mfma(qa, kb.shuffle(kb, sl).ir_value(), s[sub])
-                            if const_expr(need_v):
-                                vb = cur['v'][t][sub]
-                                dp[sub] = mfma(o8.shuffle(o8, sl).ir_value(), vb.shuffle(vb, sl).ir_value(), dp[sub])
+                            vb = cur['v'][t][sub]
+                            dp[sub] = mfma(o8.shuffle(o8, sl).ir_value(), vb.shuffle(vb, sl).ir_value(), dp[sub])
 
                 stream(tr.NT, read, use, hooks)
                 return s, dp
@@ -801,11 +711,8 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 lse2 = [fx.Float32(x) * fx.Float32(LOG2E) for x in lse]
                 q0 = q0_of(j)
                 if const_expr(True):
-                    do_dv = cur['mode'] != 'dk'
-                    do_dk = cur['mode'] != 'dv'
                     sv = Vec(s_raw[sub]) * fx.full(4, fx.Float32(c_scale), fx.Float32)
-                    if const_expr(do_dk):
-                        dpv = Vec(dp_raw[sub])
+                    dpv = Vec(dp_raw[sub])
                     if const_expr(masked):
                         rel0 = q0 + fx.Int32(gq * 4) - band_lo[sub]
                     if const_expr(dropout):
@@ -822,112 +729,48 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                         if const_expr(masked):
                             live = fx.Uint32(rel0 + fx.Int32(r)) <= fx.Uint32(band_span)
                             p = live.select(p, fx.Float32(0.0))
-                        dpr = fx.Float32(0.0)
-                        if const_expr(do_dk):
-                            dpr = fx.Float32(dpv[r])
+                        dpr = fx.Float32(dpv[r])
                         p_drop = p
                         if const_expr(dropout):
                             p_drop = keep[r].select(p * fx.Float32(dropout_scale), fx.Float32(0.0))
                             dpr = keep[r].select(dpr * fx.Float32(dropout_scale), fx.Float32(0.0))
                         ps.append(p_drop)
                         dss.append(p * (dpr - fx.Float32(delta[r])))
-                    p_out = None
-                    ds_out = None
-                    if const_expr(do_dv):
-                        p_out = pack4(ps)
-                    if const_expr(do_dk):
-                        ds_out = pack4(dss)
-                    out[sub] = (p_out, ds_out)
+                    out[sub] = (pack4(ps), pack4(dss))
 
             def dvdk(dk_accs, dv_accs, p_pk, ds_pk, slot, hooks=()):
                 dk_accs = list(dk_accs)
                 dv_accs = list(dv_accs)
 
-                do_dv = cur['mode'] != 'dk'
-                do_dk = cur['mode'] != 'dv'
-
                 def read(u):
-                    out = []
-                    for dt in range_constexpr(2 * u, min(2 * u + 2, tr.NDT)):
-                        a_do = None
-                        a_q = None
-                        if const_expr(do_dv):
-                            a_do = t_read(slot, 1, dt)
-                        if const_expr(do_dk):
-                            a_q = t_read(slot, 0, dt)
-                        out.append((a_do, a_q))
-                    return out
+                    return [(t_read(slot, 1, dt), t_read(slot, 0, dt)) for dt in range(2 * u, min(2 * u + 2, tr.NDT))]
 
                 def use(u, ops):
                     for i, (a_do, a_q) in enumerate(ops):
                         dt = 2 * u + i
                         for sub in range_constexpr(tr.NSUB):
                             k = dt * tr.NSUB + sub
-                            if const_expr(do_dv):
-                                dv_accs[k] = mfma(a_do, p_pk[sub], dv_accs[k])
-                            if const_expr(do_dk):
-                                dk_accs[k] = mfma(a_q, ds_pk[sub], dk_accs[k])
+                            dv_accs[k] = mfma(a_do, p_pk[sub], dv_accs[k])
+                            dk_accs[k] = mfma(a_q, ds_pk[sub], dk_accs[k])
 
                 stream((tr.NDT + 1) // 2, read, use, hooks)
                 return dk_accs, dv_accs
 
-            t_slot_of = (0, 1) if lds_tile else (0, 0)
             n_acc = tr.NDT * tr.NSUB
-            n_gs = 16 * tr.U_PER_THREAD + 8          # 'global': one tile's T units and LSE/Delta
-            n_extra_g = n_gs * tr.G_AHEAD
-            if const_expr(lds_tile):
-                n_extra_g = 0 if tr.SIDE_LDS else 8
-            # RM slot of tile t, and the tile Y(j) DMAs: three ahead double-buffered, two single.
-            rm_slot = (0, 1) if tr.RM_SLOTS == 2 else (0, 0)
-            dma_ahead = 3 if tr.RM_SLOTS == 2 else 2
-
-            def g_split(regs):
-                """T units, LSE, Delta of one 'global' register set."""
-                n_u = 16 * tr.U_PER_THREAD
-                side = regs[n_u:n_gs]
-                return (regs[:n_u],
-                        [fx.Int32(x).bitcast(fx.Float32) for x in side[:4]],
-                        [fx.Int32(x).bitcast(fx.Float32) for x in side[4:]])
-
-            n_dk = n_acc if cur['mode'] != 'dv' else 0
-            n_dv = n_acc if cur['mode'] != 'dk' else 0
-            n_dp = tr.NSUB if cur['mode'] != 'dv' else 0
-
-            def unpack(c):
-                o = n_dk + n_dv
-                e = o + tr.NSUB + n_dp
-                return (list(c[:n_dk]),
-                        list(c[n_dk:o]),
-                        list(c[o:o + tr.NSUB]),
-                        list(c[o + tr.NSUB:e]),
-                        list(c[e:e + n_extra_g]),
-                        list(c[e + n_extra_g:]))
-
             n_sdp = 4 * tr.NSUB * tr.NT
             n_dvdk = 2 * tr.NSUB * tr.NDT
 
+            def unpack(c):
+                o = 2 * n_acc
+                return list(c[:n_acc]), list(c[n_acc:o]), list(c[o:o + tr.NSUB]), list(c[o + tr.NSUB:o + 2 * tr.NSUB]), \
+                    list(c[o + 2 * tr.NSUB:])
+
             def iteration(j, carried, b, masked, last=False):
                 """X(j), Y(j); b = j % 2, known at trace time. `last`: no tile j+1."""
-                dk_accs, dv_accs, s_cur, dp_cur, g_regs, bvals = unpack(carried)
-                # X(j): S(j+1), dP(j+1); P(j), dS(j); T(j+1) ('lds') or T(j) ('global').
+                dk_accs, dv_accs, s_cur, dp_cur, bvals = unpack(carried)
+                # X(j): S(j+1), dP(j+1); P(j), dS(j); T(j+1).
                 sub_marks = tr.TRACE_SUB and not last
-                g_nxt = []
-                if const_expr(lds_tile and tr.SIDE_LDS):
-                    lse, delta = side_read(b)
-                elif const_expr(lds_tile):
-                    lse = [fx.Int32(x).bitcast(fx.Float32) for x in g_regs[:4]]
-                    delta = [fx.Int32(x).bitcast(fx.Float32) for x in g_regs[4:8]]
-                    if const_expr(not last):
-                        g_nxt = side_load(j + 1)
-                else:
-                    # Y(j-1) is done with T. G_AHEAD 1 loads tile j+1 here; 2 loaded it in Y(j-1).
-                    u_regs, lse, delta = g_split(g_regs[:n_gs])
-                    if const_expr('not' not in tr.EXP):
-                        t_write(u_regs, 0)
-                    if const_expr(not last and 'nol' in tr.EXP):
-                        g_nxt = g_regs
-                    elif const_expr(not last and tr.G_AHEAD == 1):
-                        g_nxt = unit_load(j + 1) + side_load(j + 1)
+                lse, delta = side_read(b)
                 b_nxt = []
                 if const_expr(not last):
                     b_nxt = bias_load(j + 1)
@@ -942,11 +785,11 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                         pd[sub] = (Vec(s_cur[sub]).to(elem).ir_value(), Vec(dp_cur[sub]).to(elem).ir_value())
                     else:
                         work.append(lambda sub=sub: softmax(s_cur, dp_cur, lse, delta, bvals, j, masked, sub, pd))
-                if const_expr(not last and lds_tile and 'notb' not in tr.EXP):
+                if const_expr(not last and 'notb' not in tr.EXP):
                     units = t_build_read(1 - b)
                     work.insert(min(tr.TB_POS, len(work)), lambda: t_write(units, 1 - b))
                 if const_expr(not last):
-                    s_nxt, dp_nxt = sdp(rm_slot[1 - b], work)
+                    s_nxt, dp_nxt = sdp(1 - b, work)
                 else:
                     for w in work:
                         w()
@@ -962,31 +805,18 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                 cluster_barrier(None if last else f'X{b}')
                 # Y(j): dV, dK of tile j; DMA RM(j+3) (and LSE/Delta(j+2)) spread over its MFMAs.
                 vm_work = []
-                pend = {}
                 if const_expr(not last):
-                    vm_work = dma_rows(j + dma_ahead, rm_slot[1 - b])
-                    if const_expr(lds_tile and tr.SIDE_LDS):
-                        vm_work.append(lambda: side_dma(j + 2, b))
-                    elif const_expr(tr.G_AHEAD == 2 and 'nol' not in tr.EXP):
-                        # After the DMA: the in-order vmcnt then gives these a tile and a half.
-                        def far_loads():
-                            rocdl.sched_barrier(0)
-                            pend['g'] = unit_load(j + 2) + side_load(j + 2)
-                        vm_work.append(far_loads)
-                dk_accs, dv_accs = dvdk(dk_accs, dv_accs, p_pk, ds_pk, t_slot_of[b], vm_work)
+                    vm_work = dma_rows(j + 3, 1 - b) + [lambda: side_dma(j + 2, b)]
+                dk_accs, dv_accs = dvdk(dk_accs, dv_accs, p_pk, ds_pk, b, vm_work)
                 if const_expr(not last):
                     sched(n_dvdk, 2 * tr.NDT, 0, tr.N_DMA)
                     rocdl.s_waitcnt(vmcnt=tr.N_VM_Y)
-                    if const_expr(not lds_tile and tr.G_AHEAD == 2 and 'nol' not in tr.EXP):
-                        g_nxt = anchor(g_regs[n_gs:]) + pend['g']
-                    else:
-                        g_nxt = anchor(g_nxt)
                     b_nxt = anchor(b_nxt)
                 rocdl.s_waitcnt(lgkmcnt=0)
                 cluster_barrier(None if last else f'Y{b}')
                 if const_expr(last):
                     return dk_accs + dv_accs
-                return dk_accs + dv_accs + s_nxt + dp_nxt + g_nxt + b_nxt
+                return dk_accs + dv_accs + s_nxt + dp_nxt + b_nxt
 
             @flyc.jit
             def odd_tail(j, carried):
@@ -997,49 +827,35 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
 
             @flyc.jit
             def finish(j, carried):
-                out = list(carried[:n_dk + n_dv])
+                out = list(carried[:2 * n_acc])
                 if j % fx.Index(2) == fx.Index(0):
                     out = iteration(j, carried, 0, True, last=True)
                 else:
                     out = iteration(j, carried, 1, True, last=True)
                 return out
 
-            # Prologue: RM(0), RM(1) DMA; X(-1) = S(0), dP(0) (and T(0)); Y(-1) = DMA RM(2).
+            # Prologue: RM(0), RM(1) DMA; X(-1) = S(0), dP(0), T(0); Y(-1) = DMA RM(2).
             rocdl.s_waitcnt(vmcnt=0)
             cluster_barrier()
             dma(0, 0)
-            if const_expr(lds_tile and tr.SIDE_LDS):
-                side_dma(0, 0)
-                g0 = []
-            elif const_expr(lds_tile):
-                g0 = side_load(0)
-            else:
-                g0 = unit_load(0) + side_load(0)
+            side_dma(0, 0)
             b0 = bias_load(0)
             rocdl.sched_barrier(0)
-            if const_expr(tr.RM_SLOTS == 2):
-                dma(1, 1)
-                rocdl.s_waitcnt(vmcnt=tr.N_DMA)
-            else:
-                rocdl.s_waitcnt(vmcnt=0)
+            dma(1, 1)
+            rocdl.s_waitcnt(vmcnt=tr.N_DMA)
             cluster_barrier()
             s0, dp0 = sdp(0)
-            if const_expr(lds_tile):
-                t_write(t_build_read(0), 0)
+            t_write(t_build_read(0), 0)
             rocdl.s_waitcnt(lgkmcnt=0)
             cluster_barrier()
-            dma(dma_ahead - 1, rm_slot[(dma_ahead - 1) % 2])
-            if const_expr(lds_tile and tr.SIDE_LDS):
-                side_dma(1, 1)
-            elif const_expr(tr.G_AHEAD == 2):
-                rocdl.sched_barrier(0)
-                g0 = g0 + unit_load(1) + side_load(1)
+            dma(2, 0)
+            side_dma(1, 1)
             rocdl.s_waitcnt(vmcnt=tr.N_VM_Y)
             cluster_barrier()
 
             # One body for every tile: masking costs a few VALU an element, a second
             # (masked) body costs registers. Pairs from j = 0, then at most one even j.
-            init = list(accs) + s0 + dp0 + g0 + b0
+            init = list(accs) + s0 + dp0 + b0
             res1 = init
             for jp, carried in range(0, fx.Index(n_pairs), 1, init=init):
                 mid = iteration(jp * 2, carried, 0, tr.CAUSAL or 'mask' in tr.EXP)
@@ -1047,19 +863,13 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
             res2 = odd_tail(fx.Index(n_pairs) * 2, res1)
             return finish(fx.Index(n_loop), res2)
 
-        n_acc = tr.NDT * tr.NSUB
-        for pi in range_constexpr(len(tr.PASSES)):
-            mode = tr.PASSES[pi]
-            cur['mode'] = mode
-            cur['k'], cur['v'] = load_res(mode != 'dv')
-            outs = [w for w in (0, 1) if mode != ('dv', 'dk')[w]]     # 0: dK, 1: dV
-            acc0 = [fx.full(4, 0.0, fx.Float32) for _ in range(n_acc * len(outs))]
-            results = acc0
-            for g, carried in range(0, fx.Index(group), 1, init=acc0):
-                results = yield head_pass(fx.Int32(g), carried)
-            rocdl.s_waitcnt(vmcnt=0)
-            store_out(results, outs)
-
+        cur['k'], cur['v'] = load_res()
+        acc0 = [fx.full(4, 0.0, fx.Float32) for _ in range(2 * tr.NDT * tr.NSUB)]
+        results = acc0
+        for g, carried in range(0, fx.Index(group), 1, init=acc0):
+            results = yield head_pass(fx.Int32(g), carried)
+        rocdl.s_waitcnt(vmcnt=0)
+        store_out(results)
 
     @flyc.jit
     def launch_fmha_bwd_dkdv_gfx942_wide(
