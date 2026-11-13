@@ -262,6 +262,8 @@ class WideStoreHelper(ParityStoreHelper):
 
     def store_final_o_runs(self, v_o, q_row, runs, shard_slot, m_row=None, l_row=None):
         traits = self.traits
+        # Only the rows this wave owns; a no-op at 32 rows per wave.
+        q_row = self._owned_row(q_row)
         # Runtime, because the shard comes from `wave_id`. Added to the base
         # once per run rather than folded into the constexpr run offsets.
         shard_chunks = shard_slot * traits.D_CHUNKS_PER_STAGE_SHARD

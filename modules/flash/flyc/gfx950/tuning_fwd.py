@@ -600,7 +600,7 @@ class Gfx950Knobs(FmhaKnobs):
         (8, 128, 64, 64),
         (4, 64, 64, 64),
         (8, 64, 64, 64),
-        (4, 32, 64, 64),  # 4-wave staging; only reachable with q_heads_per_wg 4
+        (4, 32, 64, 64),  # 4-wave staging; 8 rows per wave unpacked (see `_owned_row`), 32 with q_heads_per_wg 4
         (4, 128, 64, 32),  # family S -- granule 32, for widths off the 64 grid
     )
 

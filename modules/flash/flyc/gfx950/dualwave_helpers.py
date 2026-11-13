@@ -57,6 +57,7 @@ import fmha_utils as fmha
 from fmha_utils import MaskedAxis
 from .traits import BF16_BYTES as _ELEM_BYTES
 from .traits import DMA_BYTES as _ACCESS_BYTES
+from .traits import MFMA_M
 from .standalone import buffer_ops, dualwave
 from philox import Philox
 
@@ -2698,6 +2699,43 @@ class ParityStoreHelper(dualwave.DualwaveStoreHelper):
     def _final_o_base(self, q_row):
         return q_row * self.stride_o_seq_v + self.lane_div_32 * 8
 
+    def _owned_row(self, q_row):
+        """`q_row` if this lane's wave owns that row, else a row every store drops.
+
+        **A wave computes 32 rows but may own fewer.** The MFMA's M extent pins
+        a wave's accumulator at 32 rows, `q_row = q_start + wave_q_offset +
+        lane % 32`, while a geometry with `BLOCK_M < Q_TILES * 32` steps
+        `wave_q_offset` by only `ROWS_PER_WAVE` (8 or 16). So the waves overlap,
+        and the last ones run past the block: at (4, 32, 64, 64) wave 3 covers
+        rows 24..55 of a 32-row block, 24 of them the *next* block's.
+
+        Without causal masking those overhanging rows come out right -- same
+        Q row, same full KV walk -- so the duplicate stores are benign. With
+        it they are not: the walk stops at *this* block's `causal_end` (and a
+        window's left skip is this block's too), so an overhanging row misses
+        keys it should attend, and a block that takes the `causal_end <= 0`
+        early exit writes `O = 0, LSE = +inf` over live rows of its neighbour.
+        Which writer lands last is a race, so the damage moves between runs
+        and with the dispatch order (LPT): the first `32 - ROWS_PER_WAVE` rows
+        of a block, a few or all of them, wrong.
+
+        So a lane stores only the rows its wave owns, `lane % 32 <
+        ROWS_PER_WAVE`; the waves' owned ranges tile `BLOCK_M` exactly, with
+        or without GQA head packing. The rest are pointed at row `seqlen_q`,
+        which both stores already drop: O by its slab descriptor's bound (see
+        `q_row_slab`), LSE by its `q_row < seqlen_q` select. At
+        `ROWS_PER_WAVE == 32` every lane owns its row and this emits nothing.
+        """
+        traits = self.traits
+        if const_expr(traits.ROWS_PER_WAVE >= MFMA_M):
+            return q_row
+        owned = self.lane_mod_32 < fx.Index(traits.ROWS_PER_WAVE)
+        return fx.Index(owned.select(q_row, self.seqlen_q_v))
+
+    def store_final_o(self, v_o, q_row, m_row=None, l_row=None):
+        """The inherited O and LSE stores, for owned rows only; see `_owned_row`."""
+        super().store_final_o(v_o, self._owned_row(q_row), m_row, l_row)
+
     def _o_pack_words(self, v_o, dc, g):
         """The four dwords of one 128-bit O store, in lane order.
 
@@ -2856,7 +2894,10 @@ class ParityStoreHelper(dualwave.DualwaveStoreHelper):
         should go. The `+inf` select it depends on must stay either way: upstream
         spells the value `m * ln2 + log(l)`, which is `-inf` at best.
         """
-        super().zero_o_block_if_needed(causal_end_raw_i32)
+        if const_expr(self.traits.ROWS_PER_WAVE >= MFMA_M):
+            super().zero_o_block_if_needed(causal_end_raw_i32)
+        else:
+            self._zero_owned_o_rows(causal_end_raw_i32)
         if const_expr(not self.traits.RETURN_LSE):
             return
         if causal_end_raw_i32 is None:
@@ -2870,13 +2911,46 @@ class ParityStoreHelper(dualwave.DualwaveStoreHelper):
         lane_mod_32 = self.lane_mod_32
         zero = self.c_zero_f
         store = self._store_lse_row
+        owned_row = self._owned_row
 
         @flyc.jit
         def _store_masked_lse_block():
             if causal_end_raw_i32 <= fx.Int32(0):
-                store(zero, zero, q_start + wave_q_offset + lane_mod_32)
+                store(zero, zero, owned_row(q_start + wave_q_offset + lane_mod_32))
 
         _store_masked_lse_block()
+
+    def _zero_owned_o_rows(self, causal_end_raw_i32=None):
+        """The inherited O zeroing, restricted to the rows this wave owns.
+
+        For `ROWS_PER_WAVE < 32` only, where the inherited one zeroes the
+        whole 32-row span of every wave -- and so, from the last waves, live
+        rows of the next Q block; see `_owned_row`. Its row guard is dropped
+        rather than copied: an unowned or out-of-range row lands past the O
+        slab's bound, which drops the store, as it does for `store_final_o`.
+        """
+        if causal_end_raw_i32 is None:
+            causal_end_raw_i32 = self.causal_end_raw_i32
+        traits = self.traits
+        q_start = self.q_start
+        wave_q_offset = self.wave_q_offset
+        lane_mod_32 = self.lane_mod_32
+
+        @flyc.jit
+        def _zero_owned_o_rows_if_needed():
+            if causal_end_raw_i32 <= fx.Int32(0):
+                o_base = self._final_o_base(self._owned_row(q_start + wave_q_offset + lane_mod_32))
+                c_zero_i = fx.Int32(0)
+                zero_pack = Vec.from_elements([c_zero_i, c_zero_i, c_zero_i, c_zero_i], fx.Int32)
+                for dc in range_constexpr(traits.D_CHUNKS):
+                    for g in range_constexpr(2):
+                        dualwave._buffer_store_128(zero_pack,
+                                                   self._final_o_global(o_base, dc, g),
+                                                   _o_store_reg_128=self.o_store_reg_128,
+                                                   _store_atom_128=self.store_atom_128,
+                                                   o_div=self.o_div)
+
+        _zero_owned_o_rows_if_needed()
 
     def _store_lse_row(self, m_row, l_row, q_row):
         """`_store_lse_row_unguarded`, skipped entirely when `LSE` is null.
