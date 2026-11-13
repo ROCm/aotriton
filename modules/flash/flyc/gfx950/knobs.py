@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 FlyDSL Project Contributors
 
-"""Knob fields of the gfx950 attention kernels (forward, dQ, dK/dV).
+"""Knob fields of the gfx950 attention kernels (forward, dQ, dK/dV, fused backward).
 
 Plain data and flydsl-free: the code generator imports them to record the
 resolved knobs. The tuning modules (`fmha_tuning_*gfx950.py`) subclass these
@@ -16,7 +16,7 @@ from fmha_knobs import (
     FlycQKnobs,
 )
 
-__all__ = ["BwdDkDvKnobFields", "BwdDqKnobFields", "Gfx950KnobFields"]
+__all__ = ["BwdDkDvKnobFields", "BwdDqKnobFields", "BwdFusedKnobFields", "Gfx950KnobFields"]
 
 
 @dataclass(frozen=True)
@@ -153,4 +153,34 @@ class BwdDkDvKnobFields(FlycKVKnobs):
 
     FLYC_SOURCE = "gfx950/dkdv.py"
     FLYC_KERNEL_NAME = "fmha_bwd_dkdv_gfx950_kernel"
+    FLYC_GRID_AXIS_ORDER = GRID_AXIS_HEAD_FASTEST
+
+
+@dataclass(frozen=True)
+class BwdFusedKnobFields(FlycKVKnobs):
+    """The fused backward's knobs. `None` means "policy decides".
+
+    `block_kv` is the KV rung, which one workgroup owns whole; the rest is the
+    dK/dV body's geometry, which the fused kernel is.
+    """
+
+    hdim_qk_floor: int | None = None
+
+    mfma_rows: int | None = None
+    num_waves: int | None = None
+    block_q: int | None = None
+    head_dim_granule: int | None = None
+    num_stream_buffers: int | None = None
+    waves_per_eu: int | None = None
+    # The 32-row body's register-against-ILP switch; see
+    # `BwdDkDvKnobFields.tight_registers`. Inert in the 16-row family.
+    tight_registers: bool | None = None
+    # Rows of `-log2e*LSE` and `delta` the LDS row arrays hold: the build's
+    # `seqlen_q` ceiling, rounded up by `_with_rows_cap`.
+    q_rows_cap: int | None = None
+
+    strides_constexpr: bool | None = None
+
+    FLYC_SOURCE = "gfx950/fused_bwd.py"
+    FLYC_KERNEL_NAME = "fmha_bwd_fused_gfx950_kernel"
     FLYC_GRID_AXIS_ORDER = GRID_AXIS_HEAD_FASTEST
