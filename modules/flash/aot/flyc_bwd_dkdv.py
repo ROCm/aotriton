@@ -165,16 +165,15 @@ def _flyc_bwd_dkdv_disabled(f):
 # --- functional-axis markers, NOT kernel arguments ----------------------------
 #
 # See flyc_attn_fwd.py for the full rationale (same mechanism, same reason:
-# this backend's compiled ladder, FLYC_BWD_DKDV_HEAD_DIMS, is a strict subset
-# of the operator's BLOCK_DMODEL axis). Kept out of the ordered kernarg block
-# above -- BLOCK_DMODEL/PADDED_HEAD are not part of `bwd_dkdv_kernel`'s
-# signature at all, they are build-time Python values the operator owns.
+# this backend's compiled ladders differ from the operator's BLOCK_DMODEL axis).
+# Kept out of the ordered kernarg block above -- BLOCK_DMODEL/PADDED_HEAD are
+# not part of `bwd_dkdv_kernel`'s signature at all, they are build-time
+# Python values.
 #
-# One shared marker for both arches (this decorator stack does not vary by
-# arch), so `options=` is the union of both ladders -- see flyc_attn_fwd.py's
-# BLOCK_DMODEL marker for why a single arch's ladder would under-document.
+# `options=` is this backend's own BLOCK_DMODEL axis, the union of the per-arch
+# ladders; the disable predicate narrows it per arch.
 @ati.scalar('BLOCK_DMODEL',
-            options=sorted(FLYC_BWD_DKDV_HEAD_DIMS | FLYC_GFX950_BWD_DKDV_HEAD_DIMS),
+            options=sorted(set().union(*_FLYC_BWD_DKDV_HEAD_DIMS_BY_ARCH.values())),
             wires_to=ati.context_helper('flyc_block_dmodel'))
 @ati.scalar('PADDED_HEAD', options=[False, True],
             wires_to=ati.context_helper('flyc_padded_head'))
@@ -228,7 +227,7 @@ def flyc_bwd_dkdv(arch, choices, hints):
         ))
         assert knobs.block_dmodel == tile, (
             f'resolve_knobs returned block_dmodel={knobs.block_dmodel} for '
-            f'BLOCK_DMODEL={tile}; the compiled tile must be the operator axis')
+            f'BLOCK_DMODEL={tile}; the compiled tile must be choices.BLOCK_DMODEL')
 
         def build(knobs=knobs):
             """Deferred: constructs the FlyDSL module. Imports flydsl transitively,
@@ -327,7 +326,7 @@ def flyc_bwd_dkdv(arch, choices, hints):
         ).resolve(meta)
         assert knobs.block_dmodel == tile, (
             f'resolve() returned block_dmodel={knobs.block_dmodel} for '
-            f'BLOCK_DMODEL={tile}; the compiled tile must be the operator axis')
+            f'BLOCK_DMODEL={tile}; the compiled tile must be choices.BLOCK_DMODEL')
 
         def build():
             """Deferred: constructs the FlyDSL module. Imports flydsl transitively,

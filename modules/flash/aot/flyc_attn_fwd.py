@@ -48,11 +48,13 @@ Three consequences, each handled below:
    from every other `@ati.scalar` in this file. A marker never becomes a kernel
    argument, since `options=` and an explicit type are mutually exclusive, so it
    can never claim a kernel-argument slot the way `varlen_bits`'s `'i32'` does.
-   It exists purely so that `godel_number()` can be redirected to read the
-   rounded value a context helper computes, rather than the raw, off-ladder
-   choice: this backend's ladder is a strict subset of the declared axis. See
-   `ir/flyc/kdesc.py`'s `context_helper_for_functional` for the mechanism, and
-   for why it must not be confused with the three real, explicit-type helpers
+   It does two things: `godel_number()` reads the value a context helper
+   computes (the true head dim rounded up to this backend's compiled ladder)
+   instead of the operator's binned choice, and the marker's `options=` replaces
+   the operator's choices for that axis, so a rung only this backend compiles
+   (384) still gets a functional. See `ir/flyc/kdesc.py`'s
+   `context_helper_for_functional` and `_own_space` for the mechanism, and for
+   why it must not be confused with the three real, explicit-type helpers
    above it.
 
 3. **The kernarg list is declared, because nothing else can supply it.** aiter hands
@@ -362,32 +364,30 @@ def _flyc_fwd_disabled(f):
 #
 # --- functional-axis markers, NOT kernel arguments ----------------------------
 #
-# `BLOCK_DMODEL`/`PADDED_HEAD` are the operator's own axes, inherited via
-# `@ati.cite` above and narrowed by `_flyc_fwd_disabled`'s ladder check -- NOT
-# part of `flash_attn_func_aiw_kernel`'s argument list declared above, so these
-# two lines are deliberately kept out of that ordered block. `options=` and an
-# explicit type are mutually exclusive, so a marker can never be read by
-# `iter_launch_arguments` as a real launch argument; it is only ever found by
-# axis name, via `context_helper_for_functional` (ir/flyc/kdesc.py).
+# `BLOCK_DMODEL`/`PADDED_HEAD` are the operator's axes, inherited via
+# `@ati.cite` above -- NOT part of `flash_attn_func_aiw_kernel`'s argument list
+# declared above, so these two lines are deliberately kept out of that ordered
+# block. `options=` and an explicit type are mutually exclusive, so a marker can
+# never be read by `iter_launch_arguments` as a real launch argument; it is only
+# ever found by axis name, via `context_helper_for_functional`
+# (ir/flyc/kdesc.py).
 #
 # Why either axis needs a marker at all: dispatch bins the caller's head
 # dimension to a `BLOCK_DMODEL` rung on the OPERATOR's ladder before a backend
-# is chosen, and this backend's compiled ladder is a strict subset of it. Wiring
-# the axis to a context helper lets `godel_number()` read the ROUNDED value the
-# helper computes (modules/flash/csrc/flyc_attn_fwd.cc) instead of the raw,
-# potentially off-ladder choice. `PADDED_HEAD` must follow that decision -- a
+# is chosen, and this backend's compiled ladder differs from it (fewer rungs on
+# gfx950/gfx942, and 384, which the operator does not have). Wiring the axis to
+# a context helper lets `godel_number()` read the ROUNDED value the helper
+# computes (modules/flash/csrc/flyc_attn_fwd.cc) from the true head dim instead
+# of the operator's binned choice. `PADDED_HEAD` must follow that decision -- a
 # kernel re-rounded to a wider rung with `PADDED_HEAD` left false is a silent
 # wrong answer, not a build error.
 #
-# The `options=` lists restate each ladder as free documentation, not as a
-# second source of truth: the digit's real range comes from the OPERATOR's
-# axis, and the backend's own disable predicate is what enforces the subset.
-# One shared marker declaration serves both architectures (like the
-# Workspace/BlockTable declaration above, this decorator stack does not vary by
-# arch), so `options=` is the UNION of both ladders rather than either alone --
-# neither is a subset of the other, so one arch's list would under-document the
-# other's compiled rungs.
-@ati.scalar('BLOCK_DMODEL', options=sorted(FLYC_HEAD_DIMS | FLYC_GFX950_HEAD_DIMS),
+# `options=` is this backend's own BLOCK_DMODEL axis: the functionals enumerate
+# it instead of the operator's choices (`_own_space`, ir/flyc/kdesc.py), and
+# `_flyc_fwd_disabled`'s ladder check narrows it per arch. One shared marker
+# serves every arch (this decorator stack does not vary by arch), so it is the
+# UNION of the per-arch ladders.
+@ati.scalar('BLOCK_DMODEL', options=sorted(set().union(*_FLYC_FWD_LADDERS.values())),
             wires_to=ati.context_helper('flyc_block_dmodel'))
 @ati.scalar('PADDED_HEAD', options=[False, True],
             wires_to=ati.context_helper('flyc_padded_head'))
@@ -589,7 +589,7 @@ def flyc_attn_fwd(arch, choices, hints):
         ).resolve(meta)
         assert knobs.block_dmodel == tile, (
             f'resolve() returned block_dmodel={knobs.block_dmodel} for '
-            f'BLOCK_DMODEL={tile}; the compiled tile must be the operator axis')
+            f'BLOCK_DMODEL={tile}; the compiled tile must be choices.BLOCK_DMODEL')
         assert not knobs.strides_constexpr, \
             'num_heads=1 is only safe while STRIDE_TOKEN stays behind ' \
             'strides_constexpr (the LSE descriptor, the other NUM_HEADS_Q ' \
