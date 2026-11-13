@@ -75,7 +75,8 @@ from kernels.common import buffer_ops, kernels_common
 # `kernels.common.utils` -- ssel, smin, smax, sdiv_rd_pow2 -- are branch-local
 # and absent from the released tag the build clones, so both names alias the
 # polyfill wholesale and no call site below changes. `buffer_ops` and
-# `kernels_common` are NOT rewritten: their symbols are in the released tree.
+# `kernels_common` are NOT rewritten: their symbols are in the released tree,
+# except `_if_then`, which FlyDSL 0.4.2 dropped; it is `common_utils.if_then`.
 import flyc_polyfill as wmma_ops
 import flyc_polyfill as common_utils
 
@@ -869,7 +870,7 @@ def _over_batches(aperture, base_row, block_rows, body):
         row = aperture.batch_row(base_row, batch)
         if aperture.needs_guard:
             if_op = _scf.IfOp(fx.as_ir_value(row < block_rows))
-            with kernels_common._if_then(if_op):
+            with common_utils.if_then(if_op):
                 body(batch, row)
         else:
             body(batch, row)
@@ -1100,7 +1101,7 @@ def publish_transposed(aperture, tiling, lds_ptr, vecs):
     for step in range_constexpr(tiling.loads):
         if tiling.overshoots(step):
             if_op = _scf.IfOp(fx.as_ir_value(tiling.tile(step) < fx.Index(tiling.tiles)))
-            with kernels_common._if_then(if_op):
+            with common_utils.if_then(if_op):
                 body(step)
         else:
             body(step)
@@ -1129,7 +1130,7 @@ def write_v8(aperture, write, row, col, val):
         write(row, col, val)
         return
     if_op = _scf.IfOp(fx.as_ir_value(aperture.cols.valid(col)))
-    with kernels_common._if_then(if_op):
+    with common_utils.if_then(if_op):
         write(row, col, val)
 
 
@@ -1310,7 +1311,7 @@ def philox_report(seed_output, offset_output, seed, offset_base):
         & (fx.Index(gpu.block_idx.y) == fx.Index(0))
         & (fx.Index(gpu.block_idx.z) == fx.Index(0))
     )
-    with kernels_common._if_then(_scf.IfOp(fx.as_ir_value(first))):
+    with common_utils.if_then(_scf.IfOp(fx.as_ir_value(first))):
         _store_u64_if_nonnull(seed_output, seed)
         _store_u64_if_nonnull(offset_output, offset_base)
 
@@ -1335,7 +1336,7 @@ def _load_u64_or_zero(ptr):
 
 def _store_u64_if_nonnull(ptr, value):
     nonnull = fx.Int64(fx.ptrtoint(ptr)) != fx.Int64(0)
-    with kernels_common._if_then(_scf.IfOp(fx.as_ir_value(nonnull))):
+    with common_utils.if_then(_scf.IfOp(fx.as_ir_value(nonnull))):
         fx.ptr_store(fx.Int64(value), fx.recast_iter(_i64_global_ptr_ty(), ptr))
 
 

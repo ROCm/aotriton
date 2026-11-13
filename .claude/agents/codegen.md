@@ -95,6 +95,14 @@ When asked to identify implied changes for a PR, trace the data flow:
 entry name construction (Python) → embedded strings in generated `.cc` →
 C++ runtime reconstruction → AKS2 lookup. Any break in this chain is a bug.
 
+### Kernel sources are not build dependencies
+
+The kernel toolchain has no `gcc -MD` equivalent, so ninja never sees edits to
+kernel sources, and none is planned. Do not try to fix this in the generated
+build rules. After a kernel edit, clean the kernel's `.hsaco`, `.aks2` and
+packaged `.zip` by hand (recipe in the `sdpa-expert` agent, "Rebuilding after
+a kernel edit"). Edits to `modules/*/aot/*.py` need `cmake .` before `ninja`.
+
 ### What this agent can help with
 
 - Adding a new kernel or operator to `v3python/rules/`

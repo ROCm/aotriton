@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-ATI description of the flash attn_fwd FlyDSL backend (gfx1201 and gfx950).
+ATI description of the flash attn_fwd FlyDSL backend (gfx1201, gfx950 and gfx942).
 
 Registered as backend 2 of `op_attn_fwd`, through `metro_fwd_flyc`.
 `python -m aotriton.flyc_compile` on this file also produces an hsaco for
@@ -48,11 +48,13 @@ Three consequences, each handled below:
    from every other `@ati.scalar` in this file. A marker never becomes a kernel
    argument, since `options=` and an explicit type are mutually exclusive, so it
    can never claim a kernel-argument slot the way `varlen_bits`'s `'i32'` does.
-   It exists purely so that `godel_number()` can be redirected to read the
-   rounded value a context helper computes, rather than the raw, off-ladder
-   choice: this backend's ladder is a strict subset of the declared axis. See
-   `ir/flyc/kdesc.py`'s `context_helper_for_functional` for the mechanism, and
-   for why it must not be confused with the three real, explicit-type helpers
+   It does two things: `godel_number()` reads the value a context helper
+   computes (the true head dim rounded up to this backend's compiled ladder)
+   instead of the operator's binned choice, and the marker's `options=` replaces
+   the operator's choices for that axis, so a rung only this backend compiles
+   (384) still gets a functional. See `ir/flyc/kdesc.py`'s
+   `context_helper_for_functional` and `_own_space` for the mechanism, and for
+   why it must not be confused with the three real, explicit-type helpers
    above it.
 
 3. **The kernarg list is declared, because nothing else can supply it.** aiter hands
@@ -65,7 +67,7 @@ Three consequences, each handled below:
 from dataclasses import dataclass, asdict
 
 import aotriton.template_instantiation as ati
-from ._common import flash_disabled, check_value
+from ._common import block_dmodel_values, flash_disabled, check_value
 
 
 @dataclass
@@ -114,12 +116,16 @@ FLYC_HEAD_DIMS = frozenset({16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 384
 # already superseded.
 FLYC_GFX950_HEAD_DIMS = frozenset({32, 64, 96, 128, 160, 192, 224, 256, 384, 512})
 
+# gfx942's ladder, from fmha_tuning_gfx942.LADDER, a literal for the same reason.
+FLYC_GFX942_HEAD_DIMS = frozenset({32, 64, 96, 128, 160, 192, 224, 256, 384, 512})
+
 # Per-arch ladder lookup, keyed the same way the disable predicate and the
 # builder branch below are. Also what `_flyc_fwd_disabled` uses to decide which
 # arches this backend serves at all -- `f.arch in _FLYC_FWD_LADDERS`.
 _FLYC_FWD_LADDERS = {
     'gfx1201': FLYC_HEAD_DIMS,
     'gfx950': FLYC_GFX950_HEAD_DIMS,
+    'gfx942': FLYC_GFX942_HEAD_DIMS,
 }
 
 
@@ -147,6 +153,11 @@ def _flyc_fwd_disabled(f):
     # arrange the runtime extent and the padded-head contract that make the
     # rounding safe.
     if check_value(f, ['BLOCK_DMODEL']) not in _FLYC_FWD_LADDERS[f.arch]:
+        return True
+    # Only the operator's head dims ship for now: no surveyed LLM uses 257-511
+    # (HF 2026-11; 128/256/512 and MLA 192/128, 576/512), so rungs such as 384
+    # stay JIT-only until op-level tuning decides which off-axis rungs to build.
+    if check_value(f, ['BLOCK_DMODEL']) not in block_dmodel_values():
         return True
     return False
 
@@ -358,32 +369,30 @@ def _flyc_fwd_disabled(f):
 #
 # --- functional-axis markers, NOT kernel arguments ----------------------------
 #
-# `BLOCK_DMODEL`/`PADDED_HEAD` are the operator's own axes, inherited via
-# `@ati.cite` above and narrowed by `_flyc_fwd_disabled`'s ladder check -- NOT
-# part of `flash_attn_func_aiw_kernel`'s argument list declared above, so these
-# two lines are deliberately kept out of that ordered block. `options=` and an
-# explicit type are mutually exclusive, so a marker can never be read by
-# `iter_launch_arguments` as a real launch argument; it is only ever found by
-# axis name, via `context_helper_for_functional` (ir/flyc/kdesc.py).
+# `BLOCK_DMODEL`/`PADDED_HEAD` are the operator's axes, inherited via
+# `@ati.cite` above -- NOT part of `flash_attn_func_aiw_kernel`'s argument list
+# declared above, so these two lines are deliberately kept out of that ordered
+# block. `options=` and an explicit type are mutually exclusive, so a marker can
+# never be read by `iter_launch_arguments` as a real launch argument; it is only
+# ever found by axis name, via `context_helper_for_functional`
+# (ir/flyc/kdesc.py).
 #
 # Why either axis needs a marker at all: dispatch bins the caller's head
 # dimension to a `BLOCK_DMODEL` rung on the OPERATOR's ladder before a backend
-# is chosen, and this backend's compiled ladder is a strict subset of it. Wiring
-# the axis to a context helper lets `godel_number()` read the ROUNDED value the
-# helper computes (modules/flash/csrc/flyc_attn_fwd.cc) instead of the raw,
-# potentially off-ladder choice. `PADDED_HEAD` must follow that decision -- a
+# is chosen, and this backend's compiled ladder differs from it (fewer rungs on
+# gfx950/gfx942, and 384, which the operator does not have). Wiring the axis to
+# a context helper lets `godel_number()` read the ROUNDED value the helper
+# computes (modules/flash/csrc/flyc_attn_fwd.cc) from the true head dim instead
+# of the operator's binned choice. `PADDED_HEAD` must follow that decision -- a
 # kernel re-rounded to a wider rung with `PADDED_HEAD` left false is a silent
 # wrong answer, not a build error.
 #
-# The `options=` lists restate each ladder as free documentation, not as a
-# second source of truth: the digit's real range comes from the OPERATOR's
-# axis, and the backend's own disable predicate is what enforces the subset.
-# One shared marker declaration serves both architectures (like the
-# Workspace/BlockTable declaration above, this decorator stack does not vary by
-# arch), so `options=` is the UNION of both ladders rather than either alone --
-# neither is a subset of the other, so one arch's list would under-document the
-# other's compiled rungs.
-@ati.scalar('BLOCK_DMODEL', options=sorted(FLYC_HEAD_DIMS | FLYC_GFX950_HEAD_DIMS),
+# `options=` is this backend's own BLOCK_DMODEL axis: the functionals enumerate
+# it instead of the operator's choices (`_own_space`, ir/flyc/kdesc.py), and
+# `_flyc_fwd_disabled`'s ladder check narrows it per arch. One shared marker
+# serves every arch (this decorator stack does not vary by arch), so it is the
+# UNION of the per-arch ladders.
+@ati.scalar('BLOCK_DMODEL', options=sorted(set().union(*_FLYC_FWD_LADDERS.values())),
             wires_to=ati.context_helper('flyc_block_dmodel'))
 @ati.scalar('PADDED_HEAD', options=[False, True],
             wires_to=ati.context_helper('flyc_padded_head'))
@@ -585,7 +594,7 @@ def flyc_attn_fwd(arch, choices, hints):
         ).resolve(meta)
         assert knobs.block_dmodel == tile, (
             f'resolve() returned block_dmodel={knobs.block_dmodel} for '
-            f'BLOCK_DMODEL={tile}; the compiled tile must be the operator axis')
+            f'BLOCK_DMODEL={tile}; the compiled tile must be choices.BLOCK_DMODEL')
         assert not knobs.strides_constexpr, \
             'num_heads=1 is only safe while STRIDE_TOKEN stays behind ' \
             'strides_constexpr (the LSE descriptor, the other NUM_HEADS_Q ' \
@@ -612,8 +621,32 @@ def flyc_attn_fwd(arch, choices, hints):
         # gfx1201 branch above.
         return build, asdict(knobs)
 
+    elif arch == 'gfx942':
+        # Flydsl-free here; only build() imports flydsl. The kernel ABI is gfx1201's.
+        from fmha_tuning_gfx942 import FmhaInputMetadata, knob_dict
+        from fmha_tuning_gfx942 import BODIES, FwdKnobs
+
+        meta = FmhaInputMetadata(head_dim=choices.BLOCK_DMODEL,
+                                 causal_type=choices.CAUSAL_TYPE,
+                                 dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
+                                 bias=bool(choices.BIAS_TYPE),
+                                 dropout=bool(choices.ENABLE_DROPOUT),
+                                 padded_head=bool(choices.PADDED_HEAD))
+        knobs = FwdKnobs().resolve(meta)
+
+        def build(knobs=knobs):
+            """Deferred: imports flydsl, so only `aotriton.flyc_compile` calls it.
+            `knobs` is bound as a default: the name is rebound to the dict below."""
+            from fmha_fwd_gfx942 import build_fmha_fwd_gfx942_module_primary
+            return build_fmha_fwd_gfx942_module_primary(meta, knobs)
+
+        # knobs.body picks the source; block_m and GRID_AXIS_ORDER feed grid_calculator().
+        build.flyc_source, build.flyc_kernel_name, _ = BODIES[knobs.body]
+        knobs = knob_dict(knobs)  # past here `knobs` is the dict, not the dataclass
+        return build, knobs
+
     else:
-        # Unreachable: _flyc_fwd_disabled only lets gfx1201/gfx950 functionals
+        # Unreachable: _flyc_fwd_disabled only lets gfx1201/gfx950/gfx942 functionals
         # through _FLYC_FWD_LADDERS. Fail loudly rather than silently building
         # nothing if that ever stops being true.
         assert False, f'flyc_attn_fwd: no builder branch for arch {arch!r}'

@@ -31,6 +31,7 @@ agree with every kernel it hands data to.
 | fully masked row | `O = 0`, `LSE = +inf`, `dQ = 0` | `+inf` makes the backward's `exp(S - LSE)` vanish |
 | `Delta` | `rowsum(dO * O)` in fp32, from the O the forward **stored** | see [Delta in low precision](#6-delta-in-low-precision) |
 | P as a GEMM operand | rounded to the input dtype **to nearest**, never truncated | P is never negative; see [Rounding toward zero](#16-rounding-a-one-signed-operand-toward-zero) |
+| running max | **exact**: the max of every score seen so far, so `P <= 1` and the row's top P is exactly 1 | see [A lazy running max](#17-a-lazy-running-max) |
 | `dS` | `P * (dP - Delta)`, the gradient with respect to the *scaled* logits | `sm_scale` then multiplies dQ and dK exactly once |
 | `dB` | `dS` itself, no `log2(e)`, no `sm_scale` | the bias enters the softmax unscaled |
 | dropout | `l_i` sums P **before** the mask; `1/(1-p)` applied once; identical Philox offsets and word order in every kernel of every backend | fwd and bwd backends are chosen independently; see [Dropout](#9-dropout) |
@@ -611,6 +612,12 @@ version (#227, selected by the op database from #239) to #259. Fixed by
 P in the forward and in dV. dS keeps the truncation: it is signed, and dQ and
 dK showed no material bias from it.
 
+**gfx942** has no f32 to bf16 convert either (`v_cvt_pk_bf16_f32` is gfx950
+and later), and its flyc forward rounds P the same way
+(`pack_p` in `modules/flash/flyc/fmha_fwd_gfx942.py`). NVIDIA rounds P to
+nearest even in hardware (`cvt.rn.bf16x2.f32`) in FlashAttention 2, 3 and 4,
+so the ties-away rounding is the only difference from them, at exact ties.
+
 **Related.** #253 is a different problem with the same carrier. There, O is
 rounded *correctly* to the input dtype, and Delta inherits that unbiased
 rounding error. That is the ~1e-3 dQ floor every backend has, and it does not
@@ -618,6 +625,52 @@ grow with head_dim.
 
 **Guard.** `test_common_mistakes[one_signed_values]`: the mean signed error
 of O and dV against `eps/8` of their magnitude, and dQ against the floor.
+
+## Online softmax state
+
+### 17. A lazy running max
+
+**Mistake.** Letting the running max lag: keep the stale `m` unless a block's
+max exceeds it by more than a threshold (8 in log2 units), and skip rescaling
+O. It saves the rescale and, with a wave-level vote, the cross-lane max
+exchange, so it keeps being proposed as a speedup.
+
+**Why it is wrong.** With a stale `m`, P reaches up to `2**8` and the row's
+dominant key gets `p = exp2(delta)` instead of exactly 1. Rounding that `p`
+to the input dtype is then a *coherent* gain error on the whole output row,
+since the fp32 row sum counts the unrounded value. With an exact max the
+dominant `p` is 1, which rounds exactly, and the remaining roundings are
+incoherent. FlashAttention's own analysis is in its
+`AI/SPARSE_MLA_EXACT_SOFTMAX_MAX.md`.
+
+**Exposed by:** peaked rows and large logits. Max |err| against fp64, B=1
+H=4 S=289 dense, `sm_scale = 1.0`, exact -> lazy:
+
+| | head_dim 64 | 128 | 256 |
+|---|---|---|---|
+| gfx950 bf16 | 8.1e-3 -> 1.6e-2 | 8.5e-3 -> 1.8e-2 | 1.2e-2 -> 2.3e-2 |
+| gfx950 f16 | 1.1e-3 -> 2.2e-3, 1920 inf | 1.9e-3 -> 2.3e-3, 15232 inf | 1.5e-3 -> 2.0e-3, 62464 inf |
+| gfx942 bf16 | 9.2e-3 -> 1.3e-2 | 9.0e-3 -> 1.6e-2 | - |
+| gfx942 f16 | 1.1e-3 -> 1.7e-3 | 1.3e-3 -> 1.9e-3 | - |
+
+The gfx950 f16 infinities are not understood (see `fmha_tuning_gfx950.py`).
+On gfx942 relative RMS error grows only 5-6%, which is why RMS checks miss it.
+
+**What it buys.** 5-17% on gfx950 at S=4096, 2-5% on gfx942.
+
+**Others.** FlashAttention 2 and 3 compute the exact max every block. FA4's
+SM100 forward uses the lazy max for 16-bit inputs, and switches to the exact
+max for sparse-MLA training after measuring the gain error (row gain 6.4x the
+rounding noise when the dominant key comes last).
+
+**History.** Upstream FlyDSL's gfx950 forward enables it
+(`lazy_rescale=True`); AOTriton's gfx950 default turns it off. The gfx942
+forward keeps it as an opt-in knob, `rescale_threshold`, off (0) by default
+for parity with FA4; at 0 the cross-lane exchange is skipped only when no
+lane's max grew, which changes nothing.
+
+**Guard.** None: `test_common_mistakes` bounds RMS error and bias, and a lazy
+max stays within both. The max error above at `sm_scale = 1.0` is the signal.
 
 ## Not mistakes: what the hardware does
 

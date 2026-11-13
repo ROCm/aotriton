@@ -42,9 +42,13 @@ FLYC_BWD_DKDV_HEAD_DIMS = frozenset({16, 32, 48, 64, 80, 96, 128, 160, 192, 224,
 # per the forward's note on that rung (the same tuple, same ruling).
 FLYC_GFX950_BWD_DKDV_HEAD_DIMS = frozenset({32, 64, 96, 128, 160, 192, 224, 256, 384, 512})
 
+# gfx942's ladder, from fmha_tuning_bwd_dkdv_gfx942.LADDER, a literal for the same reason.
+FLYC_GFX942_BWD_DKDV_HEAD_DIMS = frozenset({32, 64, 96, 128, 160, 192, 224, 256, 384, 512})
+
 _FLYC_BWD_DKDV_HEAD_DIMS_BY_ARCH = {
     'gfx1201': FLYC_BWD_DKDV_HEAD_DIMS,
     'gfx950': FLYC_GFX950_BWD_DKDV_HEAD_DIMS,
+    'gfx942': FLYC_GFX942_BWD_DKDV_HEAD_DIMS,
 }
 
 
@@ -161,16 +165,15 @@ def _flyc_bwd_dkdv_disabled(f):
 # --- functional-axis markers, NOT kernel arguments ----------------------------
 #
 # See flyc_attn_fwd.py for the full rationale (same mechanism, same reason:
-# this backend's compiled ladder, FLYC_BWD_DKDV_HEAD_DIMS, is a strict subset
-# of the operator's BLOCK_DMODEL axis). Kept out of the ordered kernarg block
-# above -- BLOCK_DMODEL/PADDED_HEAD are not part of `bwd_dkdv_kernel`'s
-# signature at all, they are build-time Python values the operator owns.
+# this backend's compiled ladders differ from the operator's BLOCK_DMODEL axis).
+# Kept out of the ordered kernarg block above -- BLOCK_DMODEL/PADDED_HEAD are
+# not part of `bwd_dkdv_kernel`'s signature at all, they are build-time
+# Python values.
 #
-# One shared marker for both arches (this decorator stack does not vary by
-# arch), so `options=` is the union of both ladders -- see flyc_attn_fwd.py's
-# BLOCK_DMODEL marker for why a single arch's ladder would under-document.
+# `options=` is this backend's own BLOCK_DMODEL axis, the union of the per-arch
+# ladders; the disable predicate narrows it per arch.
 @ati.scalar('BLOCK_DMODEL',
-            options=sorted(FLYC_BWD_DKDV_HEAD_DIMS | FLYC_GFX950_BWD_DKDV_HEAD_DIMS),
+            options=sorted(set().union(*_FLYC_BWD_DKDV_HEAD_DIMS_BY_ARCH.values())),
             wires_to=ati.context_helper('flyc_block_dmodel'))
 @ati.scalar('PADDED_HEAD', options=[False, True],
             wires_to=ati.context_helper('flyc_padded_head'))
@@ -224,7 +227,7 @@ def flyc_bwd_dkdv(arch, choices, hints):
         ))
         assert knobs.block_dmodel == tile, (
             f'resolve_knobs returned block_dmodel={knobs.block_dmodel} for '
-            f'BLOCK_DMODEL={tile}; the compiled tile must be the operator axis')
+            f'BLOCK_DMODEL={tile}; the compiled tile must be choices.BLOCK_DMODEL')
 
         def build(knobs=knobs):
             """Deferred: constructs the FlyDSL module. Imports flydsl transitively,
@@ -323,7 +326,7 @@ def flyc_bwd_dkdv(arch, choices, hints):
         ).resolve(meta)
         assert knobs.block_dmodel == tile, (
             f'resolve() returned block_dmodel={knobs.block_dmodel} for '
-            f'BLOCK_DMODEL={tile}; the compiled tile must be the operator axis')
+            f'BLOCK_DMODEL={tile}; the compiled tile must be choices.BLOCK_DMODEL')
 
         def build():
             """Deferred: constructs the FlyDSL module. Imports flydsl transitively,
@@ -342,6 +345,30 @@ def flyc_bwd_dkdv(arch, choices, hints):
         # 'block_kv' knob, so grid_calculator() reads one key regardless
         # of arch (see flyc_bwd_dkdv.cc).
         return build, asdict(knobs)
+
+    elif arch == 'gfx942':
+        # Flydsl-free here; only build() imports flydsl. The kernel ABI is gfx1201's.
+        from fmha_tuning_gfx942 import FmhaInputMetadata, knob_dict
+        from fmha_tuning_bwd_dkdv_gfx942 import BODIES, DkdvKnobs
+
+        meta = FmhaInputMetadata(head_dim=choices.BLOCK_DMODEL,
+                                 causal_type=choices.CAUSAL_TYPE,
+                                 dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
+                                 bias=bool(choices.BIAS_TYPE),
+                                 dropout=bool(choices.ENABLE_DROPOUT),
+                                 padded_head=bool(choices.PADDED_HEAD))
+        knobs = DkdvKnobs().resolve(meta)
+
+        def build(knobs=knobs):
+            """Deferred: imports flydsl, so only `aotriton.flyc_compile` calls it.
+            `knobs` is bound as a default: the name is rebound to the dict below."""
+            from fmha_bwd_dkdv_gfx942 import build_fmha_bwd_dkdv_gfx942_module_primary
+            return build_fmha_bwd_dkdv_gfx942_module_primary(meta, knobs)
+
+        # knobs.body picks the source; block_kv and GRID_AXIS_ORDER feed grid_calculator().
+        build.flyc_source, build.flyc_kernel_name, _ = BODIES[knobs.body]
+        knobs = knob_dict(knobs)  # past here `knobs` is the dict, not the dataclass
+        return build, knobs
 
     else:
         assert False, f'flyc_bwd_dkdv: no builder branch for arch {arch!r}'

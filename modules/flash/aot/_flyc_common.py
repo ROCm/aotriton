@@ -18,7 +18,7 @@ hoisting its versions here would be grouping by spelling rather than by fact.
 
 from dataclasses import dataclass
 
-from ._common import flash_disabled, check_value
+from ._common import block_dmodel_values, flash_disabled, check_value
 
 
 @dataclass
@@ -70,5 +70,10 @@ def flyc_bwd_disabled(f, *, head_dims):
     # arrange the runtime extent and the padded-head contract that make the
     # rounding safe.
     if check_value(f, ['BLOCK_DMODEL']) not in head_dims[f.arch]:
+        return True
+    # Only the operator's head dims ship for now: no surveyed LLM uses 257-511
+    # (HF 2026-11; 128/256/512 and MLA 192/128, 576/512), so rungs such as 384
+    # stay JIT-only until op-level tuning decides which off-axis rungs to build.
+    if check_value(f, ['BLOCK_DMODEL']) not in block_dmodel_values():
         return True
     return False

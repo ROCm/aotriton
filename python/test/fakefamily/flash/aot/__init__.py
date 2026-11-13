@@ -16,6 +16,7 @@ from .bwd_preprocess_varlen import bwd_preprocess_varlen
 from .debug_simulate_encoded_softmax import debug_simulate_encoded_softmax
 from .aiter_fwd import aiter_fmha_v3_fwd
 from .aiter_bwd import aiter_fmha_v3_bwd
+from .flyc_attn_fwd import flyc_attn_fwd
 
 
 # --- triton metro backends (transpiled, never executed) -------------------
@@ -57,6 +58,7 @@ def metro_bwd(params):
 @ati.tune.fallback(PADDED_HEAD=False)
 @ati.tune.binning(Max_seqlen_q=ati.tune.binning.le,
                   Max_seqlen_k=ati.tune.binning.le)
+@ati.backend(2, flyc_attn_fwd, 'flyc')
 @ati.backend(1, aiter_fmha_v3_fwd, 'aiter')
 @ati.backend(0, metro_fwd, 'triton')
 @ati.operator(call_options_name='attn_options')
