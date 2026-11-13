@@ -200,13 +200,15 @@ fi
 echo "Building against LLVM: ${LLVM_NAME}"
 
 # --- Python build deps for the outer interpreter ---
-# setup.py shells out to scripts/build.sh, which configures CMake with
-# Python3_EXECUTABLE=$(which python3) and locates nanobind by importing it in
-# that same interpreter. pip's build isolation gives those packages to the
-# build backend, not to the interpreter CMake ends up using, so they have to be
-# here too. nanobind is pinned to the version the LLVM tarball's MLIR bindings
-# were built with -- they share the "mlir" nanobind domain, so the two must
-# agree; bump both together or not at all.
+# The wheel is built with --no-build-isolation (see `pip wheel` below), so
+# this interpreter is the build environment: everything FlyDSL's
+# pyproject.toml [build-system] requires is installed here -- setuptools>=64,
+# wheel, pybind11, nanobind, numpy, cmake -- and nothing else installs it.
+# scripts/build.sh also configures CMake with Python3_EXECUTABLE=$(which
+# python3) and locates nanobind by importing it in that same interpreter.
+# nanobind is pinned to the version the LLVM tarball's MLIR bindings were
+# built with -- they share the "mlir" nanobind domain, so the two must agree;
+# bump both together or not at all.
 #
 # patchelf is a BINARY the build shells out to by name -- FlyDSL's CMake sets
 # the RPATH of the MLIR runtime libraries it copies into the wheel -- so it has
@@ -222,7 +224,8 @@ echo "Building against LLVM: ${LLVM_NAME}"
 # libmlir_apfloat_wrappers.so.<ver> that nothing else puts in the wheel;
 # repair is what grafts it into flydsl.libs/, as in FlyDSL's own releases.
 NANOBIND_VERSION="${NANOBIND_VERSION:-2.12.0}"
-python -m pip install "nanobind==${NANOBIND_VERSION}" numpy pybind11 patchelf auditwheel
+python -m pip install "setuptools>=64" wheel cmake \
+  "nanobind==${NANOBIND_VERSION}" numpy pybind11 patchelf auditwheel
 command -v patchelf >/dev/null || { echo "Error: patchelf is not on PATH after install." >&2; exit 1; }
 command -v auditwheel >/dev/null || { echo "Error: auditwheel is not on PATH after install." >&2; exit 1; }
 
@@ -248,8 +251,19 @@ export CMAKE_BUILD_PARALLEL_LEVEL="${JOBS}"
 #
 # --no-deps: FlyDSL declares no runtime requirements today, and if it gains
 # some we still want exactly one wheel to publish.
+#
+# --no-build-isolation, as FlyDSL's own scripts/build_wheels.sh effectively
+# does by running `setup.py bdist_wheel` directly. setup.py runs `auditwheel
+# repair` as a child process, and pip's build isolation puts a sitecustomize
+# on PYTHONPATH that drops this venv's site-packages from every Python child:
+# /opt/therock/bin/auditwheel is found on PATH and then cannot import
+# auditwheel. setup.py catches that and keeps the unrepaired wheel.
+#
+# -v because setup.py only warns when repair fails, and pip hides a
+# successful build's output; without it the manylinux check below could say
+# that repair failed but never why.
 DIST_DIR="${BUILD_DIR}/dist"
-python -m pip wheel . --no-deps -w "${DIST_DIR}"
+python -m pip wheel . --no-deps --no-build-isolation -v -w "${DIST_DIR}"
 
 # The cp tag is not cosmetic: AOTriton's CMake refuses a --flydsl_wheel whose
 # ABI does not match the build venv, so a wheel that came out tagged for a
