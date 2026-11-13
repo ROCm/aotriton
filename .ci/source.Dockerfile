@@ -5,3 +5,6 @@ RUN mkdir /root/build
 WORKDIR /root/build
 
 RUN git clone --recursive ${GIT_HTTPS_ORIGIN} -b ${GIT_NAME}
+
+# A build environment: nothing listens, so there is nothing to probe.
+HEALTHCHECK NONE

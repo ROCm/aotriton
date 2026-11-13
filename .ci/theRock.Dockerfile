@@ -41,3 +41,6 @@ export ROCM_PATH="${rocm_root}"
 export PATH="\${ROCM_PATH}/bin:\${ROCM_PATH}/llvm/bin:\${PATH}"
 export LD_LIBRARY_PATH="\${ROCM_PATH}/lib\${LD_LIBRARY_PATH:+:\${LD_LIBRARY_PATH}}"
 EOF
+
+# A build environment: nothing listens, so there is nothing to probe.
+HEALTHCHECK NONE
