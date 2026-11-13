@@ -228,6 +228,10 @@ python -m pip install "setuptools>=64" wheel cmake \
   "nanobind==${NANOBIND_VERSION}" numpy pybind11 patchelf auditwheel
 command -v patchelf >/dev/null || { echo "Error: patchelf is not on PATH after install." >&2; exit 1; }
 command -v auditwheel >/dev/null || { echo "Error: auditwheel is not on PATH after install." >&2; exit 1; }
+# rsync publishes the finished wheel (end of this script). Unlike the two above
+# it cannot come from PyPI, so it has to be in the image -- base.Dockerfile
+# installs it -- and a missing one should fail here, not after the build.
+command -v rsync >/dev/null || { echo "Error: rsync is not on PATH; it is needed to publish the wheel." >&2; exit 1; }
 
 # --- Build ---
 # FLY_BUILD_DIR must stay relative to the repo root: setup.py rejects a path
