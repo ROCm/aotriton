@@ -1161,6 +1161,8 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         self.group_id = fx.Index(group_id_i32)
         self.q_head_idx = self.h_kv_idx * gqa_group + self.group_id
         self.kv_head_idx = self.h_kv_idx
+        if const_expr(self.traits.Q_HEADS_PER_WG > 1):
+            self._pack_q_heads(gqa_group)
         if const_expr(self.traits.LPT_TILE_ORDER and self.traits.CAUSAL):
             # P7. Longest-processing-time-first: under a causal mask q-block
             # `i` walks about `i` KV tiles and `grid.y` issues in increasing
@@ -1179,6 +1181,58 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
             # derivation above, which only shows up once the runtime head
             # counts differ from the build's.
             self.q_block_idx = fx.Index(gpu.grid_dim.y) - fx.Index(1) - self.q_block_idx
+
+    def _pack_q_heads(self, gqa_group):
+        """Give each wave its own q head, so one workgroup serves several.
+
+        **GQA head packing.** When `seqlen_q` is shorter than the workgroup's
+        `Q_TILES * ROWS_PER_WAVE` rows, the waves past the sequence end compute
+        a full MFMA schedule over rows that do not exist -- at `seqlen_q = 64`
+        on a 4-wave, 128-row workgroup that is half the machine. Under GQA the
+        q heads of one group read the *same* K and V, so the idle waves can take
+        a second head of the group instead: the KV tile in LDS is shared, and
+        only the Q rows, the O/LSE rows and the dropout plane differ.
+
+        The workgroup's `BLOCK_M` is therefore *per head*, and the waves split
+        as `(sub_head, row_tile)` with the row tile fastest:
+
+            waves_per_head = Q_TILES // Q_HEADS_PER_WG
+            sub_head       = wave // waves_per_head
+            row offset     = (wave % waves_per_head) * ROWS_PER_WAVE
+
+        `grid.x` is `num_head_q // Q_HEADS_PER_WG`; workgroup `h` takes kv head
+        `h % num_head_k` and group slot `h // num_head_k`, so its heads are
+        `h_kv * gqa_group + slot * Q_HEADS_PER_WG + sub_head` -- consecutive
+        members of one group, which is what makes the KV shared. The host
+        rejects a group size that `Q_HEADS_PER_WG` does not divide.
+
+        Everything else keys off `q_head_idx` and the row, both of which are
+        now per wave: the Q and O descriptors, the LSE row, the bias slab and
+        the philox plane. They are derived from the *uniform* wave id, so they
+        stay scalar. The causal bound is per head and every head in the
+        workgroup has the same rows, so `q_start + BLOCK_M` is still right.
+        """
+        traits = self.traits
+        waves_per_head = traits.Q_TILES // traits.Q_HEADS_PER_WG
+        sub_head = self.wave_id_uni // fx.Index(waves_per_head)
+        self.q_head_idx = (
+            self.h_kv_idx * gqa_group + self.group_id * fx.Index(traits.Q_HEADS_PER_WG) + sub_head
+        )
+        self.wave_q_offset = (self.wave_id % fx.Index(waves_per_head)) * fx.Index(traits.ROWS_PER_WAVE)
+
+    def init_q_row(self):
+        super().init_q_row()
+        traits = self.traits
+        if const_expr(traits.Q_HEADS_PER_WG > 1):
+            # The inherited `q_start_pos_i32` reads the uniform wave id as a
+            # row block; under packing the row block is the remainder. Same
+            # correction `WideKernelContext` makes for its shards -- the causal
+            # mask's "does this tile need masking" test reads it.
+            waves_per_head = traits.Q_TILES // traits.Q_HEADS_PER_WG
+            self.q_start_pos_i32 = fx.Int32(
+                self.q_start
+                + (self.wave_id_uni % fx.Index(waves_per_head)) * fx.Index(traits.ROWS_PER_WAVE)
+            )
 
     # -- granule-general staging ------------------------------------------
 

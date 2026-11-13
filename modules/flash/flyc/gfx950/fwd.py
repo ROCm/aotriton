@@ -1412,6 +1412,12 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
             grid_z = bs_idx * traits.NUM_KV_SPLITS
         else:
             grid_z = bs_idx
+        # GQA head packing: one workgroup per `Q_HEADS_PER_WG` q heads. See
+        # `ParityKernelContext._pack_q_heads`.
+        if const_expr(traits.Q_HEADS_PER_WG > 1):
+            grid_x = num_head_q // traits.Q_HEADS_PER_WG
+        else:
+            grid_x = num_head_q
 
         # Grid axis order is the production one: head fastest. Not a free
         # choice -- on gfx950 the q_block-fastest arrangement was measured to
@@ -1467,7 +1473,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
             block_table_stride,
             value_attrs=fmha.kernel_attrs(traits.BLOCK_SIZE, traits.WAVES_PER_EU),
         ).launch(
-            grid=(num_head_q, num_q_blocks, grid_z),
+            grid=(grid_x, num_q_blocks, grid_z),
             block=(traits.BLOCK_SIZE, 1, 1),
             stream=stream,
         )
@@ -1527,6 +1533,15 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         # this replaced.
         del ptrs
         num_head_q, num_head_k, hdim_qk, hdim_vo = shape_meta
+        # GQA head packing serves `Q_HEADS_PER_WG` consecutive q heads of one
+        # group per workgroup, all reading the same K/V. A group it does not
+        # divide would put two kv heads' q heads in one workgroup, which reads
+        # the wrong K/V for one of them -- finite and wrong, so it is refused.
+        if traits.Q_HEADS_PER_WG > 1 and (num_head_q // num_head_k) % traits.Q_HEADS_PER_WG:
+            raise ValueError(
+                f"this build packs {traits.Q_HEADS_PER_WG} q heads per workgroup, which needs a GQA group "
+                f"size divisible by it; got {num_head_q} q heads over {num_head_k} kv heads"
+            )
 
         # **The 8-element D pitch is the alignment contract.** Loads and stores
         # are 8 columns wide, so the kernel touches `ceil8(hdim)` columns of

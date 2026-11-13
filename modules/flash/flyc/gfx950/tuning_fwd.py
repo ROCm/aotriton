@@ -600,6 +600,7 @@ class Gfx950Knobs(FmhaKnobs):
         (8, 128, 64, 64),
         (4, 64, 64, 64),
         (8, 64, 64, 64),
+        (4, 32, 64, 64),  # 4-wave staging; only reachable with q_heads_per_wg 4
         (4, 128, 64, 32),  # family S -- granule 32, for widths off the 64 grid
     )
 
@@ -702,6 +703,7 @@ class Gfx950Knobs(FmhaKnobs):
             d_stages=self.d_stages,
             qk_shards=self.qk_shards,
             vo_shards=self.vo_shards,
+            q_heads_per_wg=self.q_heads_per_wg,
             v_half_wave=self.v_half_wave,
             v_n_group=self.v_n_group,
             v_k_substep=self.v_k_substep,
@@ -803,6 +805,7 @@ _GFX950_FALLBACK = Gfx950Knobs(
     stagger=None,
     lpt_tile_order=False,
     exact_kv_tiles=False,
+    q_heads_per_wg=1,
     paged=False,
     kv_cache_layout="linear",
     num_kv_splits=1,
@@ -853,6 +856,10 @@ def entry_resolve(meta, *, overrides=None) -> FmhaKnobs:
     assert knobs.return_lse, 'every binary must keep the LSE store'
     assert not knobs.paged and knobs.num_kv_splits == 1, \
         'the Workspace/BlockTable/block_table_stride fold needs paged=False, num_kv_splits=1'
+    assert knobs.q_heads_per_wg == 1, (
+        'GQA head packing launches num_head_q / q_heads_per_wg workgroups, '
+        'and FlycAttnFwdContext::grid_calculator does not divide yet -- a '
+        'packed binary would be launched with too many workgroups')
     return knobs
 
 

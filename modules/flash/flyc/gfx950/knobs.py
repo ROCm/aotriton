@@ -85,6 +85,15 @@ class Gfx950KnobFields(FlycQKnobs):
     block_n: int | None = None
     head_dim_granule: int | None = None
 
+    # GQA head packing: q heads of one GQA group per workgroup, with
+    # `block_m` then meaning the Q tile *per head*. Not one of the four
+    # geometry fields -- those decide the KV staging, which this leaves
+    # alone -- and not derived by policy either: whether it is legal depends
+    # on the *call's* group size, which no build knows, so the dispatcher picks
+    # it (see `ParityKernelContext._pack_q_heads`) and the host rejects a group
+    # it does not divide.
+    q_heads_per_wg: int | None = None
+
     # The two D-axis splits. Deliberately *not* part of the four-field geometry
     # pinning rule above: those four are one indivisible choice (a family),
     # while these are per-width policy that a sweep wants to vary on its own.

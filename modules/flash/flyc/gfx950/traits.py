@@ -113,6 +113,14 @@ class ParityDualwaveTraits(dualwave.DualwaveSwpTraits):
     # `BIAS_TYPE`: a build without dropout emits no PRNG at all.
     ENABLE_DROPOUT: bool = False
 
+    # GQA head packing: how many q heads of one GQA group a workgroup serves.
+    # `BLOCK_M` is then the Q tile *per head*, and the `Q_TILES` waves split
+    # into `Q_HEADS_PER_WG` heads of `Q_TILES // Q_HEADS_PER_WG` row tiles
+    # each. Exists for `seqlen_q < Q_TILES * ROWS_PER_WAVE`, where an unpacked
+    # workgroup leaves waves computing rows past the sequence end; see
+    # `ParityKernelContext._pack_q_heads`. 1 changes nothing.
+    Q_HEADS_PER_WG: int = 1
+
     # P7. Dispatch the causal Q blocks longest-first. A bijection over the same
     # index set, so the output is bit-identical and this is purely a
     # load-balance choice; see `ParityKernelContext.init_thread_mapping`.
@@ -152,6 +160,7 @@ def make_traits(
     d_stages=1,
     qk_shards=1,
     vo_shards=1,
+    q_heads_per_wg=1,
     v_half_wave=None,
     v_n_group=None,
     v_k_substep=None,
@@ -212,15 +221,25 @@ def make_traits(
     # what shrinks -- it is pinned at 32 by the MFMA's M extent -- so BLOCK_M
     # falls instead, and what each wave saves is D columns of O.
     q_tiles = num_waves // vo_shards
-    if block_m % q_tiles:
-        raise ValueError(f"BLOCK_M {block_m} does not divide across {q_tiles} Q tiles")
+    if q_heads_per_wg < 1 or q_tiles % q_heads_per_wg:
+        raise ValueError(f"q_heads_per_wg {q_heads_per_wg} must divide the {q_tiles} Q tiles")
+    if q_heads_per_wg > 1 and (vo_shards > 1 or d_stages > 1 or num_kv_splits > 1):
+        # The wide body maps waves to (q_tile, shard) on its own, and split-K's
+        # workspace is indexed by a workgroup-uniform head. Neither has been
+        # taught a per-wave head.
+        raise ValueError("q_heads_per_wg > 1 is implemented for the dual-wave body only (no shards, stages or split-K)")
+    # Rows one head's tile spreads over: with packing, a head owns only
+    # `q_tiles // q_heads_per_wg` of the waves.
+    tiles_per_head = q_tiles // q_heads_per_wg
+    if block_m % tiles_per_head:
+        raise ValueError(f"BLOCK_M {block_m} does not divide across {tiles_per_head} Q tiles")
     if head_dim % granule:
         raise ValueError(f"head_dim {head_dim} is not a multiple of the granule {granule}")
     if head_dim % D_CHUNK:
         raise ValueError(f"head_dim {head_dim} is not a multiple of the PV MFMA width {D_CHUNK}")
 
     block_size = num_waves * WARP_SIZE
-    rows_per_wave = block_m // q_tiles
+    rows_per_wave = block_m // tiles_per_head
     if rows_per_wave > MFMA_M:
         # **The comment above is an invariant, and this enforces it.** A wave
         # holds at most the MFMA's M extent in rows, so `BLOCK_M` is really
@@ -240,9 +259,10 @@ def make_traits(
         # 281/563/1111 TFLOP/s at head_dim 128). So this is a ceiling, not an
         # equality, and the loss below it is left to the tuner.
         raise ValueError(
-            f"BLOCK_M {block_m} over {q_tiles} Q tiles gives {rows_per_wave} rows per wave, but the "
+            f"BLOCK_M {block_m} over {tiles_per_head} Q tiles gives {rows_per_wave} rows per wave, but the "
             f"MFMA's M extent caps it at {MFMA_M}. BLOCK_M is derived: pass "
-            f"{q_tiles * MFMA_M} for num_waves={num_waves}, vo_shards={vo_shards}"
+            f"{tiles_per_head * MFMA_M} for num_waves={num_waves}, vo_shards={vo_shards}, "
+            f"q_heads_per_wg={q_heads_per_wg}"
         )
 
     k_steps_qk = head_dim // K_STEP_QK
@@ -366,6 +386,7 @@ def make_traits(
         VO_SHARDS=vo_shards,
         D_CHUNKS_PER_STAGE_SHARD=d_chunks_per_stage_shard,
         Q_TILES=q_tiles,
+        Q_HEADS_PER_WG=q_heads_per_wg,
         SMEM_D_BUCKETS=granule // VEC_KV,
         K_STEPS_PER_BAND=granule // K_STEP_QK,
         D_CHUNKS_PER_BAND=granule // D_CHUNK,
