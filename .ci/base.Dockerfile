@@ -50,5 +50,10 @@ RUN set -ex; \
     python -m ensurepip && \
     python -m pip install cmake ninja wheel
 
+# Non-root by default, as nobody (65534), a uid that owns nothing on any
+# host. No user is created: the .ci scripts always run containers as the
+# invoking host user instead (common-docker-user.sh).
+USER 65534:65534
+
 # A build environment: nothing listens, so there is nothing to probe.
 HEALTHCHECK NONE

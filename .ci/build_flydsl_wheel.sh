@@ -103,6 +103,7 @@ if [[ -z "${LLVM_TARBALL}" ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "${SCRIPT_DIR}/common-docker-user.sh"
 . "${SCRIPT_DIR}/common-git-cache.sh"
 . "${SCRIPT_DIR}/common-altwheel.sh"
 . "${SCRIPT_DIR}/common-therock.sh"
@@ -226,6 +227,7 @@ fi
 # problem the LLVM pin has: resolve it against the mirror before the wheel
 # name -- and therefore the cache key -- depends on it.
 RESOLVED=$(docker run --rm -i \
+  "${DOCKER_USER_ARGS[@]}" \
   -v "${MIRROR_VOLUME}:/mirror:ro" \
   "${BASE_DOCKER_IMAGE}" \
   bash -s "${FLYDSL_COMMIT}" <<'EOF'
@@ -287,6 +289,7 @@ fi
 
 # Container stdout goes to stderr; this script's stdout is the wheel path.
 docker run --network=host -i --rm \
+  "${DOCKER_USER_ARGS[@]}" \
   -v "${MIRROR_VOLUME}:/mirror:ro" \
   --tmpfs "/scratch:exec" \
   --mount "type=bind,source=${WHEEL_OUTPUT_DIR},target=/cache/wheels" \

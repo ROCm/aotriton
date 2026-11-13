@@ -246,6 +246,7 @@ echo "SUITE_RUNTIME_LIST ${SUITE_RUNTIME_LIST[@]}"
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
 . "${SCRIPT_DIR}/common-therock.sh"
+. "${SCRIPT_DIR}/common-docker-user.sh"
 . "${SCRIPT_DIR}/common-git-cache.sh"
 . "${SCRIPT_DIR}/common-pin.sh"
 . "${SCRIPT_DIR}/common-git-https-origin.sh"
@@ -432,11 +433,13 @@ function build_inside() {
   [ ${SUITE_DEBUG} -gt 0 ] && TTY_FLAGS=(-t -e SUITE_DEBUG=1)
   set -x
   docker run --network=host -i --rm \
+    "${DOCKER_USER_ARGS[@]}" \
     -v ${MIRROR_VOLUME}:/mirror:ro \
     --mount "type=bind,source=$(realpath ${SCRIPT_DIR}/runc-manylinux-build-tar.sh),target=/tmp/runc-manylinux-build-tar.sh,readonly" \
     --mount "type=bind,source=$(realpath ${OUTPUT_DIR}),target=/output" \
     --mount "type=bind,source=$(realpath ${CACHE_DIR}),target=/cache" \
     --tmpfs "/scratch:exec" \
+    -e AOTRITON_SOURCE_PATH=/scratch/src/aotriton \
     -e AOTRITON_BUILD_PATH=/scratch/build/aotriton \
     -e AOTRITON_INSTALL_PREFIX=/scratch/install \
     -e AOTRITON_GIT_COMMIT=${GIT_COMMIT} \

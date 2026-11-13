@@ -3,6 +3,9 @@
 ARG BASE_TAG=base
 FROM aotriton:${BASE_TAG}
 
+# aotriton:base ends as the non-root nobody (65534); installing needs root.
+USER root
+
 # Defaults are the RELEASE pair and must stay consistent: a nightly version needs
 # the nightly index and vice versa, and pip does not fall back between them.
 # Callers that may pass either derive the index with
@@ -44,3 +47,5 @@ EOF
 
 # A build environment: nothing listens, so there is nothing to probe.
 HEALTHCHECK NONE
+
+USER 65534:65534

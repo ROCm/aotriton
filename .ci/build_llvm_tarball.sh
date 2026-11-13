@@ -71,6 +71,7 @@ if [[ -z "${TARBALL_OUTPUT_DIR}" ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "${SCRIPT_DIR}/common-docker-user.sh"
 . "${SCRIPT_DIR}/common-git-cache.sh"
 . "${SCRIPT_DIR}/common-pin.sh"
 
@@ -178,6 +179,7 @@ fi
 # forever. The mirror fetches +refs/*:refs/*, so a branch or tag name resolves
 # here exactly as it would at the origin.
 RESOLVED=$(docker run --rm -i \
+  "${DOCKER_USER_ARGS[@]}" \
   -v "${MIRROR_VOLUME}:/mirror:ro" \
   "${BASE_DOCKER_IMAGE}" \
   bash -s "${LLVM_COMMIT}" <<'EOF'
@@ -217,6 +219,7 @@ fi
 # stdout of the container goes to stderr: this script's stdout is the tarball
 # path and nothing else.
 docker run --network=host -i --rm \
+  "${DOCKER_USER_ARGS[@]}" \
   -v "${MIRROR_VOLUME}:/mirror:ro" \
   --tmpfs "/scratch:exec" \
   --mount "type=bind,source=${TARBALL_OUTPUT_DIR},target=/cache/llvm" \
