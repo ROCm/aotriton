@@ -115,8 +115,13 @@ git -C "${SRC_DIR}" checkout -f "${COMMIT}"
 # share the "mlir" nanobind domain (MLIR_BINDINGS_PYTHON_NB_DOMAIN below).
 # Pinned to the same default runc-build-flydsl-wheel.sh uses, for that reason
 # alone; bump both together or not at all.
+#
+# Installed under BUILD_DIR rather than into the interpreter's site-packages,
+# which is root-owned in the CI images and the containers do not run as root.
 NANOBIND_VERSION="${NANOBIND_VERSION:-2.12.0}"
-python -m pip install "nanobind==${NANOBIND_VERSION}" numpy pybind11
+PYDEPS="${BUILD_DIR}/pydeps"
+python -m pip install --upgrade --target "${PYDEPS}" "nanobind==${NANOBIND_VERSION}" numpy pybind11
+export PYTHONPATH="${PYDEPS}${PYTHONPATH:+:${PYTHONPATH}}"
 NANOBIND_DIR=$(python -c "import nanobind, os; print(os.path.dirname(nanobind.__file__) + '/cmake')")
 
 # --- Configure ---

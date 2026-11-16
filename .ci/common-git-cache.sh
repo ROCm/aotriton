@@ -21,6 +21,8 @@
 # mirror, so a commit that is not a branch/tag tip still resolves without a
 # network round-trip or a destructive re-clone.
 
+. "$(dirname "${BASH_SOURCE[0]}")/common-docker-user.sh"
+
 # Maintain a bare mirror of a git repo in a docker volume.
 function sync_mirror() {
   local mirror_volume="$1"
@@ -63,7 +65,9 @@ function sync_mirror() {
   fi
 
   docker volume create --name "${mirror_volume}" >/dev/null
+  claim_volume "${mirror_volume}" "${base_docker_image}" || return 1
   docker run --network=host -i --rm \
+    "${DOCKER_USER_ARGS[@]}" \
     -v "${mirror_volume}:/mirror" \
     "${origin_mount[@]}" \
     "${pat_env_arg[@]}" \

@@ -36,6 +36,7 @@ if [[ "${#TRITON_HASHES[@]}" -eq 0 ]]; then
 fi
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+. "${SCRIPT_DIR}/common-docker-user.sh"
 . "${SCRIPT_DIR}/common-git-cache.sh"
 . "${SCRIPT_DIR}/common-altwheel.sh"
 BASE_DOCKER_IMAGE="aotriton:base-py${PYVER}"
@@ -51,6 +52,7 @@ fi
 TRITON_GIT_ORIGIN="${TRITON_GIT_ORIGIN:-https://github.com/ROCm/triton}"
 
 mkdir -p "${WHEEL_OUTPUT_DIR}"
+require_writable "${WHEEL_OUTPUT_DIR}" || exit 1
 
 # hash_origin/hash_pat_environ are each called once per NEEDED_HASHES entry
 # from up to 3 separate loops below (the PAT pre-check, the mirror-sync
@@ -169,6 +171,7 @@ for HASH in "${NEEDED_HASHES[@]}"; do
   fi
 
   docker run --network=host -i --rm \
+    "${DOCKER_USER_ARGS[@]}" \
     -v "${volume}:/mirror:ro" \
     --mount "type=bind,source=$(realpath ${WHEEL_OUTPUT_DIR}),target=/cache/wheels" \
     --mount "type=bind,source=$(realpath ${SCRIPT_DIR}/runc-build-triton-wheel.sh),target=/tmp/runc-build-triton-wheel.sh,readonly" \
@@ -201,6 +204,7 @@ if [[ -n "${ALTWHEEL_YAML}" ]]; then
     fi
     index="$(altwheel_pep508_index "${WHEEL_OUTPUT_DIR}" "${req}" "${PYVER}")"
     docker run --network=host -i --rm \
+      "${DOCKER_USER_ARGS[@]}" \
       --mount "type=bind,source=$(realpath ${WHEEL_OUTPUT_DIR}),target=/cache/wheels" \
       --tmpfs "/scratch:exec" \
       -e TRITON_WHEEL_VERSION_SUFFIX="${TRITON_WHEEL_VERSION_SUFFIX}" \

@@ -223,9 +223,17 @@ echo "Building against LLVM: ${LLVM_NAME}"
 # into flydsl/_mlir/_mlir_libs, carries a DT_NEEDED on
 # libmlir_apfloat_wrappers.so.<ver> that nothing else puts in the wheel;
 # repair is what grafts it into flydsl.libs/, as in FlyDSL's own releases.
+#
+# All of it goes under BUILD_DIR, not into the interpreter's site-packages:
+# that is the root-owned /opt/therock venv in the CI image, and the containers
+# do not run as root. PYTHONPATH rather than a venv of our own, because a venv
+# cannot be layered on /opt/therock and would lose the rocm packages in it.
 NANOBIND_VERSION="${NANOBIND_VERSION:-2.12.0}"
-python -m pip install "setuptools>=64" wheel cmake \
+PYDEPS="${BUILD_DIR}/pydeps"
+python -m pip install --upgrade --target "${PYDEPS}" "setuptools>=64" wheel cmake \
   "nanobind==${NANOBIND_VERSION}" numpy pybind11 patchelf auditwheel
+export PYTHONPATH="${PYDEPS}${PYTHONPATH:+:${PYTHONPATH}}"
+export PATH="${PYDEPS}/bin:${PATH}"
 command -v patchelf >/dev/null || { echo "Error: patchelf is not on PATH after install." >&2; exit 1; }
 command -v auditwheel >/dev/null || { echo "Error: auditwheel is not on PATH after install." >&2; exit 1; }
 # rsync publishes the finished wheel (end of this script). Unlike the two above
@@ -260,7 +268,7 @@ export CMAKE_BUILD_PARALLEL_LEVEL="${JOBS}"
 # does by running `setup.py bdist_wheel` directly. setup.py runs `auditwheel
 # repair` as a child process, and pip's build isolation puts a sitecustomize
 # on PYTHONPATH that drops this venv's site-packages from every Python child:
-# /opt/therock/bin/auditwheel is found on PATH and then cannot import
+# auditwheel is found on PATH and then cannot import
 # auditwheel. setup.py catches that and keeps the unrepaired wheel.
 #
 # -v because setup.py only warns when repair fails, and pip hides a

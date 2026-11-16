@@ -355,7 +355,13 @@ def do_bench(fn,
     :type return_mode: str
     """
     assert return_mode in ["min", "max", "mean", "median"]
-    assert hipGetLastError() != hipError_t.hipErrorIllegalAddress
+    # Only an illegal address is fatal: it is sticky and ruins every later
+    # launch in this process, while other errors are per-config results.
+    # Not an assert: the call also clears the error, and -O would skip both.
+    err = hipGetLastError()
+    if err == hipError_t.hipErrorIllegalAddress:
+        raise RuntimeError(f'do_bench: an earlier kernel left {err} on the device; '
+                           'nothing timed after it can be trusted')
 
     torch.cuda.synchronize()
     # We maintain a buffer of 1024 MB that we clear
