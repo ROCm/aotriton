@@ -1503,7 +1503,7 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         now per wave: the Q and O descriptors, the LSE row, the bias slab and
         the philox plane. They are derived from the *uniform* wave id, so they
         stay scalar. The causal bound is per head and every head in the
-        workgroup has the same rows, so `q_start + BLOCK_M` is still right.
+        workgroup has the same rows, so the block's last real row is still right.
         """
         traits = self.traits
         waves_per_head = traits.Q_TILES // traits.Q_HEADS_PER_WG
@@ -1709,7 +1709,27 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
             )
             self.window_left_i32 = fx.Int32(left)
             self.delta_i32 = fx.Int32(right)
+        # **The KV end follows the block's last *real* row.** The base class
+        # spells `causal_end_raw_i32` as `q_start + BLOCK_M + delta_i32`, the
+        # tile's last row, so a 128-row block over 64 real rows walks the KV
+        # of 64 rows that are never stored -- under a top-left mask, twice the
+        # live range. `delta_i32` is shifted by the padding for the base's
+        # computation only, which makes it `min(q_start + BLOCK_M, seqlen_q) +
+        # delta_i32`; the mask keeps the unshifted value. A block past its
+        # sequence (varlen) keeps the old bound: it is inactive either way.
+        # Only fully masked tiles are cut, but a shorter walk can move the
+        # pipeline's epilogue onto live tiles, and the loop and the epilogue
+        # round a rescaled P differently: O may move by a bf16 ulp, exactly
+        # as with `exact_kv_tiles`. Never at `seqlen_q == seqlen_k`, nor under
+        # bottom-right causal, where `num_kv_tiles` already caps the last block.
+        delta_i32 = self.delta_i32
+        if const_expr(self.traits.CAUSAL):
+            block_m_i32 = fx.Int32(self.traits.BLOCK_M)
+            row_pad_i32 = fx.Int32(self.q_start) + block_m_i32 - fx.Int32(self.seqlen_q_v)
+            live_pad = (row_pad_i32 > fx.Int32(0)) & (row_pad_i32 < block_m_i32)
+            self.delta_i32 = delta_i32 - fx.Int32(live_pad.select(row_pad_i32, fx.Int32(0)))
         super().init_tile_bounds(**kwargs)
+        self.delta_i32 = delta_i32
         self.exact_tile_count = exact_tile_count
         if const_expr(exact_tile_count):
             self._drop_padding_tiles()

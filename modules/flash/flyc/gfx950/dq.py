@@ -533,7 +533,8 @@ class BwdDqKernelContext(ParityKernelContext):
         super().init_tile_bounds(**kwargs)
         traits = self.traits
         if const_expr(traits.CAUSAL):
-            # `causal_end_raw_i32` is `q_start + BLOCK_M + delta_i32`, and
+            # `causal_end_raw_i32` is `min(q_start + BLOCK_M, seqlen_q) +
+            # delta_i32` (see `ParityKernelContext.init_tile_bounds`), and
             # `delta_i32` is the resolved *right* bound under a window -- which
             # is why re-pointing it generalises the tile count as well as the
             # mask.
