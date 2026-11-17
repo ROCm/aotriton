@@ -411,7 +411,7 @@ check enforces it.
 
 Resolution happens in `parse_window` (`modules/flash/kernel/masked_load_store.py`)
 for the Triton kernels and in `resolve_window`
-(`modules/flash/flyc/fmha_common_gfx1201.py`) for the FlyDSL kernels (gfx950
+(`modules/flash/flyc/fmha_utils.py`) for the FlyDSL kernels (gfx950
 and gfx1201). Both are called once per sequence, before any interval
 arithmetic.
 

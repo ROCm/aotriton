@@ -75,10 +75,12 @@ absent, and no gate short of a numerical test would catch it.
 
 ## The vendoring contract
 
-`modules/<family>/flyc/` is a **bare directory of Python files**, modelled on
-`modules/<family>/kernel/`: no `__init__.py`, not a package, flat sibling
-imports between the files. Anything that imports from it puts the directory on
-`sys.path` first — the same contract the Triton kernel directory already uses.
+`modules/<family>/flyc/` holds the modules every architecture shares at its
+root, and one package per architecture (`gfx950/`, `gfx1201/`). Anything that
+imports from it puts `flyc/` on `sys.path` first, the same contract the Triton
+kernel directory uses. Shared modules are imported by bare name; an arch
+package's modules import each other relatively. Keep the arch packages'
+`__init__.py` empty: the code generator imports their tuning modules.
 
 Rules that make a re-sync cheap, and that a re-syncer must keep:
 
@@ -149,9 +151,9 @@ architecture at all — the build host is typically neither of the targets.
    `@ati.flyc.kernel` and `@ati.flyc.hints`, declare the kernel arguments with
    their types and alignments, and have the builder return the FlyDSL module
    and the knobs it resolved. The knobs must carry `flyc_source` (the kernel
-   file, relative to `modules/<family>/flyc/`) and `flyc_kernel_name` (the
-   `@flyc.kernel` def); derive the knobs class from `FlycKnobs`
-   (`fmha_knobs.py`), whose `resolve` fills both.
+   file, relative to `modules/<family>/flyc/`, e.g. `gfx950/fwd.py`) and
+   `flyc_kernel_name` (the `@flyc.kernel` def); derive the knobs class from
+   `FlycKnobs` (`fmha_knobs.py`), whose `resolve` fills both.
 6. **Compile one, by hand,** before wiring anything into the build:
    `AOTRITON_FLYDSL_KERNEL_ROOT=<flydsl source tree> python -m
    aotriton.flyc_compile <description> --kernel_name <name> --target <arch>
@@ -161,7 +163,7 @@ architecture at all — the build host is typically neither of the targets.
    without it and there is no default outside CMake. That check needs no GPU
    and no AOTriton build, and it is the cheapest place to find out that a
    kernel argument is misdeclared.
-7. **Put development tools in `modules/<family>/flyc/devtools/`,** not in
+7. **Put development tools in `modules/<family>/flyc/<arch>/devtools/`,** not in
    `modules/<family>/tests/`. The latter is reserved for tests of the built
    library; a harness that imports the vendored kernels directly and times them
    is a different thing and should not need an AOTriton build to run.
