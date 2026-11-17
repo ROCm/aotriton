@@ -192,7 +192,7 @@ def flyc_bwd_dkdv(arch, choices, hints):
         # import lives inside `build()` below, so the code generator -- which
         # calls this function but never the callable -- never imports flydsl.
         from fmha_tuning_bwd_dkdv_gfx1201 import (
-            BwdDkDvKnobs, BwdDkDvMetadata, resolve_knobs,
+            BwdDkDvMetadata, resolve_knobs,
         )
 
         tile = choices.BLOCK_DMODEL
@@ -213,15 +213,12 @@ def flyc_bwd_dkdv(arch, choices, hints):
             dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
             bias=bool(choices.BIAS_TYPE),
             dropout=bool(choices.ENABLE_DROPOUT),
-        )
-        knobs = resolve_knobs(meta, BwdDkDvKnobs(
+            # The compiled tile and its padding are the functional's own axes.
             block_dmodel=tile,
             block_dmodel_v=tile,
             padded_head=choices.PADDED_HEAD,
-        ))
-        assert knobs.block_dmodel == tile, (
-            f'resolve_knobs returned block_dmodel={knobs.block_dmodel} for '
-            f'BLOCK_DMODEL={tile}; the compiled tile must be the operator axis')
+        )
+        knobs = resolve_knobs(meta)
 
         def build():
             """Deferred: constructs the FlyDSL module. Imports flydsl transitively,

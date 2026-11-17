@@ -337,6 +337,13 @@ class BwdDqInputMetadata:
     # build axis. `dbias=` is therefore required alongside `bias=`.
     bias: bool = False
 
+    # The compiled tile and whether the real extents are narrower. Inputs, not
+    # knobs: a functional's BLOCK_DMODEL and PADDED_HEAD fix them. `plan`
+    # derives them from the real head dims; a caller whose head dims already
+    # fill the tile uses `with_direct_tile`.
+    block_dmodel: int | None = None
+    padded_head: bool | None = None
+
 
 _KNOBS_FALLBACK = BwdDqKnobs(
     kt_lds_layout=_DEFAULT_KT_LDS_LAYOUT,
@@ -363,19 +370,9 @@ def resolve_knobs(meta: BwdDqInputMetadata, overrides: "BwdDqKnobs | None" = Non
     pinning `num_waves` therefore also moves `block_m`.
     """
     s = _KNOBS_FALLBACK.merge(overrides)
-    if s.block_dmodel is None:
-        # The wider of the two axes: one tile serves both, so it must cover
-        # whichever is larger and the other rides as a masked runtime extent.
-        s = replace(s, block_dmodel=max(meta.head_dim, _head_dim_v(meta)))
-    hd = s.block_dmodel
-
-    # **Derived here rather than in `plan`.** `plan` is only one of the ways in
-    # -- `build_bwd_dq_module`'s keyword front end and the AOT builder both call
-    # `resolve_knobs` directly -- and a `padded_head` computed one level up is a
-    # `padded_head` those two never see. It defaulted to False for them, which
-    # left `vo_cols` unmasked whenever the V/O extent was the narrower one.
-    if s.padded_head is None:
-        s = replace(s, padded_head=(hd != meta.head_dim) or (hd != _head_dim_v(meta)))
+    if meta.block_dmodel is None:
+        raise ValueError("meta.block_dmodel is unset: use plan(meta), or with_direct_tile(meta) for a tile-wide head_dim")
+    hd = meta.block_dmodel
 
     if s.shards is None:
         s = replace(s, shards=default_shards(hd))
@@ -415,12 +412,28 @@ class BwdDqPlan:
     knobs: BwdDqKnobs
 
 
+def with_direct_tile(meta: BwdDqInputMetadata) -> BwdDqInputMetadata:
+    """`meta` for a caller whose head dims are already compiled tile widths.
+
+    The tile is the wider of the two axes: one tile serves both, and the
+    narrower one rides as a masked runtime extent. `padded_head` is derived
+    here rather than defaulted to False, which would leave `vo_cols` unmasked
+    whenever the V/O extent is the narrower one.
+    """
+    head_dim_v = _head_dim_v(meta)
+    block_dmodel = max(meta.head_dim, head_dim_v) if meta.block_dmodel is None else meta.block_dmodel
+    padded_head = meta.padded_head
+    if padded_head is None:
+        padded_head = (block_dmodel != meta.head_dim) or (block_dmodel != head_dim_v)
+    return replace(meta, block_dmodel=block_dmodel, padded_head=padded_head)
+
+
 def plan(request: BwdDqInputMetadata, overrides: BwdDqKnobs | None = None) -> BwdDqPlan:
     """The one entry point into tuning: the caller's inputs in, a full plan out.
 
-    `request` is returned as `BwdDqPlan.meta` **unchanged**. The rounding up to
-    a compiled tile lands in `BwdDqPlan.knobs.block_dmodel`, and
-    `knobs.padded_head` records whether the two differ.
+    The rounding up to a compiled tile lands in `BwdDqPlan.meta.block_dmodel`,
+    and `meta.padded_head` records whether the real extents differ from it. Both
+    overwrite whatever `request` carried.
     """
     if request.bias and (request.causal or request.causal_type):
         raise ValueError(
@@ -429,13 +442,14 @@ def plan(request: BwdDqInputMetadata, overrides: BwdDqKnobs | None = None) -> Bw
             "causal pattern into the bias tensor, or drop the bias"
         )
     head_dim = request.head_dim
-    head_dim_v = request.head_dim_v if request.head_dim_v is not None else head_dim
+    head_dim_v = _head_dim_v(request)
     # One tile serves both axes, so it has to cover the wider one; whichever
     # axis is narrower than the tile is then a masked runtime extent.
     wide = max(head_dim, head_dim_v)
     if wide < 1 or wide > MAX_HEAD_DIM:
         raise ValueError(f"kernel requires 1 <= head_dim <= {MAX_HEAD_DIM}, got ({head_dim}, {head_dim_v})")
     block_dmodel = _round_to_ladder(wide)
-    # `resolve_knobs` derives `padded_head` from the same two extents.
-    knobs = resolve_knobs(request, (overrides or BwdDqKnobs()).merge(BwdDqKnobs(block_dmodel=block_dmodel)))
-    return BwdDqPlan(request, knobs)
+    meta = replace(request,
+                   block_dmodel=block_dmodel,
+                   padded_head=(block_dmodel != head_dim) or (block_dmodel != head_dim_v))
+    return BwdDqPlan(meta, resolve_knobs(meta, overrides))

@@ -477,11 +477,13 @@ def flyc_attn_fwd(arch, choices, hints):
             dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
             bias=bool(choices.BIAS_TYPE),
             dropout=bool(choices.ENABLE_DROPOUT),
-        )
-        # Supply FmhaKnobs to resolve_knobs to make sure knobs.block_dmodel align with choices.BLOCK_DMODEL
-        knobs = resolve_knobs(meta, FmhaKnobs(
+            # The compiled tile and its padding are the functional's own axes.
+            # AOTriton has ONE BLOCK_DMODEL axis, so V/O is the same width.
             block_dmodel=tile,
+            block_dmodel_v=tile,
             padded_head=choices.PADDED_HEAD,
+        )
+        knobs = resolve_knobs(meta, FmhaKnobs(
             # AOT cannot bake strides: one binary must serve every layout. This is also
             # what makes `num_heads` above irrelevant to the emitted code.
             strides_constexpr=False,

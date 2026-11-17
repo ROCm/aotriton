@@ -110,6 +110,7 @@ from fmha_tuning_bwd_dq_gfx1201 import (  # noqa: F401
     BwdDqInputMetadata,
     BwdDqKnobs,
     resolve_knobs,
+    with_direct_tile,
 )
 from kernels.common import buffer_ops
 from kernels.common import kernels_common as common_kernels
@@ -175,7 +176,7 @@ def build_bwd_dq_module_primary(meta, knobs):
     causal_type = meta.causal_type
     dropout = meta.dropout
 
-    BLOCK_DMODEL = knobs.block_dmodel
+    BLOCK_DMODEL = meta.block_dmodel
     BLOCK_M = knobs.block_m
     BLOCK_N = knobs.block_n
     NUM_WAVES = knobs.num_waves
@@ -186,7 +187,7 @@ def build_bwd_dq_module_primary(meta, knobs):
     WAVES_PER_EU = knobs.waves_per_eu
     FLAT_WORK_GROUP_SIZE = knobs.flat_work_group_size
     SCHED_STRATEGY_KNOB = knobs.sched_strategy
-    PADDED_HEAD = knobs.padded_head
+    PADDED_HEAD = meta.padded_head
     LPT_TILE_ORDER_KNOB = knobs.lpt_tile_order
     FP_MODE = knobs.fp_mode
     DENORMALS_ARE_ZERO = knobs.denormals_are_zero
@@ -1671,6 +1672,6 @@ def build_bwd_dq_module(**kwargs):
     unknown = set(kwargs) - meta_fields - knob_fields
     if unknown:
         raise TypeError(f"unknown build parameter(s): {sorted(unknown)}")
-    meta = BwdDqInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields})
+    meta = with_direct_tile(BwdDqInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
     overrides = BwdDqKnobs(**{k: v for k, v in kwargs.items() if k in knob_fields})
     return build_bwd_dq_module_primary(meta, resolve_knobs(meta, overrides))

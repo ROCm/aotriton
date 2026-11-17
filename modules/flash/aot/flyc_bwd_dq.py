@@ -133,7 +133,7 @@ def flyc_bwd_dq(arch, choices, hints):
     """
     if arch == 'gfx1201':
         from fmha_tuning_bwd_dq_gfx1201 import (
-            BwdDqInputMetadata, BwdDqKnobs, resolve_knobs,
+            BwdDqInputMetadata, resolve_knobs,
         )
 
         tile = choices.BLOCK_DMODEL
@@ -160,14 +160,11 @@ def flyc_bwd_dq(arch, choices, hints):
             dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
             bias=bool(choices.BIAS_TYPE),
             dropout=bool(choices.ENABLE_DROPOUT),
-        )
-        knobs = resolve_knobs(meta, BwdDqKnobs(
+            # The compiled tile and its padding are the functional's own axes.
             block_dmodel=tile,
             padded_head=choices.PADDED_HEAD,
-        ))
-        assert knobs.block_dmodel == tile, (
-            f'resolve_knobs returned block_dmodel={knobs.block_dmodel} for '
-            f'BLOCK_DMODEL={tile}; the compiled tile must be the operator axis')
+        )
+        knobs = resolve_knobs(meta)
 
         def build():
             """Deferred: constructs the FlyDSL module. Imports flydsl transitively,

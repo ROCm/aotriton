@@ -106,6 +106,7 @@ from fmha_tuning_gfx1201 import (  # noqa: F401
     resolve_knobs,
     resolve_shards,
     vo_chunks,
+    with_direct_tile,
 )
 from kernels.common import buffer_ops
 # Import rewrite: the only symbol this file takes from `kernels.common.utils`
@@ -202,14 +203,14 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     FLAT_WORK_GROUP_SIZE = knobs.flat_work_group_size
     BLOCK_M_KNOB = knobs.block_m
     BLOCK_N_KNOB = knobs.block_n
-    BLOCK_DMODEL = knobs.block_dmodel
-    BLOCK_DMODEL_V = knobs.block_dmodel_v
+    BLOCK_DMODEL = meta.block_dmodel
+    BLOCK_DMODEL_V = meta.block_dmodel_v
     D_OFFSET = knobs.d_offset
     K_PREFETCH_DIST_KNOB = knobs.k_prefetch_dist
     V_PREFETCH_DIST = knobs.v_prefetch_dist
     V_LDS_LAYOUT = knobs.v_lds_layout
     STRIDES_CONSTEXPR = knobs.strides_constexpr
-    PADDED_HEAD = knobs.padded_head
+    PADDED_HEAD = meta.padded_head
     ROW_SUBTILES = knobs.row_subtiles
     SHARDS = knobs.shards
     UNSAFE_FP_MATH = knobs.unsafe_fp_math
@@ -2415,10 +2416,10 @@ def build_flash_attn_func_aiw_module(**kwargs):
     unknown = set(kwargs) - meta_fields - knob_fields
     if unknown:
         raise TypeError(f"unknown build parameter(s): {sorted(unknown)}")
-    # `resolve_knobs`, not `plan`: this front end takes a *compiled tile width*
-    # and must keep rejecting anything off the ladder. Rounding a real head_dim
-    # up is the interface's job, because only it also arranges the runtime
-    # extent and the padded_head contract that make the rounding safe.
-    meta = FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields})
+    # `with_direct_tile`, not `plan`: this front end takes a *compiled tile
+    # width* and must keep rejecting anything off the ladder. Rounding a real
+    # head_dim up is the interface's job, because only it also arranges the
+    # runtime extent and the padded_head contract that make the rounding safe.
+    meta = with_direct_tile(FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
     overrides = FmhaKnobs(**{k: v for k, v in kwargs.items() if k in knob_fields})
     return build_flash_attn_func_aiw_module_primary(meta, resolve_knobs(meta, overrides))

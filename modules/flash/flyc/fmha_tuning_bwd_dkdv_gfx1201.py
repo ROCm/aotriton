@@ -422,6 +422,14 @@ class BwdDkDvMetadata:
     # dQ kernel writes it along a row instead; see `return_dbias` there.
     bias: bool = False
 
+    # The compiled tile widths and whether the real extents are narrower.
+    # Inputs, not knobs: a functional's BLOCK_DMODEL and PADDED_HEAD fix them.
+    # `plan` derives them from the real head dims; a caller whose head dims are
+    # already tiles uses `with_direct_tile`.
+    block_dmodel: int | None = None
+    block_dmodel_v: int | None = None
+    padded_head: bool | None = None
+
 
 _KNOBS_FALLBACK = BwdDkDvKnobs(
     lpt_tile_order=_DEFAULT_LPT_TILE_ORDER,
@@ -439,7 +447,6 @@ _KNOBS_FALLBACK = BwdDkDvKnobs(
     sched_strategy="max-memory-clause",
     waves_per_eu=None,
     addr_hoist=False,
-    padded_head=False,
 )
 
 
@@ -451,11 +458,9 @@ def resolve_knobs(meta: BwdDkDvMetadata, overrides: "BwdDkDvKnobs | None" = None
     nothing else here, but pinning `block_dmodel` changes `block_m`.
     """
     s = _KNOBS_FALLBACK.merge(overrides)
-    if s.block_dmodel is None:
-        s = replace(s, block_dmodel=meta.head_dim)
-    if s.block_dmodel_v is None:
-        s = replace(s, block_dmodel_v=meta.head_dim_v if meta.head_dim_v is not None else s.block_dmodel)
-    hd, hdv = s.block_dmodel, s.block_dmodel_v
+    if meta.block_dmodel is None or meta.block_dmodel_v is None:
+        raise ValueError("meta.block_dmodel is unset: use plan(meta), or with_direct_tile(meta) for tile-wide head dims")
+    hd, hdv = meta.block_dmodel, meta.block_dmodel_v
     if s.contraction_shards is None:
         s = replace(s, contraction_shards=default_contraction_shards(hd, hdv))
     if s.transposed_source is None:
@@ -487,13 +492,28 @@ class BwdDkDvPlan:
     knobs: BwdDkDvKnobs
 
 
+def with_direct_tile(meta: BwdDkDvMetadata) -> BwdDkDvMetadata:
+    """`meta` for a caller whose head dims are already compiled tile widths.
+
+    No rounding and no padding; `block_dmodel_v` follows `head_dim_v`, or the
+    QK tile if that is unset.
+    """
+    block_dmodel = meta.head_dim if meta.block_dmodel is None else meta.block_dmodel
+    block_dmodel_v = meta.block_dmodel_v
+    if block_dmodel_v is None:
+        block_dmodel_v = block_dmodel if meta.head_dim_v is None else meta.head_dim_v
+    padded_head = False if meta.padded_head is None else meta.padded_head
+    return replace(meta, block_dmodel=block_dmodel, block_dmodel_v=block_dmodel_v, padded_head=padded_head)
+
+
 def plan(request: BwdDkDvMetadata, overrides: BwdDkDvKnobs | None = None) -> BwdDkDvPlan:
     """The one entry point into tuning: caller's inputs in, a full plan out.
 
-    `request` comes back as `BwdDkDvPlan.meta` unchanged. The rounding up to a
-    compiled tile lands in `knobs.block_dmodel`, and `knobs.padded_head`
-    records whether the two differ -- exactly as `fmha_tuning_gfx1201.plan`
-    does, so the two passes round a given head_dim the same way.
+    The rounding up to a compiled tile lands in `BwdDkDvPlan.meta.block_dmodel`
+    and `block_dmodel_v`, and `meta.padded_head` records whether the real
+    extents differ -- exactly as `fmha_tuning_gfx1201.plan` does, so the two
+    passes round a given head_dim the same way. All three overwrite whatever
+    `request` carried.
     """
     if request.bias and (request.causal or request.causal_type):
         raise ValueError(
@@ -507,11 +527,8 @@ def plan(request: BwdDkDvMetadata, overrides: BwdDkDvKnobs | None = None) -> Bwd
     head_dim_v = request.head_dim_v if request.head_dim_v is not None else head_dim
     block_dmodel = _round_to_ladder(head_dim)
     block_dmodel_v = _round_to_ladder(head_dim_v)
-    knobs = replace(
-        resolve_knobs(
-            request,
-            (overrides or BwdDkDvKnobs()).merge(BwdDkDvKnobs(block_dmodel=block_dmodel, block_dmodel_v=block_dmodel_v)),
-        ),
-        padded_head=(block_dmodel != head_dim) or (block_dmodel_v != head_dim_v),
-    )
-    return BwdDkDvPlan(request, knobs)
+    meta = replace(request,
+                   block_dmodel=block_dmodel,
+                   block_dmodel_v=block_dmodel_v,
+                   padded_head=(block_dmodel != head_dim) or (block_dmodel_v != head_dim_v))
+    return BwdDkDvPlan(meta, resolve_knobs(meta, overrides))

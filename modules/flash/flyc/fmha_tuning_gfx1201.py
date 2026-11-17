@@ -434,6 +434,14 @@ class FmhaInputMetadata:
     bias: bool = False
     dropout: bool = False
 
+    # The compiled tile widths and whether the real extents are narrower. They
+    # are inputs, not knobs: a functional's BLOCK_DMODEL and PADDED_HEAD fix
+    # them. `plan` derives them from a real head_dim; a caller whose head_dim is
+    # already a tile uses `with_direct_tile`.
+    block_dmodel: int | None = None
+    block_dmodel_v: int | None = None
+    padded_head: bool | None = None
+
 
 _KNOBS_FALLBACK = FmhaKnobs(
     v_prefetch_dist=1,
@@ -443,7 +451,6 @@ _KNOBS_FALLBACK = FmhaKnobs(
     unsafe_fp_math=True,
     fast_fp_math=True,
     strides_constexpr=False,
-    padded_head=False,
     d_offset=0,
     lpt_tile_order=True,
     unsafe_no_kv_clamp=False,
@@ -465,15 +472,12 @@ def resolve_knobs(meta: FmhaInputMetadata, overrides: "FmhaKnobs | None" = None)
     which is what a caller asking for two row sub-tiles means.
     """
     s = _KNOBS_FALLBACK.merge(overrides)
-    # The compiled widths come first: everything below is keyed on the width
-    # baked into the binary, not on the caller's real extent. They coincide for
-    # a direct builder call, whose head_dim must already be a tile width, and
-    # differ whenever `plan` has rounded one up.
-    if s.block_dmodel is None:
-        s = replace(s, block_dmodel=meta.head_dim)
-    if s.block_dmodel_v is None:
-        s = replace(s, block_dmodel_v=meta.head_dim_v)
-    hd = s.block_dmodel
+    if meta.block_dmodel is None:
+        raise ValueError("meta.block_dmodel is unset: use plan(meta), or with_direct_tile(meta) for a tile-wide head_dim")
+    # Everything below is keyed on the width baked into the binary, not on the
+    # caller's real extent. They coincide for a direct builder call and differ
+    # whenever `plan` has rounded one up.
+    hd = meta.block_dmodel
 
     if s.row_subtiles is None:
         s = replace(s, row_subtiles=2 if hd in _ROW_SUBTILES_2_HEAD_DIMS else 1)
@@ -491,10 +495,6 @@ def resolve_knobs(meta: FmhaInputMetadata, overrides: "FmhaKnobs | None" = None)
         s = replace(s, v_lds_layout="transposed" if s.k_prefetch_dist else "row")
     if s.block_n is None:
         s = replace(s, block_n=default_block_n(hd, meta.causal, s.k_prefetch_dist))
-    if s.block_dmodel_v is None:
-        # Defaults to the full width: a build that does not slice the V/output
-        # side computes all of it.
-        s = replace(s, block_dmodel_v=s.block_dmodel)
     if s.block_m is None:
         # Always resolved, so there is exactly one BLOCK_M in the system. It
         # used to be filled only on the distance-0 path, with the host
@@ -520,21 +520,31 @@ class FmhaPlan:
     knobs: FmhaKnobs
 
 
+def with_direct_tile(meta: FmhaInputMetadata) -> FmhaInputMetadata:
+    """`meta` for a caller whose `head_dim` is already a compiled tile width.
+
+    No rounding and no padding. `block_dmodel_v` defaults to `head_dim_v`, and
+    to the full width if that is unset: a build that does not slice the V/output
+    side computes all of it.
+    """
+    block_dmodel = meta.head_dim if meta.block_dmodel is None else meta.block_dmodel
+    block_dmodel_v = meta.block_dmodel_v
+    if block_dmodel_v is None:
+        block_dmodel_v = block_dmodel if meta.head_dim_v is None else meta.head_dim_v
+    padded_head = False if meta.padded_head is None else meta.padded_head
+    return replace(meta, block_dmodel=block_dmodel, block_dmodel_v=block_dmodel_v, padded_head=padded_head)
+
+
 def plan(request: FmhaInputMetadata, overrides: FmhaKnobs | None = None) -> FmhaPlan:
     """The one entry point into tuning: the caller's inputs in, a full plan out.
 
-    `request` is returned as `FmhaPlan.meta` **unchanged** -- it is what the
-    caller has, and nothing here may rewrite it. The rounding up to a compiled
-    tile lands in `FmhaPlan.knobs.block_dmodel`, which is the width baked into
-    the binary and therefore the maximum head_dim it can serve;
-    `knobs.padded_head` records whether the two differ. No
-    caller needs the ladder, the maximum, or the block-size tables -- every one
-    of those used to be imported by the interface, which meant the ordering
-    between them lived at the call site.
-
-    `padded_head` is a knob rather than metadata because deciding it requires
-    the ladder, which is this module's knowledge and not the caller's. Any
-    value passed in `overrides` is overwritten: the rounding decides it.
+    The rounding up to a compiled tile lands in `FmhaPlan.meta.block_dmodel`,
+    which is the width baked into the binary and therefore the maximum head_dim
+    it can serve; `meta.padded_head` records whether the two differ. Both
+    overwrite whatever `request` carried. No caller needs the ladder, the
+    maximum, or the block-size tables -- every one of those used to be imported
+    by the interface, which meant the ordering between them lived at the call
+    site.
 
     Raises for a head_dim past the largest compiled tile.
     """
@@ -542,8 +552,9 @@ def plan(request: FmhaInputMetadata, overrides: FmhaKnobs | None = None) -> Fmha
     if head_dim < 1 or head_dim > MAX_HEAD_DIM:
         raise ValueError(f"kernel requires 1 <= head_dim <= {MAX_HEAD_DIM}, got {head_dim}")
     block_dmodel = _round_to_ladder(head_dim)
-    knobs = replace(
-        resolve_knobs(request, (overrides or FmhaKnobs()).merge(FmhaKnobs(block_dmodel=block_dmodel))),
-        padded_head=block_dmodel != head_dim,
-    )
-    return FmhaPlan(request, knobs)
+    block_dmodel_v = block_dmodel if request.head_dim_v is None else request.head_dim_v
+    meta = replace(request,
+                   block_dmodel=block_dmodel,
+                   block_dmodel_v=block_dmodel_v,
+                   padded_head=block_dmodel != head_dim)
+    return FmhaPlan(meta, resolve_knobs(meta, overrides))

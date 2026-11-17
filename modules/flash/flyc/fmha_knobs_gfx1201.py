@@ -29,13 +29,6 @@ class FmhaKnobs(FlycQKnobs):
     say", and that difference is the whole point of the overrides argument.
     """
 
-    # Compile-time widths, baked into the binary. BLOCK_DMODEL is the maximum
-    # head_dim the resulting hsaco can serve; the *real* extent travels as a
-    # runtime argument and may be smaller, which is what `padded_head` records.
-    # They are knobs and not input metadata because only the ladder decides
-    # them, and the ladder is this module's.
-    block_dmodel: int | None = None
-    block_dmodel_v: int | None = None
     d_offset: int | None = None
 
     block_n: int | None = None
@@ -76,12 +69,6 @@ class FmhaKnobs(FlycQKnobs):
     fast_fp_math: bool | None = None
     strides_constexpr: bool | None = None
 
-    # Derived, not chosen: true when the caller's head_dim is not itself a
-    # compiled tile width, so the kernel computes ceil-to-tile columns and
-    # masks the difference. It lives here rather than with the caller's inputs
-    # because deciding it needs the ladder -- the set of every width that
-    # exists -- which is knowledge only this module has.
-    padded_head: bool | None = None
     lpt_tile_order: bool | None = None
     unsafe_no_kv_clamp: bool | None = None
     path_tag: str | None = None
@@ -99,10 +86,6 @@ class FmhaKnobs(FlycQKnobs):
 @dataclass(frozen=True)
 class BwdDqKnobs(FlycQKnobs):
     """How to compute it. Every field `None` means "policy decides"."""
-
-    # Compile-time width baked into the binary. The *real* extent travels as a
-    # runtime argument and may be smaller, which is what `padded_head` records.
-    block_dmodel: int | None = None
 
     block_n: int | None = None
     num_waves: int | None = None
@@ -129,7 +112,6 @@ class BwdDqKnobs(FlycQKnobs):
     unsafe_fp_math: bool | None = None
     fast_fp_math: bool | None = None
 
-    padded_head: bool | None = None
     lpt_tile_order: bool | None = None
 
     FLYC_SOURCE = "fmha_bwd_dq_gfx1201_kernel.py"
@@ -140,12 +122,6 @@ class BwdDqKnobs(FlycQKnobs):
 @dataclass(frozen=True)
 class BwdDkDvKnobs(FlycKVKnobs):
     """How to compute it. Every field `None` means "policy decides"."""
-
-    # Compile-time widths baked into the binary; the real extents ride along as
-    # runtime `hdim_qk` / `hdim_vo` arguments and `padded_head` records whether
-    # they differ.
-    block_dmodel: int | None = None
-    block_dmodel_v: int | None = None
 
     block_m: int | None = None
     num_waves: int | None = None
@@ -179,10 +155,6 @@ class BwdDkDvKnobs(FlycKVKnobs):
     # Whether the Q/dO address hoists `row * stride_seq` out of the loop. See
     # `kv_off` in `fmha_common_gfx1201.make_addr_pair`.
     addr_hoist: bool | None = None
-
-    # Derived, not chosen: true when the caller's head_dim is not itself a
-    # compiled tile width.
-    padded_head: bool | None = None
 
     FLYC_SOURCE = "fmha_bwd_dkdv_gfx1201_kernel.py"
     FLYC_KERNEL_NAME = "bwd_dkdv_kernel"

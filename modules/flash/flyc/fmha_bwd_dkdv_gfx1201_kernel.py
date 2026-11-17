@@ -149,6 +149,7 @@ from fmha_tuning_bwd_dkdv_gfx1201 import (  # noqa: F401
     BwdDkDvKnobs,
     BwdDkDvMetadata,
     resolve_knobs,
+    with_direct_tile,
 )
 from kernels.common import buffer_ops
 # Import rewrite: the only symbol this file takes from `kernels.common.utils`
@@ -214,13 +215,13 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
     causal_type = meta.causal_type
     dropout = meta.dropout
 
-    BLOCK_DMODEL = knobs.block_dmodel
-    BLOCK_DMODEL_V = knobs.block_dmodel_v
+    BLOCK_DMODEL = meta.block_dmodel
+    BLOCK_DMODEL_V = meta.block_dmodel_v
     BLOCK_M = knobs.block_m
     NUM_WAVES = knobs.num_waves
     LPT_TILE_ORDER = knobs.lpt_tile_order
     SPLIT_HEAD_DIM = knobs.split_head_dim
-    PADDED_HEAD = knobs.padded_head
+    PADDED_HEAD = meta.padded_head
     WAVES_PER_EU = knobs.waves_per_eu
     SCHED_STRATEGY = knobs.sched_strategy
     FP_MODE = knobs.fp_mode
@@ -1448,6 +1449,6 @@ def build_bwd_dkdv_module(**kwargs):
     unknown = set(kwargs) - meta_fields - knob_fields
     if unknown:
         raise TypeError(f"unknown build parameter(s): {sorted(unknown)}")
-    meta = BwdDkDvMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields})
+    meta = with_direct_tile(BwdDkDvMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
     overrides = BwdDkDvKnobs(**{k: v for k, v in kwargs.items() if k in knob_fields})
     return build_bwd_dkdv_module_primary(meta, resolve_knobs(meta, overrides))
