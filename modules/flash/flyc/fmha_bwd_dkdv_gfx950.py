@@ -140,6 +140,9 @@ from fmha_dualwave_gfx950 import (
     _slab_span_elems,
     _v_imm_lo,
     exp2_wait_state,
+    fadd,
+    fmul,
+    fsub,
     mfma_operand_wait_state,
     wire_ptr,
     wire_view,
@@ -323,7 +326,7 @@ def bias_log2e(ctx, q_rows):
         # `Vec(...)[0]`, which is what the forward's width-4 and width-8 reads
         # use and which raises here.
         b = ctx.elem_dtype(one).to(fx.Float32)
-        out.append(dualwave._fmul(fx.Float32(b), log2e, fm_bias))
+        out.append(fmul(fx.Float32(b), log2e, fm_bias))
     return out
 
 
@@ -1293,7 +1296,7 @@ class BwdDkDvSoftmaxHelper(ParitySoftmaxHelper):
                 )
                 vec = Vec(span, (width,), fx.Float32)
                 for j in range_constexpr(width):
-                    values[elem0 + j] = dualwave._fmul(vec[j], scale, self.fm_fast)
+                    values[elem0 + j] = fmul(vec[j], scale, self.fm_fast)
             return values
         pitch = self.lse_pitch
         # One divergent multiply, sixteen uniform ones. Not `(row_base +
@@ -1302,7 +1305,7 @@ class BwdDkDvSoftmaxHelper(ParitySoftmaxHelper):
         for r in range_constexpr(16):
             off = row_v + fx.Index(_ROW_THRESHOLDS[r]) * pitch
             one = buffer_ops.buffer_load(rsrc, as_mlir_value(fx.Int32(off)), vec_width=1, dtype=fx.Float32)
-            values[r] = dualwave._fmul(fx.Float32(one), scale, self.fm_fast)
+            values[r] = fmul(fx.Float32(one), scale, self.fm_fast)
         return values
 
     def probabilities(self, v_s, neg_lse2, bias2=None):
@@ -1334,12 +1337,12 @@ class BwdDkDvSoftmaxHelper(ParitySoftmaxHelper):
         fm = self.fm_fast
         if const_expr(bias2 is not None):
             fm = fx.arith.FastMathFlags.contract | fx.arith.FastMathFlags.reassoc
-        scaled = [dualwave._fmul(values[r], scale, fm) for r in range_constexpr(16)]
+        scaled = [fmul(values[r], scale, fm) for r in range_constexpr(16)]
         if const_expr(bias2 is not None):
-            scaled = [dualwave._fadd(scaled[r], bias2[r], fm) for r in range_constexpr(16)]
+            scaled = [fadd(scaled[r], bias2[r], fm) for r in range_constexpr(16)]
         return exp2_wait_state(
             [
-                dualwave.rocdl.exp2(T.f32, as_mlir_value(dualwave._fadd(scaled[r], neg_lse2[r], fm)))
+                dualwave.rocdl.exp2(T.f32, as_mlir_value(fadd(scaled[r], neg_lse2[r], fm)))
                 for r in range_constexpr(16)
             ]
         )
@@ -1393,10 +1396,10 @@ class BwdDkDvSoftmaxHelper(ParitySoftmaxHelper):
         if const_expr(keep is not None):
             s = self.ctx_ref.c_dropout_scale
             values = [
-                keep[r].select(dualwave._fmul(values[r], s, self.fm_fast), self.c_zero_f) for r in range_constexpr(16)
+                keep[r].select(fmul(values[r], s, self.fm_fast), self.c_zero_f) for r in range_constexpr(16)
             ]
         return [
-            dualwave._fmul(p_list[r], dualwave._fsub(values[r], delta[r], self.fm_fast), self.fm_fast)
+            fmul(p_list[r], fsub(values[r], delta[r], self.fm_fast), self.fm_fast)
             for r in range_constexpr(16)
         ]
 
@@ -2114,14 +2117,14 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
             # to `dK` and to nothing else. Once at the end rather than per tile:
             # a linear factor commutes with the accumulation.
             for dc in range_constexpr(n_acc):
-                dk[dc] = dualwave._fmul(Vec(dk[dc]), scale_vec, ctx.fm_fast)
+                dk[dc] = fmul(Vec(dk[dc]), scale_vec, ctx.fm_fast)
             if const_expr(traits.ENABLE_DROPOUT):
                 # `dV = s * sum_i keep*P*dO`. A per-kernel constant, so it
                 # belongs on the accumulator once rather than on `P` every
                 # tile. `dK` does not get it: its `s` is already inside `dS`,
                 # where it multiplies only the `dP` term.
                 for dc in range_constexpr(n_acc):
-                    dv[dc] = dualwave._fmul(Vec(dv[dc]), drop_vec, ctx.fm_fast)
+                    dv[dc] = fmul(Vec(dv[dc]), drop_vec, ctx.fm_fast)
             store.store_accs(dv, "dv", hdim_vo)
             store.store_accs(dk, "dk", hdim_qk)
 

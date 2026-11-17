@@ -242,6 +242,9 @@ from fmha_dualwave_gfx950 import (
     _bias_slab_num_records_bytes,
     _score_column_runs,
     exp2_wait_state,
+    fmax,
+    fmul,
+    fsub,
     mfma_operand_wait_state,
     wire_ptr,
     wire_view,
@@ -654,7 +657,7 @@ class BwdDqKernelContext(ParityKernelContext):
         # every exponent downstream is `exp2`, so the conversion happens once
         # here rather than per element. AOTriton's `l_i = tl.load(...) *
         # RCP_LN2` is the same fold.
-        lse2 = dualwave._fmul(fx.Float32(lse), fx.Float32(dualwave._LOG2E), self.fm_fast)
+        lse2 = fmul(fx.Float32(lse), fx.Float32(dualwave._LOG2E), self.fm_fast)
         # **Floored, because `LSE` can legitimately be `-inf`** and this is an
         # *input*. A causal row with no live key -- every row below
         # `seqlen_q - seqlen_kv` under bottom-right alignment, which is every
@@ -686,7 +689,7 @@ class BwdDqKernelContext(ParityKernelContext):
         # pack and the dQ store, and neither is upstream of this. So the
         # argument is about `fastmath<fast>`'s `ninf` on an f32 FMA and is
         # dtype-independent.
-        lse2 = dualwave._fmax(fx.Float32(lse2), self.c_neg_floor, self.fm_fast)
+        lse2 = fmax(fx.Float32(lse2), self.c_neg_floor, self.fm_fast)
         return lse2, fx.Float32(delta)
 
 
@@ -749,7 +752,7 @@ class BwdDqSoftmaxHelper(ParitySoftmaxHelper):
         s_lo, s_hi = v_s
         acc = self.traits.ACC_ELEMS
         scale_v = Vec.from_elements([fx.Float32(qk_scale)], fx.Float32).broadcast_to(acc)
-        neg_lse2 = dualwave._fsub(self.c_zero_f, lse2, self.fm_fast)
+        neg_lse2 = fsub(self.c_zero_f, lse2, self.fm_fast)
         neg_v = Vec.from_elements([fx.Float32(neg_lse2)], fx.Float32).broadcast_to(acc)
         lo = fmath.fma(Vec(s_lo), scale_v, neg_v, fastmath=self.fm_fast)
         hi = fmath.fma(Vec(s_hi), scale_v, neg_v, fastmath=self.fm_fast)
@@ -881,7 +884,7 @@ class BwdDqSoftmaxHelper(ParitySoftmaxHelper):
                 )
                 keep = rng.keep_span(ctx.philox_seed, first, width, ctx.idropout_p)
                 for j in range_constexpr(width):
-                    kept = dualwave._fmul(values[elem0 + j], scale, self.fm_fast)
+                    kept = fmul(values[elem0 + j], scale, self.fm_fast)
                     values[elem0 + j] = keep[j].select(fx.Float32(kept), zero)
         return (lo, hi)
 
@@ -979,7 +982,7 @@ class BwdDqKvLdsToVgprLoader(ParityKvLdsToVgprLoader):
         they cannot alias, and here they read the same bytes.
         """
         traits = self.traits
-        ptr = buffer_ops.get_element_ptr(self.lds_kv_base_ptr, byte_offset=elem_idx * traits.BF16_BYTES, elem_type=T.i8)
+        ptr = (self.lds_kv_base_ptr + fx.Int64(elem_idx * traits.BF16_BYTES)).llvm_ptr
         return llvm.LoadOp(
             self.kv_mfma_pack_type,
             ptr,
@@ -1462,8 +1465,8 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
                 ds_lo = [None] * ACC_ELEMS
                 ds_hi = [None] * ACC_ELEMS
                 for r in range_constexpr(ACC_ELEMS):
-                    ds_lo[r] = dualwave._fmul(v_p[0][r], dualwave._fsub(dp_lo[r], delta, ctx.fm_fast), ctx.fm_fast)
-                    ds_hi[r] = dualwave._fmul(v_p[1][r], dualwave._fsub(dp_hi[r], delta, ctx.fm_fast), ctx.fm_fast)
+                    ds_lo[r] = fmul(v_p[0][r], fsub(dp_lo[r], delta, ctx.fm_fast), ctx.fm_fast)
+                    ds_hi[r] = fmul(v_p[1][r], fsub(dp_hi[r], delta, ctx.fm_fast), ctx.fm_fast)
 
                 # -- GEMM3. dQ += dS . K, with K read transposed out of the V
                 #    slot. `cast_p` gives dS the same K permutation P has, and

@@ -83,6 +83,7 @@ It also leaves a lane's four accumulator rows **contiguous** (`8*(lane//16) +
 
 from fmha_common_gfx1201 import MaskedAxis
 from fmha_dualwave_gfx950 import _ds_read_tr16_b64_imm, exp2_wait_state, mfma_operand_wait_state
+from fmha_dualwave_gfx950 import fadd, fmul, fsub
 from fmha_mfma16_gfx950 import MFMA16_M, a16_chunk_offset, a16_read_base, lds_elem, tok_off, tok_off_dyn
 from gfx950_standalone import buffer_ops, dualwave
 
@@ -328,14 +329,14 @@ class M16SoftmaxHelper(dualwave.DualwaveKernelContext):
         if const_expr(not self.LSE_STRIDED):
             span = buffer_ops.buffer_load(rsrc, as_mlir_value(row0), vec_width=ACC16, dtype=fx.Float32)
             vec = Vec(span, (ACC16,), fx.Float32)
-            return [dualwave._fmul(vec[i], scale, self.fm_fast) for i in range_constexpr(ACC16)]
+            return [fmul(vec[i], scale, self.fm_fast) for i in range_constexpr(ACC16)]
         pitch = self.lse_pitch
         row_v = fx.Index(row0) * pitch
         out = []
         for i in range_constexpr(ACC16):
             off = row_v + fx.Index(i) * pitch
             one = buffer_ops.buffer_load(rsrc, as_mlir_value(fx.Int32(off)), vec_width=1, dtype=fx.Float32)
-            out.append(dualwave._fmul(fx.Float32(one), scale, self.fm_fast))
+            out.append(fmul(fx.Float32(one), scale, self.fm_fast))
         return out
 
     def q_rows(self, tile_idx, sub):
@@ -369,9 +370,9 @@ class M16SoftmaxHelper(dualwave.DualwaveKernelContext):
         fm = self.fm_fast
         if const_expr(bias2 is not None):
             fm = fx.arith.FastMathFlags.contract | fx.arith.FastMathFlags.reassoc
-        scaled = [dualwave._fmul(values[r], scale, fm) for r in range_constexpr(ACC16)]
+        scaled = [fmul(values[r], scale, fm) for r in range_constexpr(ACC16)]
         if const_expr(bias2 is not None):
-            scaled = [dualwave._fadd(scaled[r], bias2[r], fm) for r in range_constexpr(ACC16)]
+            scaled = [fadd(scaled[r], bias2[r], fm) for r in range_constexpr(ACC16)]
         # The `v_exp_f32` wait state. `exp2_wait_state` says why it is needed
         # and why the `dualwave._s_nop(1)` that used to stand here did not
         # supply it -- the short version is that `s_nop` takes no operands, so
@@ -386,7 +387,7 @@ class M16SoftmaxHelper(dualwave.DualwaveKernelContext):
         # sites still in it.
         return exp2_wait_state(
             [
-                dualwave.rocdl.exp2(T.f32, as_mlir_value(dualwave._fadd(scaled[r], neg_lse2[r], fm)))
+                dualwave.rocdl.exp2(T.f32, as_mlir_value(fadd(scaled[r], neg_lse2[r], fm)))
                 for r in range_constexpr(ACC16)
             ]
         )
@@ -403,11 +404,11 @@ class M16SoftmaxHelper(dualwave.DualwaveKernelContext):
         if const_expr(keep is not None):
             s = self.ctx_ref.c_dropout_scale
             values = [
-                keep[r].select(dualwave._fmul(values[r], s, self.fm_fast), self.c_zero_f)
+                keep[r].select(fmul(values[r], s, self.fm_fast), self.c_zero_f)
                 for r in range_constexpr(ACC16)
             ]
         return [
-            dualwave._fmul(p_list[r], dualwave._fsub(values[r], delta[r], self.fm_fast), self.fm_fast)
+            fmul(p_list[r], fsub(values[r], delta[r], self.fm_fast), self.fm_fast)
             for r in range_constexpr(ACC16)
         ]
 

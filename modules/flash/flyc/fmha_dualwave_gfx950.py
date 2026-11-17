@@ -66,6 +66,8 @@ from flydsl.expr import arith, const_expr, gpu, range_constexpr, rocdl
 from flydsl.expr.typing import T
 from flydsl.expr.typing import Vector as Vec
 from flydsl.expr.utils.arith import _to_raw as as_mlir_value
+from flydsl._mlir.dialects import vector
+from flydsl.expr import math as fmath
 
 # Elements touched by one D-axis access. Every load and store on that axis is
 # `DMA_BYTES` wide, which is the whole content of the 8xD input contract
@@ -85,6 +87,23 @@ __all__ = [
     "wire_ptr",
     "wire_view",
 ]
+
+
+# FlyDSL 0.4.2 removed these wrappers from flash_attn_utils; the explicit fastmath flags stay ours.
+def fadd(a, b, fm_fast):
+    return arith.addf(as_mlir_value(a), as_mlir_value(b), fastmath=fm_fast)
+
+
+def fsub(a, b, fm_fast):
+    return arith.subf(as_mlir_value(a), as_mlir_value(b), fastmath=fm_fast)
+
+
+def fmul(a, b, fm_fast):
+    return arith.mulf(as_mlir_value(a), as_mlir_value(b), fastmath=fm_fast)
+
+
+def fmax(a, b, fm_fast):
+    return arith.MaxNumFOp(as_mlir_value(a), as_mlir_value(b), fastmath=fm_fast).result
 
 
 def traits_cache_key(traits):
@@ -465,8 +484,8 @@ def _ds_read_tr16_b64_imm(result_type, addr_i32, imm_offset=0, scope_name=None, 
     # The intrinsic is typed v4f16; `Cannot select` on a vector<2xi32> result.
     op = rocdl.ds_read_tr16_b64(dualwave.ir.VectorType.get([4], dualwave.ir.F16Type.get()), ptr)
     raw = _tag_lds_alias(op, scope_name, scope_names).result
-    raw = dualwave.vector.BitCastOp(raw_type, raw).result
-    return dualwave.vector.BitCastOp(result_type, raw).result
+    raw = vector.BitCastOp(raw_type, raw).result
+    return vector.BitCastOp(result_type, raw).result
 
 
 def _ds_read_tr_v4f16_imm(
@@ -1948,7 +1967,7 @@ class ParitySoftmaxHelper(dualwave.DualwaveSoftmaxHelper):
                         # type, not a one-lane vector, so it is wrapped
                         # directly rather than through `Vec(...)[0]`.
                         b = fx.Float32(ctx.elem_dtype(one).to(fx.Float32))
-                        values[elem0 + j] = dualwave._fadd(values[elem0 + j], dualwave._fmul(b, log2e, fm_bias), fm_bias)
+                        values[elem0 + j] = fadd(values[elem0 + j], fmul(b, log2e, fm_bias), fm_bias)
                     continue
                 span = buffer_ops.buffer_load(
                     ctx.bias_rsrc,
@@ -1958,7 +1977,7 @@ class ParitySoftmaxHelper(dualwave.DualwaveSoftmaxHelper):
                 )
                 for j in range_constexpr(width):
                     b = fx.Float32(Vec(span, (width,), ctx.elem_dtype)[j].to(fx.Float32))
-                    values[elem0 + j] = dualwave._fadd(values[elem0 + j], dualwave._fmul(b, log2e, fm_bias), fm_bias)
+                    values[elem0 + j] = fadd(values[elem0 + j], fmul(b, log2e, fm_bias), fm_bias)
 
     def bias_to_lists(self, v_s, tile_idx):
         """`v_s_vec_to_lists`, with the bias folded in on the way through.
@@ -2013,12 +2032,12 @@ class ParitySoftmaxHelper(dualwave.DualwaveSoftmaxHelper):
         """
         if const_expr(self.traits.D_CHUNKS != 1):
             return super().rescale_o(v_o, m_row, l_row, m_tile_max, v_p)
-        m_new = dualwave._fmax(m_row, m_tile_max, self.fm_fast)
-        corr = rocdl.exp2(T.f32, as_mlir_value(dualwave._fsub(m_row, m_new, self.fm_fast)))
+        m_new = fmax(m_row, m_tile_max, self.fm_fast)
+        corr = rocdl.exp2(T.f32, as_mlir_value(fsub(m_row, m_new, self.fm_fast)))
         self.scale_o(v_o, corr)
         v_o = _anchor_v_o(self.traits, v_o)
         v_p = dualwave._scale_v_p(self.traits, v_p, corr, elem_dtype=self.elem_dtype, fm_fast=self.fm_fast)
-        l_row = dualwave._fmul(l_row, corr, self.fm_fast)
+        l_row = fmul(l_row, corr, self.fm_fast)
         return v_o, m_new, l_row, v_p
 
     def safe_l_inv(self, l_row):
@@ -2032,7 +2051,7 @@ class ParitySoftmaxHelper(dualwave.DualwaveSoftmaxHelper):
         """
         inv = super().safe_l_inv(l_row)
         if const_expr(self.traits.ENABLE_DROPOUT):
-            inv = dualwave._fmul(inv, fx.Float32(self.ctx_ref.dropout_scale_arg), self.fm_fast)
+            inv = fmul(inv, fx.Float32(self.ctx_ref.dropout_scale_arg), self.fm_fast)
         return inv
 
     def cast_p(self, v_p, tile_idx=None):
@@ -2198,11 +2217,11 @@ class ParitySoftmaxHelper(dualwave.DualwaveSoftmaxHelper):
 
         Otherwise identical to `rescale_o`, term for term.
         """
-        m_new = dualwave._fmax(m_row, m_tile_max, self.fm_fast)
-        corr = rocdl.exp2(T.f32, as_mlir_value(dualwave._fsub(m_row, m_new, self.fm_fast)))
+        m_new = fmax(m_row, m_tile_max, self.fm_fast)
+        corr = rocdl.exp2(T.f32, as_mlir_value(fsub(m_row, m_new, self.fm_fast)))
         self.scale_o(v_o, corr)
         v_o = _anchor_v_o(self.traits, v_o)
-        l_row = dualwave._fmul(l_row, corr, self.fm_fast)
+        l_row = fmul(l_row, corr, self.fm_fast)
         return v_o, m_new, l_row
 
 
@@ -2358,9 +2377,9 @@ class ParityStoreHelper(dualwave.DualwaveStoreHelper):
             self.batch_idx * per_batch_bytes,
             per_batch_bytes,
         )
-        lse_val = dualwave._fadd(
-            dualwave._fmul(m_row, self.c_ln2_f, self.fm_fast),
-            dualwave.fmath.log(as_mlir_value(l_row), fastmath=self.fm_fast),
+        lse_val = fadd(
+            fmul(m_row, self.c_ln2_f, self.fm_fast),
+            fmath.log(as_mlir_value(l_row), fastmath=self.fm_fast),
             self.fm_fast,
         )
         # A Q block that attends nothing gets **+inf**, and the formula above

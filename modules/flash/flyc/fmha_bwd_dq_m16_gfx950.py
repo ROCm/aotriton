@@ -69,6 +69,9 @@ from fmha_dualwave_gfx950 import (  # ParityKernelContext documents the base thi
     _ds_read_tr_v4f16_imm,
     _slab_span_elems,
     exp2_wait_state,
+    fadd,
+    fmul,
+    fsub,
     mfma_operand_wait_state,
 )
 from fmha_mfma16_gfx950 import MFMA16_M
@@ -212,9 +215,7 @@ class M16DqReader:
 
     def _lds_pack(self, elem_idx):
         traits = self.traits
-        ptr = buffer_ops.get_element_ptr(
-            self.ctx.lds_kv_base_ptr, byte_offset=elem_idx * traits.BF16_BYTES, elem_type=T.i8
-        )
+        ptr = (self.ctx.lds_kv_base_ptr + fx.Int64(elem_idx * traits.BF16_BYTES)).llvm_ptr
         return llvm.LoadOp(
             self.ctx.kv_mfma_pack_type,
             ptr,
@@ -418,7 +419,7 @@ class M16DqSoftmax:
         """
         fm = self.ctx.fm_fast
         scale_v = Vec.from_elements([fx.Float32(qk_scale)], fx.Float32).broadcast_to(self.n)
-        neg = dualwave._fsub(self.ctx.c_zero_f, lse2, fm)
+        neg = fsub(self.ctx.c_zero_f, lse2, fm)
         neg_v = Vec.from_elements([fx.Float32(neg)], fx.Float32).broadcast_to(self.n)
         return tuple(as_mlir_value(fmath.fma(Vec(h), scale_v, neg_v, fastmath=fm)) for h in v_s)
 
@@ -483,7 +484,7 @@ class M16DqSoftmax:
                 )
                 # `vec_width=1` returns a **scalar**, not a one-lane vector.
                 b = fx.Float32(ctx.elem_dtype(one).to(fx.Float32))
-                lists[step][i] = dualwave._fadd(lists[step][i], dualwave._fmul(b, log2e, fm), fm)
+                lists[step][i] = fadd(lists[step][i], fmul(b, log2e, fm), fm)
         return self.to_vecs(lists)
 
     def seq_pad_mask(self, v_s, tile_idx, lane):
@@ -626,7 +627,7 @@ class M16DqSoftmax:
             )
             keep = rng.keep_span(ctx.philox_seed, first, self.n, ctx.idropout_p)
             for i in range_constexpr(self.n):
-                kept = dualwave._fmul(dp_lists[step][i], scale, ctx.fm_fast)
+                kept = fmul(dp_lists[step][i], scale, ctx.fm_fast)
                 dp_lists[step][i] = keep[i].select(fx.Float32(kept), zero)
         return dp_lists
 
@@ -634,7 +635,7 @@ class M16DqSoftmax:
         """`dS = P * (dP - delta)`, elementwise. `dp` is already a list pair."""
         fm = self.ctx.fm_fast
         return tuple(
-            [dualwave._fmul(p_lists[h][r], dualwave._fsub(dp[h][r], delta, fm), fm) for r in range_constexpr(self.n)]
+            [fmul(p_lists[h][r], fsub(dp[h][r], delta, fm), fm) for r in range_constexpr(self.n)]
             for h in (0, 1)
         )
 
@@ -795,7 +796,7 @@ def make_m16_dq_body(
         v_dq = [loop_results[i] for i in range_constexpr(n_chunks)]
         scale = Vec.from_elements([ctx.c_sm_scale], fx.Float32).broadcast_to(acc_elems(traits))
         for c in range_constexpr(n_chunks):
-            v_dq[c] = dualwave._fmul(Vec(v_dq[c]), scale, ctx.fm_fast)
+            v_dq[c] = fmul(Vec(v_dq[c]), scale, ctx.fm_fast)
         _s_barrier()
         store.store(v_dq, q_row, lane)
 
