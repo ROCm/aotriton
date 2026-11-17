@@ -27,7 +27,7 @@ Two things are specific to this kernel:
 from dataclasses import asdict
 
 import aotriton.template_instantiation as ati
-from ._flyc_common import FlycBwdHints, flyc_bwd_disabled
+from ._flyc_common import FlycBwdHints, flyc_bwd_disabled, flyc_input_metadata
 
 
 # The compiled tile ladder, from fmha_tuning_bwd_dq_gfx1201._BLOCK_DMODEL_LADDER.
@@ -131,120 +131,14 @@ def flyc_bwd_dq(arch, choices, hints):
     function of `choices` alone) -- true here on both arches for the same reason
     it is there.
     """
-    if arch == 'gfx1201':
-        from fmha_tuning_bwd_dq_gfx1201 import (
-            BwdDqInputMetadata, resolve_knobs,
-        )
+    from fmha_dq_tuning import resolve_knobs
 
-        tile = choices.BLOCK_DMODEL
-        meta = BwdDqInputMetadata(
-            # Unread by resolve_knobs, whose policy keys on head_dim and causal.
-            num_heads=1,
-            head_dim=tile,
-            # Both the same, because AOTriton has ONE BLOCK_DMODEL axis and this
-            # kernel has one compiled tile (unlike dK/dV, which carries a second
-            # block_dmodel_v). The tile covers the wider of the two extents and the
-            # narrower axis rides as a masked RUNTIME extent -- the kernel's
-            # `vo_cols` is `MaskedAxis(hdim_vo, active=PADDED_HEAD)`.
-            #
-            # Which makes PADDED_HEAD load-bearing rather than cosmetic: with the
-            # flag off the V/O axis is not bounded at all and a narrower V is walked
-            # to the full tile. AOTriton sets it as
-            # `hdim_qk != hdim_rounded || hdim_vo != hdim_rounded`
-            # (modules/flash/csrc/attn_bwd.cc), which is exactly the condition
-            # upstream's resolve_knobs derives when asked to choose -- so passing
-            # `choices.PADDED_HEAD` below is the same answer, not a coincidence.
-            head_dim_v=tile,
-            causal=choices.CAUSAL_TYPE != 0,
-            causal_type=choices.CAUSAL_TYPE,
-            dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
-            bias=bool(choices.BIAS_TYPE),
-            dropout=bool(choices.ENABLE_DROPOUT),
-            # The compiled tile and its padding are the functional's own axes.
-            block_dmodel=tile,
-            padded_head=choices.PADDED_HEAD,
-        )
-        knobs = resolve_knobs(meta)
+    meta = flyc_input_metadata(choices)
+    knobs = resolve_knobs(arch, meta)
 
-        def build():
-            """Deferred: constructs the FlyDSL module. Imports flydsl transitively,
-            so ONLY `aotriton.flyc_compile` (run by ninja) may call this."""
-            from fmha_bwd_dq_gfx1201_kernel import build_bwd_dq_module_primary
-            return build_bwd_dq_module_primary(meta, knobs)
+    def build():
+        """Deferred: imports flydsl, so only `aotriton.flyc_compile` calls it."""
+        from fmha_dq_tuning import builder
+        return builder(arch, meta, knobs)
 
-        return build, asdict(knobs)
-
-    elif arch == 'gfx950':
-        from fmha_tuning_bwd_dq_gfx950 import bwd_dq_knobs
-        # BwdDqKnobs reuses fmha_tuning_gfx950.FmhaInputMetadata verbatim
-        # (not its own metadata class) -- see that module: only the forward
-        # and dK/dV declare their own.
-        from fmha_tuning_gfx950 import FmhaInputMetadata as Gfx950InputMetadata
-
-        tile = choices.BLOCK_DMODEL
-        meta = Gfx950InputMetadata(
-            num_heads=1,
-            head_dim=tile,
-            # No `causal_type` field here either (same shape as the forward's
-            # gfx950 branch); the kernel only ever compiles CAUSAL_TYPE in
-            # {0, 3}, so this is 1:1, no mapping.
-            causal=choices.CAUSAL_TYPE != 0,
-            window=choices.CAUSAL_TYPE != 0,
-            dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
-            bias=bool(choices.BIAS_TYPE),
-            dropout=bool(choices.ENABLE_DROPOUT),
-            # The compiled tile and its padding are the functional's own axes.
-            block_dmodel=tile,
-            padded_head=choices.PADDED_HEAD,
-        )
-        knobs = bwd_dq_knobs(
-            arch,
-            # The tile comes from the operator's ladder, not gfx950's: claim no
-            # floor, so the kernel masks every D column.
-            hdim_qk_floor=0,
-            # Pinned for the same reason as the forward's gfx950 branch:
-            # this kernel's own real signature carries no folded constexpr
-            # parameter, but the pin keeps the build configuration uniform
-            # across all three gfx950 descriptions rather than varying it
-            # kernel-by-kernel for no functional reason.
-            paged=False,
-            num_kv_splits=1,
-            # dB is this kernel's second output, and `store_db` is the
-            # `const_expr` that decides whether the store exists at all
-            # (`fmha_bwd_dq_gfx950.py`'s `if const_expr(STORE_DB)`). Upstream's
-            # `_BWD_DQ_FALLBACK` defaults it to False -- inference builds have
-            # no gradient to write -- and it is not derived from `meta.bias`,
-            # so an unpinned build with BIAS_TYPE=1 compiles a kernel that
-            # returns success and leaves dB untouched. Same defect shape as the
-            # forward's `return_lse` (see flyc_attn_fwd.py), with one real
-            # difference: BIAS_TYPE *is* a functional axis, so this one is
-            # genuinely a build-time question and specialising on it is right.
-            #
-            # gfx1201 reaches the same place without a knob -- FlyDSL 077626cd
-            # dropped its `return_dbias` and `bias=True` always emits the store
-            # (see this module's docstring). Both arches therefore *compile* the
-            # dB store whenever bias is present. Whether it executes is the
-            # separate, runtime question `bwd_kernel_dq.py` answers by clearing
-            # `store_db` on an all-zero dB stride triple, which is how a bias
-            # that does not require grad asks for the store to be skipped. Both
-            # arches implement it: `_store_db` in fmha_bwd_dq_gfx1201_kernel.py,
-            # `db_store_enabled` in fmha_bwd_dq_gfx950.py.
-            store_db=bool(choices.BIAS_TYPE),
-        ).resolve(meta)
-        assert knobs.store_db == bool(choices.BIAS_TYPE), (
-            f'resolve() returned store_db={knobs.store_db} for '
-            f'BIAS_TYPE={choices.BIAS_TYPE}; dB is written exactly when bias is')
-        assert not knobs.paged and knobs.num_kv_splits == 1, (
-            'AOT gfx950 pins paged=False, num_kv_splits=1 uniformly across the '
-            'three descriptions; resolve() must not have overridden it')
-
-        def build():
-            """Deferred: constructs the FlyDSL module. Imports flydsl transitively,
-            so ONLY `aotriton.flyc_compile` (run by ninja) may call this."""
-            from fmha_bwd_dq_gfx950 import build_fmha_bwd_dq_gfx950_module_primary
-            return build_fmha_bwd_dq_gfx950_module_primary(meta, knobs)
-
-        return build, asdict(knobs)
-
-    else:
-        assert False, f'flyc_bwd_dq: no builder branch for arch {arch!r}'
+    return build, asdict(knobs)

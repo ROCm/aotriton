@@ -72,3 +72,17 @@ def flyc_bwd_disabled(f, *, head_dims):
     if check_value(f, ['BLOCK_DMODEL']) not in head_dims[f.arch]:
         return True
     return False
+
+
+def flyc_input_metadata(choices):
+    """The arch-neutral problem a flyc functional describes, for every kernel."""
+    from fmha_fwd_tuning import FmhaInputMetadata
+    # `num_heads` reaches a kernel only through STRIDE_TOKEN, which the arch
+    # adapters keep behind strides_constexpr=False; 1 keeps it off the axes.
+    return FmhaInputMetadata(num_heads=1,
+                             block_dmodel=choices.BLOCK_DMODEL,
+                             padded_head=choices.PADDED_HEAD,
+                             causal_type=choices.CAUSAL_TYPE,
+                             dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
+                             bias=bool(choices.BIAS_TYPE),
+                             dropout=bool(choices.ENABLE_DROPOUT))

@@ -25,7 +25,7 @@ What differs from the forward, beyond the operand list:
 from dataclasses import asdict
 
 import aotriton.template_instantiation as ati
-from ._flyc_common import FlycBwdHints, flyc_bwd_disabled
+from ._flyc_common import FlycBwdHints, flyc_bwd_disabled, flyc_input_metadata
 
 
 # The compiled tile ladder, from fmha_tuning_bwd_dkdv_gfx1201._BLOCK_DMODEL_LADDER.
@@ -187,102 +187,14 @@ def flyc_bwd_dkdv(arch, choices, hints):
     and for the invariant this owes (`meta` a pure function of `choices` alone)
     -- true here on both arches for the same reason it is there.
     """
-    if arch == 'gfx1201':
-        # ONLY the flydsl-free tuning module at call time. The FlyDSL-bearing
-        # import lives inside `build()` below, so the code generator -- which
-        # calls this function but never the callable -- never imports flydsl.
-        from fmha_tuning_bwd_dkdv_gfx1201 import (
-            BwdDkDvMetadata, resolve_knobs,
-        )
+    from fmha_dkdv_tuning import resolve_knobs
 
-        tile = choices.BLOCK_DMODEL
-        meta = BwdDkDvMetadata(
-            # `num_heads` is not a functional axis. The forward pins it to 1 for a
-            # reason specific to its STRIDE_TOKEN/STRIDES_CONSTEXPR arm; here it is
-            # simply unread by resolve_knobs, whose policy keys on head_dim,
-            # head_dim_v and causal only.
-            num_heads=1,
-            head_dim=tile,
-            # AOTriton has ONE BLOCK_DMODEL axis, so the compiled QK and VO widths
-            # are the same; the real extents ride as runtime hdim_qk/hdim_vo.
-            head_dim_v=tile,
-            # FlyDSL's causal_type IS AOTriton's CAUSAL_TYPE (0 none / 1 top-left /
-            # 2 bottom-right / 3 window), and the operator's axis offers {0, 3}.
-            causal=choices.CAUSAL_TYPE != 0,
-            causal_type=choices.CAUSAL_TYPE,
-            dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
-            bias=bool(choices.BIAS_TYPE),
-            dropout=bool(choices.ENABLE_DROPOUT),
-            # The compiled tile and its padding are the functional's own axes.
-            block_dmodel=tile,
-            block_dmodel_v=tile,
-            padded_head=choices.PADDED_HEAD,
-        )
-        knobs = resolve_knobs(meta)
+    meta = flyc_input_metadata(choices)
+    knobs = resolve_knobs(arch, meta)
 
-        def build():
-            """Deferred: constructs the FlyDSL module. Imports flydsl transitively,
-            so ONLY `aotriton.flyc_compile` (run by ninja) may call this."""
-            from fmha_bwd_dkdv_gfx1201_kernel import build_bwd_dkdv_module_primary
-            return build_bwd_dkdv_module_primary(meta, knobs)
+    def build():
+        """Deferred: imports flydsl, so only `aotriton.flyc_compile` calls it."""
+        from fmha_dkdv_tuning import builder
+        return builder(arch, meta, knobs)
 
-        return build, asdict(knobs)
-
-    elif arch == 'gfx950':
-        from fmha_tuning_bwd_dkdv_gfx950 import BwdDkDvInputMetadata, bwd_dkdv_knobs
-
-        tile = choices.BLOCK_DMODEL
-        meta = BwdDkDvInputMetadata(
-            num_heads=1,
-            head_dim=tile,
-            head_dim_v=tile,
-            causal=choices.CAUSAL_TYPE != 0,
-            window=choices.CAUSAL_TYPE != 0,
-            dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
-            bias=bool(choices.BIAS_TYPE),
-            dropout=bool(choices.ENABLE_DROPOUT),
-            # There is no varlen field to set: the kernel decodes the
-            # `varlen_bits` word unconditionally, and a dense call is
-            # bits == 0.
-            #
-            # lse_layout_th stays at its False default, and that default no
-            # longer decides anything. It used to: the row read was specialised
-            # at build time, so a binary compiled False and handed (T, H) bits
-            # read the wrong elements -- which is what test_varlen.py's
-            # lse_layout=['HT', 'TH'] axis was hitting, 1193 failures of it.
-            # Since the row read branches on the runtime pitch instead, one
-            # build serves both layouts and this field survives only in the
-            # metadata and the cache key, as a record of which layout a build
-            # was tuned against.
-            #
-            # It is deliberately NOT promoted to a functional axis: compiling
-            # both variants would double the dK/dV binary count and buy no
-            # correctness, because the binary already handles both.
-            #
-            # The compiled tile and its padding are the functional's own axes.
-            block_dmodel=tile,
-            padded_head=choices.PADDED_HEAD,
-        )
-        knobs = bwd_dkdv_knobs(
-            arch,
-            # The tile comes from the operator's ladder, not gfx950's: claim no
-            # floor, so the kernel masks every D column.
-            hdim_qk_floor=0,
-            strides_constexpr=False,
-            # NOTE: unlike Gfx950Knobs (forward, dQ), BwdDkDvKnobs is a
-            # standalone dataclass with no `paged`/`num_kv_splits` fields at
-            # all -- there is nothing to pin here. This kernel's real
-            # signature also carries no folded constexpr parameter (only the
-            # forward does), so the forward's pin has no counterpart here.
-        ).resolve(meta)
-
-        def build():
-            """Deferred: constructs the FlyDSL module. Imports flydsl transitively,
-            so ONLY `aotriton.flyc_compile` (run by ninja) may call this."""
-            from fmha_bwd_dkdv_gfx950 import build_fmha_bwd_dkdv_gfx950_module_primary
-            return build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs)
-
-        return build, asdict(knobs)
-
-    else:
-        assert False, f'flyc_bwd_dkdv: no builder branch for arch {arch!r}'
+    return build, asdict(knobs)

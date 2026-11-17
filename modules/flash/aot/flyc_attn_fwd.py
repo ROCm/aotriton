@@ -66,6 +66,7 @@ from dataclasses import dataclass, asdict
 
 import aotriton.template_instantiation as ati
 from ._common import flash_disabled, check_value
+from ._flyc_common import flyc_input_metadata
 
 
 @dataclass
@@ -438,7 +439,7 @@ def flyc_attn_fwd(arch, choices, hints):
     at its default. The parameter exists so that stops being an API change — and the
     packaging is already N-capable, so neither is the artifact layout.
 
-    `resolve_knobs`/`fmha_knobs(...).resolve`, NOT `plan`: `plan()` is the JIT
+    `resolve_knobs`, NOT an arch's `plan`: `plan()` is the JIT
     entry point, which takes a *real* head_dim and rounds it up the ladder,
     deriving `padded_head` on the way. AOT already knows the tile — it IS
     `BLOCK_DMODEL` — and `PADDED_HEAD` is its own functional axis, so `plan()`
@@ -453,147 +454,14 @@ def flyc_attn_fwd(arch, choices, hints):
     `asdict(knobs)` for the psel here, and nothing downstream would notice the
     two falling out of step — the psel is what the C++ side reads for the grid.
     """
-    if arch == 'gfx1201':
-        # ONLY the flydsl-free tuning module at call time. The FlyDSL-bearing
-        # import lives inside `build()` below, so the code generator -- which
-        # calls this function but never the callable -- never imports flydsl.
-        from fmha_tuning_gfx1201 import FmhaInputMetadata, FmhaKnobs, resolve_knobs
+    from fmha_fwd_tuning import resolve_knobs
 
-        tile = choices.BLOCK_DMODEL
-        meta = FmhaInputMetadata(
-            # `num_heads` reaches the emitted kernel ONLY through STRIDE_TOKEN,
-            # which is read exclusively under STRIDES_CONSTEXPR — a dense-only
-            # diagnostic arm the AOT path never selects (see the knob below).
-            # Pinning it to 1 keeps it out of the functional space. Asserted,
-            # not assumed: this is a property of today's kernel, not a
-            # contract it owes us.
-            num_heads=1,
-            head_dim=tile,
-            # FlyDSL's causal_type IS AOTriton's CAUSAL_TYPE (0 none / 1 top-left /
-            # 2 bottom-right / 3 window), and the kernel only ever emits {0, 3} — the
-            # same pair the operator's CAUSAL_TYPE axis offers. 1:1, no mapping.
-            causal=choices.CAUSAL_TYPE != 0,
-            causal_type=choices.CAUSAL_TYPE,
-            dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
-            bias=bool(choices.BIAS_TYPE),
-            dropout=bool(choices.ENABLE_DROPOUT),
-            # The compiled tile and its padding are the functional's own axes.
-            # AOTriton has ONE BLOCK_DMODEL axis, so V/O is the same width.
-            block_dmodel=tile,
-            block_dmodel_v=tile,
-            padded_head=choices.PADDED_HEAD,
-        )
-        knobs = resolve_knobs(meta, FmhaKnobs(
-            # AOT cannot bake strides: one binary must serve every layout. This is also
-            # what makes `num_heads` above irrelevant to the emitted code.
-            strides_constexpr=False,
-        ))
-        assert not knobs.strides_constexpr, \
-            'num_heads=1 is only safe while STRIDE_TOKEN stays behind strides_constexpr'
+    meta = flyc_input_metadata(choices)
+    knobs = resolve_knobs(arch, meta)
 
-        def build():
-            """Deferred: constructs the FlyDSL module. Imports flydsl transitively,
-            so ONLY `aotriton.flyc_compile` (run by ninja) may call this."""
-            from flash_attn_func_gfx1201_aiw import build_flash_attn_func_aiw_module_primary
-            return build_flash_attn_func_aiw_module_primary(meta, knobs)
+    def build():
+        """Deferred: imports flydsl, so only `aotriton.flyc_compile` calls it."""
+        from fmha_fwd_tuning import builder
+        return builder(arch, meta, knobs)
 
-        return build, asdict(knobs)
-
-    elif arch == 'gfx950':
-        # Same flydsl-free-at-call-time rule as the gfx1201 branch above.
-        from fmha_tuning_gfx950 import FmhaInputMetadata as Gfx950InputMetadata, fmha_knobs
-
-        tile = choices.BLOCK_DMODEL
-        meta = Gfx950InputMetadata(
-            # See the gfx1201 branch: not a functional axis, unread by
-            # resolve() for the same reason (STRIDE_TOKEN sits behind
-            # strides_constexpr, pinned False below).
-            #
-            # STRIDE_TOKEN is not the only reader on this arch, though.
-            # Upstream's `_store_lse_row` also sizes LSE's per-batch slice with
-            # `traits.NUM_HEADS_Q`, because upstream compiles a kernel per
-            # shape and AOT cannot. That one is answered in the kernel, which
-            # takes the count off the `num_head_q` kernarg instead
-            # (`ParityStoreHelper._store_lse_row_unguarded`, a local edit to
-            # the vendored kernel). Left as the trait it silently dropped every
-            # head but `h == 0`, which only became visible once `return_lse`
-            # below was pinned on.
-            num_heads=1,
-            head_dim=tile,
-            # gfx950's FmhaInputMetadata has no `causal_type` field — only
-            # `causal`/`window` (window requires causal: "a left bound *on
-            # top of* the causal one"). The kernel only ever compiles
-            # CAUSAL_TYPE in {0, 3} -- checked by _flyc_fwd_disabled's cited
-            # flash_disabled, and all the operator's own axis offers here --
-            # so this is 1:1, no mapping, exactly like
-            # the gfx1201 branch's causal_type line.
-            causal=choices.CAUSAL_TYPE != 0,
-            window=choices.CAUSAL_TYPE != 0,
-            dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
-            bias=bool(choices.BIAS_TYPE),
-            dropout=bool(choices.ENABLE_DROPOUT),
-            # The compiled tile and its padding are the functional's own axes.
-            block_dmodel=tile,
-            padded_head=choices.PADDED_HEAD,
-        )
-        knobs = fmha_knobs(
-            arch,
-            # The tile comes from the operator's ladder, not gfx950's: claim no
-            # floor, so the kernel masks every D column.
-            hdim_qk_floor=0,
-            # AOT cannot bake strides: one binary must serve every layout.
-            strides_constexpr=False,
-            # Pinned, not left to the policy: this pin is what makes
-            # the Workspace/BlockTable/block_table_stride `options=[0]`
-            # declaration above true. Asserted below, not just assumed.
-            paged=False,
-            num_kv_splits=1,
-            # LSE **is** optional for AOTriton -- `attn_fwd_params::L` is
-            # declared "Can be T2::get_null_tensor()", and an inference caller
-            # passes exactly that -- but it is optional at RUNTIME, decided per
-            # launch by a null-pointer test, the way the Triton kernel's
-            # `L_not_null` and gfx1201's `_l_valid` decide it. `return_lse` is
-            # not that switch: it is a compile-time knob that deletes the store
-            # from the binary, and one AOT binary has to serve both kinds of
-            # caller. So it is pinned on, and the null case is handled in the
-            # kernel (`ParityStoreHelper._store_lse_row`, which a local edit
-            # to the vendored kernel added the guard to).
-            #
-            # Pinned rather than left alone because upstream's default is
-            # `return_lse=False` -- inference builds do not want the store --
-            # and `_GFX950_FALLBACK` supplies that default for every field the
-            # caller leaves unset. Left unpinned, `fmha_wide_gfx950`'s
-            # `if const_expr(traits.RETURN_LSE)` compiles the store away and
-            # the kernel returns without ever touching a non-null LSE: the
-            # tensor keeps whatever the caller allocated, which the test
-            # harness fills with NaN on purpose, and every case dies on
-            # "L tensor has NaN" with a launch that reported success. gfx1201
-            # has no such knob -- it always emits the store, and guards it --
-            # which is why this is pinned in this branch and not the one above.
-            return_lse=True,
-        ).resolve(meta)
-        assert not knobs.strides_constexpr, \
-            'num_heads=1 is only safe while STRIDE_TOKEN stays behind ' \
-            'strides_constexpr (the LSE descriptor, the other NUM_HEADS_Q ' \
-            'reader on this arch, is handled in the kernel)'
-        assert knobs.return_lse, \
-            'the LSE store must exist in every AOT binary (null L is a runtime ' \
-            'test, not a build variant); resolve() must not have cleared it'
-        assert not knobs.paged and knobs.num_kv_splits == 1, (
-            'AOT gfx950 only ever pins paged=False, num_kv_splits=1 -- that pin '
-            'is what makes the Workspace/BlockTable/block_table_stride constexpr '
-            'fold (options=[0]) true; resolve() must not have overridden it')
-
-        def build():
-            """Deferred: constructs the FlyDSL module. Imports flydsl transitively,
-            so ONLY `aotriton.flyc_compile` (run by ninja) may call this."""
-            from flash_attn_func_gfx950 import build_flash_attn_func_gfx950_module_primary
-            return build_flash_attn_func_gfx950_module_primary(meta, knobs)
-
-        return build, asdict(knobs)
-
-    else:
-        # Unreachable: _flyc_fwd_disabled only lets gfx1201/gfx950 functionals
-        # through _FLYC_FWD_LADDERS. Fail loudly rather than silently building
-        # nothing if that ever stops being true.
-        assert False, f'flyc_attn_fwd: no builder branch for arch {arch!r}'
+    return build, asdict(knobs)
