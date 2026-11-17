@@ -81,7 +81,7 @@ FlycBwdDkdvContext::flyc_padded_head() const {
 // the axis order here -- this is not a formality, both are real, measured
 // launchers:
 //
-// gfx1201 (`launch_bwd_dkdv` in fmha_bwd_dkdv_gfx1201_kernel.py), TILE_FASTEST:
+// gfx1201 (`launch_bwd_dkdv` in gfx1201/dkdv.py), TILE_FASTEST:
 //
 //   nseq_idx     = num_seqlens != 0 ? num_seqlens : batch_size
 //   num_kv_tiles = cdiv(max_seqlen_k, BLOCK_N)

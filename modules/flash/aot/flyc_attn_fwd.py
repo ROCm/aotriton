@@ -22,7 +22,7 @@ already has:
 
 Three consequences, each handled below:
 
-1. **The tuning table is programmatic.** `fmha_tuning_gfx1201.resolve_knobs()` is
+1. **The tuning table is programmatic.** `gfx1201.tuning_fwd.resolve_knobs()` is
    the sole producer of a schedule, so there is no `@ati.tune.schema`, no
    `@ati.tune.configs`, and no perf axes — ATI enumerates no perf variants here.
 
@@ -79,7 +79,7 @@ class FlycFwdHints:
     feeds one builder and nothing else). `ati.affine.*` is the same pattern for aiter.
 
     FlyDSL would call these part of the **problem**, opposite its **schedule**
-    (`fmha_tuning_gfx1201.py:410`: *"a caller states a problem, the tuning policy
+    (`gfx1201/tuning_fwd.py`: *"a caller states a problem, the tuning policy
     answers with a schedule"*) — worth knowing if you arrive from that file. Strictly
     the RUNTIME half of it: dtype / head_dim / causal are part of FlyDSL's problem too,
     but in ATI they are functional axes and arrive on `f`. `f` and `hints` together are
@@ -96,17 +96,17 @@ class FlycFwdHints:
     batch: int = 0
 
 
-# The compiled tile ladder, from fmha_tuning_gfx1201._BLOCK_DMODEL_LADDER. A literal,
+# The compiled tile ladder, from gfx1201.tuning_fwd._BLOCK_DMODEL_LADDER. A literal,
 # not an import: the generator parses this module and has no flydsl. `flyc_build`
 # (build time) does import flydsl, and `resolve_knobs` re-validates the tile, so a
 # drift here fails loudly at build rather than silently emitting the wrong kernel.
 FLYC_HEAD_DIMS = frozenset({16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 384, 512})
 
-# gfx950's ladder, from fmha_tuning_gfx950.LADDER -- a literal for the same reason
+# gfx950's ladder, from gfx950.tuning_fwd.LADDER -- a literal for the same reason
 # as FLYC_HEAD_DIMS above. Narrower than gfx1201's: no 16/48/80 (PV_MFMA_N is 32,
 # so only multiples of 32 are compiled). 96 IS
 # included, matching upstream's LADDER verbatim: a comment right above that tuple
-# in fmha_tuning_gfx950.py claims 96 "computes the wrong answer", but that is
+# in gfx950/tuning_fwd.py claims 96 "computes the wrong answer", but that is
 # stale prose left behind when the bug it described was fixed the same day
 # (upstream `98493cc7`, an ancestor of the vendored commit; it added 96 to the
 # tuple in the same change). Do not re-derive this by excluding 96 "to be safe":
@@ -181,7 +181,7 @@ def _flyc_fwd_disabled(f):
 # here declares it. `FlycAttnFwdContext::grid_calculator()` still needs a batch
 # count and still derives one — see modules/flash/csrc/flyc_attn_fwd.cc.
 #
-# The order is frozen and load-bearing: fmha_common_gfx1201.py:207-209 records that
+# The order is frozen and load-bearing: gfx1201/utils.py's pointer_to_llvm_ptr records that
 # switching these pointers to fx.Tensor would grow the kernarg segment from 268 to
 # 428 bytes and shift the offset of every argument after the first.
 #

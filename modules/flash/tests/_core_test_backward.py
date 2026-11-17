@@ -683,7 +683,7 @@ def core_test_sm_scale_magnitude(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, cau
     At `sm_scale = 1/sqrt(hdim)` the same cases run 0.0016 - 0.0089 (bf16) and
     0.0002 - 0.0010 (f16) either way: the fold is free where `|S|` is O(1).
 
-    Guarded implementation: modules/flash/flyc/fmha_dualwave_gfx950.py, where
+    Guarded implementation: modules/flash/flyc/gfx950/dualwave.py, where
     `ParityQLoader.scale_all` refuses the fold and
     `ParityGemmHelper.scale_scores` applies the scale to the f32 scores,
     matching modules/flash/kernel/fwd_kernel_inner.py's

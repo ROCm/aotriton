@@ -95,7 +95,7 @@ FlycAttnFwdContext::flyc_padded_head() const {
 }
 
 // Grid shape, derived from the vendored kernel's own launcher --
-// `launch_flash_attn_aiw` in modules/flash/flyc/flash_attn_func_gfx1201_aiw.py:
+// `launch_flash_attn_aiw` in modules/flash/flyc/gfx1201/fwd.py:
 //
 //   nseq_idx    = num_seqlens != 0 ? num_seqlens : batch_size
 //   num_q_tiles = cdiv(max_seqlen_q, BLOCK_M)
@@ -111,7 +111,7 @@ FlycAttnFwdContext::flyc_padded_head() const {
 // the caller; see TritonKernel::invoke.
 //
 // NEITHER LAUNCHER'S SPLIT-K MULTIPLIER IS REPRODUCED, and that is a pin, not
-// an equivalence. gfx950's `flash_attn_func_gfx950.py` computes
+// an equivalence. `gfx950/fwd.py` computes
 // `grid_z = bs_idx * traits.NUM_KV_SPLITS` under `if const_expr(traits.SPLITK)`
 // and `bs_idx` otherwise; this function always computes the `bs_idx` form. It
 // agrees because every flyc forward description pins `num_kv_splits=1`, which

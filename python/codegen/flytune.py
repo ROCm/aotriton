@@ -70,8 +70,8 @@ class FlycTuneCodeGenerator(BaseTuneCodeGenerator):
         assert kdesc.builder_fn is not None, (
             f'flyc kernel {kdesc.NAME!r} has no builder_fn '
             f'(linker.py:_build_flycs must thread builder_fn=decl.fn)')
-        # The description imports its vendored kernel/tuning modules by bare name
-        # (e.g. `import fmha_tuning_gfx1201`), resolved relative to
+        # The description imports the unified entries by bare name (e.g.
+        # `fmha_fwd_tuning`, which imports `gfx1201.tuning_fwd`), resolved relative to
         # kdesc.source_path -- the vendored flyc DIRECTORY itself. A path, not
         # flydsl -- fine for the generator.
         kernel_dir = str(kdesc.source_path)
@@ -167,7 +167,7 @@ class FlycTuneCodeGenerator(BaseTuneCodeGenerator):
         `@flyc.kernel` function has one fixed Python signature: `window_left`,
         `window_right`, `philox_offset2`, `hdim_qk` and `hdim_vo` are always
         formal `fx.Int32`/`fx.Int64` parameters of the compiled kernel, resolved
-        at runtime inside the kernel body (`fmha_common_gfx1201.resolve_window`
+        at runtime inside the kernel body (`fmha_utils.resolve_window`
         and friends), never elided from the kernarg ABI because the operator
         description happens to derive a constant for them. `real_param_order` is
         an arch-wide AST parse of that fixed signature, and `flyc_compile.py`'s

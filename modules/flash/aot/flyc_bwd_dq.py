@@ -30,15 +30,15 @@ import aotriton.template_instantiation as ati
 from ._flyc_common import FlycBwdHints, flyc_bwd_disabled, flyc_input_metadata
 
 
-# The compiled tile ladder, from fmha_tuning_bwd_dq_gfx1201._BLOCK_DMODEL_LADDER.
+# The compiled tile ladder, from gfx1201.tuning_dq._BLOCK_DMODEL_LADDER.
 # A literal, not an import, for the reason flyc_bwd_dkdv.py records. Narrower
 # than dK/dV's -- no 320 or 448 -- which is exactly why the ladder is a per-kernel
 # constant rather than something shared in _flyc_common.py.
 FLYC_BWD_DQ_HEAD_DIMS = frozenset({16, 32, 48, 64, 80, 96, 128, 160, 192, 224,
                                    256, 384, 512})
 
-# gfx950's ladder, from fmha_tuning_bwd_dq_gfx950.BWD_DQ_LADDER (itself
-# `fmha_tuning_gfx950.LADDER`, imported there unchanged). A literal for the same
+# gfx950's ladder, from gfx950.tuning_dq.BWD_DQ_LADDER (itself
+# `gfx950.tuning_fwd.LADDER`, imported there unchanged). A literal for the same
 # reason as FLYC_BWD_DQ_HEAD_DIMS above -- including 96, per the forward's note
 # on that rung (the stale-comment/live-tuple discrepancy lives in the forward's
 # tuning module; this ladder is the same tuple, so the same ruling applies).
@@ -72,7 +72,7 @@ def _flyc_bwd_dq_disabled(f):
 @ati.tensor('DO',    'T_io', rank=4, strides='stride_do_*', wires_to='DO')
 @ati.tensor('DQ',    'T_io', rank=4, strides='stride_dq_*', wires_to='DQ')
 # DB has its OWN stride triple, not B's. FlyDSL made that split deliberately
-# (fmha_abi_gfx1201.bias_args: "B and DB are separate tensors and may be laid
+# (fmha_utils.bias_args: "B and DB are separate tensors and may be laid
 # out differently ... deriving one from the other happens to work whenever both
 # are contiguous, and writes to the wrong addresses the moment either is a
 # view"). `stride_b_*` does not match `stride_db_*`, so the two globs stay

@@ -5,7 +5,7 @@
 ATI description of the flash bwd dK/dV FlyDSL backend (gfx1201 and gfx950).
 
 The backward half of `flyc_attn_fwd.py`, and it works the same way: no perf
-axes (`fmha_tuning_bwd_dkdv_gfx1201.resolve_knobs` is the sole producer of a
+axes (`gfx1201.tuning_dkdv.resolve_knobs` is the sole producer of a
 schedule), no functional axes of its own (it inherits `op_attn_bwd`'s and
 narrows them with `@ati.disable`), and a declared kernel-argument list, because
 the hsaco's layout comes from `bwd_dkdv_kernel` and nothing else can supply
@@ -28,7 +28,7 @@ import aotriton.template_instantiation as ati
 from ._flyc_common import FlycBwdHints, flyc_bwd_disabled, flyc_input_metadata
 
 
-# The compiled tile ladder, from fmha_tuning_bwd_dkdv_gfx1201._BLOCK_DMODEL_LADDER.
+# The compiled tile ladder, from gfx1201.tuning_dkdv._BLOCK_DMODEL_LADDER.
 # A literal, not an import: the generator parses this module and has no flydsl.
 # `build` (build time) does import it, and `resolve_knobs` re-validates the tile,
 # so a drift here fails loudly at build rather than silently emitting the wrong
@@ -36,8 +36,8 @@ from ._flyc_common import FlycBwdHints, flyc_bwd_disabled, flyc_input_metadata
 FLYC_BWD_DKDV_HEAD_DIMS = frozenset({16, 32, 48, 64, 80, 96, 128, 160, 192, 224,
                                      256, 320, 384, 448, 512})
 
-# gfx950's ladder, from fmha_tuning_bwd_dkdv_gfx950.LADDER (that module's own
-# copy, NOT imported from fmha_tuning_gfx950 -- see that file's header). A
+# gfx950's ladder, from gfx950.tuning_dkdv.LADDER (that module's own
+# copy, NOT imported from gfx950.tuning_fwd -- see that file's header). A
 # literal for the same reason as FLYC_BWD_DKDV_HEAD_DIMS above -- including 96,
 # per the forward's note on that rung (the same tuple, same ruling).
 FLYC_GFX950_BWD_DKDV_HEAD_DIMS = frozenset({32, 64, 96, 128, 160, 192, 224, 256, 384, 512})

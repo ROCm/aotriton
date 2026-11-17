@@ -97,7 +97,7 @@ flyc_classify_varlen(int32_t varlen_bits, const T4& q,
 }
 
 // The i32 dropout threshold. FlyDSL's `philox.dropout_threshold` (in
-// modules/flash/flyc/philox.py, reached from fmha_abi_gfx1201.py's
+// modules/flash/flyc/philox.py, reached from fmha_utils.py's
 // dropout_args): a uniform u32 reinterpreted as i32 is uniform on
 // [-2**31, 2**31), so comparing against `(p - 0.5) * 0xFFFFFFFF` keeps a
 // `1 - p` fraction with one signed compare and no per-element float

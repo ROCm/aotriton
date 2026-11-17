@@ -72,7 +72,7 @@ FlycBwdDqContext::flyc_padded_head() const {
 }
 
 // Grid shape, derived from the vendored kernel's own launcher -- `launch_bwd_dq`
-// in modules/flash/flyc/fmha_bwd_dq_gfx1201_kernel.py:
+// in modules/flash/flyc/gfx1201/dq.py:
 //
 //   nseq_idx    = num_seqlens != 0 ? num_seqlens : batch_size
 //   num_q_tiles = cdiv(max_seqlen_q, BLOCK_M)
