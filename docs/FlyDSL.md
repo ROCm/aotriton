@@ -148,7 +148,10 @@ architecture at all — the build host is typically neither of the targets.
 5. **Describe the kernel** in `modules/<family>/aot/`: mark the builder with
    `@ati.flyc.kernel` and `@ati.flyc.hints`, declare the kernel arguments with
    their types and alignments, and have the builder return the FlyDSL module
-   and the knobs it resolved.
+   and the knobs it resolved. The knobs must carry `flyc_source` (the kernel
+   file, relative to `modules/<family>/flyc/`) and `flyc_kernel_name` (the
+   `@flyc.kernel` def); derive the knobs class from `FlycKnobs`
+   (`fmha_knobs.py`), whose `resolve` fills both.
 6. **Compile one, by hand,** before wiring anything into the build:
    `AOTRITON_FLYDSL_KERNEL_ROOT=<flydsl source tree> python -m
    aotriton.flyc_compile <description> --kernel_name <name> --target <arch>
@@ -290,8 +293,9 @@ one new compile rule and no new packaging.
 **Nothing in the generator ever invokes the FlyDSL compiler.** A description's
 builder returns `(build, knobs)`: `knobs` is a plain dict, already resolved, and
 `build` is a deferred callable that would construct the FlyDSL module. The
-generator reads `knobs` and two plain strings off `build`, and discards it
-without calling it. Only `flyc_compile`, run by ninja, calls it. Getting that
+generator reads `knobs` (which include the two plain strings `flyc_source` and
+`flyc_kernel_name`, like every other knob) and discards `build` without calling
+it. Only `flyc_compile`, run by ninja, calls it. Getting that
 wrong would put every kernel compile inside `cmake` configure.
 
 **A flyc kernel has no autotune LUT.** Every functional resolves to exactly one

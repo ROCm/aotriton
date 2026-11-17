@@ -25,9 +25,7 @@ form:
     @ati.flyc.kernel()                            # innermost marker
     def flyc_attn_fwd(arch, choices, hints):
         ...
-        build.flyc_source = 'flash_attn_func_gfx1201_aiw.py'   # in modules/flash/flyc/
-        build.flyc_kernel_name = 'flash_attn_func_aiw_kernel'  # the @flyc.kernel def
-        return build, knobs
+        return build, knobs    # knobs['flyc_source'], knobs['flyc_kernel_name']: see below
 
 These produce passive spec records; `specs/flyc.py` collects them into a
 `FlycDecl`. See `docs/FlyDSL.md`.
@@ -49,12 +47,13 @@ class FlycKernelSpec(StackedSpec):
     Carries NO path. The vendored kernel FILE the description's builder
     actually drives can vary by `arch` -- one description serving two
     architectures is the point -- so it cannot be known here, at decoration
-    time, before any arch is chosen. Instead the builder sets it, once it has
-    resolved `arch`, as two attributes on the `build` closure it returns:
-    `build.flyc_source` (the vendored file, relative to the family's `flyc/`
-    directory) and `build.flyc_kernel_name` (the `@flyc.kernel` def's own name
-    inside that file). Consumers read those two strings off `build` -- never
-    anything stashed here eagerly.
+    time, before any arch is chosen. Instead the knobs the builder returns
+    carry it, once it has resolved `arch`: `knobs['flyc_source']` (the vendored
+    file, relative to the family's `flyc/` directory) and
+    `knobs['flyc_kernel_name']` (the `@flyc.kernel` def's own name inside that
+    file). They are fields of `FlycKnobs`, filled by the arch's `resolve`, and
+    are recorded like every other knob. Consumers read them from the returned
+    dict -- never anything stashed here eagerly.
 
     The operator whose functionals this kernel inherits is NOT declared here
     either: which operator a kernel serves is the operator's fact, not the

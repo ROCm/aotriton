@@ -713,7 +713,7 @@ def kernel_function_of(jf, kernel_name):
     unlike `jit_function_of` which walks `built`; the two closures are not
     the same one).
 
-    Selected by NAME (`build.flyc_kernel_name`), not by "the
+    Selected by NAME (`knobs['flyc_kernel_name']`), not by "the
     only KernelFunction in this closure": a closure can legitimately hold
     more than one, and an implicit uniqueness assumption breaks silently the
     day a vendored file's launcher closes over a second one (e.g. a nested
@@ -936,9 +936,9 @@ def do_compile(args):
     built = build()
 
     jf = jit_function_of(built)
-    # `build.flyc_kernel_name` selects which KernelFunction in jf.func's
+    # `knobs['flyc_kernel_name']` selects which KernelFunction in jf.func's
     # closure to drive -- by name, not by uniqueness.
-    kf = kernel_function_of(jf, build.flyc_kernel_name)
+    kf = kernel_function_of(jf, knobs['flyc_kernel_name'])
     # The hsaco's exported symbol becomes the name of the def
     # @ati.flyc.kernel decorates (args.kernel_name, e.g. 'flyc_attn_fwd'), not
     # FlyDSL's own '<kernel_def>_<id>' naming. Must be set before

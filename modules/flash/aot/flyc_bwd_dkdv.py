@@ -192,7 +192,7 @@ def flyc_bwd_dkdv(arch, choices, hints):
         # import lives inside `build()` below, so the code generator -- which
         # calls this function but never the callable -- never imports flydsl.
         from fmha_tuning_bwd_dkdv_gfx1201 import (
-            ROWS_PER_WAVE, BwdDkDvKnobs, BwdDkDvMetadata, resolve_knobs,
+            BwdDkDvKnobs, BwdDkDvMetadata, resolve_knobs,
         )
 
         tile = choices.BLOCK_DMODEL
@@ -226,57 +226,13 @@ def flyc_bwd_dkdv(arch, choices, hints):
             f'resolve_knobs returned block_dmodel={knobs.block_dmodel} for '
             f'BLOCK_DMODEL={tile}; the compiled tile must be the operator axis')
 
-        def build(knobs=knobs):
+        def build():
             """Deferred: constructs the FlyDSL module. Imports flydsl transitively,
-            so ONLY `aotriton.flyc_compile` (run by ninja) may call this.
-
-            `knobs` is bound here as a default rather than captured: the name is
-            rebound to the JSON knob dict below, and a live closure would follow
-            it and hand a `dict` to a function expecting `BwdDkDvKnobs`. The
-            driver calls this with no arguments."""
+            so ONLY `aotriton.flyc_compile` (run by ninja) may call this."""
             from fmha_bwd_dkdv_gfx1201_kernel import build_bwd_dkdv_module_primary
             return build_bwd_dkdv_module_primary(meta, knobs)
 
-        # Two plain strings: the vendored file, relative to
-        # modules/flash/flyc/, and the `@flyc.kernel` def's own name inside it.
-        # Read by codegen/flytune.py and flyc_compile.py off the `build`
-        # closure WITHOUT ever calling it.
-        build.flyc_source = 'fmha_bwd_dkdv_gfx1201_kernel.py'
-        build.flyc_kernel_name = 'bwd_dkdv_kernel'
-
-        # BLOCK_N is what the grid's x extent divides Max_seqlen_k by, and unlike
-        # the dQ kernel's it is NOT a knob: fmha_bwd_dkdv_gfx1201_kernel.py derives
-        # it inside the builder as `ROWS_PER_WAVE * NUM_TEAMS`, which would leave
-        # grid_calculator() with no way to ask for it.
-        #
-        # Mirrored here from that derivation, whose three inputs ARE all knobs:
-        #
-        #     TEAM_WAVES = 2 * CONTRACTION_SHARDS if SPLIT_HEAD_DIM else 1
-        #     NUM_TEAMS  = NUM_WAVES // TEAM_WAVES
-        #     BLOCK_N    = ROWS_PER_WAVE * NUM_TEAMS
-        #
-        # A divergence between the two copies is a wrong grid rather than a build
-        # failure, so this is a real coupling to the vendored file -- check it on
-        # every re-sync, the same way the kernarg order is checked.
-        #
-        # Filed under 'block_kv', not 'block_n': there is no upstream field
-        # this key belongs to on this arch (we compute it, we don't rename
-        # someone else's), and gfx950's BwdDkDvKnobs already owns a real
-        # 'block_kv' field for the same concept (see the gfx950 branch below)
-        # -- so grid_calculator() reads one key regardless of arch.
-        team_waves = 2 * knobs.contraction_shards if knobs.split_head_dim else 1
-        block_kv = ROWS_PER_WAVE * (knobs.num_waves // team_waves)
-        # Past this line `knobs` is the JSON dict, not BwdDkDvKnobs -- which is
-        # why `build()` above binds the dataclass as a default argument, and why
-        # every field read off it happens before here.
-        knobs = asdict(knobs)
-        knobs['block_kv'] = block_kv
-        # gfx1201's own knob class has no GRID_AXIS_ORDER field: unlike
-        # the forward and dQ, this kernel walks (tile, head, seq) --
-        # TILE_FASTEST -- because it is one workgroup per KV head with the GQA
-        # query heads summed inside; see grid_calculator()'s own comment.
-        knobs['GRID_AXIS_ORDER'] = 1  # TILE_FASTEST; fmha_tuning_gfx950.GRID_AXIS_TILE_FASTEST
-        return build, knobs
+        return build, asdict(knobs)
 
     elif arch == 'gfx950':
         from fmha_tuning_bwd_dkdv_gfx950 import BwdDkDvInputMetadata, bwd_dkdv_knobs
@@ -331,16 +287,6 @@ def flyc_bwd_dkdv(arch, choices, hints):
             from fmha_bwd_dkdv_gfx950 import build_fmha_bwd_dkdv_gfx950_module_primary
             return build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs)
 
-        build.flyc_source = 'fmha_bwd_dkdv_gfx950.py'
-        build.flyc_kernel_name = 'fmha_bwd_dkdv_gfx950_kernel'
-
-        # block_kv and GRID_AXIS_ORDER are flat resolved fields on BwdDkDvKnobs
-        # already -- no mirroring needed, unlike the gfx1201 branch
-        # above. The two arches derive this value differently (gfx950 resolves
-        # it as a real knob; gfx1201 has no such field and derives it from
-        # three others, see the note there), but both land on the same
-        # 'block_kv' knob, so grid_calculator() reads one key regardless
-        # of arch (see flyc_bwd_dkdv.cc).
         return build, asdict(knobs)
 
     else:

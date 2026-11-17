@@ -171,32 +171,13 @@ def flyc_bwd_dq(arch, choices, hints):
             f'resolve_knobs returned block_dmodel={knobs.block_dmodel} for '
             f'BLOCK_DMODEL={tile}; the compiled tile must be the operator axis')
 
-        def build(knobs=knobs):
+        def build():
             """Deferred: constructs the FlyDSL module. Imports flydsl transitively,
-            so ONLY `aotriton.flyc_compile` (run by ninja) may call this.
-
-            `knobs` is bound here as a default rather than captured: the name is
-            rebound to the JSON knob dict below, and a live closure would follow
-            it and hand a `dict` to a function expecting `BwdDqKnobs`. The driver
-            calls this with no arguments."""
+            so ONLY `aotriton.flyc_compile` (run by ninja) may call this."""
             from fmha_bwd_dq_gfx1201_kernel import build_bwd_dq_module_primary
             return build_bwd_dq_module_primary(meta, knobs)
 
-        # Two plain strings: the vendored file, relative to
-        # modules/flash/flyc/, and the `@flyc.kernel` def's own name inside it.
-        # Read by codegen/flytune.py and flyc_compile.py off the `build`
-        # closure WITHOUT ever calling it.
-        build.flyc_source = 'fmha_bwd_dq_gfx1201_kernel.py'
-        build.flyc_kernel_name = 'bwd_dq_kernel'
-
-        # `block_m` is already a knob here, so the dict needs nothing added for
-        # it -- unlike flyc_bwd_dkdv.py, which has to re-derive its grid's
-        # block_n. `GRID_AXIS_ORDER` still needs supplying by hand though:
-        # gfx1201's BwdDqKnobs has no such field, and this kernel walks
-        # (head, q_tile, seq) -- HEAD_FASTEST -- same as the forward.
-        knobs = asdict(knobs)  # past here `knobs` is the dict, not BwdDqKnobs
-        knobs['GRID_AXIS_ORDER'] = 0  # HEAD_FASTEST; fmha_tuning_gfx950.GRID_AXIS_HEAD_FASTEST
-        return build, knobs
+        return build, asdict(knobs)
 
     elif arch == 'gfx950':
         from fmha_tuning_bwd_dq_gfx950 import bwd_dq_knobs
@@ -267,11 +248,6 @@ def flyc_bwd_dq(arch, choices, hints):
             from fmha_bwd_dq_gfx950 import build_fmha_bwd_dq_gfx950_module_primary
             return build_fmha_bwd_dq_gfx950_module_primary(meta, knobs)
 
-        build.flyc_source = 'fmha_bwd_dq_gfx950.py'
-        build.flyc_kernel_name = 'fmha_bwd_dq_gfx950_kernel'
-
-        # GRID_AXIS_ORDER is a flat resolved field on Gfx950Knobs/BwdDqKnobs
-        # already -- no mirroring needed.
         return build, asdict(knobs)
 
     else:

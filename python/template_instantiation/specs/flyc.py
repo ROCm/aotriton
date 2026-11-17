@@ -82,8 +82,8 @@ def _flyc_kernel_stub(module_path, kernel_name):
     (decorators/source.py).
 
     Selected by NAME, not by "the unique `@flyc.kernel`-decorated function in
-    this file": an explicit name is what the description itself declares (`build.flyc_kernel_name`, set by the builder once `arch`
-    is known -- see decorators/flyc.py), and matching it exactly is robust to
+    this file": an explicit name is what the description itself declares (`knobs['flyc_kernel_name']`, filled by
+    the arch's `resolve` once `arch` is known -- see decorators/flyc.py), and matching it exactly is robust to
     a vendored file someday holding more than one `@flyc.kernel` def, which a
     uniqueness assumption is not. The flyc kernel def may still sit in a
     nested scope (unlike a top-level-only Triton kernel), so this walks every
@@ -106,12 +106,12 @@ def _synth_param_order(tensors, scalars):
     declared `@ati.tensor`/`@ati.scalar` `arg_name` or it raises `KeyError`).
 
     Deliberately NOT the real, AST-parsed flyc kernel signature. The real
-    per-arch kernel file and def name live on the `build` closure the
+    per-arch kernel file and def name live in the knobs the
     description's builder function returns, which cannot be
     called this early: link time (`codegen/linker.py:_build_flycs`, where
     `build_kernel` runs) has no `Functional` yet, and every flyc builder seen
     so far reads real `choices` values before setting
-    `build.flyc_source`/`build.flyc_kernel_name` -- so resolving the real
+    `knobs['flyc_source']`/`knobs['flyc_kernel_name']` -- so resolving the real
     stub is only possible once a concrete functional exists, i.e. at
     generate time (`codegen/flytune.py`'s `_gen_signatures`, per functional).
     That is where `ir/flyc/kdesc.py`'s `iter_launch_arguments` gets ITS real,
@@ -163,7 +163,7 @@ def collect_flyc_decl(placeholder, specs):
     Does NOT resolve a real kernel stub: `FlycKernelSpec` carries no path, so
     there is no vendored file to AST-parse yet -- only
     the description's builder function, once called with a concrete `arch`,
-    knows which file/def to use (`build.flyc_source`/`build.flyc_kernel_name`).
+    knows which file/def to use (`knobs['flyc_source']`/`knobs['flyc_kernel_name']`).
     That resolution happens later, per arch, in `codegen/flytune.py`; see
     `_synth_param_order` for why `params` does not need it either."""
     from ..decorators.flyc import FlycKernelSpec, FlycHintsSpec

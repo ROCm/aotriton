@@ -232,7 +232,7 @@ class KernelDescription(Interface):
     # --- builder invocation: the code generator (FlycTuneCodeGenerator,
     # python/codegen/flytune.py) calls `self.builder_fn(arch, choices, hints)`
     # directly, keeps the `knobs` half of its `(build, knobs)` return, and
-    # passes `build` to `ensure_stub_resolved` (above) for its two attribute
+    # passes `knobs` to `ensure_stub_resolved` (above) for its two string
     # reads -- see that module for the sys.path setup.
     # There is deliberately no `build()` method on this class: the generator
     # must never invoke the FlyDSL compiler, and a wrapper method here would
@@ -250,13 +250,13 @@ class KernelDescription(Interface):
 
     # --- launch-argument vector ---
 
-    def ensure_stub_resolved(self, arch, build):
+    def ensure_stub_resolved(self, arch, knobs):
         """Populate the `arch` entry of the real-kernel-parameter cache from
-        `build` -- the closure a description's `builder_fn(arch, choices,
-        hints)` just returned. Reads only `build.flyc_source` /
-        `build.flyc_kernel_name` (two plain strings); NEVER calls `build`
-        itself (that would invoke the FlyDSL compiler from the generator,
-        which must not happen -- see the note above `hints()`).
+        `knobs` -- the dict a description's `builder_fn(arch, choices, hints)`
+        just returned. Reads only `knobs['flyc_source']` /
+        `knobs['flyc_kernel_name']` (two plain strings); the `build` callable
+        is never involved (calling it would invoke the FlyDSL compiler from
+        the generator, which must not happen -- see the note above `hints()`).
 
         Idempotent per arch (a no-op once cached), so `codegen/flytune.py`
         can call this once per functional without re-parsing the vendored
@@ -266,8 +266,8 @@ class KernelDescription(Interface):
         from pathlib import Path
         from ...specs.flyc import _flyc_kernel_stub
 
-        module_path = Path(self.source_path) / build.flyc_source
-        stub = _flyc_kernel_stub(module_path, build.flyc_kernel_name)
+        module_path = Path(self.source_path) / knobs['flyc_source']
+        stub = _flyc_kernel_stub(module_path, knobs['flyc_kernel_name'])
         # `stub.params` is already the plain parameter-name list
         # (ast_params.collect_params returns `[p.arg for p in ...]`, not
         # ParamSpec objects -- KernelStub is shared with @ati.source, whose
@@ -295,7 +295,7 @@ class KernelDescription(Interface):
         real_param_order = self._real_params_by_arch.get(arch)
         assert real_param_order is not None, (
             f'flyc kernel {self.NAME!r}: no resolved kernel stub for arch '
-            f'{arch!r} -- ensure_stub_resolved(arch, build) must run before '
+            f'{arch!r} -- ensure_stub_resolved(arch, knobs) must run before '
             f'iter_launch_arguments (see codegen/flytune.py _gen_signatures)')
 
         tensor_ptr_lookup = {}

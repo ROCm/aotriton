@@ -15,8 +15,8 @@
 # actually constructs the FlyDSL module (and, in the standalone
 # `flyc_compile.py` driver, transitively imports flydsl), while `knobs` is a
 # plain dict already known by the time `fn(arch, choices, hints)` returns.
-# This generator calls `fn(arch, choices, hints)` for `knobs` (plus two plain
-# string attributes off `build` -- `flyc_source`/`flyc_kernel_name`) and
+# This generator calls `fn(arch, choices, hints)` for `knobs` (which carry the
+# two plain strings `flyc_source`/`flyc_kernel_name`) and
 # discards `build` without ever CALLING it, so a configure never pays for
 # hundreds of FlyDSL compiles. `knobs` is what feeds `ir/flyc/ksignature.py`'s
 # `psel_section`; the true on-disk `<hsaco>.json` knobs file is a separate,
@@ -84,9 +84,9 @@ class FlycTuneCodeGenerator(BaseTuneCodeGenerator):
         # takes (arch, choices, hints), with arch arriving as an argument in
         # its own right rather than smuggled into choices.
         build, knobs = kdesc.builder_fn(f.arch, choices, hints)
-        # `build.flyc_source`/`build.flyc_kernel_name` are the only two
-        # attributes read off `build` -- never call it (see above).
-        kdesc.ensure_stub_resolved(f.arch, build)
+        # `knobs['flyc_source']`/`knobs['flyc_kernel_name']` locate the kernel
+        # stub; `build` is never called (see above).
+        kdesc.ensure_stub_resolved(f.arch, knobs)
         yield KernelSignature(f, psels=knobs)
 
     def generate(self):

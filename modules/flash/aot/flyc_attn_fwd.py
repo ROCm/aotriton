@@ -489,30 +489,13 @@ def flyc_attn_fwd(arch, choices, hints):
         assert not knobs.strides_constexpr, \
             'num_heads=1 is only safe while STRIDE_TOKEN stays behind strides_constexpr'
 
-        def build(knobs=knobs):
+        def build():
             """Deferred: constructs the FlyDSL module. Imports flydsl transitively,
-            so ONLY `aotriton.flyc_compile` (run by ninja) may call this.
-
-            `knobs` is bound here as a default rather than captured: the name is
-            rebound to the JSON knob dict below, and a live closure would follow
-            it and hand a `dict` to a function expecting the knob dataclass. The
-            driver calls this with no arguments."""
+            so ONLY `aotriton.flyc_compile` (run by ninja) may call this."""
             from flash_attn_func_gfx1201_aiw import build_flash_attn_func_aiw_module_primary
             return build_flash_attn_func_aiw_module_primary(meta, knobs)
 
-        # Two plain strings: the vendored file, relative to
-        # modules/flash/flyc/, and the `@flyc.kernel` def's own name inside it.
-        # Read by codegen/flytune.py and flyc_compile.py off the `build`
-        # closure WITHOUT ever calling it.
-        build.flyc_source = 'flash_attn_func_gfx1201_aiw.py'
-        build.flyc_kernel_name = 'flash_attn_func_aiw_kernel'
-
-        # gfx1201's own knob class has no GRID_AXIS_ORDER field: the grid has
-        # always walked (head, q_tile, seq) here, i.e. HEAD_FASTEST. Supply the
-        # key by hand so both arches' knob dicts carry it uniformly.
-        knobs = asdict(knobs)  # past here `knobs` is the dict, not the dataclass
-        knobs['GRID_AXIS_ORDER'] = 0  # HEAD_FASTEST; fmha_tuning_gfx950.GRID_AXIS_HEAD_FASTEST
-        return build, knobs
+        return build, asdict(knobs)
 
     elif arch == 'gfx950':
         # Same flydsl-free-at-call-time rule as the gfx1201 branch above.
@@ -604,12 +587,6 @@ def flyc_attn_fwd(arch, choices, hints):
             from flash_attn_func_gfx950 import build_flash_attn_func_gfx950_module_primary
             return build_flash_attn_func_gfx950_module_primary(meta, knobs)
 
-        build.flyc_source = 'flash_attn_func_gfx950.py'
-        build.flyc_kernel_name = 'flash_attn_func_gfx950_kernel'
-
-        # Gfx950Knobs.GRID_AXIS_ORDER is a flat resolved field already (FlyDSL
-        # 70b2dbc5 made the class POD) -- no mirroring needed, unlike the
-        # gfx1201 branch above.
         return build, asdict(knobs)
 
     else:
