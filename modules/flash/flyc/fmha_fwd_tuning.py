@@ -29,8 +29,8 @@ class FmhaInputMetadata:
 
 
 _ARCH_MODULES = {
-    'gfx950': 'fmha_tuning_gfx950',
-    'gfx1201': 'fmha_tuning_gfx1201',
+    'gfx950': 'gfx950.tuning_fwd',
+    'gfx1201': 'gfx1201.tuning_fwd',
 }
 
 

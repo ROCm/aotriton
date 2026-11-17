@@ -8,8 +8,8 @@ Same contract as `fmha_fwd_tuning`, whose `FmhaInputMetadata` it takes.
 from fmha_fwd_tuning import FmhaInputMetadata, arch_module  # noqa: F401
 
 _ARCH_MODULES = {
-    'gfx950': 'fmha_tuning_bwd_dq_gfx950',
-    'gfx1201': 'fmha_tuning_bwd_dq_gfx1201',
+    'gfx950': 'gfx950.tuning_dq',
+    'gfx1201': 'gfx1201.tuning_dq',
 }
 
 
