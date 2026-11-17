@@ -3,14 +3,14 @@
 
 """The dQ backward body at **16 rows per wave**, on `v_mfma_f32_16x16x32_bf16`.
 
-B3.5. A second MFMA family beside the 32-row one in `fmha_bwd_dq_gfx950.py`,
+B3.5. A second MFMA family beside the 32-row one in `dq.py`,
 not a replacement: the 32-row family wins below head_dim 256 and this one
 exists for the top of the ladder, where B3 left dQ at 303 TF (384) and 110
 (512) against ~730 in the middle.
 
 --- Why 16 rows, and why this shape ------------------------------------------
 
-`register_demand` in `fmha_tuning_bwd_dq_gfx950` states the problem exactly. At
+`register_demand` in `tuning_dq` states the problem exactly. At
 32 rows the loop-invariant Q + dO + dQ is `1.0 * head_dim` registers per lane,
 which is the whole 512-register file at head_dim 512 *before a single operand*.
 At 16 rows it is `0.5 * head_dim`. Nothing else moves that term -- it is
@@ -47,7 +47,7 @@ re-spelled below against `ACC_ELEMS`.
 The score accumulator gives lane `j` (group `g = j // 16`) the KV tokens
 `{4g+e}` from `s_lo` and `{16+4g+e}` from `s_hi`. GEMM3's B operand wants 8
 contraction values per lane, and the *published* transpose map
-(`fmha_mfma16_gfx950`) delivers `k = 8g + i` -- a different set. One of the two
+(`mfma16`) delivers `k = 8g + i` -- a different set. One of the two
 has to bend.
 
 **The transpose read bends**, exactly as it does in the 32-row family, and the
@@ -63,8 +63,8 @@ costs nothing: the group term becomes `4 * (lane // 16)` tokens instead of
 anything else was written.
 """
 
-import fmha_common_gfx1201 as fmha  # noqa: F401  (kept for the shared row addressing)
-from fmha_dualwave_gfx950 import (  # ParityKernelContext documents the base this rides on
+import fmha_utils as fmha  # noqa: F401  (kept for the shared row addressing)
+from .dualwave import (  # ParityKernelContext documents the base this rides on
     ParityKernelContext,  # noqa: F401
     _ds_read_tr_v4f16_imm,
     _slab_span_elems,
@@ -74,8 +74,8 @@ from fmha_dualwave_gfx950 import (  # ParityKernelContext documents the base thi
     fsub,
     mfma_operand_wait_state,
 )
-from fmha_mfma16_gfx950 import MFMA16_M
-from gfx950_standalone import buffer_ops, dualwave
+from .mfma16 import MFMA16_M
+from .standalone import buffer_ops, dualwave
 
 import flydsl.compiler as flyc
 import flydsl.expr as fx
@@ -165,7 +165,7 @@ class M16DqReader:
     # -- addressing ---------------------------------------------------------
 
     def _tok_off(self, t):
-        """`fmha_mfma16_gfx950.tok_off`, over *this* region's pitch.
+        """`mfma16.tok_off`, over *this* region's pitch.
 
         The published helper is written against `SMEM_V_LINE_STRIDE` because
         the forward only ever transposes the V region. This kernel reads a
@@ -427,7 +427,7 @@ class M16DqSoftmax:
         """The KV column of score element `(step, i)`.
 
         A lane's four accumulator elements are four **contiguous** tokens at
-        `4 * (lane // 16)` -- the 16-row map from `fmha_mfma16_gfx950`, and
+        `4 * (lane // 16)` -- the 16-row map from `mfma16`, and
         much simpler than the 32-row one, whose four runs of four are why
         `_score_column_runs` exists. The KV tail mask and the dB store both
         read this, so they cannot disagree.

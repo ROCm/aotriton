@@ -2,11 +2,11 @@
 
 """Our own `gfx950_standalone`, authored rather than vendored.
 
-Upstream's file of this name (`kernels/attention/parity/gfx950_standalone.py`)
+Upstream's file of that name (`kernels/attention/parity/gfx950_standalone.py`)
 is a compatibility layer between `parity/` -- which is not part of the flydsl
 package -- and its parent, which is. It does that with `sys.path` surgery
-relative to `Path(__file__).parents[3]`. Under `modules/flash/flyc/` that
-resolves to the **AOTriton repository root**, so vendoring it verbatim would
+relative to `Path(__file__).parents[3]`. Under `modules/flash/flyc/gfx950/` that
+resolves to AOTriton's **`modules/`**, so vendoring it verbatim would
 put the wrong directory on `sys.path`. There is nothing to fix in it: it is
 correct where it lives and wrong where we would put it.
 
@@ -37,7 +37,7 @@ differently:
   `.ci/build-shim.sh` stays cheap. `dualwave` falls back to `flyc_polyfill`,
   which carries a verbatim copy of the one name the generate-time path needs
   (`DualwaveSwpTraits`, the base class of
-  `fmha_traits_gfx950.ParityDualwaveTraits`).
+  `traits.ParityDualwaveTraits`).
 
 `buffer_ops` is resolved **lazily**, and deliberately so. It is device-side
 only: the five vendored files that import it all import `flydsl` at module

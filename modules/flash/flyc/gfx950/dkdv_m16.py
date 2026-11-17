@@ -3,9 +3,9 @@
 
 """The dK/dV tile body at **16 KV rows per wave**, on `v_mfma_f32_16x16x32`.
 
-B3.5. A second family alongside the 32-row one in `fmha_bwd_dkdv_gfx950.py`,
+B3.5. A second family alongside the 32-row one in `dkdv.py`,
 not a replacement: the tuning table picks per rung. A separate module for the
-reason `fmha_wide_gfx950.py` is one -- the operand algebra differs at a dozen
+reason `fwd_wide.py` is one -- the operand algebra differs at a dozen
 sites, so an `if` at each would be a fork with extra steps. Everything that is
 not operand algebra stays shared: the context, the DMA staging, the
 descriptors, the ABI and the tuning.
@@ -81,11 +81,11 @@ It also leaves a lane's four accumulator rows **contiguous** (`8*(lane//16) +
   needed.
 """
 
-from fmha_common_gfx1201 import MaskedAxis
-from fmha_dualwave_gfx950 import _ds_read_tr16_b64_imm, exp2_wait_state, mfma_operand_wait_state
-from fmha_dualwave_gfx950 import fadd, fmul, fsub
-from fmha_mfma16_gfx950 import MFMA16_M, a16_chunk_offset, a16_read_base, lds_elem, tok_off, tok_off_dyn
-from gfx950_standalone import buffer_ops, dualwave
+from fmha_utils import MaskedAxis
+from .dualwave import _ds_read_tr16_b64_imm, exp2_wait_state, mfma_operand_wait_state
+from .dualwave import fadd, fmul, fsub
+from .mfma16 import MFMA16_M, a16_chunk_offset, a16_read_base, lds_elem, tok_off, tok_off_dyn
+from .standalone import buffer_ops, dualwave
 
 import flydsl.compiler as flyc
 import flydsl.expr as fx

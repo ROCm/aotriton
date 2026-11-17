@@ -4,7 +4,7 @@
 """The wide-head_dim kernel body: no dual-wave pipeline, D staged and sharded.
 
 Serves head_dim 384 and 512. A separate file from
-`flash_attn_func_gfx950.py` because it is a **different algorithm**, not a
+`fwd.py` because it is a **different algorithm**, not a
 wider setting of the same one -- only the ABI and the helpers are shared.
 
 --- Why the dual-wave pipeline does not come along ---------------------------
@@ -72,15 +72,15 @@ output columns are no longer contiguous, so the store walks one run per stage.
 import contextlib
 from dataclasses import replace
 
-from fmha_common_gfx1201 import MaskedAxis
-from fmha_dualwave_gfx950 import (
+from fmha_utils import MaskedAxis
+from .dualwave import (
     ParityGemmHelper,
     ParityKernelContext,
     ParityKvLdsToVgprLoader,
     ParitySoftmaxHelper,
     ParityStoreHelper,
 )
-from gfx950_standalone import dualwave
+from .standalone import dualwave
 
 import flydsl.compiler as flyc
 import flydsl.expr as fx

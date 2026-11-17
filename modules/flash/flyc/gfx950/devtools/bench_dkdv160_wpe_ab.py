@@ -4,7 +4,7 @@
 
 """Interleaved A/B of head_dim 160 dK/dV at `waves_per_eu` 1 against 2.
 
-Why this exists. `_GEOMETRY[160]` in `fmha_tuning_bwd_dkdv_gfx950.py` asks for
+Why this exists. `_GEOMETRY[160]` in `gfx950/tuning_dkdv.py` asks for
 `waves_per_eu=2`, and the backend cannot grant it: the workgroup takes 87040 B
 of LDS, so two of them need 174080 B against a 163840 B cap and occupancy is
 pinned at 1 before the register allocator gets a say. Every head_dim 160 build
@@ -68,7 +68,7 @@ Usage:
     HIP_VISIBLE_DEVICES=5 \\
     PYTHONPATH=<build>/venv/lib/python3.13/site-packages \\
     python \\
-        modules/flash/flyc/devtools/bench_dkdv160_wpe_ab.py [head_dim ...]
+        modules/flash/flyc/gfx950/devtools/bench_dkdv160_wpe_ab.py [head_dim ...]
 
 Set `WPE_ORDER=12` to run wpe=1 before wpe=2 in each round; any effect that
 does not survive both orders is the slot, not the knob.
@@ -86,14 +86,14 @@ from pathlib import Path
 
 # AOTriton's VENDORED kernels, not FlyDSL's parity copies -- these are what
 # ships, and the two trees have diverged (the varlen build axis is gone here).
-# The kernels are this directory's parent, and that is the whole of what this
-# tool knows about the repository layout.
-# It must come first, so that `fmha_traits_gfx950` and friends resolve to
-# the vendored siblings rather than to FlyDSL's own `parity/` copies.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# `flyc/` is two levels up, and that is the whole of what this tool knows
+# about the repository layout.
+# It must come first, so that `gfx950.traits` and friends resolve to
+# the vendored modules rather than to FlyDSL's own `parity/` copies.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 # ...and the FlyDSL checkout, for the `kernels.attention.flash_attn_utils` that
-# `gfx950_standalone` re-exports as `dualwave`. Required, with no default: the
+# `gfx950/standalone.py` re-exports as `dualwave`. Required, with no default: the
 # only honest default would be one person's build directory.
 _KERNEL_ROOT = os.environ.get("AOTRITON_FLYDSL_KERNEL_ROOT")
 if not _KERNEL_ROOT:
@@ -120,7 +120,7 @@ print(f"ROCM_PATH={_ROCM_PATH}")
 
 import torch  # noqa: E402
 
-from fmha_bwd_dkdv_gfx950 import build_fmha_bwd_dkdv_gfx950_module as build_dkdv  # noqa: E402
+from gfx950.dkdv import build_fmha_bwd_dkdv_gfx950_module as build_dkdv  # noqa: E402
 
 DT = torch.bfloat16
 B, H, S = 2, 8, 4096
@@ -267,6 +267,6 @@ if __name__ == "__main__":
     import importlib.metadata as md
 
     print(f"flydsl {md.version('flydsl')}, kernels from "
-          f"{Path(__file__).resolve().parent.parent}")
+          f"{Path(__file__).resolve().parents[1]}")
     for d in dims:
         run(d)

@@ -48,8 +48,8 @@ floor, and it is an instruction limit rather than a staging one.
 from dataclasses import dataclass, fields, replace
 
 from fmha_knobs import pinned
-from fmha_knobs_gfx950 import Gfx950KnobFields
-from fmha_traits_gfx950 import make_traits
+from .knobs import Gfx950KnobFields
+from .traits import make_traits
 
 __all__ = [
     "LADDER",
@@ -83,7 +83,7 @@ __all__ = [
 # Three families. **A** (granule 64, 8 waves) serves 64 and 128; **B/S**
 # (4 waves) serve the rest up to 256, with granule 32 where the width is not a
 # multiple of 64; **W** stages the D axis (`D_STAGES`) and shards it
-# (`VO_SHARDS`) for 384 and 512, on the separate body in `fmha_wide_gfx950.py`.
+# (`VO_SHARDS`) for 384 and 512, on the separate body in `fwd_wide.py`.
 #
 # The break at 384 is not a tuning preference, it is LDS: two KV tiles in
 # flight need `2 * BLOCK_N * head_dim * ~8.3 B`, which is 199.5 KB at 384 and
@@ -175,7 +175,7 @@ def rung_below(block_dmodel):
     `tile_width_for` rounds *up* to the first rung that fits, so a build it
     chose serves exactly the half-open range `(rung_below(R), R]`. That lower
     bound is what lets the kernel skip masking the D columns it knows are real
-    -- see `HDIM_QK_FLOOR` in `flash_attn_func_gfx950.py`.
+    -- see `HDIM_QK_FLOOR` in `fwd.py`.
 
     It is a property of the ladder rather than of any one build, so it lives
     next to `LADDER`: adding a rung silently tightens every wider build's
@@ -623,7 +623,7 @@ class Gfx950Knobs(FmhaKnobs):
     def _check_helpers_support_geometry(self):
         """Refuse a geometry the kernel's addressing cannot actually serve.
 
-        `fmha_traits_gfx950.make_traits` takes the geometry as parameters, so
+        `traits.make_traits` takes the geometry as parameters, so
         it will happily *describe* families S and B. The addressing has not
         caught up, and the gap is specific:
 
@@ -700,7 +700,7 @@ class Gfx950Knobs(FmhaKnobs):
         reading a field off the knobs, so the knob object stays plain data --
         see the note where the `traits` field used to be.
 
-        `fmha_traits_gfx950.make_traits` takes the geometry as parameters where
+        `traits.make_traits` takes the geometry as parameters where
         the production constructor hardcodes it, and is checked field-by-field
         against production at family A's numbers -- so family A goes through
         this path today and the bitwise-vs-production test covers it.
@@ -888,5 +888,5 @@ def entry_resolve(meta, *, overrides=None) -> FmhaKnobs:
 
 
 def entry_build(meta, knobs: FmhaKnobs):
-    from flash_attn_func_gfx950 import build_flash_attn_func_gfx950_module_primary
+    from .fwd import build_flash_attn_func_gfx950_module_primary
     return build_flash_attn_func_gfx950_module_primary(_entry_meta(meta), knobs)

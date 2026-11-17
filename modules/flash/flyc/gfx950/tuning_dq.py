@@ -3,7 +3,7 @@
 
 """Traits and tuning policy for the gfx950 backward **dQ (and dB)** kernel.
 
-Split from `fmha_bwd_dq_gfx950.py` for the reason `fmha_tuning_gfx950.py`
+Split from `dq.py` for the reason `tuning_fwd.py`
 gives: the kernel file is about correctness, this one is about speed, and a
 number here can only make a build slow, never wrong.
 
@@ -35,7 +35,7 @@ than extending it, and the docstring there carries the full
 for this kernel at every rung measured.
 
 The MFMA shape is still not baked in anywhere: `ROWS_PER_WAVE`, `D_CHUNK` and
-`K_STEP_QK` all come from `fmha_traits_gfx950`, and `BLOCK_M` is derived as
+`K_STEP_QK` all come from `traits`, and `BLOCK_M` is derived as
 `num_waves * MFMA_M` rather than chosen -- which is the P7 invariant this phase
 had to stop stating in prose.
 """
@@ -43,9 +43,9 @@ had to stop stating in prose.
 from dataclasses import dataclass, fields, replace
 
 from fmha_knobs import pinned
-from fmha_knobs_gfx950 import BwdDqKnobFields
-from fmha_traits_gfx950 import ParityDualwaveTraits, make_traits
-from fmha_tuning_gfx950 import LADDER, FmhaInputMetadata, Gfx950Knobs, tile_width_for
+from .knobs import BwdDqKnobFields
+from .traits import ParityDualwaveTraits, make_traits
+from .tuning_fwd import LADDER, FmhaInputMetadata, Gfx950Knobs, tile_width_for
 
 __all__ = [
     "BWD_DQ_LADDER",
@@ -238,7 +238,7 @@ class BwdDqTraits(ParityDualwaveTraits):
 
 
 def make_bwd_dq_traits(*, store_db=False, hdim_vo_floor=0, mfma_shape=(32, 32, 16), **kwargs):
-    """`fmha_traits_gfx950.make_traits`, widened, and cut to **one** LDS buffer.
+    """`traits.make_traits`, widened, and cut to **one** LDS buffer.
 
     Delegating rather than transcribing is the whole point: every derived
     field -- the LDS line strides, the DMA split, the V transpose strides the
@@ -625,7 +625,7 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
 def bwd_dq_knobs(arch: str = "gfx950", **overrides) -> BwdDqKnobs:
     """The knob object for the backward dQ kernel on `arch`.
 
-    Mirrors `fmha_tuning_gfx950.fmha_knobs`, including its arch-*prefix* match
+    Mirrors `tuning_fwd.fmha_knobs`, including its arch-*prefix* match
     so a full `gcnArchName` -- "gfx950:sramecc+:xnack-" -- works unstripped.
     """
     base = arch.split(":")[0].lower() if arch else ""
@@ -693,5 +693,5 @@ def entry_resolve(meta, *, overrides=None) -> BwdDqKnobs:
 
 
 def entry_build(meta, knobs: BwdDqKnobs):
-    from fmha_bwd_dq_gfx950 import build_fmha_bwd_dq_gfx950_module_primary
+    from .dq import build_fmha_bwd_dq_gfx950_module_primary
     return build_fmha_bwd_dq_gfx950_module_primary(_entry_meta(meta), knobs)

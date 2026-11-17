@@ -101,7 +101,7 @@ MFMA16_M = 16
 def tok_off(traits, t):
     """LDS element offset of advancing the staged token index by a **constant** `t`.
 
-    `fmha_traits_gfx950`'s unified formula: a line holds `512 // granule` token
+    `traits`'s unified formula: a line holds `512 // granule` token
     slots, and slot `s` of line `n` is token `s * SMEM_N_RPT + n`.
     """
     return (t // traits.SMEM_N_RPT) * traits.D_128B_SIZE + (t % traits.SMEM_N_RPT) * traits.SMEM_V_LINE_STRIDE

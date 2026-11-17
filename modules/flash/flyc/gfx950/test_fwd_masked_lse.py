@@ -37,7 +37,7 @@ Requires a gfx950 device, `AOTRITON_FLYDSL_KERNEL_ROOT`, and a ROCm the
 FlyDSL compiler can link against; skips cleanly without any of them.
 
     AOTRITON_FLYDSL_KERNEL_ROOT=<flydsl-checkout> \\
-        python -m pytest modules/flash/flyc/test_fwd_masked_lse_gfx950.py
+        python -m pytest modules/flash/flyc/gfx950/test_fwd_masked_lse.py
 """
 
 import math
@@ -47,11 +47,11 @@ from pathlib import Path
 
 import pytest
 
-# The vendored kernels are this file's own directory; importing them by bare
-# name is what every other consumer does (`devtools/`, the AOT descriptions),
-# and pytest's rootless import mode has already put the directory on sys.path.
+# The kernels are this package's modules, imported relatively; pytest has
+# put `flyc/` (the first directory up without an `__init__.py`) on sys.path
+# for the shared ones.
 # The FlyDSL checkout has to be added, for the `kernels.attention` that
-# `gfx950_standalone` re-exports as `dualwave`.
+# `standalone` re-exports as `dualwave`.
 _KERNEL_ROOT = os.environ.get("AOTRITON_FLYDSL_KERNEL_ROOT")
 if _KERNEL_ROOT and _KERNEL_ROOT not in sys.path:
     sys.path.append(_KERNEL_ROOT)
@@ -65,7 +65,7 @@ pytestmark = pytest.mark.skipif(
     reason="needs a gfx950 device and AOTRITON_FLYDSL_KERNEL_ROOT",
 )
 
-# head_dim 512 takes the wide kernel (`fmha_wide_gfx950.py`), a different
+# head_dim 512 takes the wide kernel (`fwd_wide.py`), a different
 # algorithm with its own store helper; 64 and 128 take the dual-wave one. The
 # early exit is shared -- `zero_o_block_if_needed` is called outside the
 # WIDE/else split -- so covering both is what says the shared call is reached
@@ -83,10 +83,10 @@ LIVE_ATOL = 8e-3
 
 def _build(head_dim):
     """A causal, LSE-returning forward for `head_dim`, compiled in-process."""
-    from flash_attn_func_gfx950 import (
+    from .fwd import (
         build_flash_attn_func_gfx950_module_primary as build_primary,
     )
-    from fmha_tuning_gfx950 import FmhaInputMetadata, fmha_knobs, plan
+    from .tuning_fwd import FmhaInputMetadata, fmha_knobs, plan
 
     meta = FmhaInputMetadata(
         num_heads=NUM_HEADS, head_dim=head_dim, causal=True, dtype_str="bf16"

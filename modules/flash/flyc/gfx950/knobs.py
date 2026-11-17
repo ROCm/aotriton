@@ -97,7 +97,7 @@ class Gfx950KnobFields(FlycQKnobs):
     v_k_substep: int | None = None
     v_dc_in_pair: int | None = None
 
-    FLYC_SOURCE = "flash_attn_func_gfx950.py"
+    FLYC_SOURCE = "gfx950/fwd.py"
     FLYC_KERNEL_NAME = "flash_attn_func_gfx950_kernel"
     FLYC_GRID_AXIS_ORDER = GRID_AXIS_HEAD_FASTEST
 
@@ -113,7 +113,7 @@ class BwdDqKnobFields(Gfx950KnobFields):
     # because at 16 rows `BLOCK_N` is not free.
     mfma_rows: int | None = None
 
-    FLYC_SOURCE = "fmha_bwd_dq_gfx950.py"
+    FLYC_SOURCE = "gfx950/dq.py"
     FLYC_KERNEL_NAME = "fmha_bwd_dq_gfx950_kernel"
 
 
@@ -139,6 +139,6 @@ class BwdDkDvKnobFields(FlycKVKnobs):
     daz: bool | None = None
     strides_constexpr: bool | None = None
 
-    FLYC_SOURCE = "fmha_bwd_dkdv_gfx950.py"
+    FLYC_SOURCE = "gfx950/dkdv.py"
     FLYC_KERNEL_NAME = "fmha_bwd_dkdv_gfx950_kernel"
     FLYC_GRID_AXIS_ORDER = GRID_AXIS_HEAD_FASTEST

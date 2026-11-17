@@ -24,13 +24,10 @@ contract: `+inf` would zero `P` by itself and let a missing mask pass, while a
 finite LSE leaves the mask as the only thing that can make the row's dQ zero.
 
 Requires a gfx950 device, `AOTRITON_FLYDSL_KERNEL_ROOT`, and a ROCm the
-FlyDSL compiler can link against; skips cleanly without any of them. Set
-`FLYDSL_EXTRA_SOURCE_DIRS` to this directory when editing the kernel: the
-FlyDSL disk cache does not hash these sources.
+FlyDSL compiler can link against; skips cleanly without any of them.
 
     AOTRITON_FLYDSL_KERNEL_ROOT=<flydsl-checkout> \\
-    FLYDSL_EXTRA_SOURCE_DIRS=$PWD/modules/flash/flyc \\
-        python -m pytest modules/flash/flyc/test_bwd_dq_principal_diagonal_gfx950.py
+        python -m pytest modules/flash/flyc/gfx950/test_bwd_dq_principal_diagonal.py
 """
 
 import functools
@@ -96,9 +93,9 @@ MFMA_ROWS = (32, 16)
 @functools.cache
 def _build(mfma_rows):
     """A causal, window-capable dQ build at HEAD_DIM, compiled in-process."""
-    from fmha_bwd_dq_gfx950 import build_fmha_bwd_dq_gfx950_module_primary
-    from fmha_tuning_bwd_dq_gfx950 import bwd_dq_knobs
-    from fmha_tuning_gfx950 import FmhaInputMetadata, plan
+    from .dq import build_fmha_bwd_dq_gfx950_module_primary
+    from .tuning_dq import bwd_dq_knobs
+    from .tuning_fwd import FmhaInputMetadata, plan
 
     meta = FmhaInputMetadata(num_heads=NUM_HEADS,
                              head_dim=HEAD_DIM,
@@ -113,7 +110,7 @@ def _build(mfma_rows):
 
 
 def _abi():
-    import fmha_abi_gfx1201 as abi
+    import fmha_utils as abi
 
     return abi
 

@@ -4,7 +4,7 @@
 
 """Sweep `waves_per_eu` 1 against 2 for `flyc_attn_fwd`, every shipped rung.
 
-Why this exists. `_GFX950_FALLBACK` in `fmha_tuning_gfx950.py` sets
+Why this exists. `_GFX950_FALLBACK` in `gfx950/tuning_fwd.py` sets
 `waves_per_eu=2` for the whole forward -- it sits among "defaults the policy
 has no shape-dependent opinion about", and every one of the 216 shipped
 `flyc_attn_fwd` builds carries it. The hardware grants it at the narrow rungs
@@ -74,7 +74,7 @@ Usage:
     HIP_VISIBLE_DEVICES=5 \\
     PYTHONPATH=<build>/venv/lib/python3.13/site-packages \\
     python \\
-        modules/flash/flyc/devtools/bench_fwd_wpe_sweep.py [--head_dims 256 512] [...]
+        modules/flash/flyc/gfx950/devtools/bench_fwd_wpe_sweep.py [--head_dims 256 512] [...]
 
 The GPU is shared, so the run refuses to start on a board that is already busy
 -- see `preflight`. Pin it with HIP_VISIBLE_DEVICES.
@@ -90,12 +90,12 @@ from pathlib import Path
 
 # AOTriton's VENDORED kernels, not FlyDSL's parity copies -- these are what
 # ships, and the two trees have diverged (the varlen build axis is gone here).
-# The kernels are this directory's parent, and that is the whole of what this
-# tool knows about the repository layout.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# `flyc/` is two levels up, and that is the whole of what this tool knows
+# about the repository layout.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 # ...and the FlyDSL checkout, for the `kernels.attention.flash_attn_utils` that
-# `gfx950_standalone` re-exports as `dualwave`. Required, with no default: the
+# `gfx950/standalone.py` re-exports as `dualwave`. Required, with no default: the
 # only honest default would be one person's build directory.
 _KERNEL_ROOT = os.environ.get("AOTRITON_FLYDSL_KERNEL_ROOT")
 if not _KERNEL_ROOT:
@@ -122,10 +122,10 @@ print(f"ROCM_PATH={_ROCM_PATH}")
 
 import torch  # noqa: E402
 
-from flash_attn_func_gfx950 import (  # noqa: E402
+from gfx950.fwd import (  # noqa: E402
     build_flash_attn_func_gfx950_module_primary as build_primary,
 )
-from fmha_tuning_gfx950 import FmhaInputMetadata, fmha_knobs, plan  # noqa: E402
+from gfx950.tuning_fwd import FmhaInputMetadata, fmha_knobs, plan  # noqa: E402
 
 # Every head_dim with a shipped `flyc_attn_fwd` build. 384 is deliberately
 # absent: it is a supported geometry in the tuning policy but not a rung the
@@ -311,7 +311,7 @@ def main():
     import importlib.metadata as md
 
     print(f"flydsl {md.version('flydsl')}, kernels from "
-          f"{Path(__file__).resolve().parent.parent}")
+          f"{Path(__file__).resolve().parents[1]}")
     print(
         f"{args.dtype}, {args.rounds} rounds x {REP} launches, "
         f"pair order {'FIXED (2,1) -- slot-biased' if args.fixed_order else 'alternating'}\n"

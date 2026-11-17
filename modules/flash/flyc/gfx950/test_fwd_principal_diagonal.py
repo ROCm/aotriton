@@ -15,7 +15,7 @@ and row `i` keeps column `j` iff `0 <= j < seqlen_k` and `i - L <= j <= i + R`
 shifted. `p = 0` is the behavior before the bit existed.
 
 The bit travels in the VarlenBits word and nowhere else: a dense call passes
-`varlen=abi.varlen_dense(principal_diagonal=...)`, a varlen call sets it in
+`varlen=fmha.varlen_dense(principal_diagonal=...)`, a varlen call sets it in
 `varlen["bits"]`.
 
 The reference is a float32 masked softmax built straight from that predicate,
@@ -26,13 +26,10 @@ A row whose band holds no key has no defined softmax. Only its O is compared
 (it must be 0); its LSE is a placeholder and is not read.
 
 Requires a gfx950 device, `AOTRITON_FLYDSL_KERNEL_ROOT`, and a ROCm the FlyDSL
-compiler can link against; skips cleanly without any of them. Set
-`FLYDSL_EXTRA_SOURCE_DIRS` to this directory after editing a kernel source, or
-the JIT disk cache returns the previous binary.
+compiler can link against; skips cleanly without any of them.
 
     AOTRITON_FLYDSL_KERNEL_ROOT=<flydsl-checkout> \\
-    FLYDSL_EXTRA_SOURCE_DIRS=$PWD/modules/flash/flyc \\
-        python -m pytest modules/flash/flyc/test_fwd_principal_diagonal_gfx950.py
+        python -m pytest modules/flash/flyc/gfx950/test_fwd_principal_diagonal.py
 """
 
 import functools
@@ -59,8 +56,7 @@ _SKIP_REASON = "needs a gfx950 device and AOTRITON_FLYDSL_KERNEL_ROOT"
 if _SKIP:
     pytest.skip(_SKIP_REASON, allow_module_level=True)
 
-import fmha_abi_gfx1201 as abi  # noqa: E402
-import fmha_common_gfx1201 as fmha  # noqa: E402
+import fmha_utils as fmha  # noqa: E402
 
 # 64 and 128 take the dual-wave kernel, 512 the wide one. Both resolve the
 # window in `ParityKernelContext.init_tile_bounds`, but they walk the tiles
@@ -84,8 +80,8 @@ WINDOWS = {
 }
 
 PRINCIPAL_DIAGONAL = {
-    0: abi.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT,
-    1: abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT,
+    0: fmha.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT,
+    1: fmha.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT,
 }
 
 # (seqlen_q, seqlen_k). Chosen off the tile sizes so ragged edges are hit.
@@ -104,10 +100,10 @@ VARLEN_SEQS = ((1, 300), (64, 320), (130, 130), (300, 37), (37, 200))
 @functools.cache
 def _build(head_dim):
     """A causal window build returning LSE, compiled in-process."""
-    from flash_attn_func_gfx950 import (
+    from .fwd import (
         build_flash_attn_func_gfx950_module_primary as build_primary,
     )
-    from fmha_tuning_gfx950 import FmhaInputMetadata, fmha_knobs, plan
+    from .tuning_fwd import FmhaInputMetadata, fmha_knobs, plan
 
     meta = FmhaInputMetadata(num_heads=NUM_HEADS,
                              head_dim=head_dim,
@@ -187,7 +183,7 @@ def test_dense(head_dim, shape_name, window_name, p):
        scale=sm_scale,
        lse=lse,
        window=window,
-       varlen=abi.varlen_dense(principal_diagonal=PRINCIPAL_DIAGONAL[p]))
+       varlen=fmha.varlen_dense(principal_diagonal=PRINCIPAL_DIAGONAL[p]))
     torch.cuda.synchronize()
 
     keep = _keep_mask(window, p, sq, sk, q.device)
@@ -225,9 +221,9 @@ def test_varlen_mixed(head_dim, window_name, p):
     cu_q_t = torch.tensor(cu_q, device="cuda", dtype=torch.int32)
     cu_k_t = torch.tensor(cu_k, device="cuda", dtype=torch.int32)
     varlen = {
-        "bits": abi.varlen_bits(abi.VARLEN_COMPACT_SIDE,
-                                abi.VARLEN_COMPACT_SIDE,
-                                principal_diagonal=PRINCIPAL_DIAGONAL[p]),
+        "bits": fmha.varlen_bits(fmha.VARLEN_COMPACT_SIDE,
+                                 fmha.VARLEN_COMPACT_SIDE,
+                                 principal_diagonal=PRINCIPAL_DIAGONAL[p]),
         "seqinfo_q0": cu_q_t,
         "seqinfo_k0": cu_k_t,
         "max_seqlen_q": max(lens_q),
@@ -264,9 +260,9 @@ def test_varlen_none_is_the_dense_top_left_word():
     q = torch.randn((2, NUM_HEADS, sq, HEAD_DIMS[0]), device="cuda", dtype=DTYPE)
     k = torch.randn((2, NUM_HEADS, sk, HEAD_DIMS[0]), device="cuda", dtype=DTYPE)
     v = torch.randn_like(k)
-    assert abi.varlen_dense()["bits"] == 0
+    assert fmha.varlen_dense()["bits"] == 0
     outs = []
-    for varlen in (None, abi.varlen_dense()):
+    for varlen in (None, fmha.varlen_dense()):
         out = torch.full_like(q, float("nan"))
         lse = torch.full((2 * NUM_HEADS, sq), float("nan"), device="cuda", dtype=torch.float32)
         fn(q,
@@ -289,7 +285,7 @@ def test_dense_word_rejects_seqinfo():
     """A dense word reads no sequence info; handing it some is a caller error."""
     fn = _build(HEAD_DIMS[0])
     q = torch.zeros((1, NUM_HEADS, 8, HEAD_DIMS[0]), device="cuda", dtype=DTYPE)
-    varlen = abi.varlen_dense(principal_diagonal=abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT)
+    varlen = fmha.varlen_dense(principal_diagonal=fmha.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT)
     varlen["seqinfo_q0"] = torch.tensor([0, 8], device="cuda", dtype=torch.int32)
     with pytest.raises(ValueError, match="dense VarlenBits word"):
         fn(q,
@@ -306,7 +302,7 @@ def test_dense_word_rejects_seqinfo():
 def test_varlen_dense_rejects_other_values():
     """Only the two `VARLEN_PRINCIPAL_DIAGONAL_*` words; a bare 1 is not bit 18."""
     with pytest.raises(ValueError, match="principal_diagonal"):
-        abi.varlen_dense(principal_diagonal=1)
+        fmha.varlen_dense(principal_diagonal=1)
 
 
 if __name__ == "__main__":

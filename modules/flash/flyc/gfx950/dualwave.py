@@ -53,11 +53,11 @@ import contextlib
 from dataclasses import fields as dataclass_fields
 from dataclasses import replace
 
-import fmha_common_gfx1201 as fmha
-from fmha_common_gfx1201 import MaskedAxis
-from fmha_traits_gfx950 import BF16_BYTES as _ELEM_BYTES
-from fmha_traits_gfx950 import DMA_BYTES as _ACCESS_BYTES
-from gfx950_standalone import buffer_ops, dualwave
+import fmha_utils as fmha
+from fmha_utils import MaskedAxis
+from .traits import BF16_BYTES as _ELEM_BYTES
+from .traits import DMA_BYTES as _ACCESS_BYTES
+from .standalone import buffer_ops, dualwave
 from philox import Philox
 
 import flydsl.compiler as flyc
@@ -197,7 +197,7 @@ def wire_ptr(t, elem_type=None):
     assumed alignment from its element type -- `(width + 7) // 8` -- and so does
     the `fx.Tensor` path it replaces, which is what makes the two agree: a bf16
     operand keeps alignment 2 either way. Passing a byte pointer instead, as
-    `fmha_abi_gfx1201.ptr_arg` does, would silently drop it to 1. Nothing fails
+    `fmha.ptr_arg` does, would silently drop it to 1. Nothing fails
     when that happens; the loads just lose an alignment fact the backend was
     using, which is the kind of regression that gets attributed to the wrong
     change six weeks later.
@@ -611,7 +611,7 @@ def _slab_span_elems(rows, stride_seq, hdim):
     included, and nothing else is contiguous on any axis -- a caller may put a
     guard page between two rows, two heads or two batches. The D grant is why
     this rounds; the absence of any other grant is why nothing else does.
-    `flash_attn_func_gfx950`'s module docstring states the contract in full.
+    `fwd`'s module docstring states the contract in full.
 
     **Bounding at `hdim` stops in the middle of a real column, which is the bug
     this shape fixes.** gfx950 range-checks a multi-dword buffer op per dword
@@ -767,7 +767,7 @@ class ParityGemmHelper(dualwave.DualwaveGemmHelper):
         fp32 reference than scaling each partial sum would be. **Which means
         the caller owns the call** -- `qk_stage` cannot do it, because it
         cannot tell a middle stage from the last one, and `qk` cannot either,
-        because `fmha_bwd_dq_gfx950` calls it for raw scores on purpose and
+        because `dq` calls it for raw scores on purpose and
         applies its own scale in `scale_and_sub_lse`.
         """
         s_lo, s_hi = v_s
@@ -815,7 +815,7 @@ class ParityGemmHelper(dualwave.DualwaveGemmHelper):
         `mfma_operand_wait_state` for dK/dV and dQ where the hazard was caught
         producing a wrong answer, and a scan of the rebuilt kernels is what
         should retire it -- not the disappearance of one of its two known
-        producers. `fmha_bwd_dq_gfx950` passes an unscaled Q through this same
+        producers. `dq` passes an unscaled Q through this same
         method and needs it regardless.
 
         The `_s_nop(1)` in `qk` below is a different thing at a different
@@ -843,7 +843,7 @@ class ParityGemmHelper(dualwave.DualwaveGemmHelper):
         loop; routing both through it is what puts the barrier on every build
         rather than only the staged ones.
 
-        **Raw, like `qk_stage`.** `fmha_bwd_dq_gfx950` is the other caller and
+        **Raw, like `qk_stage`.** `dq` is the other caller and
         wants it that way -- it applies `qk_scale` itself, fused into the LSE
         subtract. The forward reaches `scale_scores` through `_FwdGemmHelper`.
         """
@@ -1180,7 +1180,7 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         POSITION), which is five useful configurations rather than one, so the
         decode replaces that branch rather than extending it.
 
-        `fmha.decode_addressing` is gfx1201's, reused unedited: the bits mean
+        `fmha.decode_addressing` is shared with gfx1201: the bits mean
         the same thing on both architectures, and a second copy of a wire
         format is a second thing to keep in step.
 
@@ -1306,7 +1306,7 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
             #
             # Resolution is on the device, not the host: a sentinel resolves
             # against *this sequence's* lengths, and under varlen those differ
-            # per sequence. `fmha.resolve_window` is gfx1201's, reused unedited.
+            # per sequence. `fmha.resolve_window` is shared with gfx1201.
             #
             # `varlen_bits` carries `principal_diagonal_choice` (bit 18), which
             # shifts a *numeric* bound by this sequence's `seqlen_k - seqlen_q`.
@@ -1615,7 +1615,7 @@ class ParityQLoader(dualwave.DualwaveQLoader):
         call it on the line after `load_all`), and nothing downstream checks
         shapes or magnitudes, so a reintroduction would be a silently wrong
         answer at large `sm_scale` and a correct one everywhere the tests look
-        hardest. `fmha_bwd_dq_gfx950.py`'s module docstring names the same trap
+        hardest. `dq.py`'s module docstring names the same trap
         for the same reason.
         """
         raise NotImplementedError(
@@ -2296,7 +2296,7 @@ class ParityStoreHelper(dualwave.DualwaveStoreHelper):
         kernel spells the contract as `L_not_null` -- *"Allows null L for
         training=False"*, modules/flash/kernel/fwd_kernel.py -- and gfx1201's
         FlyDSL kernel spells it as `_l_valid`
-        (flash_attn_func_gfx1201_aiw.py). The gfx950 path had neither: a null
+        (gfx1201/fwd.py). The gfx950 path had neither: a null
         `L` reached `_make_ws_rsrc` as a descriptor based at address 0 and the
         store faulted.
 

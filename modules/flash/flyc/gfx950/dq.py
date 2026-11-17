@@ -112,7 +112,7 @@ today -- the ISA is byte-identical, same 260 VGPRs at head_dim 128 -- so what
 is left is exactly the list below, and nothing else.
 
 **Two findings that do not need the lane-map probe**, both in
-`fmha_tuning_bwd_dq_gfx950`:
+`tuning_dq`:
 
 - `v_mfma_f32_16x16x16_bf16` is **4 passes for 8192 flops** against
   `32x32x16`'s **8 for 32768** (`SISchedule.td`, `SIDPGFX950FullSpeedModel`).
@@ -142,7 +142,7 @@ What still has to be re-derived, in dependency order:
    pair. Settle this before anything else.
 2. `_seq_pad_score_threshold` -- the element -> KV column map, derived from the
    32x32 accumulator layout. The KV tail mask and the dB store both read it,
-   so they stay consistent for free once it is right. `fmha_mfma16_gfx950`
+   so they stay consistent for free once it is right. `mfma16`
    gives the replacement: a lane's four accumulator elements are four
    *contiguous* KV tokens at `4 * (lane // 16)`, where at 32 rows they are the
    scattered `8*(i//4) + 4*(lane//32) + (i%4)`.
@@ -154,7 +154,7 @@ What still has to be re-derived, in dependency order:
    per-lane scalars, because the query row is the accumulator's *n* axis here
    (it is dK/dV, where the query row is *m*, that gets the `dwordx4`).
 5. The transpose read for GEMM3. **Answered by the probe, and favourably**
-   (`fmha_mfma16_gfx950`): it serves both 16-row shapes from *one* staged tile,
+   (`mfma16`): it serves both 16-row shapes from *one* staged tile,
    so the four-LDS-tile risk does not materialise. Better than that for this
    kernel -- **the 16-row maps carry no permutation on the contraction index**,
    where the 32-row one does. GEMM3 currently works because `cast_p`'s pack
@@ -227,10 +227,9 @@ left to accrete.
 
 from dataclasses import replace
 
-import fmha_abi_gfx1201 as abi
-import fmha_common_gfx1201 as fmha
-from fmha_bwd_dq_m16_gfx950 import make_m16_dq_body
-from fmha_dualwave_gfx950 import (
+import fmha_utils as fmha
+from .dq_m16 import make_m16_dq_body
+from .dualwave import (
     ParityGemmHelper,
     ParityKernelContext,
     ParityKvGmemToLdsLoader,
@@ -250,16 +249,16 @@ from fmha_dualwave_gfx950 import (
     wire_view,
 )
 
-# Private to `fmha_dualwave_gfx950`, and imported anyway: they are the
+# Private to `dualwave`, and imported anyway: they are the
 # granule-general spellings of the K read's per-lane base and k-step offset,
 # and the alternative is a second copy of two formulas the read and write sides
 # of an LDS layout both depend on. Reaching across within one kernel family
 # beats transcribing.
-from fmha_dualwave_gfx950 import _k_read_base as _parity_k_read_base
-from fmha_dualwave_gfx950 import _ks_offset as _parity_ks_offset
-from fmha_tuning_bwd_dq_gfx950 import BwdDqKnobs, bwd_dq_knobs
-from fmha_tuning_gfx950 import FmhaInputMetadata, plan
-from gfx950_standalone import buffer_ops, dualwave
+from .dualwave import _k_read_base as _parity_k_read_base
+from .dualwave import _ks_offset as _parity_ks_offset
+from .tuning_dq import BwdDqKnobs, bwd_dq_knobs
+from .tuning_fwd import FmhaInputMetadata, plan
+from .standalone import buffer_ops, dualwave
 from philox import Philox
 
 import flydsl.compiler as flyc
@@ -791,7 +790,7 @@ class BwdDqSoftmaxHelper(ParitySoftmaxHelper):
         whose `v_cvt_f16_f32` packs the scheduler happened to hoist 8-36
         instructions clear. That is the `v_cvt_pk_bf16_f32` -> MFMA hazard with
         a wrong answer attached rather than a suspicion, and
-        `fmha_bwd_dq_m16_gfx950.pack_ds` already carried the barrier on the
+        `dq_m16.pack_ds` already carried the barrier on the
         strength of the suspicion alone.
         """
         p_lo_packs, p_hi_packs = dualwave.DualwaveSoftmaxHelper.cast_p(self, v_p)
@@ -1145,7 +1144,7 @@ class BwdDbStoreHelper(ParityStoreHelper):
         dB is a permutation of itself and dQ is simply wrong, so the two check
         each other.
         """
-        from fmha_bwd_dq_m16_gfx950 import MFMA16_M, acc_elems
+        from .dq_m16 import MFMA16_M, acc_elems
 
         traits = self.traits
         ctx = self.ctx_ref
@@ -1195,7 +1194,7 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
     # used to name individually and which are all `traits.` reads.
     #
     # `strides_constexpr` is **new** here and was a hole of the same kind:
-    # `abi.varlen_args` below reads it, so it changes the emitted kernel, and
+    # `fmha.varlen_args` below reads it, so it changes the emitted kernel, and
     # it appeared in neither half of the old key. The forward and dK/dV tags
     # both had it.
     _cache_tag = (
@@ -1267,7 +1266,7 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         stride_db_seq_q: fx.Int64,
     ):
         # Nine pointers in, nine nominal views out -- `wire_view` in
-        # `fmha_dualwave_gfx950.py` has the argument. Everything below this line
+        # `dualwave.py` has the argument. Everything below this line
         # is unchanged by the move, because every extent the kernel bounds a
         # descriptor with was already built from the strides and seqlens on the
         # wire rather than read off a tensor.
@@ -1517,7 +1516,7 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         # head_dim 384 and 512 run a second MFMA family, in its own file: 16
         # rows per wave on `16x16x32`, which halves the loop-invariant Q + dO +
         # dQ that is the whole 512-register file at 32 rows. See
-        # `fmha_bwd_dq_m16_gfx950` for why that shape and why `BLOCK_N` 32.
+        # `dq_m16` for why that shape and why `BLOCK_N` 32.
         if const_expr(M16):
             _body = make_m16_dq_body(
                 ctx,
@@ -1749,13 +1748,13 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         The diagonal a *numeric* `window` bound is measured from is VarlenBits
         bit 18 (`principal_diagonal_choice`), and `varlen["bits"]` is its only
         source. A dense call carries it with
-        `varlen=abi.varlen_dense(principal_diagonal=...)`; `varlen=None` is
+        `varlen=fmha.varlen_dense(principal_diagonal=...)`; `varlen=None` is
         word 0, i.e. top-left. The kernel's addressing decode reads only the
         side bytes, so the bit does not move a dense call onto the varlen
         path.
         """
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
-        _ptrs, shape_meta, st = abi.prep_tensors(
+        _ptrs, shape_meta, st = fmha.prep_tensors(
             [("Q", Q), ("K", K), ("V", V), ("DO", DO), ("DQ", DQ)],
             q_heads=("DO", "DQ"),
         )
@@ -1779,7 +1778,7 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
                 "builder so the D-axis masks are emitted."
             )
 
-        # `abi.varlen_args` is gfx1201's, reused unedited: it encodes the same
+        # `fmha.varlen_args` is shared with gfx1201: it encodes the same
         # wire format the forward uses, and it is where the two host-side
         # checks live that no kernel can make -- `batch_size` must be the
         # tensor's batch extent whatever the layout, and a packed
@@ -1788,13 +1787,13 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         # 1-batch tensor and every one of them addresses a plausible row.
         # `varlen=None` is not an error and never was a separate build: it is
         # `bits == 0`, which the decode answers with dense addressing; a dense
-        # word (`abi.varlen_dense`) differs only in bits 18:16.
-        _vl = abi.varlen_args(bool(knobs.strides_constexpr), varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
+        # word (`fmha.varlen_dense`) differs only in bits 18:16.
+        _vl = fmha.varlen_args(bool(knobs.strides_constexpr), varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
 
         # **`(batch * heads, tokens)`, and the shape is shared with dK/dV.**
         # Both backward kernels take the same two row tensors and read them
         # with the same `fmha.lse_row_addressing`, so the host check is the
-        # shared `abi.row_tensor_arg` rather than a second spelling of it.
+        # shared `fmha.row_tensor_arg` rather than a second spelling of it.
         # This is the layout the forward writes LSE in -- `q_head_idx *
         # seq_len_v + q_row` inside a per-batch slab -- viewed at rank 2; a
         # caller holding `(B, H, S)` passes `lse.view(-1, S)`, which is free
@@ -1812,10 +1811,10 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         for name, t in (("logsumexp", LSE), ("delta", Delta)):
             if t is None:
                 raise ValueError(f"{name} is required: the backward reads it, it is not recomputed")
-            abi.row_tensor_arg(t, name, num_head_q, seqlen_q, varlen)
-            if abi.varlen_is_dense(varlen):
+            fmha.row_tensor_arg(t, name, num_head_q, seqlen_q, varlen)
+            if fmha.varlen_is_dense(varlen):
                 # Per the word's LSE layout: a dense word may select TH.
-                want = abi.dense_row_shape(varlen, batch_size, num_head_q, seqlen_q)
+                want = fmha.dense_row_shape(varlen, batch_size, num_head_q, seqlen_q)
                 if tuple(t.shape) != want:
                     raise ValueError(f"{name} must be {want}; got {tuple(t.shape)}")
 
@@ -1848,11 +1847,11 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         # passed.** Under a captured graph the caller's offset is a pointer the
         # forward re-reads, so the two need not be equal -- and the mask has to
         # be regenerated bit-identically or the gradients are quietly wrong.
-        # `abi.dropout_args` is gfx1201's: it turns the probability into the
+        # `fmha.dropout_args` is shared with gfx1201: it turns the probability into the
         # i32 threshold the raw random is compared against and the `1/(1-p)`
         # survivor scale, once per call, and keeps the counter as the
         # (pointer, immediate) pair torch splits it into.
-        *_dp, _dp_keepalive = abi.dropout_args(
+        *_dp, _dp_keepalive = fmha.dropout_args(
             bool(traits.ENABLE_DROPOUT),
             dropout_p,
             philox_seed,
@@ -1896,7 +1895,7 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         return (
             # Nine pointers, not nine tensors. LSE and Delta are pinned to f32
             # rather than read off the tensor: both are required and both are
-            # already checked f32 by `abi.row_tensor_arg`, so naming the type
+            # already checked f32 by `fmha.row_tensor_arg`, so naming the type
             # here keeps the slot's type a property of the ABI rather than of
             # the call.
             wire_ptr(Q),
@@ -1926,7 +1925,7 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
             num_head_k,
             hdim_qk,
             hdim_vo,
-            abi.resolve_scale(
+            fmha.resolve_scale(
                 Q, scale if scale is not None else BUILD_SM_SCALE, PADDED_HEAD, 1.0 / (BLOCK_DMODEL**0.5)
             ),
             *st,
@@ -1937,7 +1936,7 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
     def _launch(*args, **kwargs):
         packed, stream = _args(*args, **kwargs)
         with CompilationContext.compile_hints(_COMPILE_HINTS):
-            return abi.run_compiled(
+            return fmha.run_compiled(
                 _COMPILED,
                 launch_fmha_bwd_dq_gfx950,
                 *packed,
@@ -1952,7 +1951,7 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
     _launch.compile = _compile
     _launch.traits = traits
     _launch.knobs = knobs
-    _launch.varlen_dense = abi.varlen_dense
+    _launch.varlen_dense = fmha.varlen_dense
     return _launch
 
 

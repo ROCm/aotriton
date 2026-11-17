@@ -23,14 +23,13 @@ The reference is a float32 autograd backward of a masked softmax built from
 that predicate. LSE and Delta are computed here with torch, not by the
 forward kernel: this file tests the backward alone. A row that attends
 nothing gets LSE `+inf`, the forward's contract (see
-`test_fwd_masked_lse_gfx950.py`).
+`gfx950/test_fwd_masked_lse.py`).
 
 Requires a gfx950 device, `AOTRITON_FLYDSL_KERNEL_ROOT`, and a `ROCM_PATH`
 the FlyDSL compiler can link against; skips cleanly without the first two.
 
-    FLYDSL_EXTRA_SOURCE_DIRS=$PWD/modules/flash/flyc \\
     AOTRITON_FLYDSL_KERNEL_ROOT=<flydsl-checkout> \\
-        python -m pytest modules/flash/flyc/test_bwd_dkdv_principal_diagonal_gfx950.py
+        python -m pytest modules/flash/flyc/gfx950/test_bwd_dkdv_principal_diagonal.py
 """
 
 import math
@@ -103,7 +102,7 @@ BUILDS = (
 
 @cache
 def _build(head_dim, mfma_rows):
-    from fmha_bwd_dkdv_gfx950 import build_fmha_bwd_dkdv_gfx950_module as build
+    from .dkdv import build_fmha_bwd_dkdv_gfx950_module as build
 
     knobs = {} if mfma_rows is None else {"mfma_rows": mfma_rows}
     fn = build(num_heads=NUM_HEADS,
@@ -118,7 +117,7 @@ def _build(head_dim, mfma_rows):
 
 
 def _wire_window(window):
-    import fmha_common_gfx1201 as fmha
+    import fmha_utils as fmha
 
     wl, wr = window
     return (fmha.WINDOW_TOPLEFT if wl is None else wl), wr
@@ -183,7 +182,7 @@ def _rand(*shape):
 @pytest.mark.parametrize("window", WINDOWS, ids=lambda w: f"w{w[0]}_{w[1]}")
 @pytest.mark.parametrize("shape", DENSE_SHAPES, ids=lambda s: f"sq{s[0]}_sk{s[1]}")
 def test_dense(head_dim, mfma_rows, p, window, shape):
-    import fmha_abi_gfx1201 as abi
+    import fmha_utils as abi
 
     fn = _build(head_dim, mfma_rows)
     seqlen_q, seqlen_k = shape
@@ -235,7 +234,7 @@ def test_dense_word_th_layout(head_dim, mfma_rows):
 
     `seqlen_q != NUM_HEADS`, so a row check that assumed HT would reject it.
     """
-    import fmha_abi_gfx1201 as abi
+    import fmha_utils as abi
 
     fn = _build(head_dim, mfma_rows)
     seqlen_q, seqlen_k = 48, 160
@@ -290,7 +289,7 @@ def test_dense_word_th_layout(head_dim, mfma_rows):
 @pytest.mark.parametrize("window", WINDOWS, ids=lambda w: f"w{w[0]}_{w[1]}")
 def test_varlen(head_dim, mfma_rows, p, window):
     """Packed batch, one `(seqlen_q, seqlen_k)` pair per sequence, bit in `varlen["bits"]`."""
-    import fmha_abi_gfx1201 as abi
+    import fmha_utils as abi
 
     fn = _build(head_dim, mfma_rows)
     sm_scale = 1.0 / math.sqrt(head_dim)
@@ -354,7 +353,7 @@ def test_varlen(head_dim, mfma_rows, p, window):
 
 def test_dense_word_rejects_seqinfo():
     """A dense word reads no sequence info; handing it some is a caller error."""
-    import fmha_abi_gfx1201 as abi
+    import fmha_utils as abi
 
     fn = _build(*BUILDS[0])
     t = _rand(1, NUM_HEADS, 8, BUILDS[0][0])

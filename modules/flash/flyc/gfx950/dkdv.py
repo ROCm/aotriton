@@ -12,13 +12,13 @@ first.
 
 **dK/dV is the forward loop transposed.** K and V stay resident in registers
 while Q and dO stream past through LDS, exactly mirroring the forward's
-resident Q and streaming K/V. Every helper in `fmha_dualwave_gfx950.py` was
+resident Q and streaming K/V. Every helper in `dualwave.py` was
 written against "a tensor, its bounds and where it lands" rather than against
 K or V by name, so the roles swap by re-pointing four descriptors and nothing
 else. The two tensor slots the staging machinery calls *K* and *V* carry **Q**
 and **dO** here, and `BLOCK_M` / `BLOCK_N` / `VO_SHARDS` in the traits mean the
 KV block, the Q tile and the dK/dV D-axis split -- see
-`fmha_tuning_bwd_dkdv_gfx950`'s docstring for the full map.
+`tuning_dkdv`'s docstring for the full map.
 
 --- Four GEMMs, and where each operand comes from ---------------------------
 
@@ -124,11 +124,11 @@ left to accrete.
 
 import weakref
 
-import fmha_abi_gfx1201 as abi
-import fmha_bwd_dkdv_m16_gfx950 as m16
-import fmha_common_gfx1201 as fmha
-from fmha_common_gfx1201 import MaskedAxis
-from fmha_dualwave_gfx950 import (
+import fmha_utils as fmha
+from . import dkdv_m16 as m16
+import fmha_utils as fmha
+from fmha_utils import MaskedAxis
+from .dualwave import (
     ParityGemmHelper,
     ParityKernelContext,
     ParityKvGmemToLdsLoader,
@@ -147,8 +147,8 @@ from fmha_dualwave_gfx950 import (
     wire_ptr,
     wire_view,
 )
-from fmha_tuning_bwd_dkdv_gfx950 import BwdDkDvInputMetadata, bwd_dkdv_knobs, plan
-from gfx950_standalone import buffer_ops, dualwave
+from .tuning_dkdv import BwdDkDvInputMetadata, bwd_dkdv_knobs, plan
+from .standalone import buffer_ops, dualwave
 from philox import Philox, keep_mask
 
 import flydsl.compiler as flyc
@@ -205,7 +205,7 @@ for _e0, _c0, _w in _ROW_RUNS:
 def _stream_row_read_base(traits, lane_mod_32, lane_div_32):
     """Per-lane LDS base for the row-major read of a staged tile.
 
-    `fmha_dualwave_gfx950._k_read_base` with `STREAM_LINE_STRIDE` in place of
+    `dualwave._k_read_base` with `STREAM_LINE_STRIDE` in place of
     `SMEM_K_LINE_STRIDE`: both streamed tiles are V-shaped (see
     `BwdDkDvTraits.STREAM_LINE_STRIDE`), and the line stride is the only term
     of the K read that knows which shape it is addressing.
@@ -704,7 +704,7 @@ class BwdDkDvKernelContext(ParityKernelContext):
 
         LOCAL DIVERGENCE FROM UPSTREAM: upstream did not import this hoist, and
         attacks the same liveness from the addressing side instead. Whether it
-        still pays on top of that is UNMEASURED -- `flyc/devtools/` holds the
+        still pays on top of that is UNMEASURED -- `flyc/gfx950/devtools/` holds the
         A/B harness that settles it. Retire this if an A/B on an idle gfx950
         shows it inert.
 
@@ -1564,7 +1564,7 @@ class BwdDkDvTileBody(dualwave.DualwaveKernelContext):
     """One streamed q tile: four GEMMs, one softmax, two barriers.
 
     A helper object rather than a nested `def`, for the reason
-    `fmha_wide_gfx950.make_wide_body` gives: the loop this is called from uses
+    `fwd_wide.make_wide_body` gives: the loop this is called from uses
     the `range(..., init=[...])` / `yield` protocol, which only exists after
     the AST rewrite, so the body has to stay inside the traced function while
     the code it calls stays out of it.
@@ -1713,7 +1713,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
     STRIDES_CONSTEXPR = knobs.strides_constexpr
     BUILD_SM_SCALE = meta.sm_scale
     NBUF = traits.NUM_STREAM_BUFFERS
-    # Which MFMA family this build is. See `fmha_bwd_dkdv_m16_gfx950`.
+    # Which MFMA family this build is. See `dkdv_m16`.
     M16 = traits.MFMA_ROWS == 16
     # `(T, H)` logsumexp/delta. See `BwdDkDvInputMetadata.lse_layout_th`.
     # `lse_layout_th` no longer reaches the emitted code: the row read decodes
@@ -1805,7 +1805,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         stride_b_seq_q: fx.Int64,
     ):
         # Nine pointers in, nine nominal views out -- `wire_view` in
-        # `fmha_dualwave_gfx950.py` has the argument. Everything below this line
+        # `dualwave.py` has the argument. Everything below this line
         # is unchanged by the move, because every extent the kernel bounds a
         # descriptor with was already built from the strides and seqlens on the
         # wire rather than read off a tensor.
@@ -2377,8 +2377,8 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         bound may round the D axis up -- it must, or the hardware's per-dword
         range check drops the tail chunk and takes the real column `hdim - 1`
         with it -- and may round no other axis by any amount. `_slab_span_elems`
-        in `fmha_dualwave_gfx950.py` is where both halves are spent, and
-        `flash_attn_func_gfx950`'s module docstring states the contract in full.
+        in `dualwave.py` is where both halves are spent, and
+        `fwd`'s module docstring states the contract in full.
 
         Two separate requirements, and the pitch is only the first. *Alignment*:
         a row starts at `sum(index * stride)`, so every non-D stride must be a
@@ -2438,13 +2438,13 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         The diagonal a *numeric* `window` bound is measured from is VarlenBits
         bit 18 (`principal_diagonal_choice`), and `varlen["bits"]` is its only
         source. A dense call carries it with
-        `varlen=abi.varlen_dense(principal_diagonal=...)`; `varlen=None` is
+        `varlen=fmha.varlen_dense(principal_diagonal=...)`; `varlen=None` is
         word 0, i.e. top-left. Same contract as the gfx950 forward's launcher,
         so a forward and its backward given the same `varlen` measure from the
         same diagonal.
         """
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
-        _ptrs, shape_meta, st = abi.prep_tensors(
+        _ptrs, shape_meta, st = fmha.prep_tensors(
             [("Q", Q), ("K", K), ("V", V), ("DO", DO), ("DK", DK), ("DV", DV)],
             q_heads=("DO",),
             k_heads=("DK", "DV"),
@@ -2513,13 +2513,13 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         # for the kernel to address them with one offset computation. Its return
         # is discarded: this kernel takes them as tensors, because it builds
         # buffer descriptors rather than dereferencing a raw pointer.
-        abi.row_tensor_arg(LSE, "logsumexp", num_head_q, seqlen_q, varlen)
-        abi.row_tensor_arg(Delta, "delta", num_head_q, seqlen_q, varlen)
+        fmha.row_tensor_arg(LSE, "logsumexp", num_head_q, seqlen_q, varlen)
+        fmha.row_tensor_arg(Delta, "delta", num_head_q, seqlen_q, varlen)
         if Delta.shape != LSE.shape:
             raise ValueError(f"delta must have logsumexp's shape {tuple(LSE.shape)}, got {tuple(Delta.shape)}")
-        if abi.varlen_is_dense(varlen):
+        if fmha.varlen_is_dense(varlen):
             # Per the word's LSE layout: a dense word may select TH.
-            want = abi.dense_row_shape(varlen, batch_size, num_head_q, seqlen_q)
+            want = fmha.dense_row_shape(varlen, batch_size, num_head_q, seqlen_q)
             if tuple(LSE.shape) != want:
                 raise ValueError(f"logsumexp must be {want}; got {tuple(LSE.shape)}")
         # Upstream also rejects a varlen descriptor on a build compiled without
@@ -2542,25 +2542,25 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         # reasoning inverts once `varlen` defaults on: the caller who passes
         # nothing is now the ordinary *dense* caller, and they must be served.
         # They are, exactly: `varlen_args` gives dense side bytes (`bits == 0`,
-        # or only bits 18:16 for `abi.varlen_dense`), and at dense side bytes
+        # or only bits 18:16 for `fmha.varlen_dense`), and at dense side bytes
         # `decode_addressing` returns `(max_seqlen, 0, z)` -- dense addressing
         # -- with every array read behind a real branch, so the null `seqinfo`
         # pointers are never dereferenced. The cost of a dense call on a varlen
         # build is one not-taken scalar branch.
-        # `abi.varlen_args` is gfx1201's, reused unedited: it encodes the same
+        # `fmha.varlen_args` is shared with gfx1201: it encodes the same
         # wire format and it is where the two host-side checks live that no
         # kernel can make -- `batch_size` must be the tensor's batch extent
         # whatever the layout, and a packed `num_seqlens` must agree with the
         # length array.
-        _vl = abi.varlen_args(STRIDES_CONSTEXPR, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
+        _vl = fmha.varlen_args(STRIDES_CONSTEXPR, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
         # **The seed and the counter are the ones the *forward* reported**, not
         # the ones its caller passed: under graph capture the effective offset
-        # is `*offset1 + offset2`, summed on the device. `abi.dropout_args` is
-        # gfx1201's and takes the same (pointer, immediate) pair, so a caller
+        # is `*offset1 + offset2`, summed on the device. `fmha.dropout_args` is
+        # shared with gfx1201 and takes the same (pointer, immediate) pair, so a caller
         # can hand the forward's `philox_seed_output` / `philox_offset_output`
         # straight back. The threshold and `1/(1-p)` are computed once here
         # rather than per element.
-        *_dp, _dp_keepalive = abi.dropout_args(
+        *_dp, _dp_keepalive = fmha.dropout_args(
             bool(traits.ENABLE_DROPOUT),
             dropout_p,
             philox_seed,
@@ -2624,7 +2624,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         return (
             # Nine pointers, not nine tensors. LSE and Delta are pinned to f32
             # rather than read off the tensor: both are required and both are
-            # already checked f32 by `abi.row_tensor_arg`, so naming the type
+            # already checked f32 by `fmha.row_tensor_arg`, so naming the type
             # here keeps the slot's type a property of the ABI rather than of
             # the call.
             wire_ptr(Q),
@@ -2654,7 +2654,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
             num_head_k,
             hdim_qk,
             hdim_vo,
-            abi.resolve_scale(
+            fmha.resolve_scale(
                 Q, scale if scale is not None else BUILD_SM_SCALE, PADDED_HEAD, 1.0 / (BLOCK_DMODEL**0.5)
             ),
             *st,
@@ -2664,7 +2664,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
     def _launch(*args, **kwargs):
         packed, stream = _args(*args, **kwargs)
         with CompilationContext.compile_hints(_COMPILE_HINTS):
-            return abi.run_compiled(
+            return fmha.run_compiled(
                 _COMPILED,
                 launch_fmha_bwd_dkdv_gfx950,
                 *packed,
@@ -2679,7 +2679,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
     _launch.compile = _compile
     _launch.traits = traits
     _launch.knobs = knobs
-    _launch.varlen_dense = abi.varlen_dense
+    _launch.varlen_dense = fmha.varlen_dense
     return _launch
 
 

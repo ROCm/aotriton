@@ -3,7 +3,7 @@
 
 """Tuning policy for the gfx950 dK/dV backward kernel: which knobs, for which shape.
 
-The backward twin of `fmha_tuning_gfx950.py`, and split from the kernel for the
+The backward twin of `tuning_fwd.py`, and split from the kernel for the
 same reason: a number here moves when a sweep says so, and nothing here can
 make a build *wrong*, only slow.
 
@@ -57,9 +57,9 @@ behind it are recorded there.
 
 from dataclasses import dataclass, fields, replace
 
-from fmha_traits_gfx950 import ParityDualwaveTraits, make_traits
+from .traits import ParityDualwaveTraits, make_traits
 from fmha_knobs import pinned
-from fmha_knobs_gfx950 import BwdDkDvKnobFields
+from .knobs import BwdDkDvKnobFields
 
 __all__ = [
     "LADDER",
@@ -440,8 +440,8 @@ class BwdDkDvTraits(ParityDualwaveTraits):
     NUM_STREAM_BUFFERS: int = 2
 
     # KV rows one wave owns, and therefore which MFMA family the body is: 32
-    # for `v_mfma_f32_32x32x16` (`fmha_bwd_dkdv_gfx950`) or 16 for
-    # `v_mfma_f32_16x16x16` (`fmha_bwd_dkdv_m16_gfx950`). Contract section 4
+    # for `v_mfma_f32_32x32x16` (`dkdv`) or 16 for
+    # `v_mfma_f32_16x16x16` (`dkdv_m16`). Contract section 4
     # asked for the shape to be a trait rather than a literal; B3.5 is where
     # that became true in fact.
     MFMA_ROWS: int = 32
@@ -926,5 +926,5 @@ def entry_resolve(meta, *, overrides=None) -> BwdDkDvKnobs:
 
 
 def entry_build(meta, knobs: BwdDkDvKnobs):
-    from fmha_bwd_dkdv_gfx950 import build_fmha_bwd_dkdv_gfx950_module_primary
+    from .dkdv import build_fmha_bwd_dkdv_gfx950_module_primary
     return build_fmha_bwd_dkdv_gfx950_module_primary(_entry_meta(meta), knobs)

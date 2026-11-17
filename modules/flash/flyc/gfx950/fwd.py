@@ -3,7 +3,7 @@
 
 """Flash Attention for gfx950 -- AOTriton's `attn_fwd` surface on the dualwave schedule.
 
-The gfx950 counterpart of `flash_attn_func_gfx1201_aiw.py`. Same goal --
+The gfx950 counterpart of `gfx1201/fwd.py`. Same goal --
 functional equivalence with AOTriton's Triton `attn_fwd`, so this can replace
 it rather than sit beside it -- reached from the opposite direction: gfx1201
 had the features and needed the speed, gfx950 has the speed and needs the
@@ -21,7 +21,7 @@ architectures; schedules do not.
 --- What this file is ------------------------------------------------------
 
 The body below is the production dualwave pipeline, copied rather than
-imported. The *helpers* subclass cleanly (see `fmha_dualwave_gfx950.py`), but
+imported. The *helpers* subclass cleanly (see `dualwave.py`), but
 the pipeline itself is inline in `build_flash_attn_dualwave_swp_module`, and
 every remaining phase -- windows, bias, dropout -- rewrites parts of it. A copy
 that diverges on purpose is honest; an import that has to be special-cased at
@@ -90,7 +90,7 @@ That cuts both ways and both ways are load-bearing:
   that stops at `head_dim` does not merely decline the pad: gfx950 range-checks
   a multi-dword buffer op per dword and drops any dword not wholly inside
   `num_records`, so it takes the real column `head_dim - 1` with it.
-  `_slab_span_elems` in `fmha_dualwave_gfx950.py` is where that is spent, and
+  `_slab_span_elems` in `dualwave.py` is where that is spent, and
   carries the measurement of what the mistake cost.
 - **Round no other axis, ever, by any amount.** There is no slack on the
   sequence, head or batch axes to rely on, so a bound may only ever end on an
@@ -126,9 +126,8 @@ for bit. `test_dropout_mask_does_not_depend_on_the_tiling` builds one problem
 with two supported wave geometries and requires identical output.
 """
 
-import fmha_abi_gfx1201 as abi
-import fmha_common_gfx1201 as fmha
-from fmha_dualwave_gfx950 import (
+import fmha_utils as fmha
+from .dualwave import (
     ParityGemmHelper,
     ParityKernelContext,
     ParityKvGmemToLdsLoader,
@@ -140,8 +139,8 @@ from fmha_dualwave_gfx950 import (
     wire_ptr,
     wire_view,
 )
-from fmha_tuning_gfx950 import FmhaInputMetadata, fmha_knobs, plan
-from fmha_wide_gfx950 import (
+from .tuning_fwd import FmhaInputMetadata, fmha_knobs, plan
+from .fwd_wide import (
     WideGemmHelper,
     WideKernelContext,
     WideKvLdsToVgprLoader,
@@ -149,7 +148,7 @@ from fmha_wide_gfx950 import (
     WideStoreHelper,
     make_wide_body,
 )
-from gfx950_standalone import dualwave
+from .standalone import dualwave
 
 import flydsl.compiler as flyc
 import flydsl.expr as fx
@@ -167,8 +166,8 @@ KERNEL_NAME = "flash_attn_func_gfx950_kernel"
 # it does there. Imported, not re-implemented -- these are the scheduling
 # primitives the hand-built pipeline is made of, and a second copy of any of
 # them would be a second thing to keep in step.
-from fmha_dualwave_gfx950 import _anchor_v_o  # noqa: E402  (one-accumulator safe)
-from fmha_dualwave_gfx950 import exp2_wait_state  # noqa: E402  (issue 10)
+from .dualwave import _anchor_v_o  # noqa: E402  (one-accumulator safe)
+from .dualwave import exp2_wait_state  # noqa: E402  (issue 10)
 
 _anchor_v_p = dualwave._anchor_v_p
 _dualwave_sync_barrier = dualwave._dualwave_sync_barrier
@@ -229,7 +228,7 @@ class _KvTailCausalMaskMixin:
 
     True -- for the `delta` that sentence names. But a window build re-points
     `delta_i32` at the resolved `window_right` (`init_tile_bounds` in
-    `fmha_dualwave_gfx950.py`), and that is what makes the argument fail:
+    `dualwave.py`), and that is what makes the argument fail:
     top-left causal is `window_right == 0`, so the bound is `col <= row`, and
     for `row >= seqlen_kv` that admits columns the K buffer does not have.
     Those columns come back as zero from the out-of-range buffer load, which is
@@ -253,7 +252,7 @@ class _KvTailCausalMaskMixin:
     Composed as a mixin over both helpers because the two bodies reach the
     causal mask by different routes -- the dual-wave body through
     `causal_mask_split_prologue_if_needed` and three epilogue calls, the wide
-    body (`fmha_wide_gfx950.make_wide_body`, which this file does not vendor)
+    body (`fwd_wide.make_wide_body`, which this file does not vendor)
     through one call per tile -- and `causal_mask_prologue_if_needed` is the
     single point all of them pass through.
 
@@ -317,7 +316,7 @@ class _WideSoftmaxHelper(_Exp2WaitStateMixin, _KvTailCausalMaskMixin, WideSoftma
 class _FwdGemmHelper(ParityGemmHelper):
     """`qk` with `qk_scale` applied, which is what the *forward* wants.
 
-    `ParityGemmHelper.qk` returns raw `Q·K^T` because `fmha_bwd_dq_gfx950`
+    `ParityGemmHelper.qk` returns raw `Q·K^T` because `dq`
     shares it and folds `qk_scale` into its own LSE subtract. The dual-wave
     forward body calls `qk` from six sites across its software pipeline -- the
     prologue, two in the main loop, three in the epilogue -- and every one of
@@ -380,7 +379,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
     MASK_ALL_TILES = traits.CROSS_SEQLEN or traits.WINDOW
 
     # A scale baked into the build configuration. `None` means "derive it",
-    # which `abi.resolve_scale` then does from the *real* head dim rather than
+    # which `fmha.resolve_scale` then does from the *real* head dim rather than
     # the compiled tile -- the distinction that matters under a padded head.
     # Precedence is per-call `scale` > `meta.sm_scale` > derived.
     BUILD_SM_SCALE = meta.sm_scale
@@ -510,7 +509,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         block_table_stride: _BTS_ANN,
     ):
         # The six tensor operands arrive as bare pointers -- see `wire_ptr` in
-        # `fmha_dualwave_gfx950.py` for why, and `wire_view` for why they are
+        # `dualwave.py` for why, and `wire_view` for why they are
         # wrapped back up here rather than at each use. Doing it once, at the
         # boundary, is what leaves the addressing code below untouched: every
         # extent it needs is a wire scalar already, so the only thing the
@@ -1069,7 +1068,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
 
         # head_dim > 256 runs a different algorithm, in its own file: no
         # dual-wave pipeline, D staged through LDS and sharded across waves.
-        # See `fmha_wide_gfx950.py` for why none of the schedule above ports.
+        # See `fwd_wide.py` for why none of the schedule above ports.
         if const_expr(WIDE):
             _body = make_wide_body(
                 ctx,
@@ -1113,7 +1112,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         Always a pair, even for a build that ignores it -- the non-windowed
         arms forward sentinels so every build shares one ABI and stays directly
         comparable, which is the same reason the strides are passed even under
-        `strides_constexpr`. gfx1201's `abi.resolve_window` makes the same call.
+        `strides_constexpr`. `fmha.window_args` makes the same call.
 
         A *sentinel* rather than a bound is what goes on the wire for the fixed
         alignments: the kernel resolves it against each sequence's own lengths,
@@ -1317,12 +1316,12 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         The diagonal a *numeric* `window` bound is measured from is VarlenBits
         bit 18 (`principal_diagonal_choice`), and `varlen["bits"]` is its only
         source. A dense call carries it with
-        `varlen=abi.varlen_dense(principal_diagonal=...)`; `varlen=None` is
+        `varlen=fmha.varlen_dense(principal_diagonal=...)`; `varlen=None` is
         word 0, i.e. top-left. The bit means the same thing dense or varlen
         (`d` is merely uniform).
         """
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
-        ptrs, shape_meta, st = abi.prep_tensors(
+        ptrs, shape_meta, st = fmha.prep_tensors(
             [("Q", Q), ("K", K), ("V", V), ("O", O)],
             q_heads=("O",),
         )
@@ -1419,7 +1418,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         # Both were measured: error 3.5 and 4.0 against a 2e-2 tolerance,
         # finite, deterministic, no fault. The whole point of this port is that
         # these three strides are free, and the combine path never received
-        # that change of variables -- see `fmha_dualwave_gfx950`'s docstring
+        # that change of variables -- see `dualwave`'s docstring
         # for the change every other helper did get.
         #
         # Strict on purpose. Split-K is off by default and has no caller here,
@@ -1464,12 +1463,12 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         bias_t = bias if bias is not None else O
         bias_st = tuple(int(x) for x in bias.stride()[:3]) if bias is not None else (0, 0, 0)
 
-        # `abi.dropout_args` is gfx1201's: it turns the probability into the
+        # `fmha.dropout_args` is shared with gfx1201: it turns the probability into the
         # i32 threshold the raw random is compared against and the `1/(1-p)`
         # survivor scale, both once per call rather than per element, and
         # keeps the counter as the (pointer, immediate) pair torch splits it
         # into so a captured graph can re-read the pointer half.
-        *_dp, _dp_keepalive = abi.dropout_args(
+        *_dp, _dp_keepalive = fmha.dropout_args(
             bool(traits.ENABLE_DROPOUT),
             dropout_p,
             philox_seed,
@@ -1481,8 +1480,8 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         if dropout_p is not None and not traits.ENABLE_DROPOUT:
             raise ValueError("this build was not compiled for dropout; pass dropout=True in FmhaInputMetadata")
         _dp_out = (
-            abi.ptr_arg(philox_seed_out) if philox_seed_out is not None else abi.NULL_PTR,
-            abi.ptr_arg(philox_offset_out) if philox_offset_out is not None else abi.NULL_PTR,
+            fmha.ptr_arg(philox_seed_out) if philox_seed_out is not None else fmha.NULL_PTR,
+            fmha.ptr_arg(philox_offset_out) if philox_offset_out is not None else fmha.NULL_PTR,
         )
 
         lse_out = lse if lse is not None else O
@@ -1494,14 +1493,14 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         ws = (workspace if workspace is not None else O) if _WS_RUNTIME else 0
         bt = (block_table if block_table is not None else O) if _BT_RUNTIME else 0
 
-        # `abi.varlen_args` is gfx1201's, reused unedited: it encodes the same
+        # `fmha.varlen_args` is shared with gfx1201: it encodes the same
         # wire format, and it is where the two host-side checks live that no
         # kernel can make -- `batch_size` must be the tensor's batch extent
         # whatever the layout, and a packed `num_seqlens` must agree with the
         # length array. Passing the sequence count where the batch extent
         # belongs launches N programs over a 1-batch tensor and every one of
         # them addresses a plausible row.
-        _vl = abi.varlen_args(STRIDES_CONSTEXPR, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
+        _vl = fmha.varlen_args(STRIDES_CONSTEXPR, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
 
         return (
             # Six pointers, not six tensors. `wire_ptr` types each one from the
@@ -1537,7 +1536,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
             num_head_k,
             hdim_qk,
             hdim_vo,
-            abi.resolve_scale(
+            fmha.resolve_scale(
                 Q,
                 scale if scale is not None else BUILD_SM_SCALE,
                 PADDED_HEAD,
@@ -1551,7 +1550,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
     def _launch(*args, **kwargs):
         packed, stream = _args(*args, **kwargs)
         with CompilationContext.compile_hints(_COMPILE_HINTS):
-            return abi.run_compiled(
+            return fmha.run_compiled(
                 _COMPILED,
                 launch_flash_attn_func_gfx950,
                 *packed,
@@ -1566,7 +1565,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
     _launch.compile = _compile
     _launch.traits = traits
     _launch.knobs = knobs
-    _launch.varlen_dense = abi.varlen_dense
+    _launch.varlen_dense = fmha.varlen_dense
     return _launch
 
 

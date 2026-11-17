@@ -41,7 +41,7 @@ the error is `sm_scale * sqrt(head_dim)`, which is what the cases below vary.
 regression should be reproduced at the shape it was reported at.
 
 **Why a JIT test and why here.** Same reason as
-`test_fwd_masked_lse_gfx950.py`: reaching this from the AOT suite costs a full
+`gfx950/test_fwd_masked_lse.py`: reaching this from the AOT suite costs a full
 `ninja install` plus a by-hand deletion of the flyc hsaco/aks2/zip outputs,
 because no ninja edge depends on these sources. `modules/flash/tests/
 test_forward.py` covers the same ground at release tolerances; this one builds
@@ -52,7 +52,7 @@ Requires a gfx950 device, `AOTRITON_FLYDSL_KERNEL_ROOT`, and a ROCm the FlyDSL
 compiler can link against; skips cleanly without any of them.
 
     AOTRITON_FLYDSL_KERNEL_ROOT=<flydsl-checkout> \\
-        python -m pytest modules/flash/flyc/test_fwd_qk_scale_gfx950.py
+        python -m pytest modules/flash/flyc/gfx950/test_fwd_qk_scale.py
 """
 
 import math
@@ -62,10 +62,8 @@ from pathlib import Path
 
 import pytest
 
-# See `test_fwd_masked_lse_gfx950.py` for why the kernel root is appended here
-# rather than by a conftest: the vendored kernels import each other by bare
-# name, and pytest's rootless import mode has already put this directory on
-# `sys.path`.
+# See `gfx950/test_fwd_masked_lse.py` for why the kernel root is appended here
+# rather than by a conftest.
 _KERNEL_ROOT = os.environ.get("AOTRITON_FLYDSL_KERNEL_ROOT")
 if _KERNEL_ROOT and _KERNEL_ROOT not in sys.path:
     sys.path.append(_KERNEL_ROOT)
@@ -86,8 +84,8 @@ NUM_HEADS = 4
 SEQLEN_Q = 289
 SEQLEN_K = 289
 
-# 64 and 256 take the dual-wave kernel (`flash_attn_func_gfx950.make_body`),
-# 512 the wide one (`fmha_wide_gfx950.make_wide_body`). They reintroduce the
+# 64 and 256 take the dual-wave kernel (`fwd.make_body`),
+# 512 the wide one (`fwd_wide.make_wide_body`). They reintroduce the
 # scale at different places -- the dual-wave body through `_FwdGemmHelper.qk`,
 # which serves six call sites across its software pipeline, the wide body with
 # one explicit `scale_scores` after its D-stage loop -- so covering both is
@@ -119,14 +117,14 @@ MAX_ABS_ERR = 0.035
 def _build(head_dim, dtype_str, causal=False, bias=False):
     """A forward for one `(head_dim, dtype)`, compiled in-process.
 
-    `flash_attn_func_gfx950._COMPILED` memoises, and FlyDSL caches to disk on
+    `fwd._COMPILED` memoises, and FlyDSL caches to disk on
     top of that, so the parametrization below pays for each distinct build
     once rather than once per case.
     """
-    from flash_attn_func_gfx950 import (
+    from .fwd import (
         build_flash_attn_func_gfx950_module_primary as build_primary,
     )
-    from fmha_tuning_gfx950 import FmhaInputMetadata, fmha_knobs, plan
+    from .tuning_fwd import FmhaInputMetadata, fmha_knobs, plan
 
     meta = FmhaInputMetadata(
         num_heads=NUM_HEADS,
@@ -146,7 +144,7 @@ def _inputs(head_dim, dtype, seed):
     q = torch.randn(shape_q, device="cuda", dtype=dtype)
     k = torch.randn(shape_k, device="cuda", dtype=dtype)
     v = torch.randn_like(k)
-    # NaN rather than zeros, for the reason `test_fwd_masked_lse_gfx950.py`
+    # NaN rather than zeros, for the reason `gfx950/test_fwd_masked_lse.py`
     # gives: an unwritten element must not be able to pass as a correct one.
     out = torch.full(shape_q, float("nan"), device="cuda", dtype=dtype)
     return q, k, v, out
@@ -314,7 +312,7 @@ def test_bias_survives_a_same_shape_bias_free_build(sm_scale):
     what rules out ever expressing the bias as `bias / sm_scale` in a raw-score
     domain, as a free FMA fusion of `qk_scale` into `sub_m` would have needed.
 
-    Bias excludes causal (`fmha_traits_gfx950.make_traits` rejects the pair),
+    Bias excludes causal (`traits.make_traits` rejects the pair),
     so this is the dense path only.
     """
     head_dim = 64

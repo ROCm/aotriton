@@ -26,7 +26,7 @@ but wrong numbers, and none of them is exercised until one is built.
 
 from dataclasses import dataclass, fields
 
-from gfx950_standalone import dualwave
+from .standalone import dualwave
 
 __all__ = ["make_traits", "assert_matches_production", "ParityDualwaveTraits"]
 
