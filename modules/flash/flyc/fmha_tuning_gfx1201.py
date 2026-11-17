@@ -473,7 +473,7 @@ def resolve_knobs(meta: FmhaInputMetadata, overrides: "FmhaKnobs | None" = None)
     """
     s = _KNOBS_FALLBACK.merge(overrides)
     if meta.block_dmodel is None:
-        raise ValueError("meta.block_dmodel is unset: use plan(meta), or with_direct_tile(meta) for a tile-wide head_dim")
+        raise ValueError("meta.block_dmodel is unset; see plan() and with_direct_tile()")
     # Everything below is keyed on the width baked into the binary, not on the
     # caller's real extent. They coincide for a direct builder call and differ
     # whenever `plan` has rounded one up.

@@ -371,7 +371,7 @@ def resolve_knobs(meta: BwdDqInputMetadata, overrides: "BwdDqKnobs | None" = Non
     """
     s = _KNOBS_FALLBACK.merge(overrides)
     if meta.block_dmodel is None:
-        raise ValueError("meta.block_dmodel is unset: use plan(meta), or with_direct_tile(meta) for a tile-wide head_dim")
+        raise ValueError("meta.block_dmodel is unset; see plan() and with_direct_tile()")
     hd = meta.block_dmodel
 
     if s.shards is None:

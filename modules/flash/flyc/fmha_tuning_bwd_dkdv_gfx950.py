@@ -865,7 +865,8 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
             )
         if traits.STREAM_TILE_ELEMS * traits.BF16_BYTES != self._stream_slot_bytes(meta.block_dmodel):
             raise AssertionError(
-                f"`_stream_slot_bytes` says {self._stream_slot_bytes(meta.block_dmodel)} B per slot but the traits derive "
+                f"`_stream_slot_bytes` says {self._stream_slot_bytes(meta.block_dmodel)} B per slot "
+                "but the traits derive "
                 f"{traits.STREAM_TILE_ELEMS * traits.BF16_BYTES}; the buffer-count decision was made "
                 "against a stale copy of the LDS derivation"
             )
