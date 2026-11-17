@@ -150,10 +150,13 @@ architecture at all — the build host is typically neither of the targets.
 5. **Describe the kernel** in `modules/<family>/aot/`: mark the builder with
    `@ati.flyc.kernel` and `@ati.flyc.hints`, declare the kernel arguments with
    their types and alignments, and have the builder return the FlyDSL module
-   and the knobs it resolved. The knobs must carry `flyc_source` (the kernel
-   file, relative to `modules/<family>/flyc/`, e.g. `gfx950/fwd.py`) and
-   `flyc_kernel_name` (the `@flyc.kernel` def); derive the knobs class from
-   `FlycKnobs` (`fmha_knobs.py`), whose `resolve` fills both.
+   and the knobs it resolved. The description holds no arch branch: it builds
+   an arch-neutral input metadata from the functional and calls the family's
+   unified entry, `resolve_knobs(arch, meta)` for the knobs and
+   `builder(arch, meta, knobs)` inside the deferred build. The knobs must carry
+   `flyc_source` (the kernel file, relative to `modules/<family>/flyc/`, e.g.
+   `gfx950/fwd.py`) and `flyc_kernel_name` (the `@flyc.kernel` def); derive the
+   knobs class from `FlycKnobs` (`fmha_knobs.py`), whose `resolve` fills both.
 6. **Compile one, by hand,** before wiring anything into the build:
    `AOTRITON_FLYDSL_KERNEL_ROOT=<flydsl source tree> python -m
    aotriton.flyc_compile <description> --kernel_name <name> --target <arch>
@@ -167,6 +170,35 @@ architecture at all — the build host is typically neither of the targets.
    `modules/<family>/tests/`. The latter is reserved for tests of the built
    library; a harness that imports the vendored kernels directly and times them
    is a different thing and should not need an AOTriton build to run.
+
+## Adding an architecture to a family
+
+The attention family's descriptions (`flyc_attn_fwd.py`, `flyc_bwd_dq.py`,
+`flyc_bwd_dkdv.py`) know no architecture. Each calls a unified entry in
+`modules/flash/flyc/` (`fmha_fwd_tuning.py`, `fmha_dq_tuning.py`,
+`fmha_dkdv_tuning.py`), which looks the arch up in its `_ARCH_MODULES` table and
+hands the arch-neutral `FmhaInputMetadata` to that arch's tuning module. A new
+architecture therefore needs:
+
+1. **A package `modules/flash/flyc/<arch>/`** with an empty `__init__.py`, its
+   kernels under short names (`fwd.py`, `dq.py`, `dkdv.py`, ...) and its JIT
+   tests (`test_*.py`, plus a `conftest.py` that turns FlyDSL's JIT cache off).
+2. **`<arch>/knobs.py`**: the knobs classes, deriving from `FlycQKnobs` (forward,
+   dQ) or `FlycKVKnobs` (dK/dV), flydsl-free, with the `FLYC_SOURCE`,
+   `FLYC_KERNEL_NAME` and `FLYC_GRID_AXIS_ORDER` class constants.
+3. **`<arch>/tuning_fwd.py`, `tuning_dq.py`, `tuning_dkdv.py`**, each defining
+   `entry_resolve(meta, *, overrides=None)` and `entry_build(meta, knobs)`. They
+   adapt the neutral metadata to the arch's own, apply the arch's pins (with
+   `fmha_knobs.pinned`, so pins win over `overrides`) and assert them.
+   `BLOCK_DMODEL` and `PADDED_HEAD` arrive as metadata, never as knobs.
+4. **One row per unified entry** in its `_ARCH_MODULES` table, naming
+   `<arch>.tuning_fwd` and so on.
+5. **The arch's head-dim ladder** in the descriptions' disable predicates, so
+   functionals off the ladder are not built.
+
+Helpers more than one architecture uses live at the `flyc/` root
+(`fmha_utils.py`, `philox.py`, `flyc_polyfill.py`) and are imported by bare name;
+modules inside an arch package import each other relatively.
 
 ## Code generation: what the description turns into
 
