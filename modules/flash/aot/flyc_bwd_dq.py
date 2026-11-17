@@ -160,8 +160,6 @@ def flyc_bwd_dq(arch, choices, hints):
             dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
             bias=bool(choices.BIAS_TYPE),
             dropout=bool(choices.ENABLE_DROPOUT),
-            # philox_width left at None -- Philox.for_arch(), matching the forward.
-            # The backward has to reproduce the forward's mask exactly.
         )
         knobs = resolve_knobs(meta, BwdDqKnobs(
             block_dmodel=tile,

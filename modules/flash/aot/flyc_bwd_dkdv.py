@@ -213,9 +213,6 @@ def flyc_bwd_dkdv(arch, choices, hints):
             dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
             bias=bool(choices.BIAS_TYPE),
             dropout=bool(choices.ENABLE_DROPOUT),
-            # philox_width left at None -- Philox.for_arch(), which is what the
-            # forward compiled against. The backward must reproduce the forward's
-            # mask exactly, so this is the one setting that is not a free choice.
         )
         knobs = resolve_knobs(meta, BwdDkDvKnobs(
             block_dmodel=tile,

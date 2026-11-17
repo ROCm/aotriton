@@ -197,7 +197,6 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     causal_type = meta.causal_type
     bias = meta.bias
     dropout = meta.dropout
-    philox_width = meta.philox_width
 
     WAVES_PER_EU = knobs.waves_per_eu
     FLAT_WORK_GROUP_SIZE = knobs.flat_work_group_size
@@ -634,7 +633,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     # is long enough. What stays here is the *offset scheme* -- which element
     # gets which offset -- because that is layout-specific.
     ENABLE_DROPOUT = bool(dropout)
-    PHILOX = Philox.for_arch() if philox_width is None else Philox(width=philox_width)
+    PHILOX = Philox(width=knobs.philox_width)
 
     # KV columns past seqlen_k are always masked: seqlen need not divide
     # BLOCK_N now that the interface no longer pads. The guard is dynamic, so

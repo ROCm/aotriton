@@ -174,7 +174,6 @@ def build_bwd_dq_module_primary(meta, knobs):
     sm_scale = meta.sm_scale
     causal_type = meta.causal_type
     dropout = meta.dropout
-    philox_width = meta.philox_width
 
     BLOCK_DMODEL = knobs.block_dmodel
     BLOCK_M = knobs.block_m
@@ -325,7 +324,7 @@ def build_bwd_dq_module_primary(meta, knobs):
     # bit or the gradient is silently wrong, which is why the offset scheme
     # below is `Philox.grid_plane` / `grid_offset` and not a transcription.
     ENABLE_DROPOUT = bool(dropout)
-    PHILOX = Philox.for_arch() if philox_width is None else Philox(width=philox_width)
+    PHILOX = Philox(width=knobs.philox_width)
 
     # Attention bias. One build axis, not two: dB is `dS`, which this kernel
     # already forms for GEMM3, so a bias build emits the store unconditionally.

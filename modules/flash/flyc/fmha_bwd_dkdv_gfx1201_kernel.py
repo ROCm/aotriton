@@ -213,7 +213,6 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
     sm_scale = meta.sm_scale
     causal_type = meta.causal_type
     dropout = meta.dropout
-    philox_width = meta.philox_width
 
     BLOCK_DMODEL = knobs.block_dmodel
     BLOCK_DMODEL_V = knobs.block_dmodel_v
@@ -312,7 +311,7 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
     CAUSAL = bool(CAUSAL_TYPE)
 
     ENABLE_DROPOUT = bool(dropout)
-    PHILOX = Philox.for_arch() if philox_width is None else Philox(width=philox_width)
+    PHILOX = Philox(width=knobs.philox_width)
 
     # Attention bias. An input only -- dB is the dQ kernel's, for the layout
     # reason `BwdDkDvMetadata.bias` records.

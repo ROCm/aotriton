@@ -433,7 +433,6 @@ class FmhaInputMetadata:
     causal_type: int | None = None
     bias: bool = False
     dropout: bool = False
-    philox_width: int | None = None
 
 
 _KNOBS_FALLBACK = FmhaKnobs(

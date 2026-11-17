@@ -409,7 +409,6 @@ class BwdDkDvMetadata:
     sm_scale: float | None = None
     causal_type: int | None = None
     dropout: bool = False
-    philox_width: int | None = None
     # Attention bias, matching the forward's `BIAS_TYPE`: a (B, H, Sq, Sk)
     # matrix added to the scores after the scale and before the mask.
     #
