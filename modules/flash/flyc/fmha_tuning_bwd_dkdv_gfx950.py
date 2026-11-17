@@ -58,7 +58,7 @@ behind it are recorded there.
 from dataclasses import dataclass, fields, replace
 
 from fmha_traits_gfx950 import ParityDualwaveTraits, make_traits
-from fmha_tuning_gfx950 import GRID_AXIS_HEAD_FASTEST
+from fmha_knobs_gfx950 import BwdDkDvKnobFields
 
 __all__ = [
     "LADDER",
@@ -583,7 +583,7 @@ class BwdDkDvInputMetadata:
 
 
 @dataclass(frozen=True)
-class BwdDkDvKnobs:
+class BwdDkDvKnobs(BwdDkDvKnobFields):
     """How to compute it. `None` means "policy decides".
 
     `None` rather than a literal default for the same reason as the forward's
@@ -591,44 +591,9 @@ class BwdDkDvKnobs:
     caller did not say".
     """
 
-    block_dmodel: int | None = None
-    block_dmodel_v: int | None = None
-    padded_head: bool | None = None
-    hdim_qk_floor: int | None = None
-
-    # Pinned as a set of four; see `_with_geometry`.
-    num_waves: int | None = None
-    block_kv: int | None = None
-    block_q: int | None = None
-    head_dim_granule: int | None = None
-
-    # Per-width policy a sweep wants to vary on its own, so not part of the
-    # four-field set above.
-    dkv_shards: int | None = None
-    mfma_rows: int | None = None
-    num_stream_buffers: int | None = None
-    waves_per_eu: int | None = None
-    tight_registers: bool | None = None
-
-    daz: bool | None = None
-    strides_constexpr: bool | None = None
-
-    # Which quantity lands on which grid axis; the enum is documented in
-    # `fmha_tuning_gfx950`. Set by `resolve`, never by a caller. Upper case
-    # because the field name is the wire key the C++ side reads back. **Note
-    # the head here is the *kv* head**, which is what the GQA fold made it.
-    GRID_AXIS_ORDER: int | None = None
-
     # There is deliberately no `traits` field: a knob class is plain build
     # options, every value a scalar, so the set can be recorded beside the
     # compiled hsaco in a flat `k=v` wire format. `build_traits` derives them.
-
-    def merge(self, other):
-        """`other`'s set fields win; its `None`s leave this one's alone."""
-        if other is None:
-            return self
-        set_fields = {f.name: getattr(other, f.name) for f in fields(other) if getattr(other, f.name) is not None}
-        return replace(self, **set_fields)
 
     def resolve(self, meta: BwdDkDvInputMetadata) -> "BwdDkDvKnobs":
         """The complete build configuration for `meta`, traits included.
@@ -811,7 +776,7 @@ class BwdDkDvKnobs:
         the forward and dQ share.
         """
         self.build_traits(meta)
-        return replace(self, GRID_AXIS_ORDER=GRID_AXIS_HEAD_FASTEST)
+        return self.with_flyc_fields()
 
     def build_traits(self, meta):
         """The traits this configuration implies. **The one knob->traits map.**

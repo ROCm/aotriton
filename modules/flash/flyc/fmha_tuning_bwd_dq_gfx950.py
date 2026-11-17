@@ -42,6 +42,7 @@ had to stop stating in prose.
 
 from dataclasses import dataclass, fields, replace
 
+from fmha_knobs_gfx950 import BwdDqKnobFields
 from fmha_traits_gfx950 import ParityDualwaveTraits, make_traits
 from fmha_tuning_gfx950 import LADDER, Gfx950Knobs, tile_width_for
 
@@ -304,20 +305,13 @@ def make_bwd_dq_traits(*, store_db=False, hdim_vo_floor=0, mfma_shape=(32, 32, 1
 
 
 @dataclass(frozen=True)
-class BwdDqKnobs(Gfx950Knobs):
+class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
     """The forward's knob pipeline, with the dQ build axes added.
 
     `resolve` is inherited whole; only the last step (`build_traits`) is
     replaced, because the pipeline before it -- mode checks, the ladder, the
     wave geometry -- asks exactly the same questions for the backward.
     """
-
-    store_db: bool | None = None
-
-    # 32 or 16. The MFMA's N extent, which is the query rows one wave owns --
-    # `_with_wave_geometry` turns it into the shape and the KV tile together,
-    # because at 16 rows `BLOCK_N` is not free.
-    mfma_rows: int | None = None
 
     # The forward's list plus the two-wave points. **Not a relaxation of the
     # check** -- the check exists because `_k_dma_m0_base` assumes one DMA

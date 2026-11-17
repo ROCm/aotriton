@@ -47,6 +47,7 @@ floor, and it is an instruction limit rather than a staging one.
 
 from dataclasses import dataclass, fields, replace
 
+from fmha_knobs_gfx950 import Gfx950KnobFields
 from fmha_traits_gfx950 import make_traits
 
 __all__ = [
@@ -144,32 +145,11 @@ LADDER_PLANNED = ()
 # Granule 64 with BLOCK_N 64 is one point in that space, not the only one.
 DEFAULT_HEAD_DIM_GRANULE = 64
 
-# ---------------------------------------------------------------------------
-# The grid axis order, as a knob
-# ---------------------------------------------------------------------------
-#
-# **A consumer that computes the launch grid itself needs this, and cannot see
-# it.** AOTriton dispatches the hsaco directly and computes the grid in C++; it
-# never runs our `@flyc.jit` launcher, so every decision the launcher makes
-# about which quantity lands on which grid axis has to travel in the knob set.
-# The alternative is an `if (arch == ...)` on their side, which silently rots
-# the next time this is re-measured.
-#
-# The mapping *is* the interface, so it is written here rather than inferred:
-#
-#   0  HEAD_FASTEST  grid = (head, tile_blocks, batch_or_seq)
-#   1  TILE_FASTEST  grid = (tile_blocks, head, batch_or_seq)
-#
-# "head" is the q head for the forward and dQ, the **kv** head for dK/dV, which
-# is what the GQA fold made it. All three gfx950 launchers are HEAD_FASTEST;
-# gfx1201's dK/dV is TILE_FASTEST, chosen there for causal load balance.
-#
-# gfx950 measured the other order and rejected it: KV-fastest was 12-15% slower
-# at every rung, because MI355X's eight XCDs make this an L2-locality lever
-# rather than a duration-spreading one. That measurement is why the value is a
-# recorded knob and not a constant someone can quietly re-derive.
-GRID_AXIS_HEAD_FASTEST = 0
-GRID_AXIS_TILE_FASTEST = 1
+# The grid axis order is `GRID_AXIS_HEAD_FASTEST` (see `fmha_knobs`), and it is a
+# recorded knob rather than a constant someone can quietly re-derive: gfx950
+# measured the other order and rejected it. KV-fastest was 12-15% slower at
+# every rung, because MI355X's eight XCDs make this an L2-locality lever rather
+# than a duration-spreading one.
 
 # The PV MFMA is `v_mfma_f32_32x32x16`, whose output is 32 D columns wide, so
 # `D_CHUNKS = head_dim / 32` cannot go below 1. **This is what makes a granule
@@ -264,7 +244,7 @@ class FmhaInputMetadata:
 
 
 @dataclass(frozen=True)
-class FmhaKnobs:
+class FmhaKnobs(Gfx950KnobFields):
     """How to compute it, arch-neutral part. `None` means "policy decides".
 
     `None` rather than a literal default on purpose: it is the only way
@@ -274,53 +254,6 @@ class FmhaKnobs:
     Subclass per arch and implement `resolve`. Nothing may be added here that
     only one arch understands -- that is what the subclass is for.
     """
-
-    # Compile-time widths. `block_dmodel` is the tile the hsaco serves; the
-    # *real* extent travels as a runtime argument, which `padded_head` records.
-    block_dmodel: int | None = None
-    block_dmodel_v: int | None = None
-    padded_head: bool | None = None
-
-    # A compile-time *lower* bound on the runtime `hdim_qk`, exclusive. The
-    # build promises nothing about hdim at or below it, and the dispatcher
-    # rejects a call that violates it, so the kernel may treat D columns below
-    # it as real data and skip masking them.
-    #
-    # Derived, not a taste knob, but pinnable to 0 to force the old
-    # mask-everything behaviour if a floor is ever suspected of hiding a bug.
-    hdim_qk_floor: int | None = None
-
-    # There is no `hdim_mode`. A `"runtime_qk_steps"` mode used to be declared
-    # here -- shorten the QK reduction to `ceil(hdim_qk/16)` MFMA K-steps at
-    # runtime, against `"zero_fill"`'s tile-shaped count -- and it was **never
-    # implemented**: the flag threaded through three files into
-    # `ctx.RUNTIME_QK_STEPS`, which nothing read. The two modes produced
-    # byte-identical ISA.
-    #
-    # Deleted rather than implemented, because measurement says it was aimed at
-    # the wrong term. At head_dim 32 in the 64 tile the padded build has the
-    # same 96 MFMAs as an unpadded 64 -- the 2x waste is real -- but it also has
-    # 565 `v_cndmask` against 145 and 3584 instructions against 2562. The
-    # masking, not the MFMA count, is what makes head_dim 32 *slower in
-    # wall-clock* than head_dim 64 (185 us against 155). Shortening QK would cut
-    # 8 of the 16 MFMAs per tile and leave that untouched.
-    #
-    # The fix that would matter is a tile that does not pad: `PV_MFMA_N` is 32
-    # and `K_STEP_QK` is 16, so rungs at multiples of 32 are legal in principle
-    # and need only granule-32 staging (family S).
-
-    # Whether the strides fold to literals. False is the parity ABI; True
-    # exists so the fast path can be shown to emit unchanged code.
-    strides_constexpr: bool | None = None
-
-    return_lse: bool | None = None
-
-    def merge(self, other):
-        """`other`'s set fields win; its `None`s leave this one's alone."""
-        if other is None:
-            return self
-        set_fields = {f.name: getattr(other, f.name) for f in fields(other) if getattr(other, f.name) is not None}
-        return replace(self, **set_fields)
 
     def resolve(self, meta: FmhaInputMetadata):
         raise NotImplementedError(f"{type(self).__name__} does not implement resolve()")
@@ -404,50 +337,6 @@ class Gfx950Knobs(FmhaKnobs):
     with the lengths arriving at runtime no build can know whether
     `seqlen_q == seqlen_k`. `make_traits` emits both as constants.
     """
-
-    # Dual-wave schedule.
-    waves_per_eu: int | None = None
-    daz: bool | None = None
-    lazy_rescale: bool | None = None
-    setprio: bool | None = None
-    stagger: bool | None = None
-    lpt_tile_order: bool | None = None
-
-    # Problem modes. Ordinary fields; see the class docstring.
-    paged: bool | None = None
-    kv_cache_layout: str | None = None
-    num_kv_splits: int | None = None
-
-    # Wave geometry. `None` means "the family for this tile width", which is
-    # what `_with_wave_geometry` decides. Pinnable so a sweep can cross a
-    # family boundary without editing the table.
-    num_waves: int | None = None
-    block_m: int | None = None
-    block_n: int | None = None
-    head_dim_granule: int | None = None
-
-    # The two D-axis splits. Deliberately *not* part of the four-field geometry
-    # pinning rule above: those four are one indivisible choice (a family),
-    # while these are per-width policy that a sweep wants to vary on its own.
-    # `None` means "the width decides", as everywhere else here.
-    d_stages: int | None = None
-    qk_shards: int | None = None
-    vo_shards: int | None = None
-
-    # The four V-layout constants whose formula family A cannot pin down; see
-    # `make_traits`. Exposed so a sweep can settle them by measurement instead
-    # of picking one. `None` keeps the default formula.
-    v_half_wave: int | None = None
-    v_n_group: int | None = None
-    v_k_substep: int | None = None
-    v_dc_in_pair: int | None = None
-
-    # Which quantity lands on which grid axis; see `GRID_AXIS_HEAD_FASTEST`.
-    # Set by `resolve`, never by a caller -- it is a property of the launcher,
-    # not a choice. **Spelled in upper case against the convention here** because
-    # the field name is the wire key: the C++ side reads it back as
-    # `perf().get_int("GRID_AXIS_ORDER")`.
-    GRID_AXIS_ORDER: int | None = None
 
     # There is deliberately no `traits` field. **A knob class is plain build
     # options, every value a scalar**, which is what gfx1201's `FmhaKnobs` is
@@ -791,7 +680,7 @@ class Gfx950Knobs(FmhaKnobs):
         See `resolve` for why the traits object is discarded here.
         """
         self.build_traits(meta)
-        return replace(self, GRID_AXIS_ORDER=GRID_AXIS_HEAD_FASTEST)
+        return self.with_flyc_fields()
 
     def build_traits(self, meta):
         """The dualwave traits this configuration implies. **The one mapping.**

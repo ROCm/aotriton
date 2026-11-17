@@ -56,7 +56,9 @@ decomposition knobs are for, and the crossovers are all spill boundaries:
 `is_wide` is that last threshold. Nothing here is keyed on `causal`.
 """
 
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, replace
+
+from fmha_knobs_gfx1201 import BwdDkDvKnobs
 
 # One wave owns one WMMA M tile of KV rows. Not a knob: it is the instruction.
 ROWS_PER_WAVE = 16
@@ -422,61 +424,6 @@ class BwdDkDvMetadata:
     bias: bool = False
 
 
-@dataclass(frozen=True)
-class BwdDkDvKnobs:
-    """How to compute it. Every field `None` means "policy decides"."""
-
-    # Compile-time widths baked into the binary; the real extents ride along as
-    # runtime `hdim_qk` / `hdim_vo` arguments and `padded_head` records whether
-    # they differ.
-    block_dmodel: int | None = None
-    block_dmodel_v: int | None = None
-
-    block_m: int | None = None
-    num_waves: int | None = None
-    lpt_tile_order: bool | None = None
-    split_head_dim: bool | None = None
-
-    # Read only by `fmha_bwd_dkdv512_gfx1201_kernel`, the wide-head_dim variant.
-    # They live here rather than in a parallel dataclass so that `plan()` and
-    # `resolve_knobs` serve both kernels; the primary kernel ignores them, and
-    # their defaults are what it would have done anyway.
-    #
-    #   contraction_shards  ways the S / dP contraction is split across a team.
-    #                       1 is the primary kernel's role-only pair.
-    #   transposed_source   "tile" stages Q^T/dO^T in LDS; "derived" reads the
-    #                       same operands strided out of the row-major tiles and
-    #                       does not allocate them.
-    contraction_shards: int | None = None
-    transposed_source: str | None = None
-
-    # Function attributes and floating-point latitude. Same three-level split
-    # as the forward's: `fp_mode` is the explicit flag set on the softmax-ish
-    # arithmetic, `fast_fp_math` the ambient default, `unsafe_fp_math` a
-    # whole-compilation backend option.
-    waves_per_eu: int | None = None
-    sched_strategy: str | None = None
-    fp_mode: str | None = None
-    denormals_are_zero: bool | None = None
-    unsafe_fp_math: bool | None = None
-    fast_fp_math: bool | None = None
-
-    # Whether the Q/dO address hoists `row * stride_seq` out of the loop. See
-    # `kv_off` in `fmha_common_gfx1201.make_addr_pair`.
-    addr_hoist: bool | None = None
-
-    # Derived, not chosen: true when the caller's head_dim is not itself a
-    # compiled tile width.
-    padded_head: bool | None = None
-
-    def merge(self, other: "BwdDkDvKnobs | None") -> "BwdDkDvKnobs":
-        """`other`'s set fields win; its `None`s leave this one's alone."""
-        if other is None:
-            return self
-        set_fields = {f.name: getattr(other, f.name) for f in fields(other) if getattr(other, f.name) is not None}
-        return replace(self, **set_fields)
-
-
 _KNOBS_FALLBACK = BwdDkDvKnobs(
     lpt_tile_order=_DEFAULT_LPT_TILE_ORDER,
     # "noninf" and not "fast": `ninf` lets the compiler assume no operand is
@@ -526,7 +473,11 @@ def resolve_knobs(meta: BwdDkDvMetadata, overrides: "BwdDkDvKnobs | None" = None
             f"{lds_bytes(s.block_m, hd, hdv, 2, s.num_waves, s.split_head_dim, s.transposed_source)} B of LDS, "
             f"over the {_LDS_LIMIT} B cap"
         )
-    return s
+    # What the grid's x extent divides Max_seqlen_k by. The builder derives the same
+    # value as `ROWS_PER_WAVE * NUM_TEAMS`; keep the two in step on every re-sync.
+    team_waves = 2 * s.contraction_shards if s.split_head_dim else 1
+    s = replace(s, block_kv=ROWS_PER_WAVE * (s.num_waves // team_waves))
+    return s.with_flyc_fields()
 
 
 @dataclass(frozen=True)

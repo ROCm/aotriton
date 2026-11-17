@@ -28,7 +28,9 @@ deciding whether a change needs a benchmark or a correctness argument:
   because the policy functions call them.
 """
 
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, replace
+
+from fmha_knobs_gfx1201 import FmhaKnobs
 
 # ---------------------------------------------------------------------------
 # Tuning policy
@@ -434,83 +436,6 @@ class FmhaInputMetadata:
     philox_width: int | None = None
 
 
-@dataclass(frozen=True)
-class FmhaKnobs:
-    """How to compute it. Every field `None` means "policy decides".
-
-    `None` rather than a literal default on purpose: it is the only way
-    `resolve_knobs` can tell "the caller wants 1" from "the caller did not
-    say", and that difference is the whole point of the overrides argument.
-    """
-
-    # Compile-time widths, baked into the binary. BLOCK_DMODEL is the maximum
-    # head_dim the resulting hsaco can serve; the *real* extent travels as a
-    # runtime argument and may be smaller, which is what `padded_head` records.
-    # They are knobs and not input metadata because only the ladder decides
-    # them, and the ladder is this module's.
-    block_dmodel: int | None = None
-    block_dmodel_v: int | None = None
-    d_offset: int | None = None
-
-    block_m: int | None = None
-    block_n: int | None = None
-    k_prefetch_dist: int | None = None
-    v_prefetch_dist: int | None = None
-    v_lds_layout: str | None = None
-    row_subtiles: int | None = None
-    waves_per_eu: int | None = None
-    kv_addr_hoist: bool | None = None
-
-    # The two knobs `resolve_knobs` cannot fill. Both are derived from
-    # NUM_WAVES, which the builder computes from the shard count and the tile
-    # geometry, so filling them here would mean duplicating that derivation.
-    # `None` means "derive it"; every other field is guaranteed resolved.
-    flat_work_group_size: int | None = None
-    shards: int | None = None
-    sched_strategy: str | None = None
-
-    # Three floating-point knobs, which looks like two too many until you see
-    # that they act at three different levels:
-    #
-    #   fp_mode        the explicit `arith.FastMathFlags` set put on the
-    #                  *softmax* operations -- "fast", "noninf" or "safe".
-    #                  This is the one that has been measured; "fast" includes
-    #                  `ninf`, which silently deleted the KV tail mask once.
-    #   fast_fp_math   the *ambient* fastmath for traced operations that do not
-    #                  carry their own flags (`effective_fastmath_hint`).
-    #   unsafe_fp_math a ROCm *backend* option, `unsafe-math`, applied to the
-    #                  whole compilation (`compiler/backends/rocm.py`).
-    #
-    # So they are per-op, per-op-default and whole-compilation respectively.
-    # Only `fp_mode` is ever varied in practice; the other two have been True
-    # for every build ever made here, which means their effect is measured only
-    # in combination and collapsing them would need its own experiment.
-    fp_mode: str | None = None
-    denormals_are_zero: bool | None = None
-    unsafe_fp_math: bool | None = None
-    fast_fp_math: bool | None = None
-    strides_constexpr: bool | None = None
-
-    # Derived, not chosen: true when the caller's head_dim is not itself a
-    # compiled tile width, so the kernel computes ceil-to-tile columns and
-    # masks the difference. It lives here rather than with the caller's inputs
-    # because deciding it needs the ladder -- the set of every width that
-    # exists -- which is knowledge only this module has.
-    padded_head: bool | None = None
-    lpt_tile_order: bool | None = None
-    unsafe_no_kv_clamp: bool | None = None
-    path_tag: str | None = None
-
-    def merge(self, other: "FmhaKnobs | None") -> "FmhaKnobs":
-        """`other`'s set fields win; its `None`s leave this one's alone."""
-        if other is None:
-            return self
-        set_fields = {f.name: getattr(other, f.name) for f in fields(other) if getattr(other, f.name) is not None}
-        return replace(self, **set_fields)
-
-
-# Defaults for the knobs the policy has no opinion about -- they are the same
-# for every shape, so they are literals here rather than functions.
 _KNOBS_FALLBACK = FmhaKnobs(
     v_prefetch_dist=1,
     waves_per_eu=2,
@@ -580,7 +505,7 @@ def resolve_knobs(meta: FmhaInputMetadata, overrides: "FmhaKnobs | None" = None)
         # BLOCK_M is invariant to row_subtiles by construction; see the
         # Q_TILES_PER_BLOCK comment in the kernel.
         s = replace(s, block_m=default_block_m(hd, s.k_prefetch_dist))
-    return s
+    return s.with_flyc_fields()
 
 
 @dataclass(frozen=True)

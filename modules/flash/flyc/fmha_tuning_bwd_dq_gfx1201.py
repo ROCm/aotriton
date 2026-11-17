@@ -28,7 +28,9 @@ alternatives closer than that are not separated. The effects kept below are
 much larger than that where they matter at all.
 """
 
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, replace
+
+from fmha_knobs_gfx1201 import BwdDqKnobs
 
 # ---------------------------------------------------------------------------
 # The compiled tile widths.
@@ -337,51 +339,6 @@ class BwdDqInputMetadata:
     bias: bool = False
 
 
-@dataclass(frozen=True)
-class BwdDqKnobs:
-    """How to compute it. Every field `None` means "policy decides"."""
-
-    # Compile-time width baked into the binary. The *real* extent travels as a
-    # runtime argument and may be smaller, which is what `padded_head` records.
-    block_dmodel: int | None = None
-
-    block_m: int | None = None
-    block_n: int | None = None
-    num_waves: int | None = None
-    # Waves cooperating on one Q row sub-tile. `num_waves // shards` Q row
-    # sub-tiles per workgroup, hence `block_m = 16 * num_waves // shards`.
-    shards: int | None = None
-    kt_lds_layout: str | None = None
-    kv_addr_hoist: bool | None = None
-    kv_prefetch_dist: int | None = None
-
-    waves_per_eu: int | None = None
-    flat_work_group_size: int | None = None
-    sched_strategy: str | None = None
-
-    # Three floating-point knobs acting at three levels; see the forward tuning
-    # module's note. Only `fp_mode` is ever varied in practice.
-    #
-    # "noninf" is load-bearing here for the same reason it is there and one
-    # more: this kernel writes -inf into the scores of masked columns *and*
-    # reads a +inf logsumexp for rows the forward found no keys for. `ninf`
-    # licenses the compiler to assume neither exists.
-    fp_mode: str | None = None
-    denormals_are_zero: bool | None = None
-    unsafe_fp_math: bool | None = None
-    fast_fp_math: bool | None = None
-
-    padded_head: bool | None = None
-    lpt_tile_order: bool | None = None
-
-    def merge(self, other: "BwdDqKnobs | None") -> "BwdDqKnobs":
-        """`other`'s set fields win; its `None`s leave this one's alone."""
-        if other is None:
-            return self
-        set_fields = {f.name: getattr(other, f.name) for f in fields(other) if getattr(other, f.name) is not None}
-        return replace(self, **set_fields)
-
-
 _KNOBS_FALLBACK = BwdDqKnobs(
     kt_lds_layout=_DEFAULT_KT_LDS_LAYOUT,
     kv_prefetch_dist=_DEFAULT_KV_PREFETCH_DIST,
@@ -448,7 +405,7 @@ def resolve_knobs(meta: BwdDqInputMetadata, overrides: "BwdDqKnobs | None" = Non
                 f"({s.num_waves}) / shards ({s.shards}); one wave owns 16 rows "
                 f"of one head-dim shard"
             )
-    return s
+    return s.with_flyc_fields()
 
 
 @dataclass(frozen=True)
