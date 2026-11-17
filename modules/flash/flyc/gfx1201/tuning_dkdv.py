@@ -3,7 +3,7 @@
 
 """Tuning policy for the gfx1201 dK/dV backward kernel: which knobs, which shape.
 
-Same split as `fmha_tuning_gfx1201.py` and for the same reason -- the kernel
+Same split as `tuning_fwd.py` and for the same reason -- the kernel
 file is about correctness and this one is about speed, and a number here moves
 when a sweep says so. It imports nothing from `flydsl`, so it is trivially
 stable-only and importable from anywhere.
@@ -59,7 +59,7 @@ decomposition knobs are for, and the crossovers are all spill boundaries:
 from dataclasses import dataclass, replace
 
 from fmha_knobs import pinned
-from fmha_knobs_gfx1201 import BwdDkDvKnobs
+from .knobs import BwdDkDvKnobs
 
 # One wave owns one WMMA M tile of KV rows. Not a knob: it is the instruction.
 ROWS_PER_WAVE = 16
@@ -220,7 +220,7 @@ def default_contraction_shards(head_dim: int, head_dim_v: int) -> int:
 
     4 shards is worse again (15.5% at head_dim 512) despite being the only
     spill-free build there. `BLOCK_N` drops to 32 and the Q traffic swamps the
-    registers saved -- the same trade `fmha_tuning_bwd_dq_gfx1201` records at
+    registers saved -- the same trade `tuning_dq` records at
     its own BLOCK_M, where 16 cost it 2.2x.
     """
     return 2 if is_wide(head_dim, head_dim_v) else 1
@@ -512,7 +512,7 @@ def plan(request: BwdDkDvMetadata, overrides: BwdDkDvKnobs | None = None) -> Bwd
 
     The rounding up to a compiled tile lands in `BwdDkDvPlan.meta.block_dmodel`
     and `block_dmodel_v`, and `meta.padded_head` records whether the real
-    extents differ -- exactly as `fmha_tuning_gfx1201.plan` does, so the two
+    extents differ -- exactly as `tuning_fwd.plan` does, so the two
     passes round a given head_dim the same way. All three overwrite whatever
     `request` carried.
     """
@@ -557,5 +557,5 @@ def entry_resolve(meta, *, overrides=None) -> BwdDkDvKnobs:
 
 
 def entry_build(meta, knobs: BwdDkDvKnobs):
-    from fmha_bwd_dkdv_gfx1201_kernel import build_bwd_dkdv_module_primary
+    from .dkdv import build_bwd_dkdv_module_primary
     return build_bwd_dkdv_module_primary(_entry_meta(meta), knobs)

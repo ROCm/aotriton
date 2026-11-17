@@ -78,7 +78,7 @@ class FmhaKnobs(FlycQKnobs):
 # Defaults for the knobs the policy has no opinion about -- they are the same
 # for every shape, so they are literals here rather than functions.
 
-    FLYC_SOURCE = "flash_attn_func_gfx1201_aiw.py"
+    FLYC_SOURCE = "gfx1201/fwd.py"
     FLYC_KERNEL_NAME = "flash_attn_func_aiw_kernel"
     FLYC_GRID_AXIS_ORDER = GRID_AXIS_HEAD_FASTEST
 
@@ -114,7 +114,7 @@ class BwdDqKnobs(FlycQKnobs):
 
     lpt_tile_order: bool | None = None
 
-    FLYC_SOURCE = "fmha_bwd_dq_gfx1201_kernel.py"
+    FLYC_SOURCE = "gfx1201/dq.py"
     FLYC_KERNEL_NAME = "bwd_dq_kernel"
     FLYC_GRID_AXIS_ORDER = GRID_AXIS_HEAD_FASTEST
 
@@ -153,9 +153,9 @@ class BwdDkDvKnobs(FlycKVKnobs):
     fast_fp_math: bool | None = None
 
     # Whether the Q/dO address hoists `row * stride_seq` out of the loop. See
-    # `kv_off` in `fmha_common_gfx1201.make_addr_pair`.
+    # `kv_off` in `utils.make_addr_pair`.
     addr_hoist: bool | None = None
 
-    FLYC_SOURCE = "fmha_bwd_dkdv_gfx1201_kernel.py"
+    FLYC_SOURCE = "gfx1201/dkdv.py"
     FLYC_KERNEL_NAME = "bwd_dkdv_kernel"
     FLYC_GRID_AXIS_ORDER = GRID_AXIS_TILE_FASTEST

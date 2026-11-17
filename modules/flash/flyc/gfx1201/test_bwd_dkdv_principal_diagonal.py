@@ -29,8 +29,7 @@ Requires a gfx1201 device, `AOTRITON_FLYDSL_KERNEL_ROOT`, and a ROCm the
 FlyDSL compiler can link against; skips cleanly without any of them.
 
     AOTRITON_FLYDSL_KERNEL_ROOT=<flydsl-checkout> \\
-    FLYDSL_EXTRA_SOURCE_DIRS=$PWD/modules/flash/flyc \\
-        python -m pytest modules/flash/flyc/test_bwd_dkdv_principal_diagonal_gfx1201.py
+        python -m pytest modules/flash/flyc/gfx1201/test_bwd_dkdv_principal_diagonal.py
 """
 
 import functools
@@ -40,8 +39,8 @@ import sys
 
 import pytest
 
-# See test_fwd_masked_lse_gfx950.py: the vendored kernels are this directory,
-# which pytest puts on sys.path; the FlyDSL checkout supplies `kernels.common`.
+# See gfx950/test_fwd_masked_lse.py for the kernels' imports; the FlyDSL
+# checkout supplies `kernels.common`.
 _KERNEL_ROOT = os.environ.get("AOTRITON_FLYDSL_KERNEL_ROOT")
 if _KERNEL_ROOT and _KERNEL_ROOT not in sys.path:
     sys.path.append(_KERNEL_ROOT)
@@ -146,7 +145,7 @@ def _reference(q, k, v, do, window, p):
 
 @functools.lru_cache(maxsize=None)
 def _exe():
-    from fmha_bwd_dkdv_gfx1201_kernel import build_bwd_dkdv_module
+    from .dkdv import build_bwd_dkdv_module
 
     return build_bwd_dkdv_module(
         num_heads=NUM_HEADS_Q,
@@ -159,14 +158,14 @@ def _exe():
 
 def _pd(p):
     """The `abi.VARLEN_PRINCIPAL_DIAGONAL_*` value for bit value `p`."""
-    import fmha_abi_gfx1201 as abi
+    import fmha_utils as abi
 
     return abi.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT if p else abi.VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT
 
 
 def _dense_word(p):
     """A dense VarlenBits word carrying bit value `p`."""
-    import fmha_abi_gfx1201 as abi
+    import fmha_utils as abi
 
     return abi.varlen_dense(principal_diagonal=_pd(p))
 
@@ -277,7 +276,7 @@ def _cu(lens):
 @pytest.mark.parametrize("lens_q,lens_k", VARLEN_BATCHES)
 def test_varlen_compact(lens_q, lens_k, window, p):
     """Packed 1THD, `d` differing per sequence, the bit in `varlen["bits"]`."""
-    import fmha_abi_gfx1201 as abi
+    import fmha_utils as abi
 
     cq, ck = _cu(lens_q), _cu(lens_k)
     n = len(lens_q)

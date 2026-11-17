@@ -27,10 +27,10 @@ Two groups of tests:
   `seqlen_q <`, `==` and `> seqlen_k`, decode and chunked prefill. LSE and
   Delta come from torch, not from the forward kernel, so a failure here is
   this kernel's. Rows that see no key carry LSE `+inf` -- the forward's
-  contract (see `test_fwd_masked_lse_gfx950.py`) -- and must get dQ = 0.
+  contract (see `gfx950/test_fwd_masked_lse.py`) -- and must get dQ = 0.
 
     AOTRITON_FLYDSL_KERNEL_ROOT=<flydsl-checkout> \\
-        python -m pytest modules/flash/flyc/test_bwd_dq_principal_diagonal_gfx1201.py
+        python -m pytest modules/flash/flyc/gfx1201/test_bwd_dq_principal_diagonal.py
 """
 
 import math
@@ -41,8 +41,8 @@ from pathlib import Path
 
 import pytest
 
-# Bare-name imports of the vendored kernels, as in the other tests here; the
-# FlyDSL checkout supplies `kernels.common`.
+# Kernels imported as in the other tests here; the FlyDSL checkout supplies
+# `kernels.common`.
 _KERNEL_ROOT = os.environ.get("AOTRITON_FLYDSL_KERNEL_ROOT")
 if _KERNEL_ROOT and _KERNEL_ROOT not in sys.path:
     sys.path.append(_KERNEL_ROOT)
@@ -66,7 +66,7 @@ ATOL = 2e-2
 RTOL = 2e-2
 
 # The sentinel values, spelled here so that parametrize ids are readable and
-# collection does not import FlyDSL. Must equal `fmha_common_gfx1201`'s.
+# collection does not import FlyDSL. Must equal `fmha_utils`'s.
 WINDOW_TOPLEFT = -2147483647  # 0x80000001
 WINDOW_BOTRIGHT = -2147483646  # 0x80000002
 _SENTINELS = (WINDOW_TOPLEFT, WINDOW_BOTRIGHT)
@@ -153,7 +153,7 @@ def _reference(q, k, v, do, keep, sm_scale):
 
 @pytest.fixture(scope="module")
 def dq_fn():
-    import fmha_bwd_dq_gfx1201_kernel as kernel
+    from . import dq as kernel
 
     return kernel.build_bwd_dq_module(num_heads=NUM_HEADS,
                                       head_dim=HEAD_DIM,
@@ -164,10 +164,10 @@ def dq_fn():
 
 @pytest.fixture(scope="module")
 def abi():
-    import fmha_abi_gfx1201
+    import fmha_utils
 
-    assert fmha_abi_gfx1201.CAUSAL_SENTINEL == {1: WINDOW_TOPLEFT, 2: WINDOW_BOTRIGHT}
-    return fmha_abi_gfx1201
+    assert fmha_utils.CAUSAL_SENTINEL == {1: WINDOW_TOPLEFT, 2: WINDOW_BOTRIGHT}
+    return fmha_utils
 
 
 def _bits(abi, p):

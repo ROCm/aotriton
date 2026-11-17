@@ -3,7 +3,7 @@
 
 """Tuning policy for the gfx1201 attention kernel: which knobs, for which shape.
 
-Split out of `flash_attn_func_gfx1201_aiw.py` so that the kernel file is about
+Split out of `fwd.py` so that the kernel file is about
 correctness and this one is about speed. They change for different reasons and
 on different evidence -- a number here moves when a sweep says so, and nothing
 here can make the kernel *wrong*, only slow.
@@ -31,7 +31,7 @@ deciding whether a change needs a benchmark or a correctness argument:
 from dataclasses import dataclass, replace
 
 from fmha_knobs import pinned
-from fmha_knobs_gfx1201 import FmhaKnobs
+from .knobs import FmhaKnobs
 
 # ---------------------------------------------------------------------------
 # Tuning policy
@@ -587,5 +587,5 @@ def entry_resolve(meta, *, overrides=None) -> FmhaKnobs:
 
 
 def entry_build(meta, knobs: FmhaKnobs):
-    from flash_attn_func_gfx1201_aiw import build_flash_attn_func_aiw_module_primary
+    from .fwd import build_flash_attn_func_aiw_module_primary
     return build_flash_attn_func_aiw_module_primary(_entry_meta(meta), knobs)

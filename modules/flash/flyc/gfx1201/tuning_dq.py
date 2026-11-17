@@ -3,8 +3,8 @@
 
 """Tuning policy for the gfx1201 backward-dQ kernel: which knobs, for which shape.
 
-Split out of ``fmha_bwd_dq_gfx1201_kernel.py`` the way
-``fmha_tuning_gfx1201.py`` is split out of the forward kernel, and for the same
+Split out of ``dq.py`` the way
+``tuning_fwd.py`` is split out of the forward kernel, and for the same
 reason: the kernel file is about correctness and this one is about speed. They
 change on different evidence -- a number here moves when a sweep says so, and
 nothing here can make a build *wrong*, only slow.
@@ -31,7 +31,7 @@ much larger than that where they matter at all.
 from dataclasses import dataclass, replace
 
 from fmha_knobs import pinned
-from fmha_knobs_gfx1201 import BwdDqKnobs
+from .knobs import BwdDqKnobs
 
 # ---------------------------------------------------------------------------
 # The compiled tile widths.
@@ -274,7 +274,7 @@ def default_block_n(head_dim: int, causal: bool) -> int:
 
 
 # Whether the KV address hoists `row * stride_seq` out of the loop; see
-# `kv_off` in `fmha_common_gfx1201.make_addr_pair` for the two forms.
+# `kv_off` in `utils.make_addr_pair` for the two forms.
 #
 # The forward keys this off head_dim from a measured table. Copying its table
 # would be borrowing a conclusion rather than a fact -- the two kernels have
@@ -477,5 +477,5 @@ def entry_resolve(meta, *, overrides=None) -> BwdDqKnobs:
 
 
 def entry_build(meta, knobs: BwdDqKnobs):
-    from fmha_bwd_dq_gfx1201_kernel import build_bwd_dq_module_primary
+    from .dq import build_bwd_dq_module_primary
     return build_bwd_dq_module_primary(_entry_meta(meta), knobs)

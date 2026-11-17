@@ -874,7 +874,7 @@ def write_v8(aperture, write, row, col, val):
     A free function and not an `Aperture` method, like `stage` and `publish`
     and unlike `read_v8`: anything that emits a branch has to build the
     `scf.IfOp` itself, which only module-level code may do. Writing
-    `fmha.write_v8(ap, ...)` also keeps `ap` out of
+    `utils.write_v8(ap, ...)` also keeps `ap` out of
     `_collect_assigned_vars` -- `ap.write_v8(...)` inside a dynamic `if`
     would be collected as region state and make the enclosing `scf.if` yield
     the aperture back.

@@ -93,9 +93,9 @@ Grid:   (batch * num_q_tiles * num_heads,)
 import math as host_math
 from dataclasses import fields
 
-import fmha_abi_gfx1201 as abi
-import fmha_common_gfx1201 as fmha
-from fmha_tuning_gfx1201 import (  # noqa: F401
+import fmha_utils as fmha
+from . import utils
+from .tuning_fwd import (  # noqa: F401
     FmhaInputMetadata,
     FmhaKnobs,
     default_block_m,
@@ -154,21 +154,21 @@ def dtype_to_elem_type(dtype_str: str):
     raise ValueError(f"unsupported dtype: {dtype_str!r} (expected 'f32', 'f16', or 'bf16')")
 
 
-_COMPILED = abi.new_compiled_cache()
+_COMPILED = fmha.new_compiled_cache()
 
 
 def _pointer_load(result_type: ir.Type, ptr: ir.Value) -> ir.Value:
-    return _llvm.LoadOp(result_type, fmha.llvm_value(ptr)).result
+    return _llvm.LoadOp(result_type, utils.llvm_value(ptr)).result
 
 
 def _pointer_store(value: ir.Value, ptr: ir.Value):
-    return _llvm.StoreOp(fmha.llvm_value(value), fmha.llvm_value(ptr))
+    return _llvm.StoreOp(utils.llvm_value(value), utils.llvm_value(ptr))
 
 
 # Causal alignment as a *window* sentinel, AOTriton's `WindowValue`. These
 # occupy two values a real bound never takes, so `Window_left`/`Window_right`
 # stay plain signed integers rather than gaining a discriminant.
-# The sentinel values themselves live in `fmha_common_gfx1201`, beside the
+# The sentinel values themselves live in `fmha_utils`, beside the
 # kernel-side code that resolves them; the host only needs to emit them.
 _WINDOW_TOPLEFT = fmha.WINDOW_TOPLEFT
 _WINDOW_BOTRIGHT = fmha.WINDOW_BOTRIGHT
@@ -180,7 +180,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     Takes the two objects rather than 26 loose parameters, split on *who
     decides*: `problem` is what the caller asked for, `schedule` is what the
     tuning policy answered. Build `schedule` with
-    `fmha_tuning_gfx1201.resolve_knobs(problem)` -- every field must be
+    `tuning_fwd.resolve_knobs(problem)` -- every field must be
     resolved, since nothing here falls back to a policy any more.
 
     `build_flash_attn_func_aiw_module` below is the keyword-argument wrapper
@@ -304,7 +304,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     # ---- Validity predicate over the knob space ----
     #
     # Assertions, not ValueError: every name below was resolved by
-    # `fmha_tuning_gfx1201.resolve_knobs`, so a violation is that module
+    # `tuning_fwd.resolve_knobs`, so a violation is that module
     # contradicting itself, not a caller mistake. Caller input is validated
     # with ValueError in `plan()` and in the launcher.
     #
@@ -536,7 +536,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     # `nnan` (~0.6%).
     # Host-side: `fp_mode` is const_expr, so this is a Python object the kernel
     # body captures rather than a traced value.
-    fastmath = fmha.FastMath(FP_MODE)
+    fastmath = utils.FastMath(FP_MODE)
 
     # Two softmax corrections, unconditional. Both come from AOTriton's
     # hard-won list and there is no reason to keep the un-corrected form
@@ -662,7 +662,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     # of 8 elements (say a 16-wide head sliced out of a 24-wide allocation)
     # puts every odd row on a 16-byte boundary, and the wider load is then
     # undefined behaviour. This is the same over-promised-alignment failure
-    # documented on `fmha.lds_load_v8` for LDS, where it cost 2.2x.
+    # documented on `utils.lds_load_v8` for LDS, where it cost 2.2x.
     #
     # It is also not a win. Measured 8 against 16 (B=1 H=8 N=4096 f16, TFLOPS):
     #
@@ -683,7 +683,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     VEC_WIDTH = 8
 
     def _load_geom(width):
-        return fmha.load_geom(width, VEC_WIDTH, BLOCK_SIZE, BLOCK_N)
+        return utils.load_geom(width, VEC_WIDTH, BLOCK_SIZE, BLOCK_N)
 
     # Cover BLOCK_N rows with ceil() batches, not floor(). Flooring silently
     # dropped rows whenever K_ROWS_PER_BATCH neither reached BLOCK_N nor
@@ -785,11 +785,11 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         def _to_global_ptr_i64(ptr):
             return fx.as_ir_value(fx.Int64(fx.ptrtoint(ptr)))
 
-        q_ptr = fmha.pointer_to_llvm_ptr(Q)
-        k_ptr = fmha.pointer_to_llvm_ptr(K)
-        v_ptr = fmha.pointer_to_llvm_ptr(V)
+        q_ptr = utils.pointer_to_llvm_ptr(Q)
+        k_ptr = utils.pointer_to_llvm_ptr(K)
+        v_ptr = utils.pointer_to_llvm_ptr(V)
         v_ptr_i64 = _to_global_ptr_i64(V)
-        o_ptr = fmha.pointer_to_llvm_ptr(O)
+        o_ptr = utils.pointer_to_llvm_ptr(O)
         v8f16_type = Vec.make_type(8, elem_dtype)
         vxf16_type = Vec.make_type(VEC_WIDTH, elem_dtype)
 
@@ -828,7 +828,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         _lds_byte_base = fx.as_ir_value(fx.ptrtoint(lds_kv))
         _RED_BYTE0 = (LDS_V_BASE if RED_ALIASES_V else LDS_KV_TOTAL_SIZE - (RED_F32_TOTAL * 4 + 1) // 2) * 2
 
-        tid, wave_id, lane, lane16, klane = fmha.wave_lanes(WARP_SIZE)
+        tid, wave_id, lane, lane16, klane = utils.wave_lanes(WARP_SIZE)
 
         # (q_tile, shard) decomposition of the wave index. At QK_SHARDS == 1
         # this is q_tile == wave_id and shard == 0, i.e. the unsharded mapping.
@@ -986,7 +986,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         # worth naming rather than papering over: this makes the kernel
         # self-consistent, it does not settle what a packed bias should mean.
         if const_expr(BIAS_TYPE):
-            _b_ptr = fmha.pointer_to_llvm_ptr(B)
+            _b_ptr = utils.pointer_to_llvm_ptr(B)
             _b_base = (
                 _q_batch_v * fx.Index(stride_b_batch)
                 + head_q * fx.Index(stride_b_head)
@@ -1054,10 +1054,10 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
             hoist=KV_ADDR_HOIST,
             clamp=_KV_CLAMP,
         )
-        q_tbase, q_toff, _ = fmha.make_addr_pair(q_st, head_q, _q_batch_v, _q_row_off_v, **_addr_kw)
-        _, _, k_addr = fmha.make_addr_pair(k_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw)
-        _, _, v_addr = fmha.make_addr_pair(v_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw)
-        o_tbase, o_toff, _ = fmha.make_addr_pair(o_st, head_q, _q_batch_v, _q_row_off_v, **_addr_kw)
+        q_tbase, q_toff, _ = utils.make_addr_pair(q_st, head_q, _q_batch_v, _q_row_off_v, **_addr_kw)
+        _, _, k_addr = utils.make_addr_pair(k_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw)
+        _, _, v_addr = utils.make_addr_pair(v_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw)
+        o_tbase, o_toff, _ = utils.make_addr_pair(o_st, head_q, _q_batch_v, _q_row_off_v, **_addr_kw)
 
         # ---- PADDED_HEAD column handling ----
         #
@@ -1099,7 +1099,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         # Q and O get theirs when the per-wave load and the epilogue store move
         # behind the same interface; until then they would be objects with no
         # reader.
-        k_ap = fmha.Aperture(
+        k_ap = utils.Aperture(
             qk_cols,
             lds_base=0,
             lds_stride=K_STRIDE,
@@ -1109,7 +1109,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
             num_batches=NUM_BATCHES_K,
             needs_guard=K_NEEDS_GUARD,
         )
-        v_ap = fmha.Aperture(
+        v_ap = utils.Aperture(
             vo_cols,
             lds_base=LDS_V_BASE,
             lds_stride=VT_STRIDE if V_TRANSPOSED else V_STRIDE,
@@ -1121,10 +1121,10 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         )
 
         def _load_global_half_vec(ptr, base64, off32, vec_type):
-            return _pointer_load(vec_type, fmha.split_ptr(ptr, base64, off32, elem_type))
+            return _pointer_load(vec_type, utils.split_ptr(ptr, base64, off32, elem_type))
 
         def _store_global_half(ptr, base64, off32, val):
-            _pointer_store(val, fmha.split_ptr(ptr, base64, off32, elem_type))
+            _pointer_store(val, utils.split_ptr(ptr, base64, off32, elem_type))
 
         def load_global_f16xN(base_ptr, base64, off32):
             return _load_global_half_vec(base_ptr, base64, off32, vxf16_type)
@@ -1136,19 +1136,19 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         # instruction that consumes it. Each is `start -> (row, col) -> value`,
         # which is what every movement helper in `fmha_common` takes, so none
         # of them has to know that V^T uses a different instruction from V.
-        fetch_k = fmha.reader(k_addr, lambda b, o: load_global_f16xN(k_ptr, b, o))
-        fetch_v = fmha.reader(v_addr, lambda b, o: load_global_f16xN(v_ptr, b, o))
-        fetch_v_tr = fmha.reader(v_addr, lambda b, o: fmha.global_load_tr_v8(v_ptr_i64, b, o, v8f16_type))
+        fetch_k = utils.reader(k_addr, lambda b, o: load_global_f16xN(k_ptr, b, o))
+        fetch_v = utils.reader(v_addr, lambda b, o: load_global_f16xN(v_ptr, b, o))
+        fetch_v_tr = utils.reader(v_addr, lambda b, o: utils.global_load_tr_v8(v_ptr_i64, b, o, v8f16_type))
 
         # ---- K staging ----
 
         def coop_load_k_global(start_k):
             """Issue this thread's K global loads; results stay in registers."""
-            return fmha.read_batches(k_ap, fetch_k(start_k), load_row_in_batch, load_col_base)
+            return utils.read_batches(k_ap, fetch_k(start_k), load_row_in_batch, load_col_base)
 
         def coop_store_k_lds(vecs):
             """Distance-1 K staging: publish the tile loaded last iteration."""
-            fmha.publish(
+            utils.publish(
                 k_ap,
                 lds_kv,
                 vecs,
@@ -1159,7 +1159,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
 
         def coop_load_store_k(start_k):
             """Distance-0 K staging: load and store inside a single guard."""
-            fmha.stage(
+            utils.stage(
                 k_ap,
                 lds_kv,
                 fetch_k(start_k),
@@ -1178,10 +1178,10 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         # The lane offsets are two distinct mappings. The *load* pair is the
         # address each lane must supply so the hardware transpose lands the
         # right 16(d) x 16(kv) block in WMMA-operand order (derivation in
-        # `fmha.global_load_tr_v8`): within a group of 8 lanes the lane index
+        # `utils.global_load_tr_v8`): within a group of 8 lanes the lane index
         # picks the kv row and the group index picks the 8-wide d half. The
         # *store* pair is where the lane's transposed result then belongs.
-        v_tr = fmha.TransposedTiling(
+        v_tr = utils.TransposedTiling(
             d_blocks=V_TR_D_BLOCKS,
             tiles=_V_TR_TILES,
             loads=V_TR_LOADS,
@@ -1199,7 +1199,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         def coop_load_v_global(start_k, chunk=0):
             """V columns [chunk*VO_CHUNK_COLS, +VO_CHUNK_COLS) of this KV tile."""
             if const_expr(V_TRANSPOSED):
-                return fmha.read_transposed(
+                return utils.read_transposed(
                     v_ap,
                     v_tr,
                     fetch_v_tr(start_k),
@@ -1208,13 +1208,13 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
             col = v_col_base
             if const_expr(D_OFFSET):
                 col = fx.Index(D_OFFSET) + col
-            return fmha.read_batches_unmasked(v_ap, fetch_v(start_k), v_row_in_batch, col)
+            return utils.read_batches_unmasked(v_ap, fetch_v(start_k), v_row_in_batch, col)
 
         def coop_store_v_lds(vecs):
             if const_expr(V_TRANSPOSED):
-                fmha.publish_transposed(v_ap, v_tr, lds_kv, vecs)
+                utils.publish_transposed(v_ap, v_tr, lds_kv, vecs)
             else:
-                fmha.publish(
+                utils.publish(
                     v_ap,
                     lds_kv,
                     vecs,
@@ -1234,7 +1234,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         # hang past it. Unlike the column axes this is never inactive. Q is
         # read straight into registers, so its aperture has no LDS placement
         # and no cooperative geometry.
-        q_ap = fmha.Aperture(qk_cols, rows=fmha.MaskedAxis(fx.Index(seqlen_q_i32)))
+        q_ap = utils.Aperture(qk_cols, rows=fmha.MaskedAxis(fx.Index(seqlen_q_i32)))
         q_tile_base = q_tbase(_q_start_addr)
 
         def fetch_q(row, col):
@@ -1536,10 +1536,10 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
                     acc_idx_a = st_idx * 2
                     acc_idx_b = st_idx * 2 + 1
                     for qt in range_constexpr(ROW_SUBTILES):
-                        s_accs_all[qt][acc_idx_a] = fmha.wmma_acc(
+                        s_accs_all[qt][acc_idx_a] = utils.wmma_acc(
                             k_pack_a, q_b_packs_all[qt][ks], s_accs_all[qt][acc_idx_a]
                         )
-                        s_accs_all[qt][acc_idx_b] = fmha.wmma_acc(
+                        s_accs_all[qt][acc_idx_b] = utils.wmma_acc(
                             k_pack_b, q_b_packs_all[qt][ks], s_accs_all[qt][acc_idx_b]
                         )
 
@@ -1550,7 +1550,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
             # kernels/microbench/lds_reduce.py.
             if const_expr(QK_SHARDS > 1):
                 for qt in range_constexpr(ROW_SUBTILES):
-                    s_accs_all[qt] = fmha.reduce_s_across_shards(
+                    s_accs_all[qt] = utils.reduce_s_across_shards(
                         s_accs_all[qt],
                         lds_byte_base=_lds_byte_base,
                         byte0=_RED_BYTE0,
@@ -1670,7 +1670,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
                         _kv_i32 = fx.Int32(kv_block_start)
                         _klane_off = fx.Int32(klane) * fx.Int32(8)
                         for _i in range_constexpr(NUM_S_VALS):
-                            _bcol = _kv_i32 + fx.Int32(fmha.acc_elem_column(_i)) + _klane_off
+                            _bcol = _kv_i32 + fx.Int32(utils.acc_elem_column(_i)) + _klane_off
                             _bin = _bcol < seqlen_k_i32
                             _bsafe = _b_col0 + fx.Index(fx.Int32(_bcol) if _bin else fx.Int32(0))
                             _braw = fx.Float32(
@@ -1732,7 +1732,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
                     _klane_off = fx.Int32(klane) * fx.Int32(8)
                     _seq_i32 = seqlen_k_i32
                     for _i in range_constexpr(NUM_S_VALS):
-                        _col = _kv_i32 + fx.Int32(fmha.acc_elem_column(_i)) + _klane_off
+                        _col = _kv_i32 + fx.Int32(utils.acc_elem_column(_i)) + _klane_off
                         _dead = _col >= _seq_i32
                         if const_expr(CAUSAL):
                             # Both edges of the band. Signed throughout:
@@ -1810,7 +1810,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
                         p_slice = [p_vals[p_base + j] for j in range(8)]
 
                         if const_expr(dtype_str == "bf16"):
-                            p_packs_st.append(fmha.bf16_round_nonan_pack_v8(p_slice, elem_dtype))
+                            p_packs_st.append(utils.bf16_round_nonan_pack_v8(p_slice, elem_dtype))
                         else:
                             elem_list = []
                             for j in range_constexpr(8):
@@ -1861,7 +1861,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
                         # the V LDS reads per FLOP at ROW_SUBTILES > 1.
                         for st_idx in range_constexpr(COL_SUBTILES):
                             for qt in range_constexpr(ROW_SUBTILES):
-                                o_accs_all[qt][_vc * D_CHUNKS + dc] = fmha.wmma_acc(
+                                o_accs_all[qt][_vc * D_CHUNKS + dc] = utils.wmma_acc(
                                     cur_v_packs[st_idx],
                                     p_packs_all_qt[qt][st_idx][pks],
                                     o_accs_all[qt][_vc * D_CHUNKS + dc],
@@ -2028,7 +2028,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
                 _pointer_store(
                     _lse,
                     buffer_ops.get_element_ptr(
-                        fmha.pointer_to_llvm_ptr(LSE),
+                        utils.pointer_to_llvm_ptr(LSE),
                         fx.Int64(_lse_off),
                         elem_type=_f32_ty,
                     ),
@@ -2036,7 +2036,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
 
         # ---- Normalize and store O ----
         # O's aperture: same columns as V, same rows as Q, and never staged.
-        o_ap = fmha.Aperture(vo_cols, rows=q_ap.rows)
+        o_ap = utils.Aperture(vo_cols, rows=q_ap.rows)
 
         def write_o(row, col, val):
             _store_global_half(o_ptr, o_tbase(start_q), o_toff(row, col), val)
@@ -2075,7 +2075,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
                         d_col = fx.Index(vc * VO_CHUNK_COLS) + d_col
                     if const_expr(D_OFFSET):
                         d_col = fx.Index(D_OFFSET) + d_col
-                    fmha.write_v8(o_ap, write_o, q_rows_in_tile[qt], d_col, o_trunc)
+                    utils.write_v8(o_ap, write_o, q_rows_in_tile[qt], d_col, o_trunc)
 
     @flyc.jit
     def launch_flash_attn_aiw(
@@ -2272,7 +2272,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     #
     # Bit 18 is `principal_diagonal_choice`, which is not a layout fact and
     # applies to dense calls too. It travels in the word like every other
-    # field: a dense call that wants it passes `varlen=abi.varlen_dense(...)`.
+    # field: a dense call that wants it passes `varlen=fmha.varlen_dense(...)`.
 
     # 0x02
 
@@ -2284,14 +2284,14 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         accumulator group in one v8.
         """
         if not BIAS_TYPE:
-            return abi.NULL_PTR, 0, 0, 0
+            return fmha.NULL_PTR, 0, 0, 0
         if bias is None:
             raise ValueError("this build has BIAS_TYPE=1 and requires bias=")
         if bias.dim() != 4:
             raise ValueError(f"bias must be rank 4 (B, H, Sq, Sk), got {tuple(bias.shape)}")
         if bias.stride(3) != 1:
             raise ValueError(f"bias must have a contiguous last (Sk) dimension, got " f"stride(3)={bias.stride(3)}")
-        return (abi.ptr_arg(bias), bias.stride(0), bias.stride(1), bias.stride(2))
+        return (fmha.ptr_arg(bias), bias.stride(0), bias.stride(1), bias.stride(2))
 
     launch_flash_attn_aiw.compile_hints = dict(_fmha_compile_hints)
 
@@ -2321,26 +2321,26 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
 
         The diagonal a numeric `window=` is measured from is VarlenBits bit 18
         (`principal_diagonal_choice`), carried by `varlen["bits"]`; a dense
-        call sets it with `varlen=abi.varlen_dense(principal_diagonal=...)`.
+        call sets it with `varlen=fmha.varlen_dense(principal_diagonal=...)`.
 
         `_launch` and `_compile` were 62 identical lines out of 66, differing
         only in whether the tail is `run_compiled` or `flyc.compile` and how
         the stream is spelled. dQ already had this shape; the forward did not.
         """
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
-        ptrs, meta, st = abi.prep_tensors([("Q", Q), ("K", K), ("V", V), ("O", O)], q_heads=("O",))
-        _lse_p = abi.lse_args(lse, seqlen_q, varlen, meta[0])
-        _wl, _wr = abi.resolve_window(CAUSAL_TYPE, HOST_CAUSAL_TYPE, window, seqlen_q, seqlen_k)
-        _vb, _sq0, _sq1, _sk0, _sk1, _mq, _mk = abi.varlen_args(
+        ptrs, meta, st = fmha.prep_tensors([("Q", Q), ("K", K), ("V", V), ("O", O)], q_heads=("O",))
+        _lse_p = fmha.lse_args(lse, seqlen_q, varlen, meta[0])
+        _wl, _wr = fmha.window_args(CAUSAL_TYPE, HOST_CAUSAL_TYPE, window, seqlen_q, seqlen_k)
+        _vb, _sq0, _sq1, _sk0, _sk1, _mq, _mk = fmha.varlen_args(
             STRIDES_CONSTEXPR, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens
         )
         _bp, _sb0, _sb1, _sb2 = _bias_args(bias)
         # `_hold` keeps a materialised philox scalar alive across the launch;
-        # see `abi.u64_scalar`. Returned so the caller's frame owns it.
-        _ps, _po1, _po2, _ip, _dsc, _hold = abi.dropout_args(
+        # see `fmha.u64_scalar`. Returned so the caller's frame owns it.
+        _ps, _po1, _po2, _ip, _dsc, _hold = fmha.dropout_args(
             ENABLE_DROPOUT, dropout_p, philox_seed, philox_offset1, philox_offset2, Q.device, stream
         )
-        _so, _oo = abi.dropout_outputs(ENABLE_DROPOUT, philox_seed_output, philox_offset_output)
+        _so, _oo = fmha.dropout_outputs(ENABLE_DROPOUT, philox_seed_output, philox_offset_output)
         return (
             (
                 # Q, K, V, B, <outputs> -- `ptrs` is (Q, K, V, O), so the
@@ -2369,7 +2369,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
                 _ip,
                 _dsc,
                 *meta,
-                abi.resolve_scale(Q, scale, PADDED_HEAD, sm_scale),
+                fmha.resolve_scale(Q, scale, PADDED_HEAD, sm_scale),
                 *st,
                 _sb0,
                 _sb1,
@@ -2382,7 +2382,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     def _launch(*args, **kwargs):
         """Dispatch one forward pass. Signature is `_args`'s, which binds it."""
         packed, _hold, stream = _args(*args, **kwargs)
-        abi.run_compiled(_COMPILED, launch_flash_attn_aiw, *packed, stream if stream is not None else fx.Stream(None))
+        fmha.run_compiled(_COMPILED, launch_flash_attn_aiw, *packed, stream if stream is not None else fx.Stream(None))
 
     def _compile(*args, **kwargs):
         """AOT-compile the same call `_launch` would dispatch."""
@@ -2391,16 +2391,16 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
 
     _launch.compile = _compile
     # Still attached to the launcher, for the callers and tests that reach them
-    # that way -- but they now forward to `fmha_abi_gfx1201`, which is the one
+    # that way -- but they now forward to `fmha_utils`, which is the one
     # copy of the wire spec. The old comment claimed they closed over
     # STRIDES_CONSTEXPR; only `varlen_args` does, and it takes it as an
     # argument now.
-    _launch.varlen_bits = abi.varlen_bits
-    _launch.varlen_dense = abi.varlen_dense
-    _launch.varlen_compact = abi.varlen_compact
-    _launch.varlen_padded = abi.varlen_padded
-    _launch.varlen_strided = abi.varlen_strided
-    _launch.varlen_seqused_k = abi.varlen_seqused_k
+    _launch.varlen_bits = fmha.varlen_bits
+    _launch.varlen_dense = fmha.varlen_dense
+    _launch.varlen_compact = fmha.varlen_compact
+    _launch.varlen_padded = fmha.varlen_padded
+    _launch.varlen_strided = fmha.varlen_strided
+    _launch.varlen_seqused_k = fmha.varlen_seqused_k
     return _launch
 
 

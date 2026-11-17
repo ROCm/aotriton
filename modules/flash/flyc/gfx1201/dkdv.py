@@ -4,7 +4,7 @@
 """dK / dV backward attention for gfx1201 -- the transpose of the forward loop.
 
 A port of AOTriton's `bwd_kernel_dk_dv` + `bwd_inner_dk_dv`, against **our**
-forward kernel's ABI (`flash_attn_func_gfx1201_aiw.py`): BHSD shapes, three
+forward kernel's ABI (`fwd.py`): BHSD shapes, three
 strides per tensor, `fx.Pointer` arguments, VarlenBits addressing, and the
 logsumexp layout `fmha.lse_token_pitch` describes. AOTriton's `cu_seqlens_q/k`
 + `batch_size` logic is deliberately *not* ported; the varlen prologue below
@@ -49,7 +49,7 @@ run along it too (`B[k'=klane*8+j][n'=lane16]`); a result element `si` is
 So Q is contracted over `d` once and over `q` once, and so is dO. An A operand
 contracted over `d` wants eight contiguous `d` at one `q` -- a row-major tile.
 Contracted over `q` it wants eight contiguous `q` at one `d` -- a transposed
-tile. Hence **four LDS tiles**, and `fmha_tuning_bwd_dkdv_gfx1201.lds_bytes` is
+tile. Hence **four LDS tiles**, and `tuning_dkdv.lds_bytes` is
 what bounds `block_m`. Deriving one orientation from the other in LDS is the
 forward's `V_LDS_LAYOUT="row"` path: eight strided scalar reads per operand,
 which it measured 2.7% slower for a single tensor and would pay here twice --
@@ -127,7 +127,7 @@ makes the difference between 90496 and 49536.
 
 Both are off below head_dim 320 and both are measured losses there -- C=2
 costs 15-30% wherever C=1 does not spill, because a wider team means a
-narrower `BLOCK_N` and more Q/dO re-reads. `fmha_tuning_bwd_dkdv_gfx1201`
+narrower `BLOCK_N` and more Q/dO re-reads. `tuning_dkdv`
 holds the numbers and the policy.
 
 --- Not implemented -------------------------------------------------------
@@ -141,9 +141,9 @@ holds the numbers and the policy.
 import math as host_math
 from dataclasses import fields
 
-import fmha_abi_gfx1201 as abi
-import fmha_common_gfx1201 as fmha
-from fmha_tuning_bwd_dkdv_gfx1201 import (  # noqa: F401
+import fmha_utils as fmha
+from . import utils
+from .tuning_dkdv import (  # noqa: F401
     LDS_PAD,
     ROWS_PER_WAVE,
     BwdDkDvKnobs,
@@ -190,15 +190,15 @@ _WINDOW_BOTRIGHT = fmha.WINDOW_BOTRIGHT
 # which is the cheapest way to be sure the two agree.
 
 
-_COMPILED = abi.new_compiled_cache()
+_COMPILED = fmha.new_compiled_cache()
 
 
 def _pointer_load(result_type: ir.Type, ptr: ir.Value) -> ir.Value:
-    return _llvm.LoadOp(result_type, fmha.llvm_value(ptr)).result
+    return _llvm.LoadOp(result_type, utils.llvm_value(ptr)).result
 
 
 def _pointer_store(value: ir.Value, ptr: ir.Value):
-    return _llvm.StoreOp(fmha.llvm_value(value), fmha.llvm_value(ptr))
+    return _llvm.StoreOp(utils.llvm_value(value), utils.llvm_value(ptr))
 
 
 def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
@@ -281,7 +281,7 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
     # ---- Validity predicate over the knob space ----
     #
     # Assertions and not ValueError, as in the forward: every name here was
-    # produced by `fmha_tuning_bwd_dkdv_gfx1201`, so a violation is that module
+    # produced by `tuning_dkdv`, so a violation is that module
     # contradicting itself. Caller input is checked in the interface.
     assert (
         BLOCK_DMODEL % 16 == 0 and BLOCK_DMODEL > 0
@@ -321,7 +321,7 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
 
     NUM_HEADS = num_heads  # noqa: F841  (kept for parity with the forward's metadata)
 
-    fastmath = fmha.FastMath(FP_MODE)
+    fastmath = utils.FastMath(FP_MODE)
 
     # ---- LDS layout ----
     #
@@ -381,7 +381,7 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
     VEC_WIDTH = 8
 
     def _load_geom(width):
-        return fmha.load_geom(width, VEC_WIDTH, BLOCK_SIZE, BLOCK_M)
+        return utils.load_geom(width, VEC_WIDTH, BLOCK_SIZE, BLOCK_M)
 
     QRM_TPR, QRM_RPB, QRM_BATCHES, QRM_GUARD = _load_geom(BLOCK_DMODEL)
     DORM_TPR, DORM_RPB, DORM_BATCHES, DORM_GUARD = _load_geom(BLOCK_DMODEL_V)
@@ -400,7 +400,7 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
     DOTR_LOADS = (_DOTR_TILES + NUM_WAVES - 1) // NUM_WAVES
     DOTR_GUARD = DOTR_LOADS * NUM_WAVES != _DOTR_TILES
 
-    elem_numeric_cls = abi.dtype_to_elem_type(dtype_str)
+    elem_numeric_cls = fmha.dtype_to_elem_type(dtype_str)
 
     @fx.struct
     class SharedStorage:
@@ -466,18 +466,18 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
         def _to_global_ptr_i64(ptr):
             return fx.as_ir_value(fx.Int64(fx.ptrtoint(ptr)))
 
-        q_ptr = fmha.pointer_to_llvm_ptr(Q)
+        q_ptr = utils.pointer_to_llvm_ptr(Q)
         q_ptr_i64 = _to_global_ptr_i64(Q)
-        k_ptr = fmha.pointer_to_llvm_ptr(K)
-        v_ptr = fmha.pointer_to_llvm_ptr(V)
-        do_ptr = fmha.pointer_to_llvm_ptr(DO)
+        k_ptr = utils.pointer_to_llvm_ptr(K)
+        v_ptr = utils.pointer_to_llvm_ptr(V)
+        do_ptr = utils.pointer_to_llvm_ptr(DO)
         do_ptr_i64 = _to_global_ptr_i64(DO)
         if const_expr(BIAS_TYPE):
-            bias_ptr = fmha.pointer_to_llvm_ptr(B)
-        dk_ptr = fmha.pointer_to_llvm_ptr(DK)
-        dv_ptr = fmha.pointer_to_llvm_ptr(DV)
-        l_ptr = fmha.pointer_to_llvm_ptr(LSE)
-        delta_ptr = fmha.pointer_to_llvm_ptr(Delta)
+            bias_ptr = utils.pointer_to_llvm_ptr(B)
+        dk_ptr = utils.pointer_to_llvm_ptr(DK)
+        dv_ptr = utils.pointer_to_llvm_ptr(DV)
+        l_ptr = utils.pointer_to_llvm_ptr(LSE)
+        delta_ptr = utils.pointer_to_llvm_ptr(Delta)
 
         v8f16_type = Vec.make_type(8, elem_dtype)
         vxf16_type = Vec.make_type(VEC_WIDTH, elem_dtype)
@@ -505,7 +505,7 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
         # which is what the f32 scratch helpers index from.
         _lds_byte_base = fx.as_ir_value(fx.ptrtoint(lds_qdo))
 
-        tid, wave_id, lane, lane16, klane = fmha.wave_lanes(WARP_SIZE)
+        tid, wave_id, lane, lane16, klane = utils.wave_lanes(WARP_SIZE)
 
         # 3D grid: (kv_tile, head_k, batch). The KV tile goes on x, which
         # dispatches fastest, for the reason the forward gives about its q_tile
@@ -568,13 +568,13 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
         vo_cols = fmha.MaskedAxis(fx.Index(hdim_vo), active=PADDED_HEAD, elem_dtype=elem_dtype)
 
         def load_global_f16xN(base_ptr, base64, off32):
-            return _pointer_load(vxf16_type, fmha.split_ptr(base_ptr, base64, off32, elem_type))
+            return _pointer_load(vxf16_type, utils.split_ptr(base_ptr, base64, off32, elem_type))
 
         def load_global_v8f16(base_ptr, base64, off32):
-            return _pointer_load(v8f16_type, fmha.split_ptr(base_ptr, base64, off32, elem_type))
+            return _pointer_load(v8f16_type, utils.split_ptr(base_ptr, base64, off32, elem_type))
 
         def store_global_v8f16(base_ptr, base64, off32, val):
-            _pointer_store(val, fmha.split_ptr(base_ptr, base64, off32, elem_type))
+            _pointer_store(val, utils.split_ptr(base_ptr, base64, off32, elem_type))
 
         def load_global_f16(base_ptr, off64):
             """One bias element.
@@ -595,7 +595,7 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
             consecutive: the row-group pitch is `lse_tokens`, which no contract
             makes a multiple of 8, so a v8f32 would claim 32-byte alignment the
             tensor does not have. That over-promise is the same failure
-            `fmha.lds_load_v8` documents costing 2.2x on LDS, and here it is
+            `utils.lds_load_v8` documents costing 2.2x on LDS, and here it is
             undefined behaviour rather than merely slow.
             """
             return _pointer_load(f32_ty, buffer_ops.get_element_ptr(base_ptr, fx.Int64(off64), elem_type=f32_ty))
@@ -606,14 +606,14 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
         # is already a WMMA B operand for S, with no transpose anywhere. The row
         # bound is the *real* seqlen_k, and it is never inactive.
         _addr_kw_k = dict(seqlen_k=seqlen_k_v, seq_last=k_seq_last, hoist=ADDR_HOIST, clamp=True)
-        k_tbase, k_toff, _ = fmha.make_addr_pair(k_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw_k)
-        v_tbase, v_toff, _ = fmha.make_addr_pair(v_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw_k)
-        dk_tbase, dk_toff, _ = fmha.make_addr_pair(dk_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw_k)
-        dv_tbase, dv_toff, _ = fmha.make_addr_pair(dv_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw_k)
+        k_tbase, k_toff, _ = utils.make_addr_pair(k_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw_k)
+        v_tbase, v_toff, _ = utils.make_addr_pair(v_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw_k)
+        dk_tbase, dk_toff, _ = utils.make_addr_pair(dk_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw_k)
+        dv_tbase, dv_toff, _ = utils.make_addr_pair(dv_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw_k)
 
         kv_rows = fmha.MaskedAxis(seqlen_k_v)
-        k_ap = fmha.Aperture(qk_cols, rows=kv_rows)
-        v_ap = fmha.Aperture(vo_cols, rows=kv_rows)
+        k_ap = utils.Aperture(qk_cols, rows=kv_rows)
+        v_ap = utils.Aperture(vo_cols, rows=kv_rows)
 
         # This wave's 16 KV rows, and this lane's row inside them.
         # Under `split_head_dim` a *pair* owns the 16 KV rows and the two waves
@@ -671,7 +671,7 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
             _my_addr = fx.Int64(fx.ptrtoint(K)) if _role0 else fx.Int64(fx.ptrtoint(V))
             my_ptr = _llvm.IntToPtrOp(ir.Type.parse("!llvm.ptr<1>"), fx.as_ir_value(_my_addr)).result
             _my_st = tuple(_a if _role0 else _b for _a, _b in zip(k_st, v_st))
-            my_tbase, my_toff, _ = fmha.make_addr_pair(_my_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw_k)
+            my_tbase, my_toff, _ = utils.make_addr_pair(_my_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw_k)
             my_tile_base = my_tbase(_k_start_addr)
 
             # The column bound is the role's too. `BLOCK_DMODEL ==
@@ -685,7 +685,7 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
             # aperture exists to call a method on.
             if const_expr(PADDED_HEAD):
                 _my_hdim = fx.Int32(hdim_qk) if _role0 else fx.Int32(hdim_vo)
-                my_ap = fmha.Aperture(fmha.MaskedAxis(fx.Index(_my_hdim), elem_dtype=elem_dtype), rows=kv_rows)
+                my_ap = utils.Aperture(fmha.MaskedAxis(fx.Index(_my_hdim), elem_dtype=elem_dtype), rows=kv_rows)
             else:
                 my_ap = k_ap
 
@@ -721,7 +721,7 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
         # on its own object is the forward's rule about per-tensor geometry
         # taken one step further -- a site that gates on a guard has to name
         # whose guard it is.
-        q_rm_ap = fmha.Aperture(
+        q_rm_ap = utils.Aperture(
             qk_cols,
             lds_base=QRM_BASE,
             lds_stride=QRM_STRIDE,
@@ -731,8 +731,8 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
             num_batches=QRM_BATCHES,
             needs_guard=QRM_GUARD,
         )
-        q_tr_ap = fmha.Aperture(qk_cols, lds_base=QTR_BASE, lds_stride=QTR_STRIDE, vec_width=VEC_WIDTH)
-        do_rm_ap = fmha.Aperture(
+        q_tr_ap = utils.Aperture(qk_cols, lds_base=QTR_BASE, lds_stride=QTR_STRIDE, vec_width=VEC_WIDTH)
+        do_rm_ap = utils.Aperture(
             vo_cols,
             lds_base=DORM_BASE,
             lds_stride=DORM_STRIDE,
@@ -742,9 +742,9 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
             num_batches=DORM_BATCHES,
             needs_guard=DORM_GUARD,
         )
-        do_tr_ap = fmha.Aperture(vo_cols, lds_base=DOTR_BASE, lds_stride=DOTR_STRIDE, vec_width=VEC_WIDTH)
+        do_tr_ap = utils.Aperture(vo_cols, lds_base=DOTR_BASE, lds_stride=DOTR_STRIDE, vec_width=VEC_WIDTH)
 
-        q_tiling = fmha.TransposedTiling(
+        q_tiling = utils.TransposedTiling(
             d_blocks=QTR_D_BLOCKS,
             tiles=_QTR_TILES,
             loads=QTR_LOADS,
@@ -758,7 +758,7 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
             store_d_off=lane16,
             store_kv_off=klane * WMMA_LANE_K,
         )
-        do_tiling = fmha.TransposedTiling(
+        do_tiling = utils.TransposedTiling(
             d_blocks=DOTR_D_BLOCKS,
             tiles=_DOTR_TILES,
             loads=DOTR_LOADS,
@@ -854,12 +854,12 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
             either way. A `signed` operand (dS) goes through the bitwise
             truncation, whose errors cancel in the products; a non-negative
             one (P) is rounded to nearest, because truncation would bias
-            dV low. See `fmha.bf16_trunc_pack_v8`.
+            dV low. See `utils.bf16_trunc_pack_v8`.
             """
             if const_expr(dtype_str == "bf16"):
                 if const_expr(signed):
-                    return fmha.bf16_trunc_pack_v8(vals, elem_dtype)
-                return fmha.bf16_round_nonan_pack_v8(vals, elem_dtype)
+                    return utils.bf16_trunc_pack_v8(vals, elem_dtype)
+                return utils.bf16_round_nonan_pack_v8(vals, elem_dtype)
             return Vec.from_elements([fx.Float32(v).to(elem_dtype) for v in vals], elem_dtype).ir_value()
 
         loop_results = init_args
@@ -878,39 +878,39 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
             # because `head_q` moves with the GQA fold; everything in it is a
             # uniform scalar, so this is SGPR arithmetic.
             _addr_kw_q = dict(seqlen_k=seqlen_q_v, seq_last=q_seq_last, hoist=ADDR_HOIST, clamp=True)
-            _, _, q_addr = fmha.make_addr_pair(q_st, head_q, _q_batch_v, _q_row_off_v, **_addr_kw_q)
-            _, _, do_addr = fmha.make_addr_pair(do_st, head_q, _q_batch_v, _q_row_off_v, **_addr_kw_q)
+            _, _, q_addr = utils.make_addr_pair(q_st, head_q, _q_batch_v, _q_row_off_v, **_addr_kw_q)
+            _, _, do_addr = utils.make_addr_pair(do_st, head_q, _q_batch_v, _q_row_off_v, **_addr_kw_q)
             if const_expr(BIAS_TYPE):
                 # Rebuilt per iteration because `head_q` moves with the GQA
                 # fold, exactly as the Q/dO addressing above is. Uniform
                 # scalars, so this is SGPR arithmetic.
                 _b_head = _q_batch_v * fx.Index(stride_b_batch) + head_q * fx.Index(stride_b_head)
 
-            _fetch_q = fmha.reader(q_addr, lambda b, o: load_global_f16xN(q_ptr, b, o))(_q_row_start)
-            _fetch_do = fmha.reader(do_addr, lambda b, o: load_global_f16xN(do_ptr, b, o))(_q_row_start)
+            _fetch_q = utils.reader(q_addr, lambda b, o: load_global_f16xN(q_ptr, b, o))(_q_row_start)
+            _fetch_do = utils.reader(do_addr, lambda b, o: load_global_f16xN(do_ptr, b, o))(_q_row_start)
 
             # VRAM -> LDS, both orientations of both tensors. Rows past
             # seqlen_q are clamped by the address closure, so what lands in LDS
             # is a duplicate of a real row; the P mask below -- not this -- is
             # what keeps it out of the answer.
-            fmha.stage(q_rm_ap, lds_qdo, _fetch_q, q_row_in_batch, q_col_base, fx.Index(BLOCK_M))
-            fmha.stage(do_rm_ap, lds_qdo, _fetch_do, do_row_in_batch, do_col_base, fx.Index(BLOCK_M))
+            utils.stage(q_rm_ap, lds_qdo, _fetch_q, q_row_in_batch, q_col_base, fx.Index(BLOCK_M))
+            utils.stage(do_rm_ap, lds_qdo, _fetch_do, do_row_in_batch, do_col_base, fx.Index(BLOCK_M))
             if const_expr(KEEP_TR_TILES):
                 # Under "derived" there is no transposed tile to fill, and the
                 # `global_load_tr_b128` fetches that fed it go with it -- the
                 # same eight halves are read out of the row-major tile at GEMM
                 # time instead.
-                _fetch_q_tr = fmha.reader(q_addr, lambda b, o: fmha.global_load_tr_v8(q_ptr_i64, b, o, v8f16_type))(
+                _fetch_q_tr = utils.reader(q_addr, lambda b, o: utils.global_load_tr_v8(q_ptr_i64, b, o, v8f16_type))(
                     _q_row_start
                 )
-                _fetch_do_tr = fmha.reader(do_addr, lambda b, o: fmha.global_load_tr_v8(do_ptr_i64, b, o, v8f16_type))(
+                _fetch_do_tr = utils.reader(do_addr, lambda b, o: utils.global_load_tr_v8(do_ptr_i64, b, o, v8f16_type))(
                     _q_row_start
                 )
-                fmha.publish_transposed(
-                    q_tr_ap, q_tiling, lds_qdo, fmha.read_transposed(q_tr_ap, q_tiling, _fetch_q_tr)
+                utils.publish_transposed(
+                    q_tr_ap, q_tiling, lds_qdo, utils.read_transposed(q_tr_ap, q_tiling, _fetch_q_tr)
                 )
-                fmha.publish_transposed(
-                    do_tr_ap, do_tiling, lds_qdo, fmha.read_transposed(do_tr_ap, do_tiling, _fetch_do_tr)
+                utils.publish_transposed(
+                    do_tr_ap, do_tiling, lds_qdo, utils.read_transposed(do_tr_ap, do_tiling, _fetch_do_tr)
                 )
             # LSE and delta for this Q tile. Q-indexed, so the same BLOCK_M
             # values serve every wave -- staging them once replaces 16 scalar
@@ -925,8 +925,8 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
                     _rr = _q_row_start_i32 + _r
                     _ok = _rr < seqlen_q_i32
                     _o = _rowq_base + fx.Index(fx.Index(_rr) if _ok else fx.Index(0)) * _rowq_pitch
-                    fmha.lds_f32_store(_lds_byte_base, ROWQ_BYTE0, _r, load_global_f32(l_ptr, _o))
-                    fmha.lds_f32_store(
+                    utils.lds_f32_store(_lds_byte_base, ROWQ_BYTE0, _r, load_global_f32(l_ptr, _o))
+                    utils.lds_f32_store(
                         _lds_byte_base, ROWQ_BYTE0, _r + fx.Int32(BLOCK_M), load_global_f32(delta_ptr, _o)
                     )
             gpu.barrier()
@@ -948,13 +948,13 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
                             _c = fx.Index((_shard_k0 + fx.Int32(ks)) * fx.Int32(WMMA_K)) + klane * WMMA_LANE_K
                         else:
                             _c = fx.Index(ks * WMMA_K) + klane * WMMA_LANE_K
-                        _a_op = fmha.lds_load_v8(
+                        _a_op = utils.lds_load_v8(
                             lds_qdo, q_rm_ap.lds_index(fx.Index(_qs) + lane16, _c) + _rm_base_off, _v4_ty
                         )
-                        _mine = fmha.wmma_acc(_a_op, k_packs[ks], _mine)
+                        _mine = utils.wmma_acc(_a_op, k_packs[ks], _mine)
 
                     for _si in range_constexpr(8):
-                        fmha.lds_f32_store(
+                        utils.lds_f32_store(
                             _lds_byte_base, PDS_BYTE0, _pds_mine + fx.Int32(_si), fx.Float32(Vec(_mine)[_si])
                         )
                     gpu.barrier()
@@ -965,7 +965,7 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
                         # branch of its own. `_mine` stays in registers, so this
                         # is one LDS read where the reduction below is two.
                         _other = [
-                            fmha.lds_f32_load(_lds_byte_base, PDS_BYTE0, _pds_theirs + fx.Int32(_si))
+                            utils.lds_f32_load(_lds_byte_base, PDS_BYTE0, _pds_theirs + fx.Int32(_si))
                             for _si in range_constexpr(8)
                         ]
                         _s_vals = None
@@ -980,10 +980,10 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
                             _s_sum = None
                             _dp_sum = None
                             for _c_sh in range_constexpr(CONTRACTION_SHARDS):
-                                _sv_c = fmha.lds_f32_load(
+                                _sv_c = utils.lds_f32_load(
                                     _lds_byte_base, PDS_BYTE0, _pds_team + fx.Int32((2 * _c_sh) * PDS_SLOT_F32 + _si)
                                 )
-                                _dv_c = fmha.lds_f32_load(
+                                _dv_c = utils.lds_f32_load(
                                     _lds_byte_base,
                                     PDS_BYTE0,
                                     _pds_team + fx.Int32((2 * _c_sh + 1) * PDS_SLOT_F32 + _si),
@@ -1000,14 +1000,14 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
                         _qa = q_rm_ap.from_lds(
                             lds_qdo, fx.Index(_qs) + lane16, fx.Index(ks * WMMA_K) + klane * WMMA_LANE_K
                         )
-                        s_acc = fmha.wmma_acc(_qa, k_packs[ks], s_acc)
+                        s_acc = utils.wmma_acc(_qa, k_packs[ks], s_acc)
 
                     dp_acc = fx.as_ir_value(c_zero_v8f32)
                     for ks in range_constexpr(DV_STEPS):
                         _da = do_rm_ap.from_lds(
                             lds_qdo, fx.Index(_qs) + lane16, fx.Index(ks * WMMA_K) + klane * WMMA_LANE_K
                         )
-                        dp_acc = fmha.wmma_acc(_da, v_packs[ks], dp_acc)
+                        dp_acc = utils.wmma_acc(_da, v_packs[ks], dp_acc)
 
                 # ==== P and dS ====
                 #
@@ -1026,8 +1026,8 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
                     # Local row within the staged tile: 32-bit LDS indexing,
                     # no 64-bit address arithmetic and no global load.
                     _lrow = fx.Int32(_qs + si) + fx.Int32(klane) * fx.Int32(WMMA_LANE_K)
-                    _lse = fmha.lds_f32_load(_lds_byte_base, ROWQ_BYTE0, _lrow)
-                    _di = fmha.lds_f32_load(_lds_byte_base, ROWQ_BYTE0, _lrow + fx.Int32(BLOCK_M))
+                    _lse = utils.lds_f32_load(_lds_byte_base, ROWQ_BYTE0, _lrow)
+                    _di = utils.lds_f32_load(_lds_byte_base, ROWQ_BYTE0, _lrow + fx.Int32(BLOCK_M))
 
                     # p = exp2(sm_scale*log2e*qk - lse*log2e), AOTriton's
                     # `exp2(qk_scale*qk - l_i*RCP_LN2)` with the logsumexp in
@@ -1140,13 +1140,13 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
                 for dc in range_constexpr(DV_STEPS_OWN):
                     _gd = fx.Index((fx.Int32(dc) + _vown_i32) * fx.Int32(WMMA_N))
                     _a = _tr_operand(do_rm_ap, do_tr_ap, _gd + lane16, _q0)
-                    dv_accs[dc] = fmha.wmma_acc(_a, _p_pack, dv_accs[dc])
+                    dv_accs[dc] = utils.wmma_acc(_a, _p_pack, dv_accs[dc])
 
                 # ==== GEMM4: dK^T[d][kv] += Q^T . dS ====
                 for dc in range_constexpr(D_STEPS_OWN):
                     _gd = fx.Index((fx.Int32(dc) + _own_i32) * fx.Int32(WMMA_N))
                     _a = _tr_operand(q_rm_ap, q_tr_ap, _gd + lane16, _q0)
-                    dk_accs[dc] = fmha.wmma_acc(_a, _ds_pack, dk_accs[dc])
+                    dk_accs[dc] = utils.wmma_acc(_a, _ds_pack, dk_accs[dc])
 
             # Every wave must finish reading this Q/dO window before the next
             # iteration overwrites it.
@@ -1169,8 +1169,8 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
         def write_dv(row, col, val):
             store_global_v8f16(dv_ptr, dv_base, dv_toff(row, col), val)
 
-        dk_out_ap = fmha.Aperture(qk_cols)
-        dv_out_ap = fmha.Aperture(vo_cols)
+        dk_out_ap = utils.Aperture(qk_cols)
+        dv_out_ap = utils.Aperture(vo_cols)
 
         _row_live = kv_row_abs_i32 < seqlen_k_i32
         if _row_live:
@@ -1184,11 +1184,11 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
                 _v = fastmath.mul(loop_results[dc], _scale_vec)
                 _t = Vec(_v).to(elem_dtype).ir_value()
                 _gc = fx.Index((fx.Int32(dc) + _own_i32) * fx.Int32(WMMA_N)) + klane * WMMA_LANE_K
-                fmha.write_v8(dk_out_ap, write_dk, kv_row_in_tile, _gc, _t)
+                utils.write_v8(dk_out_ap, write_dk, kv_row_in_tile, _gc, _t)
             for dc in range_constexpr(DV_STEPS_OWN):
                 _t = Vec(loop_results[D_STEPS_OWN + dc]).to(elem_dtype).ir_value()
                 _gc = fx.Index((fx.Int32(dc) + _vown_i32) * fx.Int32(WMMA_N)) + klane * WMMA_LANE_K
-                fmha.write_v8(dv_out_ap, write_dv, kv_row_in_tile, _gc, _t)
+                utils.write_v8(dv_out_ap, write_dv, kv_row_in_tile, _gc, _t)
 
     @flyc.jit
     def launch_bwd_dkdv(
@@ -1376,30 +1376,30 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
         The diagonal a *numeric* `window` bound is measured from is VarlenBits
         bit 18 (`principal_diagonal_choice`), and `varlen["bits"]` is its only
         source. A dense call carries it with
-        `varlen=abi.varlen_dense(principal_diagonal=...)`; `varlen=None` is
+        `varlen=fmha.varlen_dense(principal_diagonal=...)`; `varlen=None` is
         word 0, i.e. top-left. The bit means the same thing dense or varlen
         (`d` is merely uniform). Same contract as the gfx950 forward's
         launcher.
         """
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
-        ptrs, meta_t, st = abi.prep_tensors(
+        ptrs, meta_t, st = fmha.prep_tensors(
             [("Q", Q), ("K", K), ("V", V), ("DO", DO), ("DK", DK), ("DV", DV)],
             q_heads=("DO",),
             k_heads=("DK", "DV"),
         )
-        _lp = abi.row_tensor_arg(L, "logsumexp", meta_t[0], seqlen_q, varlen)
-        _dp = abi.row_tensor_arg(Delta, "delta", meta_t[0], seqlen_q, varlen)
-        _wl, _wr = abi.resolve_window(CAUSAL_TYPE, HOST_CAUSAL_TYPE, window, seqlen_q, seqlen_k)
-        _vb, _sq0, _sq1, _sk0, _sk1, _mq, _mk = abi.varlen_args(
+        _lp = fmha.row_tensor_arg(L, "logsumexp", meta_t[0], seqlen_q, varlen)
+        _dp = fmha.row_tensor_arg(Delta, "delta", meta_t[0], seqlen_q, varlen)
+        _wl, _wr = fmha.window_args(CAUSAL_TYPE, HOST_CAUSAL_TYPE, window, seqlen_q, seqlen_k)
+        _vb, _sq0, _sq1, _sk0, _sk1, _mq, _mk = fmha.varlen_args(
             False, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens
         )
-        _ps, _po1, _po2, _ip, _dsc, _hold = abi.dropout_args(
+        _ps, _po1, _po2, _ip, _dsc, _hold = fmha.dropout_args(
             ENABLE_DROPOUT, dropout_p, philox_seed, philox_offset1, philox_offset2, Q.device, stream
         )
         # `with_db=False`: dB is the dQ kernel's, so the DB slot is discarded
         # rather than being a kernarg this kernel does not have.
-        _bp, _, _bs, _ = abi.bias_args(BIAS_TYPE, False, bias, None, Q)
-        abi.run_compiled(
+        _bp, _, _bs, _ = fmha.bias_args(BIAS_TYPE, False, bias, None, Q)
+        fmha.run_compiled(
             _COMPILED,
             launch_bwd_dkdv,
             # The shared backward pointer block is
@@ -1428,17 +1428,17 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
             _ip,
             _dsc,
             *meta_t,
-            abi.resolve_scale(Q, scale, PADDED_HEAD, sm_scale),
+            fmha.resolve_scale(Q, scale, PADDED_HEAD, sm_scale),
             *st,
             *_bs,
             stream if stream is not None else fx.Stream(None),
         )
 
-    _launch.varlen_bits = abi.varlen_bits
-    _launch.varlen_dense = abi.varlen_dense
-    _launch.varlen_compact = abi.varlen_compact
-    _launch.varlen_padded = abi.varlen_padded
-    _launch.varlen_strided = abi.varlen_strided
+    _launch.varlen_bits = fmha.varlen_bits
+    _launch.varlen_dense = fmha.varlen_dense
+    _launch.varlen_compact = fmha.varlen_compact
+    _launch.varlen_padded = fmha.varlen_padded
+    _launch.varlen_strided = fmha.varlen_strided
     return _launch
 
 

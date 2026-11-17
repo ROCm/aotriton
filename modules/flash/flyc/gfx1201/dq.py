@@ -4,7 +4,7 @@
 """Backward pass, dQ only, for gfx1201 (RDNA4).
 
 A port of AOTriton's ``bwd_kernel_dq`` / ``bwd_inner_dq``, written against the
-same helpers as the forward kernel in ``flash_attn_func_gfx1201_aiw.py`` and
+same helpers as the forward kernel in ``fwd.py`` and
 sharing its ABI. It computes
 
     dQ[i, :] = sm_scale * sum_j  dS[i, j] * K[j, :]
@@ -93,7 +93,7 @@ unsharded kernel *exactly*, down to the emitted ISA.
 No V/O column window, no row sub-tiles, no bias, and the distance-1 K/V
 prefetch is off by default. Those are the forward's speed knobs and each is a
 separate correctness surface; this pass is scored on matching torch autograd.
-See ``fmha_tuning_bwd_dq_gfx1201.py`` for what is worth measuring first.
+See ``tuning_dq.py`` for what is worth measuring first.
 
 Shape:  Q/K/V/dO/dQ are BHSD (batch, num_heads, seq_len, head_dim); the memory
         layout is free so long as D is innermost. Strides arrive as
@@ -104,9 +104,9 @@ Grid:   (num_head_q, num_q_tiles, batch)
 import math as host_math
 from dataclasses import fields
 
-import fmha_abi_gfx1201 as abi
-import fmha_common_gfx1201 as fmha
-from fmha_tuning_bwd_dq_gfx1201 import (  # noqa: F401
+import fmha_utils as fmha
+from . import utils
+from .tuning_dq import (  # noqa: F401
     BwdDqInputMetadata,
     BwdDqKnobs,
     resolve_knobs,
@@ -142,22 +142,22 @@ _WINDOW_BOTRIGHT = fmha.WINDOW_BOTRIGHT
 
 
 # `_run_compiled`, `_llvm_value`, `_pointer_load` and `_pointer_store` are
-# duplicated from `flash_attn_func_gfx1201_aiw.py`, which duplicated the first
+# duplicated from `fwd.py`, which duplicated the first
 # from `kernels/common/tensor_shim.py`. That file is read-only for this work
 # and importing it would make the backward kernel depend on the forward *kernel
 # module* rather than only on the shared helpers -- a dependency the eventual
 # consolidation would have to unpick. Four small functions is the cheaper debt.
 
 
-_COMPILED = abi.new_compiled_cache()
+_COMPILED = fmha.new_compiled_cache()
 
 
 def _pointer_load(result_type: ir.Type, ptr: ir.Value) -> ir.Value:
-    return _llvm.LoadOp(result_type, fmha.llvm_value(ptr)).result
+    return _llvm.LoadOp(result_type, utils.llvm_value(ptr)).result
 
 
 def _pointer_store(value: ir.Value, ptr: ir.Value):
-    return _llvm.StoreOp(fmha.llvm_value(value), fmha.llvm_value(ptr))
+    return _llvm.StoreOp(utils.llvm_value(value), utils.llvm_value(ptr))
 
 
 def build_bwd_dq_module_primary(meta, knobs):
@@ -166,7 +166,7 @@ def build_bwd_dq_module_primary(meta, knobs):
     Takes the two objects rather than a long parameter list, split on *who
     decides*: `meta` is what the caller asked for, `knobs` is what the tuning
     policy answered. Build `knobs` with
-    `fmha_tuning_bwd_dq_gfx1201.resolve_knobs(meta)` -- every field must be
+    `tuning_dq.resolve_knobs(meta)` -- every field must be
     resolved, since nothing here falls back to a policy.
     """
     num_heads = meta.num_heads
@@ -297,7 +297,7 @@ def build_bwd_dq_module_primary(meta, knobs):
     # licenses the compiler to fold away the -inf this kernel writes into
     # masked scores *and* the +inf logsumexp the forward emits for a row with
     # no live keys. Both are load-bearing here.
-    fastmath = fmha.FastMath(FP_MODE)
+    fastmath = utils.FastMath(FP_MODE)
 
     # LLVM's amdgpu-sched-strategy function attribute; "" leaves the default
     # GCN scheduler in place, which is what every width but 512 takes. See
@@ -351,7 +351,7 @@ def build_bwd_dq_module_primary(meta, knobs):
     VEC_WIDTH = 8
 
     def _load_geom(width):
-        return fmha.load_geom(width, VEC_WIDTH, BLOCK_SIZE, BLOCK_N)
+        return utils.load_geom(width, VEC_WIDTH, BLOCK_SIZE, BLOCK_N)
 
     # ceil() batches, not floor(): flooring silently drops rows whenever
     # rows-per-batch neither reaches BLOCK_N nor divides it, which surfaces as
@@ -459,11 +459,11 @@ def build_bwd_dq_module_primary(meta, knobs):
         elem_type = elem_numeric_cls.ir_type
         elem_dtype = elem_numeric_cls
 
-        q_ptr = fmha.pointer_to_llvm_ptr(Q)
-        k_ptr = fmha.pointer_to_llvm_ptr(K)
-        v_ptr = fmha.pointer_to_llvm_ptr(V)
-        do_ptr = fmha.pointer_to_llvm_ptr(DO)
-        dq_ptr = fmha.pointer_to_llvm_ptr(DQ)
+        q_ptr = utils.pointer_to_llvm_ptr(Q)
+        k_ptr = utils.pointer_to_llvm_ptr(K)
+        v_ptr = utils.pointer_to_llvm_ptr(V)
+        do_ptr = utils.pointer_to_llvm_ptr(DO)
+        dq_ptr = utils.pointer_to_llvm_ptr(DQ)
         k_ptr_i64 = fx.as_ir_value(fx.Int64(fx.ptrtoint(K)))
         v8f16_type = Vec.make_type(8, elem_dtype)
         vxf16_type = Vec.make_type(VEC_WIDTH, elem_dtype)
@@ -496,7 +496,7 @@ def build_bwd_dq_module_primary(meta, knobs):
         # shared pointer yields the 32-bit LDS offset.
         _lds_byte_base = fx.as_ir_value(fx.ptrtoint(lds_kv))
 
-        tid, wave_id, lane, lane16, klane = fmha.wave_lanes(WARP_SIZE)
+        tid, wave_id, lane, lane16, klane = utils.wave_lanes(WARP_SIZE)
 
         # (q_tile, shard) decomposition of the wave index. At QK_SHARDS == 1
         # this is q_tile == wave_id and shard == 0, i.e. the unsharded mapping.
@@ -576,11 +576,11 @@ def build_bwd_dq_module_primary(meta, knobs):
             hoist=KV_ADDR_HOIST,
             clamp=True,
         )
-        q_tbase, q_toff, _ = fmha.make_addr_pair(q_st, head_q, _q_batch_v, _q_row_off_v, **_addr_kw)
-        do_tbase, do_toff, _ = fmha.make_addr_pair(do_st, head_q, _q_batch_v, _q_row_off_v, **_addr_kw)
-        dq_tbase, dq_toff, _ = fmha.make_addr_pair(dq_st, head_q, _q_batch_v, _q_row_off_v, **_addr_kw)
-        _, _, k_addr = fmha.make_addr_pair(k_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw)
-        _, _, v_addr = fmha.make_addr_pair(v_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw)
+        q_tbase, q_toff, _ = utils.make_addr_pair(q_st, head_q, _q_batch_v, _q_row_off_v, **_addr_kw)
+        do_tbase, do_toff, _ = utils.make_addr_pair(do_st, head_q, _q_batch_v, _q_row_off_v, **_addr_kw)
+        dq_tbase, dq_toff, _ = utils.make_addr_pair(dq_st, head_q, _q_batch_v, _q_row_off_v, **_addr_kw)
+        _, _, k_addr = utils.make_addr_pair(k_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw)
+        _, _, v_addr = utils.make_addr_pair(v_st, head_k, _k_batch_v, _k_row_off_v, **_addr_kw)
 
         # ---- PADDED_HEAD column handling ----
         # One rule: an element is valid iff its column < hdim. A chunk whose
@@ -598,7 +598,7 @@ def build_bwd_dq_module_primary(meta, knobs):
         # batches when the distance-1 schedule is on. `scf_yield_` returns a
         # bare value rather than a list when this is 1.
         _CARRY_N = D_CHUNKS + (NUM_BATCHES_K + NUM_BATCHES_V if KV_PREFETCH_DIST else 0)
-        k_ap = fmha.Aperture(
+        k_ap = utils.Aperture(
             qk_cols,
             lds_base=0,
             lds_stride=K_STRIDE,
@@ -608,7 +608,7 @@ def build_bwd_dq_module_primary(meta, knobs):
             num_batches=NUM_BATCHES_K,
             needs_guard=K_NEEDS_GUARD,
         )
-        v_ap = fmha.Aperture(
+        v_ap = utils.Aperture(
             vo_cols,
             lds_base=LDS_V_BASE,
             lds_stride=V_STRIDE,
@@ -621,13 +621,13 @@ def build_bwd_dq_module_primary(meta, knobs):
         # A third aperture over the *same* tensor: K^T is a different placement
         # of K, so it needs its own LDS base and stride while sharing the
         # column bound. Only live when the transposed layout is selected.
-        kt_ap = fmha.Aperture(
+        kt_ap = utils.Aperture(
             qk_cols,
             lds_base=LDS_KT_BASE,
             lds_stride=KT_STRIDE,
             vec_width=VEC_WIDTH,
         )
-        kt_tiling = fmha.TransposedTiling(
+        kt_tiling = utils.TransposedTiling(
             d_blocks=KT_D_BLOCKS,
             tiles=_KT_TILES,
             loads=KT_LOADS,
@@ -646,10 +646,10 @@ def build_bwd_dq_module_primary(meta, knobs):
         )
 
         def load_global_f16xN(base_ptr, base64, off32):
-            return _pointer_load(vxf16_type, fmha.split_ptr(base_ptr, base64, off32, elem_type))
+            return _pointer_load(vxf16_type, utils.split_ptr(base_ptr, base64, off32, elem_type))
 
         def load_global_v8f16(base_ptr, base64, off32):
-            return _pointer_load(v8f16_type, fmha.split_ptr(base_ptr, base64, off32, elem_type))
+            return _pointer_load(v8f16_type, utils.split_ptr(base_ptr, base64, off32, elem_type))
 
         def store_global_f16(base_ptr, off64, val):
             """One dB element. Scalar because the guard is per column."""
@@ -662,14 +662,14 @@ def build_bwd_dq_module_primary(meta, knobs):
             return _pointer_load(elem_type, buffer_ops.get_element_ptr(base_ptr, fx.Int64(off64), elem_type=elem_type))
 
         def store_global_v8(base_ptr, base64, off32, val):
-            _pointer_store(val, fmha.split_ptr(base_ptr, base64, off32, elem_type))
+            _pointer_store(val, utils.split_ptr(base_ptr, base64, off32, elem_type))
 
         # How each tensor is read: its address split, paired with the load
         # instruction that consumes it. `start -> (row, col) -> value`, which
         # is what every movement helper in `fmha_common` takes.
-        fetch_k = fmha.reader(k_addr, lambda b, o: load_global_f16xN(k_ptr, b, o))
-        fetch_v = fmha.reader(v_addr, lambda b, o: load_global_f16xN(v_ptr, b, o))
-        fetch_k_tr = fmha.reader(k_addr, lambda b, o: fmha.global_load_tr_v8(k_ptr_i64, b, o, v8f16_type))
+        fetch_k = utils.reader(k_addr, lambda b, o: load_global_f16xN(k_ptr, b, o))
+        fetch_v = utils.reader(v_addr, lambda b, o: load_global_f16xN(v_ptr, b, o))
+        fetch_k_tr = utils.reader(k_addr, lambda b, o: utils.global_load_tr_v8(k_ptr_i64, b, o, v8f16_type))
 
         # ---- Q and dO preload ----
         # One 16-row sub-tile per wave, held in registers for the whole KV
@@ -687,8 +687,8 @@ def build_bwd_dq_module_primary(meta, knobs):
         # lane owns one Q row for the whole KV loop.
 
         q_rows_axis = fmha.MaskedAxis(fx.Index(seqlen_q_i32))
-        q_ap = fmha.Aperture(qk_cols, rows=q_rows_axis)
-        do_ap = fmha.Aperture(vo_cols, rows=q_rows_axis)
+        q_ap = utils.Aperture(qk_cols, rows=q_rows_axis)
+        do_ap = utils.Aperture(vo_cols, rows=q_rows_axis)
         q_tile_base = q_tbase(_q_start_addr)
         do_tile_base = do_tbase(_q_start_addr)
 
@@ -717,7 +717,7 @@ def build_bwd_dq_module_primary(meta, knobs):
         # every other one.
         if const_expr(BIAS_TYPE):
             _bq = fx.Index(q_row) if _q_in else fx.Index(0)
-            _b_ptr = fmha.pointer_to_llvm_ptr(B)
+            _b_ptr = utils.pointer_to_llvm_ptr(B)
             _b_row = (
                 _q_batch_v * fx.Index(stride_b_batch)
                 + head_q * fx.Index(stride_b_head)
@@ -730,7 +730,7 @@ def build_bwd_dq_module_primary(meta, knobs):
                 + head_q * fx.Index(stride_db_head)
                 + (_q_row_off_v + _bq) * fx.Index(stride_db_seq_q)
             )
-            _db_ptr = fmha.pointer_to_llvm_ptr(DB)
+            _db_ptr = utils.pointer_to_llvm_ptr(DB)
             # Does the caller want dB at all? A bias that does not require a
             # gradient is spelled as an all-zero dB stride triple over a null
             # DB -- AOTriton's ABI, and `bwd_kernel_dq.py`'s `store_db`, which
@@ -784,7 +784,7 @@ def build_bwd_dq_module_primary(meta, knobs):
             return _pointer_load(
                 f32_ty,
                 buffer_ops.get_element_ptr(
-                    fmha.pointer_to_llvm_ptr(ptr),
+                    utils.pointer_to_llvm_ptr(ptr),
                     fx.Int64(_lse_off),
                     elem_type=f32_ty,
                 ),
@@ -878,10 +878,10 @@ def build_bwd_dq_module_primary(meta, knobs):
             kv_upper = fx.Index(kv_upper if _alive else fx.Index(0))
 
         def _read_k(col0):
-            return fmha.read_batches(k_ap, fetch_k(col0), load_row_in_batch, load_col_base)
+            return utils.read_batches(k_ap, fetch_k(col0), load_row_in_batch, load_col_base)
 
         def _read_v(col0):
-            return fmha.read_batches_unmasked(v_ap, fetch_v(col0), v_row_in_batch, v_col_base)
+            return utils.read_batches_unmasked(v_ap, fetch_v(col0), v_row_in_batch, v_col_base)
 
         init_args = [fx.as_ir_value(c_zero_v8f32) for _ in range_constexpr(D_CHUNKS)]
         if const_expr(KV_PREFETCH_DIST):
@@ -943,13 +943,13 @@ def build_bwd_dq_module_primary(meta, knobs):
             # overwritten. Two barriers per iteration, as in the forward.
             gpu.barrier()
             if const_expr(KV_PREFETCH_DIST):
-                fmha.publish(k_ap, lds_kv, _k_cur, load_row_in_batch, load_col_base, fx.Index(BLOCK_N))
-                fmha.publish(v_ap, lds_kv, _v_cur, v_row_in_batch, v_col_base, fx.Index(BLOCK_N))
+                utils.publish(k_ap, lds_kv, _k_cur, load_row_in_batch, load_col_base, fx.Index(BLOCK_N))
+                utils.publish(v_ap, lds_kv, _v_cur, v_row_in_batch, v_col_base, fx.Index(BLOCK_N))
                 # Issued after the store and before the barrier, so the load
                 # flies over all three GEMMs rather than only the back-edge.
                 _k_next, _v_next = _read_k(next_kv_start), _read_v(next_kv_start)
             else:
-                fmha.stage(
+                utils.stage(
                     k_ap,
                     lds_kv,
                     fetch_k(kv_block_start),
@@ -957,7 +957,7 @@ def build_bwd_dq_module_primary(meta, knobs):
                     load_col_base,
                     fx.Index(BLOCK_N),
                 )
-                fmha.stage(
+                utils.stage(
                     v_ap,
                     lds_kv,
                     fetch_v(kv_block_start),
@@ -966,11 +966,11 @@ def build_bwd_dq_module_primary(meta, knobs):
                     fx.Index(BLOCK_N),
                 )
             if const_expr(KT_TRANSPOSED):
-                fmha.publish_transposed(
+                utils.publish_transposed(
                     kt_ap,
                     kt_tiling,
                     lds_kv,
-                    fmha.read_transposed(kt_ap, kt_tiling, fetch_k_tr(kv_block_start)),
+                    utils.read_transposed(kt_ap, kt_tiling, fetch_k_tr(kv_block_start)),
                 )
             gpu.barrier()
 
@@ -982,7 +982,7 @@ def build_bwd_dq_module_primary(meta, knobs):
                 k_col = shard_qk_off + fx.Index(ks * WMMA_K) + klane * WMMA_LANE_K
                 for a_idx in range_constexpr(NUM_S_ACCS):
                     k_pack = k_ap.from_lds(lds_kv, lane16 + fx.Index(a_idx * WMMA_N), k_col)
-                    s_accs[a_idx] = fmha.wmma_acc(k_pack, q_packs[ks], s_accs[a_idx])
+                    s_accs[a_idx] = utils.wmma_acc(k_pack, q_packs[ks], s_accs[a_idx])
 
             # ==== GEMM2: dP^T = V @ dO^T ====
             # The identical access pattern with V in place of K and dO in place
@@ -992,7 +992,7 @@ def build_bwd_dq_module_primary(meta, knobs):
                 v_col = shard_qk_off + fx.Index(ks * WMMA_K) + klane * WMMA_LANE_K
                 for a_idx in range_constexpr(NUM_S_ACCS):
                     v_pack = v_ap.from_lds(lds_kv, lane16 + fx.Index(a_idx * WMMA_N), v_col)
-                    dp_accs[a_idx] = fmha.wmma_acc(v_pack, do_packs[ks], dp_accs[a_idx])
+                    dp_accs[a_idx] = utils.wmma_acc(v_pack, do_packs[ks], dp_accs[a_idx])
 
             # ==== Cross-shard reduction of S and dP ====
             # Each shard-wave holds a partial sum over its own slice of the
@@ -1004,7 +1004,7 @@ def build_bwd_dq_module_primary(meta, knobs):
                     # The partials land on top of the V tile, so every wave
                     # must be past its GEMM2 reads first.
                     gpu.barrier()
-                _red = fmha.reduce_s_across_shards(
+                _red = utils.reduce_s_across_shards(
                     s_accs + dp_accs,
                     lds_byte_base=_lds_byte_base,
                     byte0=RED_BYTE0,
@@ -1063,7 +1063,7 @@ def build_bwd_dq_module_primary(meta, knobs):
                     _bkv = fx.Int32(kv_block_start)
                     _bklane = fx.Int32(klane) * fx.Int32(8)
                     for _i in range_constexpr(NUM_S_VALS):
-                        _bcol = _bkv + fx.Int32(fmha.acc_elem_column(_i)) + _bklane
+                        _bcol = _bkv + fx.Int32(utils.acc_elem_column(_i)) + _bklane
                         _bin = _bcol < seqlen_k_i32
                         _bsafe = fx.Index(fx.Int32(_bcol) if _bin else fx.Int32(0))
                         _braw = fx.Float32(fx.as_dsl_value(load_global_f16(_b_ptr, _b_row + _bsafe)).to(fx.Float32))
@@ -1094,7 +1094,7 @@ def build_bwd_dq_module_primary(meta, knobs):
                 _kv_i32 = fx.Int32(kv_block_start)
                 _klane_off = fx.Int32(klane) * fx.Int32(8)
                 for _i in range_constexpr(NUM_S_VALS):
-                    _col = _kv_i32 + fx.Int32(fmha.acc_elem_column(_i)) + _klane_off
+                    _col = _kv_i32 + fx.Int32(utils.acc_elem_column(_i)) + _klane_off
                     _dead = _col >= seqlen_k_i32
                     if const_expr(CAUSAL):
                         # Both edges of the band, signed throughout:
@@ -1155,7 +1155,7 @@ def build_bwd_dq_module_primary(meta, knobs):
                 # **Bounded, and per element.** A v8 here would be wrong at
                 # any ragged extent: dB's KV pitch is exactly `seqlen_k` with
                 # no padding, so a chunk straddling the end lands in the *next
-                # row*. That is unlike `fmha.write_v8`, whose whole-chunk skip
+                # row*. That is unlike `utils.write_v8`, whose whole-chunk skip
                 # is exact only because the head-dim pitch is a 16-byte
                 # multiple. `dS` is already 0 in those columns -- masked to
                 # -inf, so `p` is 0 -- which is precisely why the address, not
@@ -1179,13 +1179,13 @@ def build_bwd_dq_module_primary(meta, knobs):
             # ==== Build the dS packs ====
             # Truncated to the input's 16-bit type because RDNA4 WMMA has no
             # F32xF32 form: A/B operands are f16/bf16/iu8/iu4/fp8 only (ISA
-            # manual Table 41). See `fmha.bf16_trunc_pack_v8` for the accuracy
+            # manual Table 41). See `utils.bf16_trunc_pack_v8` for the accuracy
             # measurement behind the bf16 spelling.
             ds_packs = []
             for _acc in range_constexpr(NUM_S_ACCS):
                 _slice = [ds_vals[_acc * 8 + j] for j in range(8)]
                 if const_expr(dtype_str == "bf16"):
-                    ds_packs.append(fmha.bf16_trunc_pack_v8(_slice, elem_dtype))
+                    ds_packs.append(utils.bf16_trunc_pack_v8(_slice, elem_dtype))
                 else:
                     ds_packs.append(
                         Vec.from_elements(
@@ -1213,7 +1213,7 @@ def build_bwd_dq_module_primary(meta, knobs):
             # epilogue a single v8 store per 16 columns.
             for dc in range_constexpr(D_CHUNKS):
                 for a_idx in range_constexpr(NUM_S_ACCS):
-                    dq_accs[dc] = fmha.wmma_acc(_load_kt(dc, a_idx), ds_packs[a_idx], dq_accs[dc])
+                    dq_accs[dc] = utils.wmma_acc(_load_kt(dc, a_idx), ds_packs[a_idx], dq_accs[dc])
 
             _out = [dq_accs[i] for i in range_constexpr(D_CHUNKS)]
             if const_expr(KV_PREFETCH_DIST):
@@ -1274,7 +1274,7 @@ def build_bwd_dq_module_primary(meta, knobs):
 
         # ---- Scale and store dQ ----
         # dQ shares Q's rows and columns and is never staged.
-        dq_ap = fmha.Aperture(qk_cols, rows=q_rows_axis)
+        dq_ap = utils.Aperture(qk_cols, rows=q_rows_axis)
         dq_tile_base = dq_tbase(start_q)
 
         def write_dq(row, col, val):
@@ -1290,7 +1290,7 @@ def build_bwd_dq_module_primary(meta, knobs):
                 # Each shard owns a disjoint column range of dQ, so there is
                 # nothing to combine here -- the store is the reduction.
                 _col = shard_qk_off + fx.Index(dc * WMMA_N) + klane * 8
-                fmha.write_v8(dq_ap, write_dq, q_row_in_tile, _col, _trunc)
+                utils.write_v8(dq_ap, write_dq, q_row_in_tile, _col, _trunc)
 
     @flyc.jit
     def launch_bwd_dq(
@@ -1502,22 +1502,22 @@ def build_bwd_dq_module_primary(meta, knobs):
         The diagonal a *numeric* `window` bound is measured from is VarlenBits
         bit 18 (`principal_diagonal_choice`), and `varlen["bits"]` is its only
         source. A dense call carries it with
-        `varlen=abi.varlen_dense(principal_diagonal=...)`; `varlen=None` is
+        `varlen=fmha.varlen_dense(principal_diagonal=...)`; `varlen=None` is
         word 0, i.e. top-left. The bit means the same thing dense or varlen
         (`d` is merely uniform). A forward and its backward must agree on it.
         """
         seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
-        ptrs, meta_t, st = abi.prep_tensors(
+        ptrs, meta_t, st = fmha.prep_tensors(
             [("Q", Q), ("K", K), ("V", V), ("DO", DO), ("DQ", DQ)], q_heads=("DO", "DQ")
         )
-        _lp = abi.row_tensor_arg(lse, "logsumexp", meta_t[0], seqlen_q, varlen)
-        _dp = abi.row_tensor_arg(delta, "delta", meta_t[0], seqlen_q, varlen)
-        _wl, _wr = abi.resolve_window(CAUSAL_TYPE, HOST_CAUSAL_TYPE, window, seqlen_q, seqlen_k)
-        _vb, _sq0, _sq1, _sk0, _sk1, _mq, _mk = abi.varlen_args(
+        _lp = fmha.row_tensor_arg(lse, "logsumexp", meta_t[0], seqlen_q, varlen)
+        _dp = fmha.row_tensor_arg(delta, "delta", meta_t[0], seqlen_q, varlen)
+        _wl, _wr = fmha.window_args(CAUSAL_TYPE, HOST_CAUSAL_TYPE, window, seqlen_q, seqlen_k)
+        _vb, _sq0, _sq1, _sk0, _sk1, _mq, _mk = fmha.varlen_args(
             False, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens
         )
-        _ps, _po1, _po2, _ip, _dsc, _hold = abi.dropout_args(ENABLE_DROPOUT, dropout_p, seed, off1, off2, Q.device)
-        _bp, _dbp, _bs, _dbs = abi.bias_args(BIAS_TYPE, True, bias, dbias, Q)
+        _ps, _po1, _po2, _ip, _dsc, _hold = fmha.dropout_args(ENABLE_DROPOUT, dropout_p, seed, off1, off2, Q.device)
+        _bp, _dbp, _bs, _dbs = fmha.bias_args(BIAS_TYPE, True, bias, dbias, Q)
         return (
             # The shared backward pointer block is
             #     Q, K, V, B, DO, <outputs>, LSE, Delta
@@ -1549,7 +1549,7 @@ def build_bwd_dq_module_primary(meta, knobs):
             _ip,
             _dsc,
             *meta_t,
-            abi.resolve_scale(Q, scale, PADDED_HEAD, sm_scale),
+            fmha.resolve_scale(Q, scale, PADDED_HEAD, sm_scale),
             *st,
             *_bs,
             *_dbs,
@@ -1600,7 +1600,7 @@ def build_bwd_dq_module_primary(meta, knobs):
             bias,
             dbias,
         )
-        abi.run_compiled(_COMPILED, launch_bwd_dq, *args, stream if stream is not None else fx.Stream(None))
+        fmha.run_compiled(_COMPILED, launch_bwd_dq, *args, stream if stream is not None else fx.Stream(None))
 
     def _compile(
         Q,
@@ -1650,12 +1650,12 @@ def build_bwd_dq_module_primary(meta, knobs):
         return flyc.compile(launch_bwd_dq, *args, fx.Stream(stream))
 
     _launch.compile = _compile
-    _launch.varlen_bits = abi.varlen_bits
-    _launch.varlen_dense = abi.varlen_dense
-    _launch.varlen_compact = abi.varlen_compact
-    _launch.varlen_padded = abi.varlen_padded
-    _launch.varlen_strided = abi.varlen_strided
-    _launch.varlen_seqused_k = abi.varlen_seqused_k
+    _launch.varlen_bits = fmha.varlen_bits
+    _launch.varlen_dense = fmha.varlen_dense
+    _launch.varlen_compact = fmha.varlen_compact
+    _launch.varlen_padded = fmha.varlen_padded
+    _launch.varlen_strided = fmha.varlen_strided
+    _launch.varlen_seqused_k = fmha.varlen_seqused_k
     _launch.block_m = BLOCK_M
     return _launch
 
