@@ -95,6 +95,17 @@ When asked to identify implied changes for a PR, trace the data flow:
 entry name construction (Python) → embedded strings in generated `.cc` →
 C++ runtime reconstruction → AKS2 lookup. Any break in this chain is a bug.
 
+### FlyDSL (flyc) kernels
+
+A flyc description (`modules/flash/aot/flyc_*.py`, `@ati.flyc.kernel`) returns
+`(build, asdict(knobs))`. The generator only reads the knob dict: `flyc_source`
+(kernel file relative to `modules/<family>/flyc/`, e.g. `gfx950/fwd.py`) and
+`flyc_kernel_name` locate the kernel for `ir/flyc/kdesc.py`, and the rest becomes
+the psel the C++ `grid_calculator()` reads (`block_m`, `block_kv`,
+`GRID_AXIS_ORDER`). Knobs come from the unified entries in
+`modules/flash/flyc/fmha_*_tuning.py`, which must stay flydsl-free; see
+`docs/FlyDSL.md`.
+
 ### What this agent can help with
 
 - Adding a new kernel or operator to `v3python/rules/`
