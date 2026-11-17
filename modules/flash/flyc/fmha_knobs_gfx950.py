@@ -27,12 +27,6 @@ class Gfx950KnobFields(FlycQKnobs):
     `resolve` can tell "the caller wants 1" from "the caller did not say".
     """
 
-    # Compile-time widths. `block_dmodel` is the tile the hsaco serves; the
-    # *real* extent travels as a runtime argument, which `padded_head` records.
-    block_dmodel: int | None = None
-    block_dmodel_v: int | None = None
-    padded_head: bool | None = None
-
     # A compile-time *lower* bound on the runtime `hdim_qk`, exclusive. The
     # build promises nothing about hdim at or below it, and the dispatcher
     # rejects a call that violates it, so the kernel may treat D columns below
@@ -127,9 +121,6 @@ class BwdDqKnobFields(Gfx950KnobFields):
 class BwdDkDvKnobFields(FlycKVKnobs):
     """The dK/dV knobs. `None` means "policy decides". The head here is the kv head."""
 
-    block_dmodel: int | None = None
-    block_dmodel_v: int | None = None
-    padded_head: bool | None = None
     hdim_qk_floor: int | None = None
 
     # Pinned as a set of four; see `_with_geometry`.

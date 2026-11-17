@@ -258,12 +258,16 @@ def flyc_bwd_dkdv(arch, choices, hints):
             # It is deliberately NOT promoted to a functional axis: compiling
             # both variants would double the dK/dV binary count and buy no
             # correctness, because the binary already handles both.
+            #
+            # The compiled tile and its padding are the functional's own axes.
+            block_dmodel=tile,
+            padded_head=choices.PADDED_HEAD,
         )
         knobs = bwd_dkdv_knobs(
             arch,
-            block_dmodel=tile,
-            block_dmodel_v=tile,
-            padded_head=choices.PADDED_HEAD,
+            # The tile comes from the operator's ladder, not gfx950's: claim no
+            # floor, so the kernel masks every D column.
+            hdim_qk_floor=0,
             strides_constexpr=False,
             # NOTE: unlike Gfx950Knobs (forward, dQ), BwdDkDvKnobs is a
             # standalone dataclass with no `paged`/`num_kv_splits` fields at
@@ -271,9 +275,6 @@ def flyc_bwd_dkdv(arch, choices, hints):
             # signature also carries no folded constexpr parameter (only the
             # forward does), so the forward's pin has no counterpart here.
         ).resolve(meta)
-        assert knobs.block_dmodel == tile, (
-            f'resolve() returned block_dmodel={knobs.block_dmodel} for '
-            f'BLOCK_DMODEL={tile}; the compiled tile must be the operator axis')
 
         def build():
             """Deferred: constructs the FlyDSL module. Imports flydsl transitively,

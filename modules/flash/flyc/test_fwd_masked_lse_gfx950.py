@@ -86,11 +86,12 @@ def _build(head_dim):
     from flash_attn_func_gfx950 import (
         build_flash_attn_func_gfx950_module_primary as build_primary,
     )
-    from fmha_tuning_gfx950 import FmhaInputMetadata, fmha_knobs
+    from fmha_tuning_gfx950 import FmhaInputMetadata, fmha_knobs, plan
 
     meta = FmhaInputMetadata(
         num_heads=NUM_HEADS, head_dim=head_dim, causal=True, dtype_str="bf16"
     )
+    meta = plan(meta)
     # `return_lse=True` pinned, exactly as `modules/flash/aot/flyc_attn_fwd.py`
     # pins it: the policy's default is False, which deletes the store outright
     # and would make every assertion below read the allocation.

@@ -345,11 +345,11 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
             _BWD_DQ_FALLBACK.merge(self)
             ._checked_modes()
             ._with_widths(meta)
-            ._with_wave_geometry()
+            ._with_wave_geometry(meta)
             ._checked_against_traits(meta)
         )
 
-    def _with_d_axis_splits(self):
+    def _with_d_axis_splits(self, meta):
         """Both D-axis cuts stay at 1. **This is load-bearing, not tidiness.**
 
         The forward's version turns `d_stages` on at block_dmodel > 256 and
@@ -393,7 +393,7 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
         floor = int(self.hdim_qk_floor or 0)
         return floor if head_dim_v > floor else 0
 
-    def _with_wave_geometry(self):
+    def _with_wave_geometry(self, meta):
         """dQ's own geometry table. Measured, not inherited.
 
         The forward's families answer questions this body does not ask: family
@@ -438,7 +438,8 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
         they are not occupancy-limited and no wave count reaches them. See the
         B3 outcome in `sdpa-bwd-plan-gfx950.md`.
         """
-        me = self._with_d_axis_splits()
+        me = self._with_d_axis_splits(meta)
+        block_dmodel = meta.block_dmodel
         # Decided before the pin check, and separately from it: the wave count
         # is a *geometry* choice that has to move with BLOCK_M, while this is a
         # register-budget hint that is right at 1 whatever the geometry. A
@@ -452,8 +453,6 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
             raise ValueError(
                 f"pin num_waves, block_m, block_n and head_dim_granule together or not at all, got {pinned}"
             )
-        if me.block_dmodel is None:
-            raise ValueError("_with_wave_geometry runs after _with_widths; block_dmodel is not resolved")
         # **384 and up.** Measured at `B=2 H=8 S=4096`, 16 rows against 32:
         # 512 is 4.23x (116 -> 490 TF, 546 spills -> 0), 384 is 1.69x (303 ->
         # 511), 256 is 1.04x, 192 is exactly level, and 128 and 64 are *worse*
@@ -480,13 +479,13 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
         # So 256 moves down to 16 rows, which costs nothing: re-measured at
         # `B=2 H=8 S=4096`, 16 rows is 564 TF against 550 without dropout and
         # 527 against 509 with it, matching the 1.04x the original sweep saw.
-        rows = me.mfma_rows if me.mfma_rows is not None else (16 if me.block_dmodel >= 256 else 32)
+        rows = me.mfma_rows if me.mfma_rows is not None else (16 if block_dmodel >= 256 else 32)
         if rows == 16:
             # BLOCK_N 32 for the reason `build_traits` states, and four waves
             # because the wide rungs need one wave per SIMD to see all 512
             # registers -- which is the whole premise of the family.
             return replace(me, num_waves=4, block_m=4 * 16, block_n=32, head_dim_granule=64, mfma_rows=16)
-        waves = 2 if 128 <= me.block_dmodel <= 256 else 4
+        waves = 2 if 128 <= block_dmodel <= 256 else 4
         return replace(
             me,
             mfma_rows=32,
@@ -497,7 +496,7 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
             # in prose.
             block_m=waves * 32,
             block_n=64,
-            head_dim_granule=32 if me.block_dmodel % 64 else 64,
+            head_dim_granule=32 if block_dmodel % 64 else 64,
         )
 
     def build_traits(self, meta):
@@ -508,10 +507,11 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
         below it. The divergences are named: the rung check, `store_db`, and
         the modes B2 does not implement.
         """
-        if self.block_dmodel not in BWD_DQ_LADDER:
+        block_dmodel = meta.block_dmodel
+        if block_dmodel not in BWD_DQ_LADDER:
             raise NotImplementedError(
                 f"the backward dQ kernel is built for head_dim tiles {BWD_DQ_LADDER}, not "
-                f"{self.block_dmodel}. head_dim {meta.head_dim} rounds to {tile_width_for(meta.head_dim)}."
+                f"{block_dmodel}. head_dim {meta.head_dim} rounds to {tile_width_for(meta.head_dim)}."
             )
         if meta.dtype_str not in ("f16", "bf16"):
             # Same assertion and the same two values as gfx1201's `bwd_dq`, so
@@ -520,7 +520,7 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
             # store, so an unrecognised string would otherwise pick a dtype by
             # falling through a comparison.
             raise NotImplementedError(f"the backward dQ kernel supports f16/bf16, got {meta.dtype_str!r}")
-        if (self.mfma_rows or 32) == 16 and self.block_dmodel % 64:
+        if (self.mfma_rows or 32) == 16 and block_dmodel % 64:
             # Before `make_traits`, which would otherwise raise first with a
             # message about the granule and leave the caller to work out that
             # the granule came from the family. `_kt_read_base` folds
@@ -528,7 +528,7 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
             # `SMEM_N_RPT` to divide 4 -- true at granule 64, not at 32.
             raise NotImplementedError(
                 f"the 16-row family is built for head_dim tiles that are multiples of 64, not "
-                f"{self.block_dmodel}: its transpose read assumes the granule-64 staging shape, and "
+                f"{block_dmodel}: its transpose read assumes the granule-64 staging shape, and "
                 "the off-grid rungs are all served by the 32-row family anyway"
             )
         # Refused rather than ignored. Each of these would build and run and
@@ -564,17 +564,7 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
                     "would reduce over part of the head dim and return a finite wrong answer. The wide "
                     "rungs do not need it -- head_dim 512 is 133 KB of LDS unstaged."
                 )
-        if self.block_dmodel_v != self.block_dmodel:
-            # Not the same thing as an asymmetric *head_dim*, which B3 does
-            # serve: this is an asymmetric compiled *tile*, which would give
-            # GEMM3's K reads and the dQ store two different `D_CHUNKS`. B2
-            # refused it as part of a wider refusal; keep the narrow one.
-            raise NotImplementedError(
-                f"block_dmodel_v {self.block_dmodel_v} != block_dmodel {self.block_dmodel}: dQ's output "
-                "width is the *qk* extent, so a second tile width has nothing here to describe"
-            )
-
-        self.staging_shape()
+        self.staging_shape(block_dmodel)
         self._check_helpers_support_geometry()
         num_kv_heads = meta.num_heads if meta.num_kv_heads is None else meta.num_kv_heads
         shape = (16, 16, 32) if (self.mfma_rows or 32) == 16 else (32, 32, 16)
@@ -584,7 +574,7 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
             hdim_vo_floor=self._hdim_vo_floor(meta),
             num_heads=meta.num_heads,
             num_kv_heads=num_kv_heads,
-            head_dim=self.block_dmodel,
+            head_dim=block_dmodel,
             num_waves=self.num_waves,
             block_m=self.block_m,
             block_n=self.block_n,
@@ -626,7 +616,7 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
         if lds_bytes > self.LDS_CAP_BYTES:
             raise ValueError(
                 f"KV staging needs {lds_bytes} B of LDS, over the {self.LDS_CAP_BYTES} B cap, for "
-                f"block_dmodel {self.block_dmodel} at BLOCK_N {self.block_n}"
+                f"block_dmodel {block_dmodel} at BLOCK_N {self.block_n}"
             )
         return traits
 

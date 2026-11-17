@@ -126,7 +126,7 @@ def _build(head_dim, dtype_str, causal=False, bias=False):
     from flash_attn_func_gfx950 import (
         build_flash_attn_func_gfx950_module_primary as build_primary,
     )
-    from fmha_tuning_gfx950 import FmhaInputMetadata, fmha_knobs
+    from fmha_tuning_gfx950 import FmhaInputMetadata, fmha_knobs, plan
 
     meta = FmhaInputMetadata(
         num_heads=NUM_HEADS,
@@ -135,6 +135,7 @@ def _build(head_dim, dtype_str, causal=False, bias=False):
         bias=bias,
         dtype_str=dtype_str,
     )
+    meta = plan(meta)
     return build_primary(meta, fmha_knobs("gfx950").resolve(meta))
 
 

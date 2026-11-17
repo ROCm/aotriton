@@ -193,11 +193,15 @@ def flyc_bwd_dq(arch, choices, hints):
             dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
             bias=bool(choices.BIAS_TYPE),
             dropout=bool(choices.ENABLE_DROPOUT),
+            # The compiled tile and its padding are the functional's own axes.
+            block_dmodel=tile,
+            padded_head=choices.PADDED_HEAD,
         )
         knobs = bwd_dq_knobs(
             arch,
-            block_dmodel=tile,
-            padded_head=choices.PADDED_HEAD,
+            # The tile comes from the operator's ladder, not gfx950's: claim no
+            # floor, so the kernel masks every D column.
+            hdim_qk_floor=0,
             # Pinned for the same reason as the forward's gfx950 branch:
             # this kernel's own real signature carries no folded constexpr
             # parameter, but the pin keeps the build configuration uniform
@@ -230,9 +234,6 @@ def flyc_bwd_dq(arch, choices, hints):
         assert knobs.store_db == bool(choices.BIAS_TYPE), (
             f'resolve() returned store_db={knobs.store_db} for '
             f'BIAS_TYPE={choices.BIAS_TYPE}; dB is written exactly when bias is')
-        assert knobs.block_dmodel == tile, (
-            f'resolve() returned block_dmodel={knobs.block_dmodel} for '
-            f'BLOCK_DMODEL={tile}; the compiled tile must be the operator axis')
         assert not knobs.paged and knobs.num_kv_splits == 1, (
             'AOT gfx950 pins paged=False, num_kv_splits=1 uniformly across the '
             'three descriptions; resolve() must not have overridden it')

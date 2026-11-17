@@ -532,11 +532,15 @@ def flyc_attn_fwd(arch, choices, hints):
             dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
             bias=bool(choices.BIAS_TYPE),
             dropout=bool(choices.ENABLE_DROPOUT),
+            # The compiled tile and its padding are the functional's own axes.
+            block_dmodel=tile,
+            padded_head=choices.PADDED_HEAD,
         )
         knobs = fmha_knobs(
             arch,
-            block_dmodel=tile,
-            padded_head=choices.PADDED_HEAD,
+            # The tile comes from the operator's ladder, not gfx950's: claim no
+            # floor, so the kernel masks every D column.
+            hdim_qk_floor=0,
             # AOT cannot bake strides: one binary must serve every layout.
             strides_constexpr=False,
             # Pinned, not left to the policy: this pin is what makes
@@ -568,9 +572,6 @@ def flyc_attn_fwd(arch, choices, hints):
             # which is why this is pinned in this branch and not the one above.
             return_lse=True,
         ).resolve(meta)
-        assert knobs.block_dmodel == tile, (
-            f'resolve() returned block_dmodel={knobs.block_dmodel} for '
-            f'BLOCK_DMODEL={tile}; the compiled tile must be the operator axis')
         assert not knobs.strides_constexpr, \
             'num_heads=1 is only safe while STRIDE_TOKEN stays behind ' \
             'strides_constexpr (the LSE descriptor, the other NUM_HEADS_Q ' \

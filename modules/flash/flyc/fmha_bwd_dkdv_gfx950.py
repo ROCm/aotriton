@@ -147,7 +147,7 @@ from fmha_dualwave_gfx950 import (
     wire_ptr,
     wire_view,
 )
-from fmha_tuning_bwd_dkdv_gfx950 import BwdDkDvInputMetadata, bwd_dkdv_knobs
+from fmha_tuning_bwd_dkdv_gfx950 import BwdDkDvInputMetadata, bwd_dkdv_knobs, plan
 from gfx950_standalone import buffer_ops, dualwave
 from philox import Philox, keep_mask
 
@@ -1702,11 +1702,11 @@ class BwdDkDvTileBody(dualwave.DualwaveKernelContext):
 
 def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
     """Build the dK/dV kernel for a resolved (meta, knobs) pair."""
-    if knobs.block_dmodel is None:
-        raise ValueError("knobs must be resolved: call `bwd_dkdv_knobs(arch, ...).resolve(meta)` first")
+    if meta.block_dmodel is None or knobs.hdim_qk_floor is None:
+        raise ValueError("meta must come from `plan(meta)` and knobs from `bwd_dkdv_knobs(arch, ...).resolve(meta)`")
     traits = knobs.build_traits(meta)
-    BLOCK_DMODEL = knobs.block_dmodel
-    PADDED_HEAD = knobs.padded_head
+    BLOCK_DMODEL = meta.block_dmodel
+    PADDED_HEAD = meta.padded_head
     # D columns at or below this are guaranteed real, so the streamed masks can
     # skip them. See `_masked_ks_steps`.
     HDIM_QK_FLOOR = knobs.hdim_qk_floor
@@ -2688,6 +2688,6 @@ def build_fmha_bwd_dkdv_gfx950_module(arch="gfx950", **kwargs):
     from dataclasses import fields as _fields
 
     meta_fields = {f.name for f in _fields(BwdDkDvInputMetadata)}
-    meta = BwdDkDvInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields})
+    meta = plan(BwdDkDvInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
     knob_kwargs = {k: v for k, v in kwargs.items() if k not in meta_fields}
     return build_fmha_bwd_dkdv_gfx950_module_primary(meta, bwd_dkdv_knobs(arch, **knob_kwargs).resolve(meta))

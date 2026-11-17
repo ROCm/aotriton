@@ -66,6 +66,7 @@ __all__ = [
     "BwdDkDvKnobs",
     "BwdDkDvTraits",
     "bwd_dkdv_knobs",
+    "plan",
     "rung_below",
     "tile_width_for",
 ]
@@ -533,6 +534,13 @@ class BwdDkDvInputMetadata:
     head_dim_v: int | None = None
     sm_scale: float | None = None
 
+    # The compiled tile and whether the real extents are narrower. Inputs, not
+    # knobs: a functional's BLOCK_DMODEL and PADDED_HEAD fix them. `plan`
+    # derives them from the real head dims. `resolve` reads them and never
+    # changes them; a missing one is an error.
+    block_dmodel: int | None = None
+    padded_head: bool | None = None
+
     # B4. `window` is a *left* bound on top of the causal right one, so it
     # requires `causal`; see `_checked_scope`.
     causal: bool = False
@@ -582,6 +590,23 @@ class BwdDkDvInputMetadata:
     bias: bool = False
 
 
+def plan(request: BwdDkDvInputMetadata) -> BwdDkDvInputMetadata:
+    """`request` with the compiled tile and `padded_head` filled in.
+
+    The JIT entry point into tuning: rounds the real head dims up to the ladder
+    and records whether either is narrower than the tile. A tile or
+    `padded_head` already set on `request` is kept.
+    """
+    block_dmodel = request.block_dmodel
+    if block_dmodel is None:
+        block_dmodel = tile_width_for(request.head_dim)
+    padded_head = request.padded_head
+    if padded_head is None:
+        head_dim_v = request.head_dim if request.head_dim_v is None else request.head_dim_v
+        padded_head = (request.head_dim != block_dmodel) or (head_dim_v != block_dmodel)
+    return replace(request, block_dmodel=block_dmodel, padded_head=padded_head)
+
+
 @dataclass(frozen=True)
 class BwdDkDvKnobs(BwdDkDvKnobFields):
     """How to compute it. `None` means "policy decides".
@@ -606,7 +631,7 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
             ._checked_scope(meta)
             ._with_widths(meta)
             ._with_geometry(meta)
-            ._with_buffers()
+            ._with_buffers(meta)
             ._with_register_pressure(meta)
             ._checked_against_traits(meta)
         )
@@ -641,31 +666,25 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
         return self
 
     def _with_widths(self, meta):
-        """Decide `block_dmodel`, `block_dmodel_v`, `padded_head` and the mask floor."""
-        block_dmodel = self.block_dmodel
-        derived = block_dmodel is None
-        if derived:
-            block_dmodel = tile_width_for(meta.head_dim)
-        elif block_dmodel not in LADDER:
+        """Check `meta`'s tile against the ladder and decide the mask floor."""
+        block_dmodel = meta.block_dmodel
+        if block_dmodel is None or meta.padded_head is None:
+            raise ValueError("meta.block_dmodel and meta.padded_head must be set: use plan(meta)")
+        if block_dmodel not in LADDER:
             raise ValueError(f"block_dmodel must be one of the built rungs {LADDER}, got {block_dmodel}")
         if meta.head_dim > block_dmodel:
-            raise ValueError(f"head_dim {meta.head_dim} does not fit the pinned block_dmodel {block_dmodel}")
+            raise ValueError(f"head_dim {meta.head_dim} does not fit block_dmodel {block_dmodel}")
 
         head_dim_v = meta.head_dim if meta.head_dim_v is None else meta.head_dim_v
         if head_dim_v > block_dmodel:
             raise ValueError(f"head_dim_v {head_dim_v} does not fit block_dmodel {block_dmodel}")
-        block_dmodel_v = block_dmodel if self.block_dmodel_v is None else self.block_dmodel_v
 
-        padded_head = self.padded_head
-        if padded_head is None:
-            padded_head = (meta.head_dim != block_dmodel) or (head_dim_v != block_dmodel_v)
-
-        # Only a *derived* tile carries the ladder's guarantee. A caller that
-        # pins `block_dmodel` may pin 256 for head_dim 64, so there is no floor
-        # to claim and the kernel masks every column.
+        # The ladder's guarantee: a tile `plan` chose serves exactly
+        # `(rung_below(tile), tile]`. A caller whose tile is chosen elsewhere
+        # (AOT: the operator's own ladder) pins 0, and the kernel masks everything.
         hdim_qk_floor = self.hdim_qk_floor
         if hdim_qk_floor is None:
-            hdim_qk_floor = rung_below(block_dmodel) if derived else 0
+            hdim_qk_floor = rung_below(block_dmodel)
         if not 0 <= hdim_qk_floor < block_dmodel:
             raise ValueError(f"hdim_qk_floor {hdim_qk_floor} must be in [0, block_dmodel={block_dmodel})")
         if meta.head_dim <= hdim_qk_floor:
@@ -673,13 +692,7 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
                 f"head_dim {meta.head_dim} is at or below this build's hdim_qk_floor {hdim_qk_floor}; "
                 f"the {block_dmodel}-wide tile only serves ({hdim_qk_floor}, {block_dmodel}]"
             )
-        return replace(
-            self,
-            block_dmodel=block_dmodel,
-            block_dmodel_v=block_dmodel_v,
-            padded_head=bool(padded_head),
-            hdim_qk_floor=int(hdim_qk_floor),
-        )
+        return replace(self, hdim_qk_floor=int(hdim_qk_floor))
 
     def _with_geometry(self, meta):
         """Decide waves, `BLOCK_KV`, the granule and the shard count from the tile width.
@@ -691,7 +704,7 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
         and the two cannot disagree. That is the failure P7 found twelve
         instances of on the forward, where the invariant was prose.
 
-        Reads `self.block_dmodel`, so it runs after `_with_widths`.
+        Reads `meta.block_dmodel`, the tile `plan` (or the caller) chose.
         """
         shards = self.dkv_shards
         pinned = (self.num_waves, self.block_kv, self.block_q, self.head_dim_granule)
@@ -703,7 +716,7 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
             raise ValueError(
                 f"pin num_waves, block_kv, block_q and head_dim_granule together or not at all, got {pinned}"
             )
-        num_waves, waves_per_eu, table_shards, table_rows, table_bq, _tight = _geometry_for(self.block_dmodel, meta)
+        num_waves, waves_per_eu, table_shards, table_rows, table_bq, _tight = _geometry_for(meta.block_dmodel, meta)
         if shards is None:
             shards = table_shards
         rows = self.mfma_rows if self.mfma_rows is not None else table_rows
@@ -715,10 +728,10 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
             mfma_rows=rows,
             block_kv=rows * (num_waves // shards),
             block_q=table_bq,
-            head_dim_granule=_granule_for(self.block_dmodel),
+            head_dim_granule=_granule_for(meta.block_dmodel),
         )
 
-    def _with_buffers(self):
+    def _with_buffers(self, meta):
         """Two stream buffers if LDS allows, one if it does not.
 
         **The second buffer is the only thing LDS ever costs this kernel**, and
@@ -736,10 +749,10 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
         """
         if self.num_stream_buffers is not None:
             return self
-        per_slot = self._stream_slot_bytes()
+        per_slot = self._stream_slot_bytes(meta.block_dmodel)
         return replace(self, num_stream_buffers=2 if 4 * per_slot <= LDS_CAP_BYTES else 1)
 
-    def _stream_slot_bytes(self):
+    def _stream_slot_bytes(self, block_dmodel):
         """Bytes one staged tile occupies, without building the traits.
 
         Duplicates two lines of `make_traits`' derivation, and does so
@@ -750,7 +763,7 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
         granule = self.head_dim_granule
         smem_n_rpt = self.block_q // (512 // granule)
         line = 512 + 32
-        return smem_n_rpt * (self.block_dmodel // granule) * line * 2
+        return smem_n_rpt * (block_dmodel // granule) * line * 2
 
     def _with_register_pressure(self, meta):
         """Trade instruction-level parallelism for live registers, or not.
@@ -764,7 +777,7 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
         """
         if self.tight_registers is not None:
             return self
-        return replace(self, tight_registers=_geometry_for(self.block_dmodel, meta)[5])
+        return replace(self, tight_registers=_geometry_for(meta.block_dmodel, meta)[5])
 
     def _checked_against_traits(self, meta):
         """`resolve`'s last step: prove the traits are buildable, return `self`.
@@ -795,7 +808,7 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
         base = make_traits(
             num_heads=meta.num_heads,
             num_kv_heads=num_kv_heads,
-            head_dim=self.block_dmodel,
+            head_dim=meta.block_dmodel,
             num_waves=self.num_waves,
             block_m=self.block_kv,
             block_n=self.block_q,
@@ -850,9 +863,9 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
                 f"map, the operand packing and the store are all written against it. "
                 f"Pass block_kv={self.mfma_rows * (self.num_waves // self.dkv_shards)}."
             )
-        if traits.STREAM_TILE_ELEMS * traits.BF16_BYTES != self._stream_slot_bytes():
+        if traits.STREAM_TILE_ELEMS * traits.BF16_BYTES != self._stream_slot_bytes(meta.block_dmodel):
             raise AssertionError(
-                f"`_stream_slot_bytes` says {self._stream_slot_bytes()} B per slot but the traits derive "
+                f"`_stream_slot_bytes` says {self._stream_slot_bytes(meta.block_dmodel)} B per slot but the traits derive "
                 f"{traits.STREAM_TILE_ELEMS * traits.BF16_BYTES}; the buffer-count decision was made "
                 "against a stale copy of the LDS derivation"
             )
@@ -860,7 +873,7 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
         if lds_bytes > LDS_CAP_BYTES:
             raise ValueError(
                 f"Q + dO staging needs {lds_bytes} B of LDS, over the {LDS_CAP_BYTES} B cap, for "
-                f"block_dmodel {self.block_dmodel} at block_q {self.block_q} with "
+                f"block_dmodel {meta.block_dmodel} at block_q {self.block_q} with "
                 f"{self.num_stream_buffers} buffers. Drop to one buffer, or lower block_q."
             )
         return traits

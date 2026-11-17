@@ -125,7 +125,7 @@ import torch  # noqa: E402
 from flash_attn_func_gfx950 import (  # noqa: E402
     build_flash_attn_func_gfx950_module_primary as build_primary,
 )
-from fmha_tuning_gfx950 import FmhaInputMetadata, fmha_knobs  # noqa: E402
+from fmha_tuning_gfx950 import FmhaInputMetadata, fmha_knobs, plan  # noqa: E402
 
 # Every head_dim with a shipped `flyc_attn_fwd` build. 384 is deliberately
 # absent: it is a supported geometry in the tuning policy but not a rung the
@@ -229,6 +229,7 @@ def run(hd, dt, fixed_order, rounds):
             num_heads=H, head_dim=hd, causal=feat["causal"], dropout=feat["dropout"],
             dtype_str={torch.bfloat16: "bf16", torch.float16: "fp16"}[dt],
         )
+        meta = plan(meta)
         arms = {}
         for wpe in (2, 1):
             try:

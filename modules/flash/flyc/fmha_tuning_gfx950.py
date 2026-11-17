@@ -57,6 +57,7 @@ __all__ = [
     "FmhaKnobs",
     "Gfx950Knobs",
     "fmha_knobs",
+    "plan",
     "tile_width_for",
 ]
 
@@ -221,6 +222,13 @@ class FmhaInputMetadata:
     head_dim_v: int | None = None
     sm_scale: float | None = None
 
+    # The compiled tile and whether the real extents are narrower. Inputs, not
+    # knobs: a functional's BLOCK_DMODEL and PADDED_HEAD fix them. `plan`
+    # derives them from the real head dims. `resolve` reads them and never
+    # changes them; a missing one is an error.
+    block_dmodel: int | None = None
+    padded_head: bool | None = None
+
     # P3. Whether this build reads the runtime `window_left`/`window_right`
     # pair and applies a left bound as well as the causal right one --
     # AOTriton's `CAUSAL_TYPE == 3`. The bounds are runtime arguments, so they
@@ -236,6 +244,23 @@ class FmhaInputMetadata:
     # the seed are runtime arguments; only the decision to compile for them is
     # here.
     dropout: bool = False
+
+
+def plan(request: FmhaInputMetadata) -> FmhaInputMetadata:
+    """`request` with the compiled tile and `padded_head` filled in.
+
+    The JIT entry point into tuning: rounds the real head dims up to the ladder
+    (`tile_width_for`) and records whether either is narrower than the tile.
+    A tile or `padded_head` already set on `request` is kept.
+    """
+    block_dmodel = request.block_dmodel
+    if block_dmodel is None:
+        block_dmodel = tile_width_for(request.head_dim)
+    padded_head = request.padded_head
+    if padded_head is None:
+        head_dim_v = request.head_dim if request.head_dim_v is None else request.head_dim_v
+        padded_head = (request.head_dim != block_dmodel) or (head_dim_v != block_dmodel)
+    return replace(request, block_dmodel=block_dmodel, padded_head=padded_head)
 
 
 # ---------------------------------------------------------------------------
@@ -264,47 +289,40 @@ class FmhaKnobs(Gfx950KnobFields):
     # so `resolve` is a pipeline rather than a place where scattered tuples
     # get reassembled. Three things follow, and each removes a class of bug:
     #
-    # - **The field names appear once.** Returning `(block_dmodel,
-    #   block_dmodel_v, padded_head)` and `replace`-ing them at the call site
-    #   spelled them all twice, in an order nothing checked.
-    # - **The step order is the data dependency.** `_with_wave_geometry` reads
-    #   `self.block_dmodel`, so it *must* run after `_with_widths`; it no
-    #   longer takes it as an argument and cannot be handed a stale one.
+    # - **The field names appear once.** Returning a tuple of fields and
+    #   `replace`-ing them at the call site spelled them all twice, in an order
+    #   nothing checked.
+    # - **The step order is the data dependency.** `_with_widths` checks the
+    #   tile before the geometry steps derive anything from it.
     # - **`dataclasses.replace` preserves the subclass**, so a base-class step
     #   returns `Gfx950Knobs` and the pipeline can mix inherited and
     #   arch-specific steps freely.
 
     def _with_widths(self, meta):
-        """Decide `block_dmodel`, `block_dmodel_v` and `padded_head`.
+        """Check `meta`'s tile against the ladder and decide the mask floor.
 
-        Every arch has a ladder and a padded-head rule; only the ladder's
-        contents differ, and those are `tile_width_for`'s. Kept on the base so
-        a second arch cannot accidentally decide `padded_head` by another rule.
+        Every arch has a ladder; only its contents differ, and those are
+        `tile_width_for`'s. The tile and `padded_head` are inputs (see
+        `plan`), so this only validates them.
         """
-        block_dmodel = self.block_dmodel
-        derived = block_dmodel is None
-        if derived:
-            block_dmodel = tile_width_for(meta.head_dim)
-        elif block_dmodel not in LADDER:
+        block_dmodel = meta.block_dmodel
+        if block_dmodel is None or meta.padded_head is None:
+            raise ValueError("meta.block_dmodel and meta.padded_head must be set: use plan(meta)")
+        if block_dmodel not in LADDER:
             raise ValueError(f"block_dmodel must be one of the built rungs {LADDER}, got {block_dmodel}")
         if meta.head_dim > block_dmodel:
-            raise ValueError(f"head_dim {meta.head_dim} does not fit the pinned block_dmodel {block_dmodel}")
+            raise ValueError(f"head_dim {meta.head_dim} does not fit block_dmodel {block_dmodel}")
 
         head_dim_v = meta.head_dim if meta.head_dim_v is None else meta.head_dim_v
         if head_dim_v > block_dmodel:
             raise ValueError(f"head_dim_v {head_dim_v} does not fit block_dmodel {block_dmodel}")
-        block_dmodel_v = block_dmodel if self.block_dmodel_v is None else self.block_dmodel_v
 
-        padded_head = self.padded_head
-        if padded_head is None:
-            padded_head = (meta.head_dim != block_dmodel) or (head_dim_v != block_dmodel_v)
-
-        # Only a *derived* tile carries the ladder's guarantee. A caller that
-        # pins `block_dmodel` may pin 256 for head_dim 64, so there is no floor
-        # to claim and the kernel masks everything, as before.
+        # The ladder's guarantee: a tile `plan` chose serves exactly
+        # `(rung_below(tile), tile]`. A caller whose tile is chosen elsewhere
+        # (AOT: the operator's own ladder) pins 0, and the kernel masks everything.
         hdim_qk_floor = self.hdim_qk_floor
         if hdim_qk_floor is None:
-            hdim_qk_floor = rung_below(block_dmodel) if derived else 0
+            hdim_qk_floor = rung_below(block_dmodel)
         if not 0 <= hdim_qk_floor < block_dmodel:
             raise ValueError(f"hdim_qk_floor {hdim_qk_floor} must be in [0, block_dmodel={block_dmodel})")
         if meta.head_dim <= hdim_qk_floor:
@@ -313,13 +331,7 @@ class FmhaKnobs(Gfx950KnobFields):
                 f"the {block_dmodel}-wide tile only serves ({hdim_qk_floor}, {block_dmodel}]"
             )
 
-        return replace(
-            self,
-            block_dmodel=block_dmodel,
-            block_dmodel_v=block_dmodel_v,
-            padded_head=bool(padded_head),
-            hdim_qk_floor=int(hdim_qk_floor),
-        )
+        return replace(self, hdim_qk_floor=int(hdim_qk_floor))
 
 
 @dataclass(frozen=True)
@@ -492,11 +504,10 @@ class Gfx950Knobs(FmhaKnobs):
         for small head_dim by measurement, on the grounds that a wider KV tile
         amortises the per-tile softmax cost.
 
-        Reads `self.block_dmodel`, so it runs after `_with_widths`. That
-        ordering is the whole reason the width is no longer an argument: an
-        argument can be stale, a field the previous step wrote cannot.
+        Reads `meta.block_dmodel`, the tile `plan` (or the caller) chose.
         """
-        me = self._with_d_axis_splits()
+        me = self._with_d_axis_splits(meta)
+        block_dmodel = meta.block_dmodel
         pinned = (me.num_waves, me.block_m, me.block_n, me.head_dim_granule)
         if all(x is not None for x in pinned):
             return me
@@ -504,18 +515,16 @@ class Gfx950Knobs(FmhaKnobs):
             raise ValueError(
                 f"pin num_waves, block_m, block_n and head_dim_granule together or not at all, got {pinned}"
             )
-        if self.block_dmodel is None:
-            raise ValueError("_with_wave_geometry runs after _with_widths; block_dmodel is not resolved")
-        if me.block_dmodel % 64:
+        if block_dmodel % 64:
             return replace(me, num_waves=4, block_m=128, block_n=64, head_dim_granule=32)  # family S
-        if me.block_dmodel == 128 and meta.causal:
+        if block_dmodel == 128 and meta.causal:
             # Causal hd128 (e.g. GR00T): family B beats family A, which was tuned
             # non-causal. 4 waves/block_m=128 -> two workgroups co-resident per CU
             # and 2x per-lane registers; 1.36x at B=1, numerically identical.
             return replace(me, num_waves=4, block_m=128, block_n=64, head_dim_granule=64)  # family B (causal hd128)
-        if me.block_dmodel <= 128:
+        if block_dmodel <= 128:
             return replace(me, num_waves=8, block_m=256, block_n=64, head_dim_granule=64)  # family A
-        if me.block_dmodel <= 256:
+        if block_dmodel <= 256:
             return replace(me, num_waves=4, block_m=128, block_n=64, head_dim_granule=64)  # family B
         # Family W, the wide path. Four waves, like B and for the same reason
         # -- halving the wave count doubles the per-lane register file -- but
@@ -543,7 +552,7 @@ class Gfx950Knobs(FmhaKnobs):
     # rejects head_dim 384 at 204288 B and 512 at 272384 B.
     LDS_CAP_BYTES = 163840
 
-    def _with_d_axis_splits(self):
+    def _with_d_axis_splits(self, meta):
         """Decide `d_stages` and `qk_shards` from the tile width.
 
         Both stay 1 through head_dim 256, which is what keeps the four rungs
@@ -563,8 +572,7 @@ class Gfx950Knobs(FmhaKnobs):
         d_stages, qk_shards, vo_shards = self.d_stages, self.qk_shards, self.vo_shards
         if d_stages is not None and qk_shards is not None and vo_shards is not None:
             return self
-        if self.block_dmodel is None:
-            raise ValueError("_with_d_axis_splits runs after _with_widths; block_dmodel is not resolved")
+        block_dmodel = meta.block_dmodel
         if d_stages is None:
             # 2 for both wide rungs -- the least staging that fits LDS, and
             # measurement says least is also best. More stages shrink the live
@@ -585,14 +593,14 @@ class Gfx950Knobs(FmhaKnobs):
             # where the O accumulator has to live at these widths, so anything
             # that scares the allocator off it is a loss however small the
             # working set gets.
-            d_stages = 2 if self.block_dmodel > 256 else 1
+            d_stages = 2 if block_dmodel > 256 else 1
         if vo_shards is None:
             # Only 512 needs it. O is `ROWS_PER_WAVE * head_dim / 64` = 256
             # VGPRs there -- the entire AGPR file -- and no amount of staging
             # touches that, because staging bounds the K/V *window* and O is
             # loop-carried. 384's O is 192 and fits with zero spills, so it
             # pays the QK duplication for nothing.
-            vo_shards = 2 if self.block_dmodel > 384 else 1
+            vo_shards = 2 if block_dmodel > 384 else 1
         if qk_shards is None:
             qk_shards = 1
         return replace(self, d_stages=d_stages, qk_shards=qk_shards, vo_shards=vo_shards)
@@ -651,7 +659,7 @@ class Gfx950Knobs(FmhaKnobs):
             )
         return self
 
-    def staging_shape(self):
+    def staging_shape(self, block_dmodel):
         """`(tokens_per_issue, lines, issues_per_wave)` for this geometry.
 
         The coherence check the family table has to satisfy, written once so a
@@ -667,9 +675,9 @@ class Gfx950Knobs(FmhaKnobs):
         lines = self.block_n // per_issue
         if lines % self.num_waves:
             raise ValueError(f"{lines} KV tile lines do not divide across {self.num_waves} waves")
-        if self.block_dmodel < PV_MFMA_N:
+        if block_dmodel < PV_MFMA_N:
             raise ValueError(
-                f"block_dmodel {self.block_dmodel} is narrower than the PV MFMA's {PV_MFMA_N}-column "
+                f"block_dmodel {block_dmodel} is narrower than the PV MFMA's {PV_MFMA_N}-column "
                 f"output; head_dim below {PV_MFMA_N} cannot have a native tile with v_mfma_f32_32x32x16"
             )
         return per_issue, lines, lines // self.num_waves
@@ -696,13 +704,13 @@ class Gfx950Knobs(FmhaKnobs):
         against production at family A's numbers -- so family A goes through
         this path today and the bitwise-vs-production test covers it.
         """
-        self.staging_shape()  # the geometry must divide a KV tile evenly
+        self.staging_shape(meta.block_dmodel)  # the geometry must divide a KV tile evenly
         self._check_helpers_support_geometry()
         num_kv_heads = meta.num_heads if meta.num_kv_heads is None else meta.num_kv_heads
         traits = make_traits(
             num_heads=meta.num_heads,
             num_kv_heads=num_kv_heads,
-            head_dim=self.block_dmodel,
+            head_dim=meta.block_dmodel,
             num_waves=self.num_waves,
             block_m=self.block_m,
             block_n=self.block_n,
@@ -735,7 +743,7 @@ class Gfx950Knobs(FmhaKnobs):
         if lds_bytes > self.LDS_CAP_BYTES:
             raise ValueError(
                 f"KV staging needs {lds_bytes} B of LDS, over the {self.LDS_CAP_BYTES} B cap, for "
-                f"block_dmodel {self.block_dmodel} at BLOCK_N {self.block_n} with d_stages "
+                f"block_dmodel {meta.block_dmodel} at BLOCK_N {self.block_n} with d_stages "
                 f"{self.d_stages}. Raise d_stages (LDS scales as 1/d_stages) or lower BLOCK_N. "
                 "Left to the compiler this surfaces as 'local memory (N) exceeds limit (163840)' "
                 "with no indication of which knob to move."

@@ -140,7 +140,7 @@ from fmha_dualwave_gfx950 import (
     wire_ptr,
     wire_view,
 )
-from fmha_tuning_gfx950 import FmhaInputMetadata, fmha_knobs
+from fmha_tuning_gfx950 import FmhaInputMetadata, fmha_knobs, plan
 from fmha_wide_gfx950 import (
     WideGemmHelper,
     WideKernelContext,
@@ -355,12 +355,12 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
     nothing here falls back to a policy, and `knobs.build_traits(meta)` is the arch
     configuration that call produced.
     """
-    if knobs.block_dmodel is None:
-        raise ValueError("knobs must be resolved: call `fmha_knobs(arch, ...).resolve(meta)` first")
+    if meta.block_dmodel is None or knobs.hdim_qk_floor is None:
+        raise ValueError("meta must come from `plan(meta)` and knobs from `fmha_knobs(arch, ...).resolve(meta)`")
     traits = knobs.build_traits(meta)
 
-    BLOCK_DMODEL = knobs.block_dmodel
-    PADDED_HEAD = knobs.padded_head
+    BLOCK_DMODEL = meta.block_dmodel
+    PADDED_HEAD = meta.padded_head
     # D columns at or below this are guaranteed real, so the K mask can skip
     # them. See `rung_below` and `ParityKvLdsToVgprLoader.load_k`.
     HDIM_QK_FLOOR = knobs.hdim_qk_floor
@@ -1581,6 +1581,6 @@ def build_flash_attn_func_gfx950_module(arch="gfx950", **kwargs):
     from dataclasses import fields as _fields
 
     meta_fields = {f.name for f in _fields(FmhaInputMetadata)}
-    meta = FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields})
+    meta = plan(FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
     knob_kwargs = {k: v for k, v in kwargs.items() if k not in meta_fields}
     return build_flash_attn_func_gfx950_module_primary(meta, fmha_knobs(arch, **knob_kwargs).resolve(meta))

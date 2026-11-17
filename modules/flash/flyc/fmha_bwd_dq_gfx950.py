@@ -258,7 +258,7 @@ from fmha_dualwave_gfx950 import (
 from fmha_dualwave_gfx950 import _k_read_base as _parity_k_read_base
 from fmha_dualwave_gfx950 import _ks_offset as _parity_ks_offset
 from fmha_tuning_bwd_dq_gfx950 import BwdDqKnobs, bwd_dq_knobs
-from fmha_tuning_gfx950 import FmhaInputMetadata
+from fmha_tuning_gfx950 import FmhaInputMetadata, plan
 from gfx950_standalone import buffer_ops, dualwave
 from philox import Philox
 
@@ -1169,12 +1169,12 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
     the caller asked for, `knobs` is what the tuning policy answered, and
     nothing here falls back to a policy.
     """
-    if knobs.block_dmodel is None:
-        raise ValueError("knobs must be resolved: call `bwd_dq_knobs(arch, ...).resolve(meta)` first")
+    if meta.block_dmodel is None or knobs.hdim_qk_floor is None:
+        raise ValueError("meta must come from `plan(meta)` and knobs from `bwd_dq_knobs(arch, ...).resolve(meta)`")
     traits = knobs.build_traits(meta)
 
-    BLOCK_DMODEL = knobs.block_dmodel
-    PADDED_HEAD = knobs.padded_head
+    BLOCK_DMODEL = meta.block_dmodel
+    PADDED_HEAD = meta.padded_head
     HDIM_QK_FLOOR = knobs.hdim_qk_floor
     # f32 accumulator elements per lane per MFMA -- 16 at 32x32x16. Every
     # `16` the body used to spell over a score half was this, and each was a
@@ -1970,7 +1970,7 @@ def build_fmha_bwd_dq_gfx950_module(arch="gfx950", **kwargs):
     meta_fields = {f.name for f in _fields(FmhaInputMetadata)}
     meta_kwargs = {"causal": False}
     meta_kwargs.update({k: v for k, v in kwargs.items() if k in meta_fields})
-    meta = FmhaInputMetadata(**meta_kwargs)
+    meta = plan(FmhaInputMetadata(**meta_kwargs))
     knob_kwargs = {k: v for k, v in kwargs.items() if k not in meta_fields}
     knobs = bwd_dq_knobs(arch, **knob_kwargs)
     if not isinstance(knobs, BwdDqKnobs):  # pragma: no cover -- defensive, the factory is typed
