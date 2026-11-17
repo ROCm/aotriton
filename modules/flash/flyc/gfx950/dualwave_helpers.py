@@ -2063,6 +2063,12 @@ class ParityQLoader(dualwave.DualwaveQLoader):
     happen is those elements reaching the MFMA, which is what `discard` stops.
     """
 
+    def __init__(self, ctx, *, pad_steps_only=False):
+        super().__init__(ctx)
+        # Forward only for now: the backward has not been measured with it,
+        # and dO's loader would need `HDIM_VO_FLOOR` in place of the QK floor.
+        self.pad_steps_only = pad_steps_only
+
     def scale_all(self, q_all):
         """Refused. `qk_scale` belongs on the f32 scores; see `scale_scores`.
 
@@ -2189,9 +2195,14 @@ class ParityQLoader(dualwave.DualwaveQLoader):
             pack = self._read_staged_pack(ks)
         if const_expr(not self.PADDED_HEAD):
             return pack
+        # With `pad_steps_only`, only the steps that can hold pad, as in
+        # `load_k`. Masking all of them cost the `exact_kv_tiles` forward up to
+        # 160 spills: LLVM hoists the masks, identical in every arm of
+        # `_exact_body`, above its branch, and the structurized arms then keep
+        # them live through each other's KV loops.
+        if const_expr(self.pad_steps_only and (ks + 1) * self.traits.K_STEP_QK <= self.HDIM_QK_FLOOR):
+            return pack
         col_base = fx.Index(ks * self.traits.K_STEP_QK) + self.lane_div_32 * fx.Index(self.traits.MFMA_LANE_K)
-        # Q is masked once, before the KV loop, so the mask registers die
-        # immediately and the bitmask form is pure win here.
         return MaskedAxis(fx.Index(self.hdim_qk), elem_dtype=self.elem_dtype, bitmask=True).discard(
             pack, col_base, self.traits.MFMA_LANE_K
         )
@@ -2246,6 +2257,12 @@ class ParityKvLdsToVgprLoader(dualwave.DualwaveKvLdsToVgprLoader):
     lines and leaves D in linear order. `k_hi` differs from `k_lo` by
     `K_LDS_TO_REG_N_STRIP_STRIDE`, an N offset, so it carries the same columns.
     """
+
+    def __init__(self, ctx, *, per_tile_pad_mask=False):
+        super().__init__(ctx)
+        # See `_discard_pad_k`. Forward only for now, like `ParityQLoader`'s
+        # `pad_steps_only`.
+        self.per_tile_pad_mask = per_tile_pad_mask
 
     @contextlib.contextmanager
     def _scoped_to_stage(self):
@@ -2330,6 +2347,8 @@ class ParityKvLdsToVgprLoader(dualwave.DualwaveKvLdsToVgprLoader):
         masked = [ks for ks in range(steps) if ((stage * steps + ks) + 1) * self.traits.K_STEP_QK > self.HDIM_QK_FLOOR]
         if const_expr(not masked):
             return (k_lo, k_hi)
+        if const_expr(self.per_tile_pad_mask and self.elem_dtype.width == 16):
+            return self._discard_pad_k(k_lo, k_hi, masked, stage * steps, width)
         # The bitmask form ANDs one precomputed dword instead of selecting per
         # element, but each mask is a live register. Gated on the number of
         # steps that actually survive rather than on `K_STEPS_QK`: measured
@@ -2347,6 +2366,33 @@ class ParityKvLdsToVgprLoader(dualwave.DualwaveKvLdsToVgprLoader):
             col_base = fx.Index((stage * steps + ks) * self.traits.K_STEP_QK) + self.lane_div_32 * fx.Index(width)
             k_lo[ks] = cols.discard(k_lo[ks], col_base, width)
             k_hi[ks] = cols.discard(k_hi[ks], col_base, width)
+        return (k_lo, k_hi)
+
+    def _discard_pad_k(self, k_lo, k_hi, masked, step0, width):
+        """Zero K's pad columns with masks computed per tile, not held.
+
+        Precomputed bitmasks are 8 VGPRs held across the KV loop (and, with
+        `exact_kv_tiles`, across all four arms), which pushed the padded
+        builds into in-loop spills. Here the one live value is a per-lane
+        column count `x`, and each half of a dword is kept iff its column is
+        below it: `(col - x) >> 15` over packed i16 is that mask, two packed
+        VALU ops per dword. `x` flows through an empty asm tied to this
+        tile's K data so LICM cannot hoist the masks back out of the loop.
+        """
+        anchor = Vec(k_lo[masked[0]]).bitcast(fx.Int32)[0]
+        lane_off = dualwave.llvm.inline_asm(T.i32,
+                                            [as_mlir_value(fx.Int32(self.lane_div_32 * fx.Index(width))),
+                                             as_mlir_value(anchor)],
+                                            "",
+                                            "=v,0,v",
+                                            has_side_effects=False)
+        x = Vec.from_elements([fx.Int16(fx.Int32(self.hdim_qk) - fx.Int32(lane_off))] * width, fx.Int16)
+        for ks in masked:
+            col0 = (step0 + ks) * self.traits.K_STEP_QK
+            cols = Vec.from_elements([fx.Int16(col0 + j) for j in range(width)], fx.Int16)
+            keep = ((cols - x) >> Vec.filled(width, 15, fx.Int16)).bitcast(fx.Int32)
+            for packs in (k_lo, k_hi):
+                packs[ks] = (Vec(packs[ks]).bitcast(fx.Int32) & keep).bitcast(self.elem_dtype).ir_value()
         return (k_lo, k_hi)
 
     def read_v_packs(self, buf_id, urv_base):

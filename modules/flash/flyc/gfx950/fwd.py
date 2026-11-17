@@ -746,10 +746,10 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         v_o_zero = ctx.c_zero_v16f32
 
         kv_gmem_to_lds = ParityKvGmemToLdsLoader(ctx)
-        kv_lds_to_regs = (WideKvLdsToVgprLoader if WIDE else ParityKvLdsToVgprLoader)(ctx)
+        kv_lds_to_regs = (WideKvLdsToVgprLoader if WIDE else ParityKvLdsToVgprLoader)(ctx, per_tile_pad_mask=True)
         output_store = (WideStoreHelper if WIDE else _FwdStoreHelper)(ctx)
         page_ids = dualwave.DualwavePageIdLoader(ctx)
-        q_loader = ParityQLoader(ctx)
+        q_loader = ParityQLoader(ctx, pad_steps_only=True)
         gemm_helper = (WideGemmHelper if WIDE else _FwdGemmHelper)(ctx)
         softmax_helper = (_WideSoftmaxHelper if WIDE else _ParitySoftmaxHelper)(ctx)
 
