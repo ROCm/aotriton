@@ -200,9 +200,9 @@ except ImportError:
 # moves to a module importing no flydsl, or when the generator stops
 # constructing traits.
 #
-# Copied verbatim from FlyDSL ``70b2dbc5``,
-# ``kernels/attention/flash_attn_utils.py`` lines 1476-1582 (107 lines,
-# sha256 6750ff4e...). Do not reformat, rename or reorder it: the safety
+# Copied verbatim from FlyDSL ``97677775`` (v0.4.2),
+# ``kernels/attention/flash_attn_utils.py`` lines 1482-1589 (108 lines,
+# sha256 d25d655d...). Do not reformat, rename or reorder it: the safety
 # argument below is that it is an exact copy, and
 # ``assert_dualwave_swp_traits_equivalent`` is what proves that claim at
 # build time rather than asserting it in a comment.
@@ -221,6 +221,7 @@ class DualwaveSwpTraits:
     BLOCK_SIZE: int
     ROWS_PER_WAVE: int
     HEAD_DIM: int
+    HEAD_DIM_V: int
     K_STEP_QK: int
     K_STEPS_QK: int
     D_CHUNK: int
@@ -321,8 +322,8 @@ def assert_dualwave_swp_traits_equivalent(upstream, local=DualwaveSwpTraits) -> 
     """Fail loudly if the copy above has drifted from ``upstream``'s class.
 
     Compares ``dataclasses.fields()`` -- **names, types and order**. For a
-    78-field dataclass whose every field is supplied by keyword at every
-    construction (``fmha_traits_gfx950.make_traits`` passes all 78, including
+    79-field dataclass whose every field is supplied by keyword at every
+    construction (``fmha_traits_gfx950.make_traits`` passes all 79, including
     the only two that carry defaults), that comparison is *total*, not a
     sample: any upstream add, remove, rename, reorder or retype lands here.
 

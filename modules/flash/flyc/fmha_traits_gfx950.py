@@ -365,6 +365,7 @@ def make_traits(
         BLOCK_SIZE=block_size,
         ROWS_PER_WAVE=rows_per_wave,
         HEAD_DIM=head_dim,
+        HEAD_DIM_V=head_dim,  # one head-dim axis; HEAD_DIM != HEAD_DIM_V is a later PR
         K_STEP_QK=K_STEP_QK,
         K_STEPS_QK=k_steps_qk,
         D_CHUNK=D_CHUNK,
