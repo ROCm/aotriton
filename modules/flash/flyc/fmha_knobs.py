@@ -82,3 +82,10 @@ class FlycKVKnobs(FlycKnobs):
     """Kernels whose grid walks KV tiles: dK/dV."""
 
     block_kv: int | None = None
+
+
+def pinned(cls, overrides, **pins):
+    """A `cls` from `overrides` (a dict, a `cls` or None) with `pins` on top."""
+    if isinstance(overrides, dict):
+        overrides = cls(**overrides)
+    return (overrides or cls()).merge(cls(**pins))

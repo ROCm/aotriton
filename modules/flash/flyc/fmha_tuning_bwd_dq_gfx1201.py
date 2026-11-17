@@ -30,6 +30,7 @@ much larger than that where they matter at all.
 
 from dataclasses import dataclass, replace
 
+from fmha_knobs import pinned
 from fmha_knobs_gfx1201 import BwdDqKnobs
 
 # ---------------------------------------------------------------------------
@@ -453,3 +454,28 @@ def plan(request: BwdDqInputMetadata, overrides: BwdDqKnobs | None = None) -> Bw
                    block_dmodel=block_dmodel,
                    padded_head=(block_dmodel != head_dim) or (block_dmodel != head_dim_v))
     return BwdDqPlan(meta, resolve_knobs(meta, overrides))
+
+
+# Unified entry (fmha_dq_tuning): the arch-neutral metadata, adapted.
+
+
+def _entry_meta(meta) -> BwdDqInputMetadata:
+    return BwdDqInputMetadata(num_heads=meta.num_heads,
+                              head_dim=meta.block_dmodel,
+                              head_dim_v=meta.block_dmodel,
+                              causal=meta.causal_type != 0,
+                              causal_type=meta.causal_type,
+                              dtype_str=meta.dtype_str,
+                              bias=meta.bias,
+                              dropout=meta.dropout,
+                              block_dmodel=meta.block_dmodel,
+                              padded_head=meta.padded_head)
+
+
+def entry_resolve(meta, *, overrides=None) -> BwdDqKnobs:
+    return resolve_knobs(_entry_meta(meta), pinned(BwdDqKnobs, overrides))
+
+
+def entry_build(meta, knobs: BwdDqKnobs):
+    from fmha_bwd_dq_gfx1201_kernel import build_bwd_dq_module_primary
+    return build_bwd_dq_module_primary(_entry_meta(meta), knobs)

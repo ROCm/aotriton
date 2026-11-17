@@ -30,6 +30,7 @@ deciding whether a change needs a benchmark or a correctness argument:
 
 from dataclasses import dataclass, replace
 
+from fmha_knobs import pinned
 from fmha_knobs_gfx1201 import FmhaKnobs
 
 # ---------------------------------------------------------------------------
@@ -558,3 +559,33 @@ def plan(request: FmhaInputMetadata, overrides: FmhaKnobs | None = None) -> Fmha
                    block_dmodel_v=block_dmodel_v,
                    padded_head=block_dmodel != head_dim)
     return FmhaPlan(meta, resolve_knobs(meta, overrides))
+
+
+# Unified entry (fmha_fwd_tuning): the arch-neutral metadata, adapted and pinned.
+
+
+def _entry_meta(meta) -> FmhaInputMetadata:
+    return FmhaInputMetadata(num_heads=meta.num_heads,
+                             head_dim=meta.block_dmodel,
+                             causal=meta.causal_type != 0,
+                             causal_type=meta.causal_type,
+                             dtype_str=meta.dtype_str,
+                             bias=meta.bias,
+                             dropout=meta.dropout,
+                             block_dmodel=meta.block_dmodel,
+                             block_dmodel_v=meta.block_dmodel,
+                             padded_head=meta.padded_head)
+
+
+def entry_resolve(meta, *, overrides=None) -> FmhaKnobs:
+    # Strides are runtime arguments: one binary serves every layout, which is
+    # also what keeps `num_heads` out of the emitted code.
+    knobs = resolve_knobs(_entry_meta(meta), pinned(FmhaKnobs, overrides, strides_constexpr=False))
+    assert not knobs.strides_constexpr, \
+        'num_heads is only safe to ignore while STRIDE_TOKEN stays behind strides_constexpr'
+    return knobs
+
+
+def entry_build(meta, knobs: FmhaKnobs):
+    from flash_attn_func_gfx1201_aiw import build_flash_attn_func_aiw_module_primary
+    return build_flash_attn_func_aiw_module_primary(_entry_meta(meta), knobs)

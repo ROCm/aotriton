@@ -58,6 +58,7 @@ behind it are recorded there.
 from dataclasses import dataclass, fields, replace
 
 from fmha_traits_gfx950 import ParityDualwaveTraits, make_traits
+from fmha_knobs import pinned
 from fmha_knobs_gfx950 import BwdDkDvKnobFields
 
 __all__ = [
@@ -895,3 +896,35 @@ def bwd_dkdv_knobs(arch="gfx950", **overrides):
     if arch != "gfx950":
         raise ValueError(f"this tuning module is gfx950-only, got {arch!r}")
     return BwdDkDvKnobs(**overrides)
+
+
+# Unified entry (fmha_dkdv_tuning): the arch-neutral metadata, adapted and pinned.
+
+def _entry_meta(meta) -> BwdDkDvInputMetadata:
+    # gfx950 knows only causal and window, and its window requires causal; the
+    # functional's CAUSAL_TYPE is 0 or 3, so both follow it.
+    assert meta.causal_type in (0, 3), f'gfx950 flyc takes CAUSAL_TYPE 0 or 3, got {meta.causal_type}'
+    return BwdDkDvInputMetadata(num_heads=meta.num_heads,
+                            head_dim=meta.block_dmodel,
+                            head_dim_v=meta.block_dmodel,
+                            causal=meta.causal_type != 0,
+                            window=meta.causal_type != 0,
+                            dtype_str=meta.dtype_str,
+                            bias=meta.bias,
+                            dropout=meta.dropout,
+                            block_dmodel=meta.block_dmodel,
+                            padded_head=meta.padded_head)
+
+
+def entry_resolve(meta, *, overrides=None) -> BwdDkDvKnobs:
+    return pinned(BwdDkDvKnobs,
+                  overrides,
+                  # The tile comes from the functional's ladder: no floor.
+                  hdim_qk_floor=0,
+                  # Strides are runtime arguments: one binary serves every layout.
+                  strides_constexpr=False).resolve(_entry_meta(meta))
+
+
+def entry_build(meta, knobs: BwdDkDvKnobs):
+    from fmha_bwd_dkdv_gfx950 import build_fmha_bwd_dkdv_gfx950_module_primary
+    return build_fmha_bwd_dkdv_gfx950_module_primary(_entry_meta(meta), knobs)

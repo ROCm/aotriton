@@ -47,6 +47,7 @@ floor, and it is an instruction limit rather than a staging one.
 
 from dataclasses import dataclass, fields, replace
 
+from fmha_knobs import pinned
 from fmha_knobs_gfx950 import Gfx950KnobFields
 from fmha_traits_gfx950 import make_traits
 
@@ -845,3 +846,47 @@ def fmha_knobs(arch: str, **overrides) -> FmhaKnobs:
                 raise TypeError(f"unknown {cls.__name__} field(s): {sorted(unknown)}")
             return cls(**overrides)
     raise ValueError(f"no FMHA knobs for arch {arch!r}; known: {sorted(_BY_ARCH)}")
+
+
+# Unified entry (fmha_fwd_tuning): the arch-neutral metadata, adapted and pinned.
+
+def _entry_meta(meta) -> FmhaInputMetadata:
+    # gfx950 knows only causal and window, and its window requires causal; the
+    # functional's CAUSAL_TYPE is 0 or 3, so both follow it.
+    assert meta.causal_type in (0, 3), f'gfx950 flyc takes CAUSAL_TYPE 0 or 3, got {meta.causal_type}'
+    return FmhaInputMetadata(num_heads=meta.num_heads,
+                         head_dim=meta.block_dmodel,
+                         causal=meta.causal_type != 0,
+                         window=meta.causal_type != 0,
+                         dtype_str=meta.dtype_str,
+                         bias=meta.bias,
+                         dropout=meta.dropout,
+                         block_dmodel=meta.block_dmodel,
+                         padded_head=meta.padded_head)
+
+
+def entry_resolve(meta, *, overrides=None) -> FmhaKnobs:
+    knobs = pinned(Gfx950Knobs,
+                   overrides,
+                   # The tile comes from the functional's ladder: claim no
+                   # floor, so the kernel masks every D column.
+                   hdim_qk_floor=0,
+                   # Strides are runtime arguments: one binary serves every layout.
+                   strides_constexpr=False,
+                   # What makes Workspace/BlockTable/block_table_stride constexpr 0.
+                   paged=False,
+                   num_kv_splits=1,
+                   # A null L is a runtime test in the kernel, so every binary
+                   # keeps the LSE store; upstream's default compiles it away.
+                   return_lse=True).resolve(_entry_meta(meta))
+    assert not knobs.strides_constexpr, \
+        'num_heads is only safe to ignore while STRIDE_TOKEN stays behind strides_constexpr'
+    assert knobs.return_lse, 'every binary must keep the LSE store'
+    assert not knobs.paged and knobs.num_kv_splits == 1, \
+        'the Workspace/BlockTable/block_table_stride fold needs paged=False, num_kv_splits=1'
+    return knobs
+
+
+def entry_build(meta, knobs: FmhaKnobs):
+    from flash_attn_func_gfx950 import build_flash_attn_func_gfx950_module_primary
+    return build_flash_attn_func_gfx950_module_primary(_entry_meta(meta), knobs)

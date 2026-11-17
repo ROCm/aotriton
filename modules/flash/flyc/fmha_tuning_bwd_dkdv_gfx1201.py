@@ -58,6 +58,7 @@ decomposition knobs are for, and the crossovers are all spill boundaries:
 
 from dataclasses import dataclass, replace
 
+from fmha_knobs import pinned
 from fmha_knobs_gfx1201 import BwdDkDvKnobs
 
 # One wave owns one WMMA M tile of KV rows. Not a knob: it is the instruction.
@@ -532,3 +533,29 @@ def plan(request: BwdDkDvMetadata, overrides: BwdDkDvKnobs | None = None) -> Bwd
                    block_dmodel_v=block_dmodel_v,
                    padded_head=(block_dmodel != head_dim) or (block_dmodel_v != head_dim_v))
     return BwdDkDvPlan(meta, resolve_knobs(meta, overrides))
+
+
+# Unified entry (fmha_dkdv_tuning): the arch-neutral metadata, adapted.
+
+
+def _entry_meta(meta) -> BwdDkDvMetadata:
+    return BwdDkDvMetadata(num_heads=meta.num_heads,
+                           head_dim=meta.block_dmodel,
+                           head_dim_v=meta.block_dmodel,
+                           causal=meta.causal_type != 0,
+                           causal_type=meta.causal_type,
+                           dtype_str=meta.dtype_str,
+                           bias=meta.bias,
+                           dropout=meta.dropout,
+                           block_dmodel=meta.block_dmodel,
+                           block_dmodel_v=meta.block_dmodel,
+                           padded_head=meta.padded_head)
+
+
+def entry_resolve(meta, *, overrides=None) -> BwdDkDvKnobs:
+    return resolve_knobs(_entry_meta(meta), pinned(BwdDkDvKnobs, overrides))
+
+
+def entry_build(meta, knobs: BwdDkDvKnobs):
+    from fmha_bwd_dkdv_gfx1201_kernel import build_bwd_dkdv_module_primary
+    return build_bwd_dkdv_module_primary(_entry_meta(meta), knobs)
