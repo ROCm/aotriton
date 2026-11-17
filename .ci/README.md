@@ -241,8 +241,8 @@ Siblings, not caller and callee: the wheel build never builds LLVM, it is handed
 only its product's absolute path on stdout. `build_llvm_tarball.sh` defaults origin
 and ref from `flydsl-llvm.txt`, and errors when that file is empty unless both
 `--llvm_origin` and `--llvm_commit` are given. `--flydsl_commit` is a **git
-ref** (`flydsl-kernel.txt` holds one, `v0.3.1`), not a pip requirement
-(`flydsl-compiler.txt`, `flydsl==0.3.1`).
+ref** (`flydsl-kernel.txt` holds one, `v0.4.2`), not a pip requirement
+(`flydsl-compiler.txt`, `flydsl @ git+https://github.com/ROCm/FlyDSL@<sha>`).
 
 ```bash
 tarball=$(bash .ci/build_llvm_tarball.sh \
@@ -257,13 +257,13 @@ bash .ci/build-test.sh gfx950 <triton wheel> --flydsl_wheel "${wheel}"
 For a release, `releasesuite-git-head.sh` runs both, in that order:
 
 ```bash
-bash .ci/releasesuite-git-head.sh --image --flydsl_commit v0.3.1 \
-  $HOME/aotriton-gh-release/release/0.14b/hashed
+bash .ci/releasesuite-git-head.sh --image --flydsl_commit v0.4.2 \
+  $HOME/aotriton-gh-release/release/0.16b/hashed
 ```
 
 `--flydsl_commit` is optional there: a non-empty `flydsl-llvm.txt` selects the
-source build anyway, taking the ref from `flydsl-compiler.txt` (`flydsl==0.3.1`
--> `v0.3.1`; any other shape is an error, not a guess). `--flydsl_origin` (fork,
+source build anyway, taking the commit from `flydsl-compiler.txt` (`parse_flydsl_pin` in
+`common-pin.sh`; a shape it does not know is an error, not a guess). `--flydsl_origin` (fork,
 or `file:///abs/path`, like `--triton_origin`) and `--llvm_tarball` (reuse a
 tarball) are errors without an explicit `--flydsl_commit`, and `--flydsl_commit`
 is an error on `--runtime`.
@@ -279,7 +279,7 @@ is an error on `--runtime`.
 
 * That tarball name is the shape `.ci/triton-patch/docker-script-build.sh` already
   consumes, so one built here drops into `$HOME/.triton/llvm` unchanged.
-* Both pins can name a moving ref (`aotriton/0.14b/rc0`, `v0.3.1`), so each is
+* Both pins can name a moving ref (`aotriton/0.16b/dev`, `v0.4.2`), so each is
   resolved to a SHA against the git mirror before the cache is consulted.
 * The ABI tag is in the wheel key because flydsl wheels are ABI specific and CMake
   rejects a mismatched one; the LLVM commit is, because the wrong LLVM miscompiles
