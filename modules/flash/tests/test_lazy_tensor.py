@@ -13,6 +13,7 @@ import pytest
 import torch
 
 from pyaotriton import T2, T4, DType, lazy_tensor
+from pyaotriton.v3 import flash as v3
 
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason='needs a GPU')
 
@@ -132,6 +133,24 @@ def test_acquire_is_idempotent():
     acc.free()
     assert torch.cuda.memory_allocated() == before
 
+
+def test_acquire_unconfigured_raises():
+    # No callback to call: this used to crash the interpreter
+    params = v3.attn_bwd_params()
+    with pytest.raises(RuntimeError):
+        params.D.acquire()
+    with pytest.raises(RuntimeError):
+        params.DQ_ACC.acquire()
+
+
+def test_acquire_after_free_raises():
+    # free() keeps the callback but deletes its context
+    acc = lazy_tensor.dq_acc(_like((1, 1, 8, 8)), torch.cuda.current_device())
+    acc.acquire()
+    acc.free()
+    with pytest.raises(RuntimeError):
+        acc.acquire()
+    acc.free()  # freeing twice is harmless
 
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason='needs two GPUs')
 def test_honors_device_index():

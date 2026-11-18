@@ -6,6 +6,7 @@
 #include <aotriton/runtime.h>
 #include <aotriton/util.h>
 #include <nanobind/nanobind.h>
+#include <stdexcept>
 #include "lazy_tensor_template.h"
 
 namespace nb = nanobind;
@@ -19,11 +20,17 @@ namespace pyaotriton::lazy_tensor {
   template<int Rank>
   void def_lazytensor(nb::module_& m, const std::string& name) {
     // All fields are hidden. acquire/free exist for tests: acquire()
-    // materializes the tensor as the library would on first use.
+    // materializes the tensor as the library would on first use, and
+    // returns the same one when called again.
     nb::class_<aotriton::LazyTensor<Rank>>(m, name.c_str())
       .def("acquire", [](aotriton::LazyTensor<Rank>& self) -> aotriton::TensorView<Rank> {
         if (self.eager) {
           return self.eager;
+        }
+        // An unconfigured LazyTensor has no callback, and free() leaves the
+        // callback behind with a deleted context: calling either crashes.
+        if (!self.acquire || !self.cookie) {
+          throw std::runtime_error("LazyTensor is not configured, or was already freed");
         }
         return (*self.acquire)(&self);
       })
