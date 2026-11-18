@@ -83,7 +83,6 @@ It also leaves a lane's four accumulator rows **contiguous** (`8*(lane//16) +
 
 from fmha_utils import MaskedAxis
 from .dualwave_helpers import _ds_read_tr16_b64_imm, exp2_wait_state, mfma_operand_wait_state
-from .dualwave_helpers import fadd, fmul, fsub
 from .mfma16 import MFMA16_M, a16_chunk_offset, a16_read_base, lds_elem, tok_off, tok_off_dyn
 from .standalone import buffer_ops, dualwave
 
@@ -329,14 +328,14 @@ class M16SoftmaxHelper(dualwave.DualwaveKernelContext):
         if const_expr(not self.LSE_STRIDED):
             span = buffer_ops.buffer_load(rsrc, as_mlir_value(row0), vec_width=ACC16, dtype=fx.Float32)
             vec = Vec(span, (ACC16,), fx.Float32)
-            return [fmul(vec[i], scale, self.fm_fast) for i in range_constexpr(ACC16)]
+            return [vec[i] * scale for i in range_constexpr(ACC16)]
         pitch = self.lse_pitch
         row_v = fx.Index(row0) * pitch
         out = []
         for i in range_constexpr(ACC16):
             off = row_v + fx.Index(i) * pitch
             one = buffer_ops.buffer_load(rsrc, as_mlir_value(fx.Int32(off)), vec_width=1, dtype=fx.Float32)
-            out.append(fmul(fx.Float32(one), scale, self.fm_fast))
+            out.append(fx.Float32(one) * scale)
         return out
 
     def q_rows(self, tile_idx, sub):
@@ -370,9 +369,13 @@ class M16SoftmaxHelper(dualwave.DualwaveKernelContext):
         fm = self.fm_fast
         if const_expr(bias2 is not None):
             fm = fx.arith.FastMathFlags.contract | fx.arith.FastMathFlags.reassoc
-        scaled = [fmul(values[r], scale, fm) for r in range_constexpr(ACC16)]
-        if const_expr(bias2 is not None):
-            scaled = [fadd(scaled[r], bias2[r], fm) for r in range_constexpr(ACC16)]
+        with fx.fastmath(fm):
+            scaled = [values[r] * scale for r in range_constexpr(ACC16)]
+            if const_expr(bias2 is not None):
+                scaled = [scaled[r] + bias2[r] for r in range_constexpr(ACC16)]
+            p_list = [
+                dualwave.rocdl.exp2(T.f32, as_mlir_value(scaled[r] + neg_lse2[r])) for r in range_constexpr(ACC16)
+            ]
         # The `v_exp_f32` wait state. `exp2_wait_state` says why it is needed
         # and why the `dualwave._s_nop(1)` that used to stand here did not
         # supply it -- the short version is that `s_nop` takes no operands, so
@@ -385,12 +388,7 @@ class M16SoftmaxHelper(dualwave.DualwaveKernelContext):
         # `_s_nop` fixed *that* build, by luck of the allocation it perturbed,
         # and left `BLOCK_DMODEL=192, PADDED_HEAD=False` with two zero-gap
         # sites still in it.
-        return exp2_wait_state(
-            [
-                dualwave.rocdl.exp2(T.f32, as_mlir_value(fadd(scaled[r], neg_lse2[r], fm)))
-                for r in range_constexpr(ACC16)
-            ]
-        )
+        return exp2_wait_state(p_list)
 
     def dscores(self, p_list, v_dp, delta, keep=None):
         """`dS = P * (dP - delta)`. `dP` is unscaled; `sm_scale` belongs to dK.
@@ -403,14 +401,8 @@ class M16SoftmaxHelper(dualwave.DualwaveKernelContext):
         values = [Vec(v_dp)[r] for r in range_constexpr(ACC16)]
         if const_expr(keep is not None):
             s = self.ctx_ref.c_dropout_scale
-            values = [
-                keep[r].select(fmul(values[r], s, self.fm_fast), self.c_zero_f)
-                for r in range_constexpr(ACC16)
-            ]
-        return [
-            fmul(p_list[r], fsub(values[r], delta[r], self.fm_fast), self.fm_fast)
-            for r in range_constexpr(ACC16)
-        ]
+            values = [keep[r].select(values[r] * s, self.c_zero_f) for r in range_constexpr(ACC16)]
+        return [fx.Float32(p_list[r]) * (values[r] - delta[r]) for r in range_constexpr(ACC16)]
 
     def mask_if_clipped(self, p_list, tile_idx, sub):
         """Zero `P` outside the band, for the tiles that can be clipped.
