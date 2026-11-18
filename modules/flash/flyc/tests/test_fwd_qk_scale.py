@@ -41,9 +41,9 @@ the error is `sm_scale * sqrt(head_dim)`, which is what the cases below vary.
 `SEQLEN_Q` is 289 anyway, because that is what the reporting UT used and a
 regression should be reproduced at the shape it was reported at.
 
-**Why a JIT test.** Same reason as `test_fwd_masked_lse.py`: reaching this from the AOT suite costs a full
-`ninja install` plus a by-hand deletion of the flyc hsaco/aks2/zip outputs,
-because no ninja edge depends on these sources. `modules/flash/tests/
+**Why a JIT test.** Same reason as `test_fwd_masked_lse.py`: reaching this
+from the AOT suite costs a full `ninja install` plus a by-hand deletion of the
+flyc hsaco/aks2/zip outputs, because no ninja edge depends on these sources. `modules/flash/tests/
 test_forward.py` covers the same ground at release tolerances; this one builds
 one kernel in-process and compares against fp64, which is what lets it name the
 cause rather than only the symptom.

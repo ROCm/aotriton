@@ -439,12 +439,11 @@ def flyc_attn_fwd(arch, choices, hints):
     at its default. The parameter exists so that stops being an API change — and the
     packaging is already N-capable, so neither is the artifact layout.
 
-    `resolve_knobs`, NOT an arch's `plan`: `plan()` is the JIT
+    `resolve_knobs`, NOT the dispatcher's `plan`: `plan()` is the JIT
     entry point, which takes a *real* head_dim and rounds it up the ladder,
     deriving `padded_head` on the way. AOT already knows the tile — it IS
     `BLOCK_DMODEL` — and `PADDED_HEAD` is its own functional axis, so `plan()`
-    would silently re-derive an axis the operator has already fixed. The
-    builder's own keyword front end draws the same distinction on both arches.
+    would silently re-derive an axis the operator has already fixed.
 
     ONE INVARIANT TO KEEP: `meta` here is a pure function of
     `choices` alone on both arches — every field either comes straight off a

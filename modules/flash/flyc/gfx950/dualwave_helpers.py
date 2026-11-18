@@ -140,8 +140,8 @@ def traits_cache_key(traits):
     invocation and does not share this cache: every `BIAS_TYPE`,
     `ENABLE_DROPOUT` and `CAUSAL_TYPE` pair in the shipped `flyc_attn_fwd.zip`
     is a distinct binary (0 of 72, 0 of 108 and 0 of 72 groups collided). What
-    this breaks is in-process work -- `devtools/` sweeps, the JIT tests beside
-    them, and anything varying these axes in one session.
+    this breaks is in-process work -- `devtools/` sweeps, the JIT tests in
+    `flyc/tests/`, and anything varying these axes in one session.
 
     Field *names* as well as values: a rename or a reordering then changes the
     key, and reading a stale entry across one is the same bug in a slower form.

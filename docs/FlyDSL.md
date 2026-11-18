@@ -151,7 +151,8 @@ architecture at all — the build host is typically neither of the targets.
    `@ati.flyc.kernel` and `@ati.flyc.hints`, declare the kernel arguments with
    their types and alignments, and have the builder return the FlyDSL module
    and the knobs it resolved. The description holds no arch branch: it builds
-   an arch-neutral input metadata from the functional and calls the family's
+   the family's one input metadata class from the functional (attention:
+   `fmha_meta.FmhaInputMetadata`) and calls the family's
    unified entry, `resolve_knobs(arch, meta)` for the knobs and
    `builder(arch, meta, knobs)` inside the deferred build. The knobs must carry
    `flyc_source` (the kernel file, relative to `modules/<family>/flyc/`, e.g.
@@ -177,24 +178,50 @@ The attention family's descriptions (`flyc_attn_fwd.py`, `flyc_bwd_dq.py`,
 `flyc_bwd_dkdv.py`) know no architecture. Each calls a unified entry in
 `modules/flash/flyc/` (`tuning_fwd.py`, `tuning_dq.py`,
 `tuning_dkdv.py`), which looks the arch up in its `_ARCH_MODULES` table and
-hands the arch-neutral `FmhaInputMetadata` to that arch's tuning module. A new
-architecture therefore needs:
+hands `fmha_meta.FmhaInputMetadata` to that arch's tuning module as is. That
+class is the only input metadata: there is no per-arch one, and every caller
+(descriptions, JIT tests, devtools) builds it. Masking is its `causal_type`
+(AOTriton's CAUSAL_TYPE); `causal` and `window` are properties derived from it.
 
-1. **A package `modules/flash/flyc/<arch>/`** with an empty `__init__.py`, its
-   kernels under short names (`fwd.py`, `dq.py`, `dkdv.py`, ...) and its JIT
-   tests (`test_*.py`, plus a `conftest.py` that turns FlyDSL's JIT cache off).
+The unified entries serve two callers:
+
+- **AOT**: `resolve_knobs(arch, meta, *, overrides=None)`. The functional fixes
+  `block_dmodel` and `padded_head` (`BLOCK_DMODEL`, `PADDED_HEAD`), and the real
+  head dims equal the tile.
+- **JIT**: `plan(arch, meta, *, overrides=None)` returns `(meta, knobs)`, with
+  the caller's real head dims rounded up the arch's ladder into `block_dmodel`
+  (and `block_dmodel_v`) and `padded_head` set.
+- **Both**: `builder(arch, meta, knobs)` constructs the module; `arches()` lists
+  the rows.
+
+A new architecture therefore needs:
+
+1. **A package `modules/flash/flyc/<arch>/`** with an empty `__init__.py` and
+   its kernels under short names (`fwd.py`, `dq.py`, `dkdv.py`, ...).
 2. **`<arch>/knobs.py`**: the knobs classes, deriving from `FlycQKnobs` (forward,
    dQ) or `FlycKVKnobs` (dK/dV), flydsl-free, with the `FLYC_SOURCE`,
    `FLYC_KERNEL_NAME` and `FLYC_GRID_AXIS_ORDER` class constants.
 3. **`<arch>/tuning_fwd.py`, `tuning_dq.py`, `tuning_dkdv.py`**, each defining
-   `entry_resolve(meta, *, overrides=None)` and `entry_build(meta, knobs)`. They
-   adapt the neutral metadata to the arch's own, apply the arch's pins (with
-   `fmha_knobs.pinned`, so pins win over `overrides`) and assert them.
-   `BLOCK_DMODEL` and `PADDED_HEAD` arrive as metadata, never as knobs.
+   `entry_resolve(meta, *, overrides=None)` (AOT: apply the arch's pins with
+   `fmha_knobs.pinned`, so pins win over `overrides`, and assert them),
+   `entry_plan(meta, *, overrides=None)` (JIT: round the head dims up the
+   ladder, then resolve; return `(meta, knobs)`) and `entry_build(meta, knobs)`.
+   They read `FmhaInputMetadata` directly and refuse a `causal_type` the arch
+   cannot build. `BLOCK_DMODEL` and `PADDED_HEAD` arrive as metadata, never as
+   knobs.
 4. **One row per unified entry** in its `_ARCH_MODULES` table, naming
    `<arch>.tuning_fwd` and so on.
 5. **The arch's head-dim ladder** in the descriptions' disable predicates, so
    functionals off the ladder are not built.
+6. **Nothing in `modules/flash/flyc/tests/`**, which is arch-neutral: its suites
+   build through `plan` and `builder` for the first GPU's arch
+   (`gcnArchName` without feature suffixes) and skip an arch a dispatcher has no
+   row for. The built module must take the shared host ABI (`fmha_utils.py`)
+   the suites call it with; a difference between arches belongs behind the
+   dispatcher, not in a test. A case only some arch can run (a head dim one
+   ladder lacks, a knob only one arch has) is a skip with the reason. Only a
+   test of something genuinely arch-specific goes in `<arch>/test_*.py`, with a
+   `conftest.py` there that turns FlyDSL's JIT cache off.
 
 Helpers more than one architecture uses live at the `flyc/` root
 (`fmha_utils.py`, `philox.py`, `flyc_polyfill.py`) and are imported by bare name;
