@@ -95,7 +95,7 @@ if(AOTRITON_MIN_PYTHON VERSION_LESS "3.12")
   message(FATAL_ERROR "AOTRITON_MIN_PYTHON is ${AOTRITON_MIN_PYTHON}, but Python 3.12 is the minimum the code supports. If this is a stale value cached by an older configure, pass -DAOTRITON_MIN_PYTHON=3.12 or use a fresh build directory.")
 endif()
 
-find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter REQUIRED)
+find_package(Python ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter REQUIRED)
 # Sets ROCM_PATH and CMAKE_PREFIX_PATH (env, then `rocm-sdk`, then /opt/rocm),
 # then find_package(hip REQUIRED).
 include(cmake/LoadHIP.cmake)
@@ -270,13 +270,11 @@ endforeach()
 # Early failure for python binding
 if(NOT AOTRITON_NO_PYTHON)
   cmake_policy(SET CMP0148 NEW)  # Disable outdated FindPythonInterp/FindPythonLibs
-  # nanobind reads FindPython's variables, not FindPython3's. Pin FindPython to
-  # the interpreter FindPython3 already chose. Development.Module is enough to
-  # build an extension: it needs neither libpython nor an embeddable runtime.
-  set(Python_EXECUTABLE "${Python3_EXECUTABLE}")
+  # Development.Module is enough to build an extension: it needs neither
+  # libpython nor an embeddable runtime.
   find_package(Python ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter Development.Module REQUIRED)
 
-  # Must use Python3_EXECUTABLE (the cmake-invoking python), NOT VENV_BIN_PYTHON.
+  # Must use Python_EXECUTABLE (the cmake-invoking python), NOT VENV_BIN_PYTHON.
   # Workflow: (user's python env) -> cmake & ninja -> test aotriton.
   # pyaotriton must be ABI-compatible with the test environment, and VENV_DIR
   # must never have torch. Building needs no torch at all: lazy_tensor uses the
@@ -285,7 +283,7 @@ if(NOT AOTRITON_NO_PYTHON)
 
   # nanobind and nanobind-backend are build dependencies of the extension
   # (requirements.txt); ask the interpreter where nanobind's CMake files are.
-  execute_process(COMMAND "${Python3_EXECUTABLE}" -m nanobind --cmake_dir
+  execute_process(COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
                   OUTPUT_STRIP_TRAILING_WHITESPACE
                   OUTPUT_VARIABLE nanobind_DIR)
   find_package(nanobind CONFIG REQUIRED)
@@ -346,11 +344,11 @@ endif()
 
 set(Python_ARTIFACTS_INTERACTIVE TRUE)
 
-# Not a target, we need to override Python3_EXECUTABLE later
+# Not a target, we need to override Python_EXECUTABLE later
 if(AOTRITON_INHERIT_SYSTEM_SITE_TRITON)
-  execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv --system-site-packages "${VENV_DIR}")
+  execute_process(COMMAND "${Python_EXECUTABLE}" -m venv --system-site-packages "${VENV_DIR}")
 else()
-  execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv "${VENV_DIR}")
+  execute_process(COMMAND "${Python_EXECUTABLE}" -m venv "${VENV_DIR}")
 endif()
 
 set(ENV{VIRTUAL_ENV} "${VENV_DIR}")
@@ -363,9 +361,6 @@ else()
   set(VENV_REL_TRITON "triton/_C/libtriton.so")
 endif()
 set(VENV_BIN_PYTHON "${VENV_DIR}/${VENV_REL_PYTHON}")
-# set(Python3_FIND_VIRTUALENV FIRST)
-# unset(Python3_EXECUTABLE)
-# find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c "import site; print(site.getsitepackages()[0], end='')" OUTPUT_VARIABLE VENV_SITE)
 # string(STRIP "${VENV_SITE}" VENV_SITE)
@@ -538,7 +533,7 @@ if(NOT AOTRITON_NOIMAGE_MODE AND AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
     set(ALT_VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/altvenvs/${ALT_VENV_NAME}")
     message(STATUS "ALT_VENV_DIR ${ALT_VENV_DIR}")
     message(STATUS "${ALT_VENV_MODE} ${ALT_VENV_VALUE}")
-    execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv "${ALT_VENV_DIR}")
+    execute_process(COMMAND "${Python_EXECUTABLE}" -m venv "${ALT_VENV_DIR}")
     set(ALT_VENV_BIN_PYTHON "${ALT_VENV_DIR}/${VENV_REL_PYTHON}")
     execute_process(COMMAND "${ALT_VENV_BIN_PYTHON}" -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt")
     # pip installs into the venv's site-packages, not its top directory.
