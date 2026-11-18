@@ -10,11 +10,11 @@ the caller can avoid -- any cross-attention shape produces them -- and their
 LSE is read by the backward, which subtracts it from `qk`. The contract is
 therefore `+inf`, so that `exp(qk - lse)` is zero for exactly the rows that
 must contribute nothing. `modules/flash/kernel/fwd_kernel.py` writes `+inf` at
-its fully-masked early exit and says why; gfx1201's FlyDSL kernel writes it at
-its LSE store.
+its fully-masked early exit and says why. The contract is the library's, so
+every arch's flyc forward is held to it.
 
-**Two code paths reach those rows, and only one of them is the epilogue.** A Q
-block whose every row is masked never enters the kernel body -- `active` is
+**Two code paths reach those rows on gfx950, and only one of them is the
+epilogue.** A Q block whose every row is masked never enters the kernel body -- `active` is
 `causal_end_raw > 0` -- and is served entirely by
 `ParityStoreHelper.zero_o_block_if_needed`. A block that straddles the boundary
 *is* active and carries its masked rows through the ordinary epilogue. They
@@ -25,7 +25,7 @@ the caller allocated, so both read as "the store faulted" and neither is
 distinguishable from the other without splitting the rows the way
 `_row_groups` does below.
 
-**Why this is a JIT test and lives here.** The AOT suite covers this from the
+**Why this is a JIT test.** The AOT suite covers this from the
 other end (`modules/flash/tests/test_backward.py::test_bottom_right_fully_masked_rows`),
 but reaching it costs a full `ninja install` plus a by-hand deletion of the
 flyc hsaco/aks2/zip outputs, because no ninja edge depends on these sources.
@@ -33,39 +33,27 @@ Building one kernel in-process instead turns that into seconds, and it is the
 only way to sweep `head_dim` -- the AOT path compiles whatever the tuning
 database selected, so it cannot ask for the wide kernel on purpose.
 
-Requires a gfx950 device, `AOTRITON_FLYDSL_KERNEL_ROOT`, and a ROCm the
-FlyDSL compiler can link against; skips cleanly without any of them.
+Builds for the first GPU's arch through `tuning_fwd`; skips on an arch it has
+no row for, or without `AOTRITON_FLYDSL_KERNEL_ROOT`.
 
     AOTRITON_FLYDSL_KERNEL_ROOT=<flydsl-checkout> \\
-        python -m pytest modules/flash/flyc/gfx950/test_fwd_masked_lse.py
+        python -m pytest modules/flash/flyc/tests/test_fwd_masked_lse.py
 """
 
 import math
-import os
 import sys
 from pathlib import Path
 
 import pytest
 
-# The kernels are this package's modules, imported relatively; pytest has
-# put `flyc/` (the first directory up without an `__init__.py`) on sys.path
-# for the shared ones.
-# The FlyDSL checkout has to be added, for the `kernels.attention` that
-# `standalone` re-exports as `dualwave`.
-_KERNEL_ROOT = os.environ.get("AOTRITON_FLYDSL_KERNEL_ROOT")
-if _KERNEL_ROOT and _KERNEL_ROOT not in sys.path:
-    sys.path.append(_KERNEL_ROOT)
+import jit_arch
+import tuning_fwd
+from fmha_meta import FmhaInputMetadata
 
 torch = pytest.importorskip("torch")
+ARCH = jit_arch.require(tuning_fwd)
 
-pytestmark = pytest.mark.skipif(
-    not _KERNEL_ROOT
-    or not torch.cuda.is_available()
-    or not torch.cuda.get_device_properties(0).gcnArchName.startswith("gfx950"),
-    reason="needs a gfx950 device and AOTRITON_FLYDSL_KERNEL_ROOT",
-)
-
-# head_dim 512 takes the wide kernel (`fwd_wide.py`), a different
+# On gfx950, head_dim 512 takes the wide kernel (`fwd_wide.py`), a different
 # algorithm with its own store helper; 64 and 128 take the dual-wave one. The
 # early exit is shared -- `zero_o_block_if_needed` is called outside the
 # WIDE/else split -- so covering both is what says the shared call is reached
@@ -82,21 +70,12 @@ LIVE_ATOL = 8e-3
 
 
 def _build(head_dim):
-    """A causal, LSE-returning forward for `head_dim`, compiled in-process."""
-    from .fwd import (
-        build_flash_attn_func_gfx950_module_primary as build_primary,
-    )
-    from fmha_meta import FmhaInputMetadata
-    from .tuning_fwd import fmha_knobs, plan
-
-    meta = FmhaInputMetadata(
-        num_heads=NUM_HEADS, head_dim=head_dim, causal_type=2, dtype_str="bf16"
-    )
-    meta = plan(meta)
-    # `return_lse=True` pinned, exactly as `modules/flash/aot/flyc_attn_fwd.py`
-    # pins it: the policy's default is False, which deletes the store outright
-    # and would make every assertion below read the allocation.
-    return build_primary(meta, fmha_knobs("gfx950", return_lse=True).resolve(meta))
+    """`(fn, knobs)`: a bottom-right causal forward for `head_dim`, in-process."""
+    meta = FmhaInputMetadata(num_heads=NUM_HEADS,
+                             head_dim=head_dim,
+                             dtype_str="bf16",
+                             causal_type=2)
+    return jit_arch.build(tuning_fwd, ARCH, meta)
 
 
 def _row_groups(block_m):
@@ -127,8 +106,8 @@ def _reference_lse(q, k, sm_scale):
 
 @pytest.mark.parametrize("head_dim", HEAD_DIMS)
 def test_fully_masked_rows_get_positive_inf_lse(head_dim):
-    fn = _build(head_dim)
-    seqlen_q, whole, straddling = _row_groups(fn.traits.BLOCK_M)
+    fn, knobs = _build(head_dim)
+    seqlen_q, whole, straddling = _row_groups(knobs.block_m)
     sm_scale = 1.0 / math.sqrt(head_dim)
 
     torch.manual_seed(head_dim)
@@ -153,7 +132,7 @@ def test_fully_masked_rows_get_positive_inf_lse(head_dim):
         got = lse[:, :, rows]
         n_inf = int((got == float("inf")).sum())
         assert n_inf == got.numel(), (
-            f"head_dim={head_dim} BLOCK_M={fn.traits.BLOCK_M}: {name} rows "
+            f"head_dim={head_dim} BLOCK_M={knobs.block_m}: {name} rows "
             f"{rows.start}:{rows.stop} -- {n_inf}/{got.numel()} are +inf; "
             f"{int(torch.isnan(got).sum())} NaN (never written, or poison), "
             f"{int((got == float('-inf')).sum())} -inf (written with the wrong sign)"

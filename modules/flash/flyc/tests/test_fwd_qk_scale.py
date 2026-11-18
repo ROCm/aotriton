@@ -4,8 +4,9 @@
 
 """How much precision `flyc_attn_fwd` loses to a large `sm_scale`, JIT.
 
-The forward used to reach `qk_scale = sm_scale * log2e` by folding it into Q
-and **rounding the product back to the input dtype**
+The bound is the library's, so every arch's flyc forward is held to it. The
+history is gfx950's: its forward used to reach `qk_scale = sm_scale * log2e`
+by folding it into Q and **rounding the product back to the input dtype**
 (`DualwaveQLoader.scale_all`). Q is already bf16/f16, so that second rounding
 is pure loss: every element picks up a fresh relative error of up to `2**-9`,
 the QK dot multiplies it by the logit magnitude, and the result lands *in the
@@ -40,42 +41,32 @@ the error is `sm_scale * sqrt(head_dim)`, which is what the cases below vary.
 `SEQLEN_Q` is 289 anyway, because that is what the reporting UT used and a
 regression should be reproduced at the shape it was reported at.
 
-**Why a JIT test and why here.** Same reason as
-`gfx950/test_fwd_masked_lse.py`: reaching this from the AOT suite costs a full
+**Why a JIT test.** Same reason as `test_fwd_masked_lse.py`: reaching this from the AOT suite costs a full
 `ninja install` plus a by-hand deletion of the flyc hsaco/aks2/zip outputs,
 because no ninja edge depends on these sources. `modules/flash/tests/
 test_forward.py` covers the same ground at release tolerances; this one builds
 one kernel in-process and compares against fp64, which is what lets it name the
 cause rather than only the symptom.
 
-Requires a gfx950 device, `AOTRITON_FLYDSL_KERNEL_ROOT`, and a ROCm the FlyDSL
-compiler can link against; skips cleanly without any of them.
+Builds for the first GPU's arch through `tuning_fwd`; skips on an arch it has
+no row for, or without `AOTRITON_FLYDSL_KERNEL_ROOT`.
 
     AOTRITON_FLYDSL_KERNEL_ROOT=<flydsl-checkout> \\
-        python -m pytest modules/flash/flyc/gfx950/test_fwd_qk_scale.py
+        python -m pytest modules/flash/flyc/tests/test_fwd_qk_scale.py
 """
 
 import math
-import os
 import sys
 from pathlib import Path
 
 import pytest
 
-# See `gfx950/test_fwd_masked_lse.py` for why the kernel root is appended here
-# rather than by a conftest.
-_KERNEL_ROOT = os.environ.get("AOTRITON_FLYDSL_KERNEL_ROOT")
-if _KERNEL_ROOT and _KERNEL_ROOT not in sys.path:
-    sys.path.append(_KERNEL_ROOT)
+import jit_arch
+import tuning_fwd
+from fmha_meta import FmhaInputMetadata
 
 torch = pytest.importorskip("torch")
-
-pytestmark = pytest.mark.skipif(
-    not _KERNEL_ROOT
-    or not torch.cuda.is_available()
-    or not torch.cuda.get_device_properties(0).gcnArchName.startswith("gfx950"),
-    reason="needs a gfx950 device and AOTRITON_FLYDSL_KERNEL_ROOT",
-)
+ARCH = jit_arch.require(tuning_fwd)
 
 LOG2E = 1.4426950408889634
 
@@ -84,7 +75,7 @@ NUM_HEADS = 4
 SEQLEN_Q = 289
 SEQLEN_K = 289
 
-# 64 and 256 take the dual-wave kernel (`fwd.make_body`),
+# On gfx950, 64 and 256 take the dual-wave kernel (`fwd.make_body`),
 # 512 the wide one (`fwd_wide.make_wide_body`). They reintroduce the
 # scale at different places -- the dual-wave body through `_FwdGemmHelper.qk`,
 # which serves six call sites across its software pipeline, the wide body with
@@ -117,25 +108,14 @@ MAX_ABS_ERR = 0.035
 def _build(head_dim, dtype_str, causal=False, bias=False):
     """A forward for one `(head_dim, dtype)`, compiled in-process.
 
-    `fwd._COMPILED` memoises, and FlyDSL caches to disk on
-    top of that, so the parametrization below pays for each distinct build
-    once rather than once per case.
+    Causal is bottom-right; with `SEQLEN_Q == SEQLEN_K` that is also top-left.
     """
-    from .fwd import (
-        build_flash_attn_func_gfx950_module_primary as build_primary,
-    )
-    from fmha_meta import FmhaInputMetadata
-    from .tuning_fwd import fmha_knobs, plan
-
-    meta = FmhaInputMetadata(
-        num_heads=NUM_HEADS,
-        head_dim=head_dim,
-        causal_type=2 if causal else 0,
-        bias=bias,
-        dtype_str=dtype_str,
-    )
-    meta = plan(meta)
-    return build_primary(meta, fmha_knobs("gfx950").resolve(meta))
+    meta = FmhaInputMetadata(num_heads=NUM_HEADS,
+                             head_dim=head_dim,
+                             dtype_str=dtype_str,
+                             causal_type=2 if causal else 0,
+                             bias=bias)
+    return jit_arch.build(tuning_fwd, ARCH, meta)[0]
 
 
 def _inputs(head_dim, dtype, seed):
@@ -145,10 +125,15 @@ def _inputs(head_dim, dtype, seed):
     q = torch.randn(shape_q, device="cuda", dtype=dtype)
     k = torch.randn(shape_k, device="cuda", dtype=dtype)
     v = torch.randn_like(k)
-    # NaN rather than zeros, for the reason `gfx950/test_fwd_masked_lse.py`
-    # gives: an unwritten element must not be able to pass as a correct one.
+    # NaN rather than zeros, for the reason `test_fwd_masked_lse.py` gives: an
+    # unwritten element must not be able to pass as a correct one.
     out = torch.full(shape_q, float("nan"), device="cuda", dtype=dtype)
     return q, k, v, out
+
+
+def _lse():
+    """Every arch's build stores the LSE, so every call is handed one."""
+    return torch.empty((BATCH * NUM_HEADS, SEQLEN_Q), device="cuda", dtype=torch.float32)
 
 
 def _resolve(sm_scale, head_dim):
@@ -220,7 +205,7 @@ def test_qk_scale_survives_a_large_sm_scale(dtype_str, head_dim, sm_scale):
     fn = _build(head_dim, dtype_str)
     q, k, v, out = _inputs(head_dim, DTYPES[dtype_str], seed=head_dim)
 
-    fn(q, k, v, out, BATCH, SEQLEN_Q, seqlen_k=SEQLEN_K, scale=scale)
+    fn(q, k, v, out, BATCH, SEQLEN_Q, seqlen_k=SEQLEN_K, scale=scale, lse=_lse())
     torch.cuda.synchronize()
 
     assert bool(torch.isfinite(out).all()), (
@@ -273,7 +258,7 @@ def test_qk_scale_under_causal(dtype_str, head_dim, sm_scale):
     fn = _build(head_dim, dtype_str, causal=True)
     q, k, v, out = _inputs(head_dim, DTYPES[dtype_str], seed=head_dim + 1)
 
-    fn(q, k, v, out, BATCH, SEQLEN_Q, seqlen_k=SEQLEN_K, scale=scale)
+    fn(q, k, v, out, BATCH, SEQLEN_Q, seqlen_k=SEQLEN_K, scale=scale, lse=_lse())
     torch.cuda.synchronize()
 
     assert bool(torch.isfinite(out).all()), (
@@ -291,7 +276,7 @@ def test_bias_survives_a_same_shape_bias_free_build(sm_scale):
     """A bias build must apply its bias, **even after a bias-free one is built**.
 
     The second half is the whole test and is why the bias-free build is made
-    first rather than skipped. `traits.cache_tag` -- upstream's, and the thing
+    first rather than skipped. On gfx950, `traits.cache_tag` -- upstream's, and the thing
     every builder's `_cache_tag` used to start from -- does not name
     `BIAS_TYPE`, so these two builds hashed to the same FlyDSL disk-cache entry
     and the bias one silently received the bias-free binary. The symptom was
@@ -313,8 +298,7 @@ def test_bias_survives_a_same_shape_bias_free_build(sm_scale):
     what rules out ever expressing the bias as `bias / sm_scale` in a raw-score
     domain, as a free FMA fusion of `qk_scale` into `sub_m` would have needed.
 
-    Bias excludes causal (`traits.make_traits` rejects the pair),
-    so this is the dense path only.
+    Bias excludes causal on every arch, so this is the dense path only.
     """
     head_dim = 64
     q, k, v, out = _inputs(head_dim, torch.bfloat16, seed=7)
@@ -326,10 +310,10 @@ def test_bias_survives_a_same_shape_bias_free_build(sm_scale):
     # hands to the one below.
     plain = _build(head_dim, "bf16")
     plain_out = torch.full_like(out, float("nan"))
-    plain(q, k, v, plain_out, BATCH, SEQLEN_Q, seqlen_k=SEQLEN_K, scale=sm_scale)
+    plain(q, k, v, plain_out, BATCH, SEQLEN_Q, seqlen_k=SEQLEN_K, scale=sm_scale, lse=_lse())
 
     fn = _build(head_dim, "bf16", bias=True)
-    fn(q, k, v, out, BATCH, SEQLEN_Q, seqlen_k=SEQLEN_K, scale=sm_scale, bias=bias)
+    fn(q, k, v, out, BATCH, SEQLEN_Q, seqlen_k=SEQLEN_K, scale=sm_scale, bias=bias, lse=_lse())
     torch.cuda.synchronize()
 
     assert _max_err(out, plain_out.double()) > 0.0, (

@@ -2,7 +2,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""`principal_diagonal_choice` (VarlenBits bit 18) in the gfx1201 forward, JIT.
+"""`principal_diagonal_choice` (VarlenBits bit 18) in the flyc forward, JIT.
 
 The bit says which diagonal a *numeric* window bound is measured from. With
 `d = seqlen_k - seqlen_q` of the sequence being processed and `p` the bit:
@@ -18,12 +18,11 @@ The bit travels in the VarlenBits word and nowhere else: a dense call passes
 `varlen=fmha.varlen_dense(principal_diagonal=...)`, a varlen call sets it in
 `varlen["bits"]`.
 
-The kernel resolves the window once per sequence (`fmha.resolve_window`) and
-cuts its KV range into `[masked][full][masked]` from the resolved bounds
-(`fmha.decompose_causal_regions`). A shifted bound is what stresses that cut:
-`L` negative, `R` past `seqlen_k`, a band that clears the diagonal, and Q
-blocks whose band holds no key at all. The shapes below are picked to land on
-each of those, with ragged tile edges.
+The kernel resolves the window once per sequence and cuts its KV range from
+the resolved bounds. A shifted bound is what stresses that cut: `L` negative,
+`R` past `seqlen_k`, a band that clears the diagonal, and Q blocks whose band
+holds no key at all. The shapes below are picked to land on each of those,
+with ragged tile edges.
 
 The reference is a float32 masked softmax built straight from the predicate,
 per sequence, so a varlen batch whose sequences have different `d` checks that
@@ -32,42 +31,32 @@ the shift is resolved per sequence rather than once per call.
 A row whose band holds no key has no defined softmax. Only its O is compared
 (it must be exactly 0); its LSE is not read.
 
-Requires a gfx1201 device, `AOTRITON_FLYDSL_KERNEL_ROOT`, and a ROCm the FlyDSL
-compiler can link against; skips cleanly without any of them.
+Builds for the first GPU's arch through `tuning_fwd`; skips on an arch it has
+no row for, or without `AOTRITON_FLYDSL_KERNEL_ROOT`.
 
     AOTRITON_FLYDSL_KERNEL_ROOT=<flydsl-checkout> \\
-        python -m pytest modules/flash/flyc/gfx1201/test_fwd_principal_diagonal.py
+        python -m pytest modules/flash/flyc/tests/test_fwd_principal_diagonal.py
 """
 
 import functools
 import math
-import os
 import sys
 from pathlib import Path
 
 import pytest
 
-_KERNEL_ROOT = os.environ.get("AOTRITON_FLYDSL_KERNEL_ROOT")
-if _KERNEL_ROOT and _KERNEL_ROOT not in sys.path:
-    sys.path.append(_KERNEL_ROOT)
+import jit_arch
+import tuning_fwd
+from fmha_meta import FmhaInputMetadata
 
 torch = pytest.importorskip("torch")
-
-_SKIP = (not _KERNEL_ROOT
-         or not torch.cuda.is_available()
-         or not torch.cuda.get_device_properties(0).gcnArchName.startswith("gfx1201"))
-_SKIP_REASON = "needs a gfx1201 device and AOTRITON_FLYDSL_KERNEL_ROOT"
-# Skip the module *before* the imports below: a skipif mark does not stop
-# module-level imports, and these pull in FlyDSL and the kernel root's
-# `kernels.common`, so a host without them would fail collection instead.
-if _SKIP:
-    pytest.skip(_SKIP_REASON, allow_module_level=True)
+ARCH = jit_arch.require(tuning_fwd)
 
 import fmha_utils as fmha  # noqa: E402
 
-# 64 fits in registers; 128 is the width the policy splits differently (more
-# row subtiles, a different BLOCK_N), so the region cut runs at two tilings.
-HEAD_DIMS = (64, 128)
+# Different tilings and bodies per arch: gfx1201 splits 128 differently from 64
+# (more row subtiles, a different BLOCK_N); gfx950 takes 512 on its wide body.
+HEAD_DIMS = (64, 128, 512)
 NUM_HEADS = 2
 DTYPE = torch.bfloat16
 ATOL = 1.5e-2
@@ -110,17 +99,12 @@ VARLEN_SEQS = ((1, 300), (64, 320), (130, 130), (300, 37), (37, 200))
 
 @functools.cache
 def _build(head_dim):
-    """A gSWA build (`causal_type=3`), compiled in-process.
-
-    LSE is written whenever the pointer is non-null, so no knob is needed for
-    it, unlike gfx950's `return_lse`.
-    """
-    from .fwd import build_flash_attn_func_aiw_module
-
-    return build_flash_attn_func_aiw_module(num_heads=NUM_HEADS,
-                                            head_dim=head_dim,
-                                            causal_type=3,
-                                            dtype_str="bf16")
+    """A window build (`causal_type=3`), compiled in-process."""
+    meta = FmhaInputMetadata(num_heads=NUM_HEADS,
+                             head_dim=head_dim,
+                             dtype_str="bf16",
+                             causal_type=3)
+    return jit_arch.build(tuning_fwd, ARCH, meta)[0]
 
 
 def _resolve(side_value, sentinel_value, numeric_shift):
