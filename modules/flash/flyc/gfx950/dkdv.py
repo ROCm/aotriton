@@ -151,7 +151,6 @@ from philox import Philox, keep_mask
 
 import flydsl.compiler as flyc
 import flydsl.expr as fx
-from flydsl.compiler.kernel_function import CompilationContext
 from flydsl.expr import const_expr, range_constexpr
 from flydsl.expr.typing import T
 from flydsl.expr.typing import Vector as Vec
@@ -171,15 +170,6 @@ _sched_barrier = dualwave._sched_barrier
 _waitcnt_vm_n = dualwave._waitcnt_vm_n
 
 _COMPILED = weakref.WeakKeyDictionary()
-
-_COMPILE_HINTS = {
-    "fast_fp_math": True,
-    "unsafe_fp_math": True,
-    "llvm_options": {
-        "enable-post-misched": False,
-        "lsr-drop-solution": True,
-    },
-}
 
 # `_causal_pair_thresholds(False)` flattened is `8 * (r // 4) + (r % 4)`, which
 # is the MFMA accumulator's row map, and grouping it into runs gives four spans
@@ -730,7 +720,7 @@ class BwdDkDvKernelContext(ParityKernelContext):
         acquired it**, 14 of those while their spill count went down. It also
         survives forcing scratch spilling instead of lane spilling
         (`amdgpu-spill-sgpr-to-vgpr=false`, which flags an identical 28) and
-        both existing `_COMPILE_HINTS` flags, and 19 builds are flagged under
+        both `fmha.COMPILE_HINTS` flags, and 19 builds are flagged under
         every setting tried. So spill pressure is not the control variable and
         this file cannot reach the bug. See
         `flydsl-issue-gfx950-lost-sgpr-copy-REPRO.md` for the ISA and the
@@ -2399,6 +2389,9 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
                     f"multiple of 8, which needs no padding at all."
                 )
 
+    # On the JitFunction, not around the call, so AOT compiles get them too.
+    launch_fmha_bwd_dkdv_gfx950.compile_hints = dict(fmha.COMPILE_HINTS)
+
     def _args(
         Q,
         K,
@@ -2656,18 +2649,16 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
 
     def _launch(*args, **kwargs):
         packed, stream = _args(*args, **kwargs)
-        with CompilationContext.compile_hints(_COMPILE_HINTS):
-            return fmha.run_compiled(
-                _COMPILED,
-                launch_fmha_bwd_dkdv_gfx950,
-                *packed,
-                stream if stream is not None else fx.Stream(None),
-            )
+        return fmha.run_compiled(
+            _COMPILED,
+            launch_fmha_bwd_dkdv_gfx950,
+            *packed,
+            stream if stream is not None else fx.Stream(None),
+        )
 
     def _compile(*args, **kwargs):
         packed, stream = _args(*args, **kwargs)
-        with CompilationContext.compile_hints(_COMPILE_HINTS):
-            return flyc.compile(launch_fmha_bwd_dkdv_gfx950, *packed, fx.Stream(stream))
+        return flyc.compile(launch_fmha_bwd_dkdv_gfx950, *packed, fx.Stream(stream))
 
     _launch.compile = _compile
     _launch.traits = traits

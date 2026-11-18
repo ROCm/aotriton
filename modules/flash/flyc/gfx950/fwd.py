@@ -155,7 +155,6 @@ import flydsl.compiler as flyc
 import flydsl.expr as fx
 from flydsl._mlir import ir
 from flydsl._mlir.dialects import llvm
-from flydsl.compiler.kernel_function import CompilationContext
 from flydsl.expr import const_expr, range_constexpr
 from flydsl.expr.typing import T
 from flydsl.expr.typing import Vector as Vec
@@ -335,15 +334,6 @@ class _FwdGemmHelper(ParityGemmHelper):
 
 
 _COMPILED = {}
-
-_COMPILE_HINTS = {
-    "fast_fp_math": True,
-    "unsafe_fp_math": True,
-    "llvm_options": {
-        "enable-post-misched": False,
-        "lsr-drop-solution": True,
-    },
-}
 
 
 def build_flash_attn_func_gfx950_module_primary(meta, knobs):
@@ -1283,6 +1273,9 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
             stream=stream,
         )
 
+    # On the JitFunction, not around the call, so AOT compiles get them too.
+    launch_flash_attn_func_gfx950.compile_hints = dict(fmha.COMPILE_HINTS)
+
     def _args(
         Q,
         K,
@@ -1550,18 +1543,16 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
 
     def _launch(*args, **kwargs):
         packed, stream = _args(*args, **kwargs)
-        with CompilationContext.compile_hints(_COMPILE_HINTS):
-            return fmha.run_compiled(
-                _COMPILED,
-                launch_flash_attn_func_gfx950,
-                *packed,
-                stream if stream is not None else fx.Stream(None),
-            )
+        return fmha.run_compiled(
+            _COMPILED,
+            launch_flash_attn_func_gfx950,
+            *packed,
+            stream if stream is not None else fx.Stream(None),
+        )
 
     def _compile(*args, **kwargs):
         packed, stream = _args(*args, **kwargs)
-        with CompilationContext.compile_hints(_COMPILE_HINTS):
-            return flyc.compile(launch_flash_attn_func_gfx950, *packed, fx.Stream(stream))
+        return flyc.compile(launch_flash_attn_func_gfx950, *packed, fx.Stream(stream))
 
     _launch.compile = _compile
     _launch.traits = traits

@@ -261,7 +261,6 @@ from philox import Philox
 import flydsl.compiler as flyc
 import flydsl.expr as fx
 from flydsl._mlir.dialects import llvm
-from flydsl.compiler.kernel_function import CompilationContext
 from flydsl.expr import const_expr, range_constexpr
 from flydsl.expr import math as fmath
 from flydsl.expr.typing import T
@@ -309,18 +308,6 @@ def _carried(values, count):
 
 
 _COMPILED = {}
-
-# The forward's, unchanged: this kernel is the same instruction mix on the same
-# schedule primitives, so a different set here would only make the two
-# incomparable at the ISA level.
-_COMPILE_HINTS = {
-    "fast_fp_math": True,
-    "unsafe_fp_math": True,
-    "llvm_options": {
-        "enable-post-misched": False,
-        "lsr-drop-solution": True,
-    },
-}
 
 
 class BwdDqKernelContext(ParityKernelContext):
@@ -1713,6 +1700,9 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         wl, wr = window
         return int(wl), int(wr)
 
+    # On the JitFunction, not around the call, so AOT compiles get them too.
+    launch_fmha_bwd_dq_gfx950.compile_hints = dict(fmha.COMPILE_HINTS)
+
     def _args(
         Q,
         K,
@@ -1932,18 +1922,16 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
 
     def _launch(*args, **kwargs):
         packed, stream = _args(*args, **kwargs)
-        with CompilationContext.compile_hints(_COMPILE_HINTS):
-            return fmha.run_compiled(
-                _COMPILED,
-                launch_fmha_bwd_dq_gfx950,
-                *packed,
-                stream if stream is not None else fx.Stream(None),
-            )
+        return fmha.run_compiled(
+            _COMPILED,
+            launch_fmha_bwd_dq_gfx950,
+            *packed,
+            stream if stream is not None else fx.Stream(None),
+        )
 
     def _compile(*args, **kwargs):
         packed, stream = _args(*args, **kwargs)
-        with CompilationContext.compile_hints(_COMPILE_HINTS):
-            return flyc.compile(launch_fmha_bwd_dq_gfx950, *packed, fx.Stream(stream))
+        return flyc.compile(launch_fmha_bwd_dq_gfx950, *packed, fx.Stream(stream))
 
     _launch.compile = _compile
     _launch.traits = traits

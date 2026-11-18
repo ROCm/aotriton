@@ -101,6 +101,7 @@ __all__ = [
     "dropout_outputs",
     "u64_scalar",
     "varlen_args",
+    "COMPILE_HINTS",
     "run_compiled",
     "new_compiled_cache",
     "dtype_to_elem_type",
@@ -1433,6 +1434,30 @@ def varlen_args(strides_constexpr, varlen, seqlen_q, seqlen_k, q, batch_size, nu
     )
     return (bits,) + got + (int(varlen["max_seqlen_q"]), int(varlen["max_seqlen_k"]))
 
+
+# --------------------------------------------------------------------------
+# Build options
+# --------------------------------------------------------------------------
+
+# Compile hints every attention builder sets on the `@flyc.jit` it returns.
+# On the JitFunction, not around the call: `aotriton.flyc_compile` calls the
+# JitFunction directly, so hints applied by a JIT-only wrapper never reach an
+# AOT build. FlyDSL 0.4.2 reads lower-case keys only.
+#
+#   fast_fp_math    the ambient fastmath, `fast`, for traced ops that carry no
+#                   flags of their own; also the ROCDL target's `fast`.
+#   unsafe_fp_math  the ROCDL target's `unsafe-math`. That and `fast` only set
+#                   ocml's `__oclc_*` controls, so both are inert while no
+#                   kernel calls ocml; kept so that one that does agrees.
+#   llvm_options    LLVM cl::opts for the whole compile.
+COMPILE_HINTS = {
+    "fast_fp_math": True,
+    "unsafe_fp_math": True,
+    "llvm_options": {
+        "enable-post-misched": False,
+        "lsr-drop-solution": True,
+    },
+}
 
 def run_compiled(cache, exe, *args):
     """First call compiles and runs; later calls fast-dispatch the compiled fn.
