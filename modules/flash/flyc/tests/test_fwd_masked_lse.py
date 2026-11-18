@@ -72,6 +72,7 @@ LIVE_ATOL = 8e-3
 def _build(head_dim):
     """`(fn, knobs)`: a bottom-right causal forward for `head_dim`, in-process."""
     meta = FmhaInputMetadata(num_heads=NUM_HEADS,
+                             block_dmodel=None,
                              head_dim=head_dim,
                              dtype_str="bf16",
                              causal_type=2)

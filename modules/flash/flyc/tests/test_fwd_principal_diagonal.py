@@ -101,6 +101,7 @@ VARLEN_SEQS = ((1, 300), (64, 320), (130, 130), (300, 37), (37, 200))
 def _build(head_dim):
     """A window build (`causal_type=3`), compiled in-process."""
     meta = FmhaInputMetadata(num_heads=NUM_HEADS,
+                             block_dmodel=None,
                              head_dim=head_dim,
                              dtype_str="bf16",
                              causal_type=3)

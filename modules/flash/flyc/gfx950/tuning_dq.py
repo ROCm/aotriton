@@ -392,6 +392,8 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
         """
         head_dim_v = meta.head_dim if meta.head_dim_v is None else meta.head_dim_v
         floor = int(self.hdim_qk_floor or 0)
+        if head_dim_v is None:  # AOT: the real head dims are not known
+            return floor
         return floor if head_dim_v > floor else 0
 
     def _with_wave_geometry(self, meta):
@@ -512,7 +514,7 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
         if block_dmodel not in BWD_DQ_LADDER:
             raise NotImplementedError(
                 f"the backward dQ kernel is built for head_dim tiles {BWD_DQ_LADDER}, not "
-                f"{block_dmodel}. head_dim {meta.head_dim} rounds to {tile_width_for(meta.head_dim)}."
+                f"{block_dmodel}."
             )
         if meta.dtype_str not in ("f16", "bf16"):
             # Same assertion and the same two values as gfx1201's `bwd_dq`, so

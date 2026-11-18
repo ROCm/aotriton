@@ -512,6 +512,8 @@ def plan(request: FmhaInputMetadata, overrides: FmhaKnobs | None = None) -> Fmha
 
     Raises for a head_dim past the largest compiled tile.
     """
+    if request.head_dim is None:
+        raise ValueError("plan derives the tile from the caller's head_dim: set it")
     head_dim = request.head_dim
     if head_dim < 1 or head_dim > MAX_HEAD_DIM:
         raise ValueError(f"kernel requires 1 <= head_dim <= {MAX_HEAD_DIM}, got {head_dim}")

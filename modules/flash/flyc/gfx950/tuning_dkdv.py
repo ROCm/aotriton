@@ -517,6 +517,8 @@ def plan(request: FmhaInputMetadata) -> FmhaInputMetadata:
     and records whether either is narrower than the tile. A tile or
     `padded_head` already set on `request` is kept.
     """
+    if request.head_dim is None:
+        raise ValueError("plan derives the tile from the caller's head_dim: set it")
     block_dmodel = request.block_dmodel
     if block_dmodel is None:
         block_dmodel = tile_width_for(request.head_dim)
@@ -586,12 +588,13 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
             raise ValueError("meta.block_dmodel and meta.padded_head must be set: use plan(meta)")
         if block_dmodel not in LADDER:
             raise ValueError(f"block_dmodel must be one of the built rungs {LADDER}, got {block_dmodel}")
-        if meta.head_dim > block_dmodel:
-            raise ValueError(f"head_dim {meta.head_dim} does not fit block_dmodel {block_dmodel}")
-
-        head_dim_v = meta.head_dim if meta.head_dim_v is None else meta.head_dim_v
-        if head_dim_v > block_dmodel:
-            raise ValueError(f"head_dim_v {head_dim_v} does not fit block_dmodel {block_dmodel}")
+        # The real head dims are only known in JIT; AOT leaves them None.
+        if meta.head_dim is not None:
+            if meta.head_dim > block_dmodel:
+                raise ValueError(f"head_dim {meta.head_dim} does not fit block_dmodel {block_dmodel}")
+            head_dim_v = meta.head_dim if meta.head_dim_v is None else meta.head_dim_v
+            if head_dim_v > block_dmodel:
+                raise ValueError(f"head_dim_v {head_dim_v} does not fit block_dmodel {block_dmodel}")
 
         # The ladder's guarantee: a tile `plan` chose serves exactly
         # `(rung_below(tile), tile]`. A caller whose tile is chosen elsewhere
@@ -601,7 +604,7 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
             hdim_qk_floor = rung_below(block_dmodel)
         if not 0 <= hdim_qk_floor < block_dmodel:
             raise ValueError(f"hdim_qk_floor {hdim_qk_floor} must be in [0, block_dmodel={block_dmodel})")
-        if meta.head_dim <= hdim_qk_floor:
+        if meta.head_dim is not None and meta.head_dim <= hdim_qk_floor:
             raise ValueError(
                 f"head_dim {meta.head_dim} is at or below this build's hdim_qk_floor {hdim_qk_floor}; "
                 f"the {block_dmodel}-wide tile only serves ({hdim_qk_floor}, {block_dmodel}]"

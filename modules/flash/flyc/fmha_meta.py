@@ -19,7 +19,7 @@ CAUSAL_BOTTOM_RIGHT = 2
 CAUSAL_WINDOW = 3
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class FmhaInputMetadata:
     """What to compute, for the forward, dQ and dK/dV alike, on every arch.
 
@@ -28,16 +28,27 @@ class FmhaInputMetadata:
     """
 
     num_heads: int
-    # The caller's real head dims. AOT passes the functional's tile here.
-    head_dim: int
     # "bf16" or "f16".
     dtype_str: str
     # AOTriton's CAUSAL_TYPE: 0 none, 1 top-left, 2 bottom-right, 3 window.
     # The only masking field; `causal` and `window` derive from it.
     causal_type: int
-    num_kv_heads: int | None = None  # None: same as num_heads
+
+    # The compiled tiles: a functional's BLOCK_DMODEL, which AOT fills. Required
+    # but nullable: a JIT caller passes None and gets the tile from `plan`.
+    block_dmodel: int | None
+    block_dmodel_v: int | None = None  # None: same as block_dmodel
+    # Whether calls may bring head dims narrower than the tile: a functional's
+    # PADDED_HEAD in AOT, derived by `plan` in JIT.
+    padded_head: bool | None = None
+    # The caller's real head dims. They only make a difference in JIT, where
+    # `plan` derives the tile from them; AOT leaves them None, since calls pass
+    # the real head dims at run time.
+    head_dim: int | None = None
     head_dim_v: int | None = None  # None: same as head_dim
-    sm_scale: float | None = None  # None: 1/sqrt(real head dim)
+
+    num_kv_heads: int | None = None  # None: same as num_heads
+    sm_scale: float | None = None  # None: the kernel derives 1/sqrt of the head dim
     bias: bool = False
     dropout: bool = False
     # dK/dV: whether LSE and Delta use the (T, H) layout rather than (H, T).
@@ -45,14 +56,9 @@ class FmhaInputMetadata:
     # time, so a build serves both.
     lse_layout_th: bool = False
 
-    # The compiled tiles and whether the real head dims are narrower. They are
-    # a functional's BLOCK_DMODEL and PADDED_HEAD: AOT fills them, a JIT caller
-    # gets them from the dispatcher's `plan`.
-    block_dmodel: int | None = None
-    block_dmodel_v: int | None = None
-    padded_head: bool | None = None
-
     def __post_init__(self):
+        if self.block_dmodel is None and self.head_dim is None:
+            raise ValueError("set block_dmodel (AOT) or head_dim (JIT, for plan)")
         if self.causal_type not in (CAUSAL_NONE, CAUSAL_TOP_LEFT, CAUSAL_BOTTOM_RIGHT, CAUSAL_WINDOW):
             raise ValueError(f"causal_type must be 0, 1, 2 or 3, got {self.causal_type!r}")
 

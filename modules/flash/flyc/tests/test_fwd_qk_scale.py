@@ -111,6 +111,7 @@ def _build(head_dim, dtype_str, causal=False, bias=False):
     Causal is bottom-right; with `SEQLEN_Q == SEQLEN_K` that is also top-left.
     """
     meta = FmhaInputMetadata(num_heads=NUM_HEADS,
+                             block_dmodel=None,
                              head_dim=head_dim,
                              dtype_str=dtype_str,
                              causal_type=2 if causal else 0,

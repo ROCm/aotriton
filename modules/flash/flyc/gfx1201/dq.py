@@ -1662,6 +1662,7 @@ def build_bwd_dq_module(**kwargs):
     `plan` does.
     """
     meta_fields = {f.name for f in fields(FmhaInputMetadata)}
-    meta = FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields})
+    # block_dmodel is required but nullable: None lets `plan` pick the tile.
+    meta = FmhaInputMetadata(**{"block_dmodel": None, **{k: v for k, v in kwargs.items() if k in meta_fields}})
     meta, knobs = entry_plan(meta, overrides={k: v for k, v in kwargs.items() if k not in meta_fields})
     return build_bwd_dq_module_primary(meta, knobs)

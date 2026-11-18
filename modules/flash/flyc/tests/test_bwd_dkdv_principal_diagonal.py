@@ -119,6 +119,7 @@ def _build(build, config):
     dtype_str, num_heads, num_kv_heads = CONFIGS[config]
     meta = FmhaInputMetadata(num_heads=num_heads,
                              num_kv_heads=num_kv_heads,
+                             block_dmodel=None,
                              head_dim=head_dim,
                              dtype_str=dtype_str,
                              causal_type=3)

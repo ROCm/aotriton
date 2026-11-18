@@ -117,6 +117,7 @@ def _shape_id(s):
 def _build(dtype_str, variant):
     """A window dQ build at HEAD_DIM, compiled in-process."""
     meta = FmhaInputMetadata(num_heads=NUM_HEADS,
+                             block_dmodel=None,
                              head_dim=HEAD_DIM,
                              dtype_str=dtype_str,
                              causal_type=3)

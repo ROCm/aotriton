@@ -46,6 +46,7 @@ def dq_fn():
     from fmha_meta import FmhaInputMetadata
 
     meta = FmhaInputMetadata(num_heads=NUM_HEADS,
+                             block_dmodel=None,
                              head_dim=HEAD_DIM,
                              dtype_str="f16",
                              causal_type=3)

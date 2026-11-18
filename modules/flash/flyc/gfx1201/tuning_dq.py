@@ -390,6 +390,8 @@ def plan(request: FmhaInputMetadata, overrides: BwdDqKnobs | None = None) -> Bwd
             "already is an additive mask, so the pair has no defined meaning. Fold the "
             "causal pattern into the bias tensor, or drop the bias"
         )
+    if request.head_dim is None:
+        raise ValueError("plan derives the tile from the caller's head_dim: set it")
     head_dim = request.head_dim
     head_dim_v = _head_dim_v(request)
     # One tile serves both axes, so it has to cover the wider one; whichever

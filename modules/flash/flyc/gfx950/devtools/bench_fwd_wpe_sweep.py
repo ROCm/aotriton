@@ -227,7 +227,7 @@ def run(hd, dt, fixed_order, rounds):
         name = "+".join(k for k in ("causal", "dropout") if feat[k]) or "dense"
         tensors = make_inputs(hd, B, H, S, dt)
         meta = FmhaInputMetadata(
-            num_heads=H, head_dim=hd, causal_type=2 if feat["causal"] else 0, dropout=feat["dropout"],
+            num_heads=H, block_dmodel=None, head_dim=hd, causal_type=2 if feat["causal"] else 0, dropout=feat["dropout"],
             dtype_str={torch.bfloat16: "bf16", torch.float16: "fp16"}[dt],
         )
         meta = plan(meta)

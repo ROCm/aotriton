@@ -1965,6 +1965,7 @@ def build_fmha_bwd_dq_gfx950_module(**kwargs):
     from dataclasses import fields
 
     meta_fields = {f.name for f in fields(FmhaInputMetadata)}
-    meta = FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields})
+    # block_dmodel is required but nullable: None lets `plan` pick the tile.
+    meta = FmhaInputMetadata(**{"block_dmodel": None, **{k: v for k, v in kwargs.items() if k in meta_fields}})
     meta, knobs = entry_plan(meta, overrides={k: v for k, v in kwargs.items() if k not in meta_fields})
     return build_fmha_bwd_dq_gfx950_module_primary(meta, knobs)
