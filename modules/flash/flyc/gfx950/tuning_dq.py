@@ -640,7 +640,10 @@ _BWD_DQ_FALLBACK = BwdDqKnobs(
     # **Deliberately absent**: `waves_per_eu`. The forward pins 2 here; this
     # kernel wants 1 and `_with_wave_geometry` says why, with the measurement.
     # Left `None` so that step decides it and a caller can still override.
-    lazy_rescale=True,
+    # Off, as in the forward: the running max stays exact. Inert here today
+    # (dQ recomputes P from the LSE and keeps no running max), but a lazy one
+    # would spend dQ's error budget, already the widest of the gradients.
+    lazy_rescale=False,
     setprio=True,
     stagger=True,
     lpt_tile_order=False,
