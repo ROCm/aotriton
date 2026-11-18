@@ -7,7 +7,7 @@
 # things dropped relative to the Linux script, both Linux/GNU-only and not
 # applicable here: the `-fuse-ld=mold` linker flags, and any python/venv
 # bootstrapping (CMakeLists.txt still needs a Python3 interpreter for
-# codegen -- see find_package(Python3 ... REQUIRED) -- but AOTRITON_NO_PYTHON
+# codegen -- see find_package(Python ... REQUIRED) -- but AOTRITON_NO_PYTHON
 # means this build never touches torch/pyaotriton, so no venv/pip setup is
 # needed from this script itself).
 #

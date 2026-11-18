@@ -20,7 +20,7 @@ as `type`, `role`, `level` or `mode`, or a domain-specific term.
 
 ## Python Version
 
-This project targets **Python 3.10 or newer** (dev environment is Python 3.12). Do not use syntax or features deprecated as of Python 3.10:
+This project targets **Python 3.12 or newer** (dev environment is Python 3.12). Do not use syntax or features deprecated as of Python 3.12:
 - Use `X | Y` union syntax instead of `typing.Union[X, Y]`
 - Use `X | None` instead of `typing.Optional[X]`
 - Use `list`, `dict`, `tuple` etc. directly as generic types instead of `typing.List`, `typing.Dict`, `typing.Tuple`

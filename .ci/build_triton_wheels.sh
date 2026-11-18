@@ -12,7 +12,7 @@ fi
 
 WHEEL_OUTPUT_DIR=""
 TRITON_WHEEL_VERSION_SUFFIX=""
-PYVER="3.11"
+PYVER="3.12"
 ALTWHEEL_YAML=""
 while [[ "$1" == --* ]]; do
   case "$1" in

@@ -16,7 +16,7 @@ build-backend = "setuptools.build_meta"
 name = "aotriton"
 dynamic = ["version"]
 description = "AOTriton ahead-of-time Triton code generator"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 
 # No console scripts: the generator tools are invoked as `python -m aotriton.<tool>`
 # (e.g. `python -m aotriton.generate`) — not as installed binaries.

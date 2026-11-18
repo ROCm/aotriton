@@ -303,7 +303,7 @@ if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
   # Explicit, not build_triton_wheels.sh's own --python default, so this
   # script and the altwheel_resolve_config call below can't drift apart if
   # that default ever changes.
-  RELEASE_PYVER="3.11"
+  RELEASE_PYVER="3.12"
   env "${TRITON_ORIGIN_ENV[@]}" bash "${SCRIPT_DIR}/build_triton_wheels.sh" \
     --wheel_output_dir "${WHEEL_CACHE_DIR}" \
     --version_suffix "${TRITON_WHEEL_VERSION_SUFFIX}" \

@@ -348,5 +348,5 @@ below describe that version and the PR that brings it in.
 * **NULL comparisons.** A reader with a NULL `cat_level1` or subpool compares
   `x = NULL`, which is never true. It therefore claims only generic tasks, which
   is the intended behaviour.
-* **Python 3.10 target.** There is no `tomllib`, so the application manifests are
-  Python dicts.
+* **Manifests are Python dicts.** They were chosen when the project still
+  targeted Python 3.10, which has no `tomllib`.

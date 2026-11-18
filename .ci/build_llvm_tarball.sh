@@ -32,7 +32,7 @@ Options:
                               SHA; it is resolved to a SHA before caching.
       --pat_environ <VAR>     Name (not value) of an environment variable
                               holding a GitHub PAT, for a private origin.
-           --python <X.Y>     CPython for the build container. Default 3.11.
+           --python <X.Y>     CPython for the build container. Default 3.12.
               --jobs <N>      Parallel build jobs. Default: nproc/2 inside the
                               container.
 EOF
@@ -43,7 +43,7 @@ TARBALL_OUTPUT_DIR=""
 LLVM_ORIGIN=""
 LLVM_COMMIT=""
 PAT_ENVIRON=""
-PYVER="3.11"
+PYVER="3.12"
 JOBS=""
 while [[ "$1" == --* ]]; do
   # `shift 2` with one argument left FAILS WITHOUT SHIFTING, so $1 never changes

@@ -1,4 +1,4 @@
-# BASE_TAG selects the base image: "base" (PYVER 3.11, what the release suite
+# BASE_TAG selects the base image: "base" (PYVER 3.12, what the release suite
 # builds) or "base-py<X.Y>" for a wheel that has to carry a specific ABI tag.
 ARG BASE_TAG=base
 FROM aotriton:${BASE_TAG}
