@@ -89,23 +89,6 @@ __all__ = [
 ]
 
 
-# FlyDSL 0.4.2 removed these wrappers from flash_attn_utils; the explicit fastmath flags stay ours.
-def fadd(a, b, fm_fast):
-    return arith.addf(as_mlir_value(a), as_mlir_value(b), fastmath=fm_fast)
-
-
-def fsub(a, b, fm_fast):
-    return arith.subf(as_mlir_value(a), as_mlir_value(b), fastmath=fm_fast)
-
-
-def fmul(a, b, fm_fast):
-    return arith.mulf(as_mlir_value(a), as_mlir_value(b), fastmath=fm_fast)
-
-
-def fmax(a, b, fm_fast):
-    return arith.MaxNumFOp(as_mlir_value(a), as_mlir_value(b), fastmath=fm_fast).result
-
-
 def traits_cache_key(traits):
     """Every field of `traits`, for a builder's JIT disk-cache key.
 
