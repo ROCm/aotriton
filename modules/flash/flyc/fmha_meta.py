@@ -40,7 +40,9 @@ class FmhaInputMetadata:
     sm_scale: float | None = None  # None: 1/sqrt(real head dim)
     bias: bool = False
     dropout: bool = False
-    # dK/dV: whether LSE and Delta use the (T, H) layout.
+    # dK/dV: whether LSE and Delta use the (T, H) layout rather than (H, T).
+    # A tuning record only: kernels decode the layout from VarlenBits at run
+    # time, so a build serves both.
     lse_layout_th: bool = False
 
     # The compiled tiles and whether the real head dims are narrower. They are

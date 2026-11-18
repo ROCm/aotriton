@@ -59,6 +59,7 @@ decomposition knobs are for, and the crossovers are all spill boundaries:
 from dataclasses import dataclass, replace
 
 from fmha_knobs import pinned
+from fmha_meta import FmhaInputMetadata
 from .knobs import BwdDkDvKnobs
 
 # One wave owns one WMMA M tile of KV rows. Not a knob: it is the instruction.
@@ -398,40 +399,6 @@ def default_num_waves(head_dim: int, head_dim_v: int) -> int:
     return 16
 
 
-@dataclass(frozen=True)
-class BwdDkDvMetadata:
-    """What to compute. Set by the caller; never by policy."""
-
-    num_heads: int
-    head_dim: int
-    causal: bool = False
-    dtype_str: str = "f16"
-    head_dim_v: int | None = None
-    sm_scale: float | None = None
-    causal_type: int | None = None
-    dropout: bool = False
-    # Attention bias, matching the forward's `BIAS_TYPE`: a (B, H, Sq, Sk)
-    # matrix added to the scores after the scale and before the mask.
-    #
-    # An input only. The forward folds the bias into the score *and* into the
-    # logsumexp it stores, and this kernel recomputes `P` from that logsumexp,
-    # so without the bias term dK and dV are wrong by `exp(-bias)`.
-    #
-    # **dB is not emitted here.** It is `dS`, which this kernel also has, but
-    # it walks Q tiles for a fixed KV block -- so its eight elements are eight
-    # q *rows* at one kv column and the store would go down a dB column. The
-    # dQ kernel writes it along a row instead; see `return_dbias` there.
-    bias: bool = False
-
-    # The compiled tile widths and whether the real extents are narrower.
-    # Inputs, not knobs: a functional's BLOCK_DMODEL and PADDED_HEAD fix them.
-    # `plan` derives them from the real head dims; a caller whose head dims are
-    # already tiles uses `with_direct_tile`.
-    block_dmodel: int | None = None
-    block_dmodel_v: int | None = None
-    padded_head: bool | None = None
-
-
 _KNOBS_FALLBACK = BwdDkDvKnobs(
     lpt_tile_order=_DEFAULT_LPT_TILE_ORDER,
     # "noninf" and not "fast": `ninf` lets the compiler assume no operand is
@@ -451,7 +418,7 @@ _KNOBS_FALLBACK = BwdDkDvKnobs(
 )
 
 
-def resolve_knobs(meta: BwdDkDvMetadata, overrides: "BwdDkDvKnobs | None" = None) -> BwdDkDvKnobs:
+def resolve_knobs(meta: FmhaInputMetadata, overrides: "BwdDkDvKnobs | None" = None) -> BwdDkDvKnobs:
     """The complete configuration for `meta`.
 
     `overrides` is applied first, so a pinned knob participates in deriving the
@@ -489,11 +456,11 @@ def resolve_knobs(meta: BwdDkDvMetadata, overrides: "BwdDkDvKnobs | None" = None
 class BwdDkDvPlan:
     """Everything a host needs for one build, from one call."""
 
-    meta: BwdDkDvMetadata
+    meta: FmhaInputMetadata
     knobs: BwdDkDvKnobs
 
 
-def with_direct_tile(meta: BwdDkDvMetadata) -> BwdDkDvMetadata:
+def with_direct_tile(meta: FmhaInputMetadata) -> FmhaInputMetadata:
     """`meta` for a caller whose head dims are already compiled tile widths.
 
     No rounding and no padding; `block_dmodel_v` follows `head_dim_v`, or the
@@ -507,7 +474,7 @@ def with_direct_tile(meta: BwdDkDvMetadata) -> BwdDkDvMetadata:
     return replace(meta, block_dmodel=block_dmodel, block_dmodel_v=block_dmodel_v, padded_head=padded_head)
 
 
-def plan(request: BwdDkDvMetadata, overrides: BwdDkDvKnobs | None = None) -> BwdDkDvPlan:
+def plan(request: FmhaInputMetadata, overrides: BwdDkDvKnobs | None = None) -> BwdDkDvPlan:
     """The one entry point into tuning: caller's inputs in, a full plan out.
 
     The rounding up to a compiled tile lands in `BwdDkDvPlan.meta.block_dmodel`
@@ -535,27 +502,13 @@ def plan(request: BwdDkDvMetadata, overrides: BwdDkDvKnobs | None = None) -> Bwd
     return BwdDkDvPlan(meta, resolve_knobs(meta, overrides))
 
 
-# Unified entry (flyc/tuning_dkdv.py): the arch-neutral metadata, adapted.
-
-
-def _entry_meta(meta) -> BwdDkDvMetadata:
-    return BwdDkDvMetadata(num_heads=meta.num_heads,
-                           head_dim=meta.block_dmodel,
-                           head_dim_v=meta.block_dmodel,
-                           causal=meta.causal_type != 0,
-                           causal_type=meta.causal_type,
-                           dtype_str=meta.dtype_str,
-                           bias=meta.bias,
-                           dropout=meta.dropout,
-                           block_dmodel=meta.block_dmodel,
-                           block_dmodel_v=meta.block_dmodel,
-                           padded_head=meta.padded_head)
+# Unified entry (flyc/tuning_dkdv.py): the shared metadata.
 
 
 def entry_resolve(meta, *, overrides=None) -> BwdDkDvKnobs:
-    return resolve_knobs(_entry_meta(meta), pinned(BwdDkDvKnobs, overrides))
+    return resolve_knobs(meta, pinned(BwdDkDvKnobs, overrides))
 
 
 def entry_build(meta, knobs: BwdDkDvKnobs):
     from .dkdv import build_bwd_dkdv_module_primary
-    return build_bwd_dkdv_module_primary(_entry_meta(meta), knobs)
+    return build_bwd_dkdv_module_primary(meta, knobs)

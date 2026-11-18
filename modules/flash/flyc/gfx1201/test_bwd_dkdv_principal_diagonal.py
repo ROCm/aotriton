@@ -150,7 +150,6 @@ def _exe():
     return build_bwd_dkdv_module(
         num_heads=NUM_HEADS_Q,
         head_dim=HEAD_DIM,
-        causal=True,
         causal_type=3,
         dtype_str="f16",
     )

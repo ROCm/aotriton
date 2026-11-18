@@ -199,9 +199,14 @@ def run(d):
         # inherits a warm one. WPE_ORDER flips it so the asymmetry can be told
         # apart from the knob.
         for wpe in ((1, 2) if os.environ.get("WPE_ORDER") == "12" else (2, 1)):
-            fn = build_dkdv(
-                num_heads=H, num_kv_heads=H, head_dim=d, waves_per_eu=wpe, **feat
-            )
+            fn = build_dkdv(num_heads=H,
+                            num_kv_heads=H,
+                            head_dim=d,
+                            dtype_str="bf16",
+                            causal_type=2 if feat["causal"] else 0,
+                            bias=feat["bias"],
+                            dropout=feat["dropout"],
+                            waves_per_eu=wpe)
             kn = fn.knobs
             assert kn.waves_per_eu == wpe, f"override ignored: got {kn.waves_per_eu}"
             variants.append(

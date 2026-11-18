@@ -147,7 +147,8 @@ from .dualwave_helpers import (
     wire_ptr,
     wire_view,
 )
-from .tuning_dkdv import BwdDkDvInputMetadata, bwd_dkdv_knobs, plan
+from fmha_meta import FmhaInputMetadata
+from .tuning_dkdv import bwd_dkdv_knobs, plan
 from .standalone import buffer_ops, dualwave
 from philox import Philox, keep_mask
 
@@ -1715,7 +1716,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
     NBUF = traits.NUM_STREAM_BUFFERS
     # Which MFMA family this build is. See `dkdv_m16`.
     M16 = traits.MFMA_ROWS == 16
-    # `(T, H)` logsumexp/delta. See `BwdDkDvInputMetadata.lse_layout_th`.
+    # `(T, H)` logsumexp/delta. See `FmhaInputMetadata.lse_layout_th`.
     # `lse_layout_th` no longer reaches the emitted code: the row read decodes
     # the layout at runtime and a varlen build carries both arms. It stays in
     # the cache key so a caller who does pass it still gets a distinct entry
@@ -2347,7 +2348,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
             return 0, 0
         if not traits.WINDOW:
             if window is not None:
-                raise ValueError("this build is not compiled for windows; pass window=True in BwdDkDvInputMetadata")
+                raise ValueError("this build is not compiled for windows; pass causal_type=3 in FmhaInputMetadata")
             return fmha.WINDOW_BOTRIGHT, fmha.WINDOW_BOTRIGHT
         if window is None:
             raise ValueError(
@@ -2570,7 +2571,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
             stream=stream,
         )
         if dropout_p is not None and not traits.ENABLE_DROPOUT:
-            raise ValueError("this build was not compiled for dropout; pass dropout=True in BwdDkDvInputMetadata")
+            raise ValueError("this build was not compiled for dropout; pass dropout=True in FmhaInputMetadata")
 
         # B7. Checked both ways, because both silent failures return the right
         # shape: a bias build handed nothing would read whatever tensor filled
@@ -2579,7 +2580,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         if traits.BIAS_TYPE and bias is None:
             raise ValueError("this build has bias=True and requires a (batch, num_heads, seqlen_q, seqlen_k) tensor")
         if bias is not None and not traits.BIAS_TYPE:
-            raise ValueError("this build was not compiled for bias; pass bias=True in BwdDkDvInputMetadata")
+            raise ValueError("this build was not compiled for bias; pass bias=True in FmhaInputMetadata")
         if bias is not None:
             # **The bias follows Q on the query axis**, which is what the
             # addressing already does: the descriptor folds in `q_row_off` and
@@ -2687,7 +2688,7 @@ def build_fmha_bwd_dkdv_gfx950_module(arch="gfx950", **kwargs):
     """Keyword front end: name a problem, get the policy's schedule."""
     from dataclasses import fields as _fields
 
-    meta_fields = {f.name for f in _fields(BwdDkDvInputMetadata)}
-    meta = plan(BwdDkDvInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
+    meta_fields = {f.name for f in _fields(FmhaInputMetadata)}
+    meta = plan(FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
     knob_kwargs = {k: v for k, v in kwargs.items() if k not in meta_fields}
     return build_fmha_bwd_dkdv_gfx950_module_primary(meta, bwd_dkdv_knobs(arch, **knob_kwargs).resolve(meta))

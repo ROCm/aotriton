@@ -143,11 +143,11 @@ from dataclasses import fields
 
 import fmha_utils as fmha
 from . import utils
+from fmha_meta import FmhaInputMetadata
 from .tuning_dkdv import (  # noqa: F401
     LDS_PAD,
     ROWS_PER_WAVE,
     BwdDkDvKnobs,
-    BwdDkDvMetadata,
     resolve_knobs,
     with_direct_tile,
 )
@@ -201,7 +201,7 @@ def _pointer_store(value: ir.Value, ptr: ir.Value):
     return _llvm.StoreOp(utils.llvm_value(value), utils.llvm_value(ptr))
 
 
-def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
+def build_bwd_dkdv_module_primary(meta: FmhaInputMetadata, knobs: BwdDkDvKnobs):
     """Build the gfx1201 dK/dV kernel for one `(metadata, knobs)` pair.
 
     Both must be fully resolved -- pass `resolve_knobs(meta)` or, from a
@@ -300,22 +300,17 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
     # bottom-right, 3 explicit window. The kernel only ever sees 0 or 3; 1 and
     # 2 resolve to a sentinel window on the host so there is one way to express
     # a diagonal rather than two free to drift.
-    if causal_type is None:
-        HOST_CAUSAL_TYPE = 1 if causal else 0
-    else:
-        HOST_CAUSAL_TYPE = causal_type
-    if HOST_CAUSAL_TYPE not in (0, 1, 2, 3):
-        raise ValueError(f"causal_type must be 0, 1, 2 or 3, got {HOST_CAUSAL_TYPE}")
-    if bool(HOST_CAUSAL_TYPE) != bool(causal):
-        raise ValueError(f"causal={causal} disagrees with causal_type={HOST_CAUSAL_TYPE}")
+    # `FmhaInputMetadata` checks the range, and derives `causal` from it.
+    HOST_CAUSAL_TYPE = causal_type
     CAUSAL_TYPE = 0 if HOST_CAUSAL_TYPE == 0 else 3
     CAUSAL = bool(CAUSAL_TYPE)
 
     ENABLE_DROPOUT = bool(dropout)
     PHILOX = Philox(width=knobs.philox_width)
 
-    # Attention bias. An input only -- dB is the dQ kernel's, for the layout
-    # reason `BwdDkDvMetadata.bias` records.
+    # Attention bias. An input only: dB is the dQ kernel's. This kernel walks
+    # Q tiles for a fixed KV block, so its dS elements are q rows at one kv
+    # column and a dB store would go down a column; dQ writes it along a row.
     BIAS_TYPE = 1 if meta.bias else 0
     assert not (BIAS_TYPE and CAUSAL), "bias and causal are mutually exclusive, as in the forward"
 
@@ -1444,11 +1439,11 @@ def build_bwd_dkdv_module_primary(meta: BwdDkDvMetadata, knobs: BwdDkDvKnobs):
 
 def build_bwd_dkdv_module(**kwargs):
     """Keyword front end: name a problem, get the policy's schedule."""
-    meta_fields = {f.name for f in fields(BwdDkDvMetadata)}
+    meta_fields = {f.name for f in fields(FmhaInputMetadata)}
     knob_fields = {f.name for f in fields(BwdDkDvKnobs)}
     unknown = set(kwargs) - meta_fields - knob_fields
     if unknown:
         raise TypeError(f"unknown build parameter(s): {sorted(unknown)}")
-    meta = with_direct_tile(BwdDkDvMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
+    meta = with_direct_tile(FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
     overrides = BwdDkDvKnobs(**{k: v for k, v in kwargs.items() if k in knob_fields})
     return build_bwd_dkdv_module_primary(meta, resolve_knobs(meta, overrides))

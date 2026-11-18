@@ -108,8 +108,8 @@ def _build(head_dim, mfma_rows):
     fn = build(num_heads=NUM_HEADS,
                num_kv_heads=NUM_HEADS,
                head_dim=head_dim,
-               causal=True,
-               window=True,
+               causal_type=3,
+               dtype_str="bf16",
                **knobs)
     if mfma_rows is not None:
         assert fn.knobs.mfma_rows == mfma_rows, f"mfma_rows override ignored: {fn.knobs.mfma_rows}"

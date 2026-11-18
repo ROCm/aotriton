@@ -59,11 +59,12 @@ from dataclasses import dataclass, fields, replace
 
 from .traits import ParityDualwaveTraits, make_traits
 from fmha_knobs import pinned
+from fmha_meta import FmhaInputMetadata
 from .knobs import BwdDkDvKnobFields
+from .tuning_fwd import check_causal_type
 
 __all__ = [
     "LADDER",
-    "BwdDkDvInputMetadata",
     "BwdDkDvKnobs",
     "BwdDkDvTraits",
     "bwd_dkdv_knobs",
@@ -268,7 +269,7 @@ _TIGHT_REGISTERS = {
 # override wanting the 16-row family. Making the layout a build axis fixed the
 # symptom; selecting the arm once outside the tile loop fixed it properly, and
 # without a build axis that could disagree with the runtime bits. See
-# `BwdDkDvInputMetadata.lse_layout_th`.
+# `FmhaInputMetadata.lse_layout_th` (`fmha_meta.py`).
 #
 # **B7's bias needed four more, and the reason is not register pressure at
 # three of them.** A bias read is one scalar `buffer_load` per accumulator
@@ -509,89 +510,7 @@ def _as_bwd_traits(base, **extra):
     return BwdDkDvTraits(**{f.name: getattr(base, f.name) for f in fields(base)}, **extra)
 
 
-@dataclass(frozen=True)
-class BwdDkDvInputMetadata:
-    """What to compute. Set by the caller; never by policy, and never by arch."""
-
-    num_heads: int
-    head_dim: int
-    # B8. `"bf16"` or `"f16"`. Everything the tuner decides is dtype-independent
-    # -- both are two bytes, so the LDS budget, the staging granule, the tile
-    # geometry and the register pressure are identical, and the tables are
-    # shared rather than duplicated. Measured, not assumed; see the B8 outcome.
-    #
-    # **The two differ in range, not in size, and only three things in this
-    # kernel care.** `P = exp2(qk*scale + bias*log2e - lse*log2e)` is bounded
-    # by 1 by construction (`lse` is the log-sum-exp of the row, so no score
-    # exceeds it), which f16 holds exactly as well as bf16. `LSE` and `delta`
-    # are f32 row tensors whatever this says, so the padding-row argument --
-    # a zero row gives `P = exp2(0) = 1` and contributes zero -- is f32
-    # arithmetic and carries unchanged. **`dS` is the one exposure**: it is
-    # packed to this dtype for GEMM4 and is unbounded, so an f16 build
-    # overflows at 65504 where bf16 would not. That is inherent to f16 and is
-    # the same exposure the forward and every other f16 attention kernel has.
-    dtype_str: str = "bf16"
-    num_kv_heads: int | None = None
-    head_dim_v: int | None = None
-    sm_scale: float | None = None
-
-    # The compiled tile and whether the real extents are narrower. Inputs, not
-    # knobs: a functional's BLOCK_DMODEL and PADDED_HEAD fix them. `plan`
-    # derives them from the real head dims. `resolve` reads them and never
-    # changes them; a missing one is an error.
-    block_dmodel: int | None = None
-    padded_head: bool | None = None
-
-    # B4. `window` is a *left* bound on top of the causal right one, so it
-    # requires `causal`; see `_checked_scope`.
-    causal: bool = False
-    window: bool = False
-    # B5. **There is no `varlen` field.** The kernel decodes `VarlenBits`
-    # unconditionally and dense is `bits == 0`, so one build serves all six
-    # configurations *and* the rectangular one; there is nothing left to decide
-    # here.
-    #
-    # B5. Whether the logsumexp and delta tensors use Transformer Engine's
-    # `(T, H)` layout rather than AOTriton's `(H, T)`. `_HT` makes the row
-    # pitch 1, so a lane's four accumulator rows are adjacent and one `dwordx4`
-    # fetches them; `_TH` makes it `num_heads` and the same four rows need four
-    # scalar loads.
-    #
-    # **This is a tuning record, not a build axis, and no longer reaches
-    # emitted code.** It was an axis, on the measurement that deciding at
-    # runtime costs every build the scalar path -- 0.68x at head_dim 64. That
-    # measurement was of the wrong runtime branch: put it *inside* the row read
-    # and the `scf.if` is a scheduling barrier the loads cannot be hoisted
-    # across, so the loop performs as if it always took the scalar arm. One
-    # branch outside the tile loop, selecting between two traced bodies, costs
-    # the wide arm nothing.
-    #
-    # Being an axis was also wrong, not merely expensive: `lse_row_addressing`
-    # decodes the layout from `VarlenBits` at runtime, so a build compiled for
-    # one layout and handed the other read the wrong elements, with only
-    # `_args` -- which AOTriton's C++ launcher never calls -- in the way. The
-    # field survives here and in the cache key so a build still records which
-    # layout it was tuned against; nothing reads it at trace time.
-    lse_layout_th: bool = False
-    # B6. Whether this build regenerates the forward's philox mask. The rate,
-    # the seed and the counter are runtime arguments; only the decision to
-    # compile the PRNG at all is here, because a build without dropout must
-    # emit none of it.
-    dropout: bool = False
-    # B7. AOTriton's `BIAS_TYPE`: a `(b, h, sq, sk)` matrix added to the scores
-    # before the softmax. A *read* here and nothing more -- `dB` belongs to the
-    # dQ kernel, which is where `dS` is materialised per `(q, k)` element.
-    #
-    # A build axis for the reason the forward gives: the loop is latency-bound
-    # and a bias that cost anything when unused would be paid by every caller
-    # who does not want one. It also makes `bias=None` bitwise identical to a
-    # build compiled without bias, since there is nothing to be identical to
-    # otherwise. **Mutually exclusive with `causal`/`window`**, which
-    # `make_traits` enforces; see `build_traits`.
-    bias: bool = False
-
-
-def plan(request: BwdDkDvInputMetadata) -> BwdDkDvInputMetadata:
+def plan(request: FmhaInputMetadata) -> FmhaInputMetadata:
     """`request` with the compiled tile and `padded_head` filled in.
 
     The JIT entry point into tuning: rounds the real head dims up to the ladder
@@ -621,7 +540,7 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
     # options, every value a scalar, so the set can be recorded beside the
     # compiled hsaco in a flat `k=v` wire format. `build_traits` derives them.
 
-    def resolve(self, meta: BwdDkDvInputMetadata) -> "BwdDkDvKnobs":
+    def resolve(self, meta: FmhaInputMetadata) -> "BwdDkDvKnobs":
         """The complete build configuration for `meta`, traits included.
 
         Idempotent: every derived field is recomputed from `meta` and the
@@ -646,13 +565,7 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
         and one semantic exclusion, not a scope boundary; the feature refusals
         this docstring was written for are all implemented now.
         """
-        if meta.window and not meta.causal:
-            # A window without the causal machinery has no masked region to
-            # apply itself to, and silently dropping it would return dense
-            # attention -- the right shape, finite, and wrong. An unbounded
-            # `window_right` expresses a pure left-band, so nothing is lost.
-            # `make_traits` says the same; this says it before the ladder runs.
-            raise ValueError("window=True requires causal=True; it is a left bound on top of the causal one")
+        check_causal_type(meta)
         if meta.dtype_str not in ("bf16", "f16"):
             raise NotImplementedError(f"this kernel builds bf16 and f16, got {meta.dtype_str!r}")
         num_kv_heads = meta.num_heads if meta.num_kv_heads is None else meta.num_kv_heads
@@ -898,23 +811,7 @@ def bwd_dkdv_knobs(arch="gfx950", **overrides):
     return BwdDkDvKnobs(**overrides)
 
 
-# Unified entry (flyc/tuning_dkdv.py): the arch-neutral metadata, adapted and pinned.
-
-def _entry_meta(meta) -> BwdDkDvInputMetadata:
-    # gfx950 knows only causal and window, and its window requires causal; the
-    # functional's CAUSAL_TYPE is 0 or 3, so both follow it.
-    assert meta.causal_type in (0, 3), f'gfx950 flyc takes CAUSAL_TYPE 0 or 3, got {meta.causal_type}'
-    return BwdDkDvInputMetadata(num_heads=meta.num_heads,
-                            head_dim=meta.block_dmodel,
-                            head_dim_v=meta.block_dmodel,
-                            causal=meta.causal_type != 0,
-                            window=meta.causal_type != 0,
-                            dtype_str=meta.dtype_str,
-                            bias=meta.bias,
-                            dropout=meta.dropout,
-                            block_dmodel=meta.block_dmodel,
-                            padded_head=meta.padded_head)
-
+# Unified entry (flyc/tuning_dkdv.py): the shared metadata, pinned.
 
 def entry_resolve(meta, *, overrides=None) -> BwdDkDvKnobs:
     return pinned(BwdDkDvKnobs,
@@ -922,9 +819,9 @@ def entry_resolve(meta, *, overrides=None) -> BwdDkDvKnobs:
                   # The tile comes from the functional's ladder: no floor.
                   hdim_qk_floor=0,
                   # Strides are runtime arguments: one binary serves every layout.
-                  strides_constexpr=False).resolve(_entry_meta(meta))
+                  strides_constexpr=False).resolve(meta)
 
 
 def entry_build(meta, knobs: BwdDkDvKnobs):
     from .dkdv import build_fmha_bwd_dkdv_gfx950_module_primary
-    return build_fmha_bwd_dkdv_gfx950_module_primary(_entry_meta(meta), knobs)
+    return build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs)
