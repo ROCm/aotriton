@@ -121,14 +121,12 @@ import flydsl.compiler as flyc
 import flydsl.expr as fx
 from flydsl._mlir import ir
 from flydsl._mlir.dialects import llvm as _llvm
-from flydsl.compiler.kernel_function import CompilationContext
 from flydsl.expr import (
     const_expr,
     gpu,
     range_constexpr,
     rocdl,
 )
-from flydsl.expr.typing import T
 from flydsl.expr.typing import Vector as Vec
 
 KERNEL_NAME = "flash_attn_func_gfx1201_aiw_kernel"
@@ -398,7 +396,9 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     BLOCK_N_OUT = BLOCK_N
 
     # LLVM's amdgpu-sched-strategy function attribute; "" leaves the default
-    # GCN scheduler in place. See the passthrough block in the launch wrapper.
+    # GCN scheduler in place. The default sinks every LDS load next to its
+    # consuming WMMA, so the GEMMs wait out each load; max-memory-clause
+    # trades VGPRs for keeping several loads in flight.
     # Measured at BATCH=2 H=12 N=4096 d=128 f16 -- distance 1: causal
     # 85.6 -> 88.5 TFLOPS, non-causal 91.4 -> 91.9. Distance 0: causal
     # 69.8 -> 79.2, but non-causal 89.4 -> 88.6, so only causal wants it there.
@@ -510,10 +510,8 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     _NO_KV_CLAMP = UNSAFE_NO_KV_CLAMP
     # Floating-point latitude granted to the compiler.
     #
-    # "noninf" (default) is `fast` minus `ninf`, and drops the function-level
-    # `unsafe-fp-math` / `no-nans-fp-math` attributes. `denormal-fp-math-f32`
-    # (DAZ) is kept in every mode -- it is about denormals, not infinities, and
-    # it is where the actual win is.
+    # "noninf" (default) is `fast` minus `ninf`. DAZ is on in every mode
+    # (`fmha_utils.kernel_attrs`) -- it is about denormals, not infinities.
     #
     # Why: `ninf` lets the compiler assume no operand is infinite, so an -inf
     # flowing through a fast-math op may simply be folded away. That is not
@@ -2117,8 +2115,6 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
         stride_b_seq_q: fx.Int64,
         stream: fx.Stream = fx.Stream(None),
     ):
-        ctx = CompilationContext.get_current()
-
         nseq_idx = fx.Index(num_seqlens if num_seqlens != fx.Int32(0) else batch_size)
         # Grid Q extent keys on Max_seqlen_q: under varlen there is no single
         # seqlen_q, so every sequence gets the longest one's worth of
@@ -2176,56 +2172,8 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
             stride_b_batch,
             stride_b_head,
             stride_b_seq_q,
+            value_attrs=fmha.kernel_attrs(BLOCK_SIZE, WAVES_PER_EU, SCHED_STRATEGY),
         )
-
-        if const_expr(WAVES_PER_EU is not None):
-            _wpe = int(WAVES_PER_EU)
-            if const_expr(_wpe >= 1):
-                for op in ctx.gpu_module_body.operations:
-                    if const_expr(getattr(op, "OPERATION_NAME", None) == "gpu.func"):
-                        op.attributes["rocdl.WAVES_PER_EU"] = ir.IntegerAttr.get(T.i32, _wpe)
-        if const_expr(FLAT_WORK_GROUP_SIZE is not None):
-            _fwgs = int(FLAT_WORK_GROUP_SIZE)
-            if const_expr(_fwgs >= 1):
-                flat_wg_attr = ir.StringAttr.get(f"{_fwgs},{_fwgs}")
-                for op in ctx.gpu_module_body.operations:
-                    if const_expr(getattr(op, "OPERATION_NAME", None) == "gpu.func"):
-                        op.attributes["rocdl.FLAT_WORK_GROUP_SIZE"] = flat_wg_attr
-
-        passthrough_entries = []
-        # The default GCN scheduler sinks every LDS load next to its consuming
-        # WMMA and funnels them all through one VGPR quad, so SIInsertWaitcnts
-        # emits `s_wait_dscnt 0x0` between each load and use and the GEMMs run
-        # with no LDS latency hiding. max-memory-clause trades VGPRs for keeping
-        # several loads in flight.
-        if const_expr(SCHED_STRATEGY):
-            passthrough_entries.append(
-                ir.ArrayAttr.get(
-                    [
-                        ir.StringAttr.get("amdgpu-sched-strategy"),
-                        ir.StringAttr.get(SCHED_STRATEGY),
-                    ]
-                )
-            )
-        if const_expr(DENORMALS_ARE_ZERO):
-            passthrough_entries.append(
-                ir.ArrayAttr.get(
-                    [
-                        ir.StringAttr.get("denormal-fp-math-f32"),
-                        ir.StringAttr.get("preserve-sign,preserve-sign"),
-                    ]
-                )
-            )
-            if const_expr(FP_MODE == "fast"):
-                passthrough_entries.append(
-                    ir.ArrayAttr.get([ir.StringAttr.get("no-nans-fp-math"), ir.StringAttr.get("true")])
-                )
-                passthrough_entries.append(
-                    ir.ArrayAttr.get([ir.StringAttr.get("unsafe-fp-math"), ir.StringAttr.get("true")])
-                )
-        for op in ctx.gpu_module_body.operations:
-            if const_expr(getattr(op, "OPERATION_NAME", None) == "gpu.func"):
-                op.attributes["passthrough"] = ir.ArrayAttr.get(passthrough_entries)
 
         launcher.launch(
             grid=(fx.Index(num_head_q), num_q_tiles, nseq_idx),

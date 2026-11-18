@@ -126,9 +126,7 @@ import flydsl.compiler as flyc
 import flydsl.expr as fx
 from flydsl._mlir import ir
 from flydsl._mlir.dialects import llvm as _llvm
-from flydsl.compiler.kernel_function import CompilationContext
 from flydsl.expr import const_expr, gpu, range_constexpr, rocdl
-from flydsl.expr.typing import T
 from flydsl.expr.typing import Vector as Vec
 
 KERNEL_NAME = "fmha_bwd_dq_gfx1201_kernel"
@@ -1339,8 +1337,6 @@ def build_bwd_dq_module_primary(meta, knobs):
         stride_db_seq_q: fx.Int64,
         stream: fx.Stream = fx.Stream(None),
     ):
-        ctx = CompilationContext.get_current()
-
         nseq_idx = fx.Index(num_seqlens if num_seqlens != fx.Int32(0) else batch_size)
         # The grid's Q extent keys on Max_seqlen_q: under varlen there is no
         # single seqlen_q, so every sequence gets the longest one's worth of
@@ -1398,49 +1394,8 @@ def build_bwd_dq_module_primary(meta, knobs):
             stride_db_batch,
             stride_db_head,
             stride_db_seq_q,
+            value_attrs=fmha.kernel_attrs(BLOCK_SIZE, WAVES_PER_EU, SCHED_STRATEGY),
         )
-
-        if const_expr(WAVES_PER_EU is not None):
-            _wpe = int(WAVES_PER_EU)
-            if const_expr(_wpe >= 1):
-                for op in ctx.gpu_module_body.operations:
-                    if const_expr(getattr(op, "OPERATION_NAME", None) == "gpu.func"):
-                        op.attributes["rocdl.WAVES_PER_EU"] = ir.IntegerAttr.get(T.i32, _wpe)
-        _fwgs = int(BLOCK_SIZE)
-        flat_wg_attr = ir.StringAttr.get(f"{_fwgs},{_fwgs}")
-        for op in ctx.gpu_module_body.operations:
-            if const_expr(getattr(op, "OPERATION_NAME", None) == "gpu.func"):
-                op.attributes["rocdl.FLAT_WORK_GROUP_SIZE"] = flat_wg_attr
-
-        passthrough_entries = []
-        if const_expr(SCHED_STRATEGY):
-            passthrough_entries.append(
-                ir.ArrayAttr.get(
-                    [
-                        ir.StringAttr.get("amdgpu-sched-strategy"),
-                        ir.StringAttr.get(SCHED_STRATEGY),
-                    ]
-                )
-            )
-        if const_expr(DENORMALS_ARE_ZERO):
-            passthrough_entries.append(
-                ir.ArrayAttr.get(
-                    [
-                        ir.StringAttr.get("denormal-fp-math-f32"),
-                        ir.StringAttr.get("preserve-sign,preserve-sign"),
-                    ]
-                )
-            )
-            if const_expr(FP_MODE == "fast"):
-                passthrough_entries.append(
-                    ir.ArrayAttr.get([ir.StringAttr.get("no-nans-fp-math"), ir.StringAttr.get("true")])
-                )
-                passthrough_entries.append(
-                    ir.ArrayAttr.get([ir.StringAttr.get("unsafe-fp-math"), ir.StringAttr.get("true")])
-                )
-        for op in ctx.gpu_module_body.operations:
-            if const_expr(getattr(op, "OPERATION_NAME", None) == "gpu.func"):
-                op.attributes["passthrough"] = ir.ArrayAttr.get(passthrough_entries)
 
         launcher.launch(
             grid=(fx.Index(num_head_q), num_q_tiles, nseq_idx),
