@@ -322,11 +322,6 @@ _KNOBS_FALLBACK = BwdDqKnobs(
 )
 
 
-def _head_dim_v(meta) -> int:
-    """The V/O extent, defaulting to the QK one."""
-    return meta.head_dim_v if meta.head_dim_v is not None else meta.head_dim
-
-
 def resolve_knobs(meta: FmhaInputMetadata, overrides: "BwdDqKnobs | None" = None) -> BwdDqKnobs:
     """The complete configuration for `meta`.
 
@@ -335,8 +330,6 @@ def resolve_knobs(meta: FmhaInputMetadata, overrides: "BwdDqKnobs | None" = None
     pinning `num_waves` therefore also moves `block_m`.
     """
     s = _KNOBS_FALLBACK.merge(overrides)
-    if meta.block_dmodel is None:
-        raise ValueError("meta.block_dmodel is unset; see plan()")
     hd = meta.block_dmodel
 
     if s.shards is None:
@@ -390,10 +383,8 @@ def plan(request: FmhaInputMetadata, overrides: BwdDqKnobs | None = None) -> Bwd
             "already is an additive mask, so the pair has no defined meaning. Fold the "
             "causal pattern into the bias tensor, or drop the bias"
         )
-    if request.head_dim is None:
-        raise ValueError("plan derives the tile from the caller's head_dim: set it")
     head_dim = request.head_dim
-    head_dim_v = _head_dim_v(request)
+    head_dim_v = request.head_dim_v
     # One tile serves both axes, so it has to cover the wider one; whichever
     # axis is narrower than the tile is then a masked runtime extent.
     wide = max(head_dim, head_dim_v)

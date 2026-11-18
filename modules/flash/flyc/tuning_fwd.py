@@ -28,8 +28,21 @@ def arch_module(table, arch):
     return importlib.import_module(table[arch])
 
 
+def require_tile(meta):
+    """`resolve_knobs` and `builder` take a tile: AOT's, or the one `plan` chose."""
+    if meta.block_dmodel is None or meta.padded_head is None:
+        raise ValueError("meta has no tile: AOT sets block_dmodel and padded_head, JIT gets them from plan()")
+
+
+def require_head_dim(meta):
+    """`plan` derives the tile from the caller's real head dim."""
+    if meta.head_dim is None:
+        raise ValueError("plan derives the tile from the caller's head_dim: set it")
+
+
 def resolve_knobs(arch, meta, *, overrides=None):
     """The arch's knobs for `meta`; `overrides` (dict or knobs) passes through."""
+    require_tile(meta)
     return arch_module(_ARCH_MODULES, arch).entry_resolve(meta, overrides=overrides)
 
 
@@ -38,6 +51,7 @@ def plan(arch, meta, *, overrides=None):
 
     Sets the tiles and `padded_head` that AOT takes from the functional.
     """
+    require_head_dim(meta)
     return arch_module(_ARCH_MODULES, arch).entry_plan(meta, overrides=overrides)
 
 
@@ -48,4 +62,5 @@ def arches():
 
 def builder(arch, meta, knobs):
     """Construct the FlyDSL module; imports flydsl."""
+    require_tile(meta)
     return arch_module(_ARCH_MODULES, arch).entry_build(meta, knobs)

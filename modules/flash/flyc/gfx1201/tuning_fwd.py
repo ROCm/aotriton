@@ -451,8 +451,6 @@ def resolve_knobs(meta: FmhaInputMetadata, overrides: "FmhaKnobs | None" = None)
     which is what a caller asking for two row sub-tiles means.
     """
     s = _KNOBS_FALLBACK.merge(overrides)
-    if meta.block_dmodel is None:
-        raise ValueError("meta.block_dmodel is unset; see plan()")
     # Everything below is keyed on the width baked into the binary, not on the
     # caller's real extent. They coincide for a direct builder call and differ
     # whenever `plan` has rounded one up.
@@ -512,13 +510,12 @@ def plan(request: FmhaInputMetadata, overrides: FmhaKnobs | None = None) -> Fmha
 
     Raises for a head_dim past the largest compiled tile.
     """
-    if request.head_dim is None:
-        raise ValueError("plan derives the tile from the caller's head_dim: set it")
     head_dim = request.head_dim
     if head_dim < 1 or head_dim > MAX_HEAD_DIM:
         raise ValueError(f"kernel requires 1 <= head_dim <= {MAX_HEAD_DIM}, got {head_dim}")
     block_dmodel = _round_to_ladder(head_dim)
-    block_dmodel_v = block_dmodel if request.head_dim_v is None else request.head_dim_v
+    # A V extent equal to QK's (the filled default) shares the rounded tile.
+    block_dmodel_v = block_dmodel if request.head_dim_v == head_dim else request.head_dim_v
     meta = replace(request,
                    block_dmodel=block_dmodel,
                    block_dmodel_v=block_dmodel_v,

@@ -426,8 +426,6 @@ def resolve_knobs(meta: FmhaInputMetadata, overrides: "BwdDkDvKnobs | None" = No
     nothing else here, but pinning `block_dmodel` changes `block_m`.
     """
     s = _KNOBS_FALLBACK.merge(overrides)
-    if meta.block_dmodel is None or meta.block_dmodel_v is None:
-        raise ValueError("meta.block_dmodel is unset; see plan()")
     hd, hdv = meta.block_dmodel, meta.block_dmodel_v
     if s.contraction_shards is None:
         s = replace(s, contraction_shards=default_contraction_shards(hd, hdv))
@@ -475,12 +473,10 @@ def plan(request: FmhaInputMetadata, overrides: BwdDkDvKnobs | None = None) -> B
             "already is an additive mask, so the pair has no defined meaning. Fold the "
             "causal pattern into the bias tensor, or drop the bias"
         )
-    if request.head_dim is None:
-        raise ValueError("plan derives the tile from the caller's head_dim: set it")
     head_dim = request.head_dim
     if head_dim < 1 or head_dim > MAX_HEAD_DIM:
         raise ValueError(f"kernel requires 1 <= head_dim <= {MAX_HEAD_DIM}, got {head_dim}")
-    head_dim_v = request.head_dim_v if request.head_dim_v is not None else head_dim
+    head_dim_v = request.head_dim_v
     block_dmodel = _round_to_ladder(head_dim)
     block_dmodel_v = _round_to_ladder(head_dim_v)
     meta = replace(request,

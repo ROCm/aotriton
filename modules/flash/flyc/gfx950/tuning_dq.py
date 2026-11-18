@@ -390,7 +390,7 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
         the V mask has to cover every step. Slower, and the alternative is
         reducing over the caller's padding.
         """
-        head_dim_v = meta.head_dim if meta.head_dim_v is None else meta.head_dim_v
+        head_dim_v = meta.head_dim_v
         floor = int(self.hdim_qk_floor or 0)
         if head_dim_v is None:  # AOT: the real head dims are not known
             return floor
@@ -562,7 +562,7 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
                 )
         self.staging_shape(block_dmodel)
         self._check_helpers_support_geometry()
-        num_kv_heads = meta.num_heads if meta.num_kv_heads is None else meta.num_kv_heads
+        num_kv_heads = meta.num_kv_heads
         shape = (16, 16, 32) if (self.mfma_rows or 32) == 16 else (32, 32, 16)
         traits = make_bwd_dq_traits(
             mfma_shape=shape,

@@ -77,8 +77,9 @@ def flyc_bwd_disabled(f, *, head_dims):
 def flyc_input_metadata(choices):
     """The problem a flyc functional describes, for every kernel and arch."""
     from fmha_meta import FmhaInputMetadata
-    # One head-dim axis, so V's tile is QK's. The real head dims arrive at run
-    # time; PADDED_HEAD says whether they may be narrower than the tile.
+    # One head-dim axis, so V's tile is QK's (block_dmodel_v left None). The
+    # real head dims arrive at run time; PADDED_HEAD says whether they may be
+    # narrower than the tile.
     tile = choices.BLOCK_DMODEL
     # `num_heads` reaches a kernel only through STRIDE_TOKEN, which the arch
     # tuners keep behind strides_constexpr=False; 1 keeps it off the axes.
@@ -86,7 +87,6 @@ def flyc_input_metadata(choices):
                              dtype_str='bf16' if '*bf16' in choices.arg('Q') else 'f16',
                              causal_type=choices.CAUSAL_TYPE,
                              block_dmodel=tile,
-                             block_dmodel_v=tile,
                              padded_head=choices.PADDED_HEAD,
                              bias=bool(choices.BIAS_TYPE),
                              dropout=bool(choices.ENABLE_DROPOUT))

@@ -517,14 +517,12 @@ def plan(request: FmhaInputMetadata) -> FmhaInputMetadata:
     and records whether either is narrower than the tile. A tile or
     `padded_head` already set on `request` is kept.
     """
-    if request.head_dim is None:
-        raise ValueError("plan derives the tile from the caller's head_dim: set it")
     block_dmodel = request.block_dmodel
     if block_dmodel is None:
         block_dmodel = tile_width_for(request.head_dim)
     padded_head = request.padded_head
     if padded_head is None:
-        head_dim_v = request.head_dim if request.head_dim_v is None else request.head_dim_v
+        head_dim_v = request.head_dim_v
         padded_head = (request.head_dim != block_dmodel) or (head_dim_v != block_dmodel)
     return replace(request, block_dmodel=block_dmodel, padded_head=padded_head)
 
@@ -568,33 +566,13 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
         this docstring was written for are all implemented now.
         """
         check_causal_type(meta)
-        if meta.dtype_str not in ("bf16", "f16"):
-            raise NotImplementedError(f"this kernel builds bf16 and f16, got {meta.dtype_str!r}")
-        num_kv_heads = meta.num_heads if meta.num_kv_heads is None else meta.num_kv_heads
-        if meta.num_heads % num_kv_heads:
-            # B7 made GQA real; this is the one part of the old refusal that
-            # survives, because a group that does not divide evenly has no
-            # meaning rather than no implementation.
-            raise ValueError(
-                f"num_heads ({meta.num_heads}) must be a multiple of num_kv_heads ({num_kv_heads}): "
-                "each KV head owns a whole group of query heads and dK/dV sum over it"
-            )
         return self
 
     def _with_widths(self, meta):
         """Check `meta`'s tile against the ladder and decide the mask floor."""
         block_dmodel = meta.block_dmodel
-        if block_dmodel is None or meta.padded_head is None:
-            raise ValueError("meta.block_dmodel and meta.padded_head must be set: use plan(meta)")
         if block_dmodel not in LADDER:
             raise ValueError(f"block_dmodel must be one of the built rungs {LADDER}, got {block_dmodel}")
-        # The real head dims are only known in JIT; AOT leaves them None.
-        if meta.head_dim is not None:
-            if meta.head_dim > block_dmodel:
-                raise ValueError(f"head_dim {meta.head_dim} does not fit block_dmodel {block_dmodel}")
-            head_dim_v = meta.head_dim if meta.head_dim_v is None else meta.head_dim_v
-            if head_dim_v > block_dmodel:
-                raise ValueError(f"head_dim_v {head_dim_v} does not fit block_dmodel {block_dmodel}")
 
         # The ladder's guarantee: a tile `plan` chose serves exactly
         # `(rung_below(tile), tile]`. A caller whose tile is chosen elsewhere
@@ -721,7 +699,7 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
         of our own is what gets the shard validation -- the even-chunk rule the
         LDS offset decomposition depends on -- for free.
         """
-        num_kv_heads = meta.num_heads if meta.num_kv_heads is None else meta.num_kv_heads
+        num_kv_heads = meta.num_kv_heads
         base = make_traits(
             num_heads=meta.num_heads,
             num_kv_heads=num_kv_heads,
