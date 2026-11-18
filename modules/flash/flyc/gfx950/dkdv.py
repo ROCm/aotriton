@@ -140,9 +140,6 @@ from .dualwave_helpers import (
     _slab_span_elems,
     _v_imm_lo,
     exp2_wait_state,
-    fadd,
-    fmul,
-    fsub,
     mfma_operand_wait_state,
     wire_ptr,
     wire_view,
@@ -327,7 +324,8 @@ def bias_log2e(ctx, q_rows):
         # `Vec(...)[0]`, which is what the forward's width-4 and width-8 reads
         # use and which raises here.
         b = ctx.elem_dtype(one).to(fx.Float32)
-        out.append(fmul(fx.Float32(b), log2e, fm_bias))
+        with fx.fastmath(fm_bias):
+            out.append(fx.Float32(b) * log2e)
     return out
 
 
@@ -1297,7 +1295,7 @@ class BwdDkDvSoftmaxHelper(ParitySoftmaxHelper):
                 )
                 vec = Vec(span, (width,), fx.Float32)
                 for j in range_constexpr(width):
-                    values[elem0 + j] = fmul(vec[j], scale, self.fm_fast)
+                    values[elem0 + j] = vec[j] * scale
             return values
         pitch = self.lse_pitch
         # One divergent multiply, sixteen uniform ones. Not `(row_base +
@@ -1306,7 +1304,7 @@ class BwdDkDvSoftmaxHelper(ParitySoftmaxHelper):
         for r in range_constexpr(16):
             off = row_v + fx.Index(_ROW_THRESHOLDS[r]) * pitch
             one = buffer_ops.buffer_load(rsrc, as_mlir_value(fx.Int32(off)), vec_width=1, dtype=fx.Float32)
-            values[r] = fmul(fx.Float32(one), scale, self.fm_fast)
+            values[r] = fx.Float32(one) * scale
         return values
 
     def probabilities(self, v_s, neg_lse2, bias2=None):
@@ -1338,15 +1336,14 @@ class BwdDkDvSoftmaxHelper(ParitySoftmaxHelper):
         fm = self.fm_fast
         if const_expr(bias2 is not None):
             fm = fx.arith.FastMathFlags.contract | fx.arith.FastMathFlags.reassoc
-        scaled = [fmul(values[r], scale, fm) for r in range_constexpr(16)]
-        if const_expr(bias2 is not None):
-            scaled = [fadd(scaled[r], bias2[r], fm) for r in range_constexpr(16)]
-        return exp2_wait_state(
-            [
-                dualwave.rocdl.exp2(T.f32, as_mlir_value(fadd(scaled[r], neg_lse2[r], fm)))
-                for r in range_constexpr(16)
+        with fx.fastmath(fm):
+            scaled = [values[r] * scale for r in range_constexpr(16)]
+            if const_expr(bias2 is not None):
+                scaled = [scaled[r] + bias2[r] for r in range_constexpr(16)]
+            p_list = [
+                dualwave.rocdl.exp2(T.f32, as_mlir_value(scaled[r] + neg_lse2[r])) for r in range_constexpr(16)
             ]
-        )
+        return exp2_wait_state(p_list)
 
     # -- the forward's bias path, shadowed ---------------------------------
     #
@@ -1396,13 +1393,8 @@ class BwdDkDvSoftmaxHelper(ParitySoftmaxHelper):
         values = [Vec(v_dp)[r] for r in range_constexpr(16)]
         if const_expr(keep is not None):
             s = self.ctx_ref.c_dropout_scale
-            values = [
-                keep[r].select(fmul(values[r], s, self.fm_fast), self.c_zero_f) for r in range_constexpr(16)
-            ]
-        return [
-            fmul(p_list[r], fsub(values[r], delta[r], self.fm_fast), self.fm_fast)
-            for r in range_constexpr(16)
-        ]
+            values = [keep[r].select(values[r] * s, self.c_zero_f) for r in range_constexpr(16)]
+        return [fx.Float32(p_list[r]) * (values[r] - delta[r]) for r in range_constexpr(16)]
 
     def q_rows(self, tile_idx, half):
         """The absolute q row each of this half's 16 accumulator elements holds.
@@ -2118,14 +2110,14 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
             # to `dK` and to nothing else. Once at the end rather than per tile:
             # a linear factor commutes with the accumulation.
             for dc in range_constexpr(n_acc):
-                dk[dc] = fmul(Vec(dk[dc]), scale_vec, ctx.fm_fast)
+                dk[dc] = Vec(dk[dc]) * scale_vec
             if const_expr(traits.ENABLE_DROPOUT):
                 # `dV = s * sum_i keep*P*dO`. A per-kernel constant, so it
                 # belongs on the accumulator once rather than on `P` every
                 # tile. `dK` does not get it: its `s` is already inside `dS`,
                 # where it multiplies only the `dP` term.
                 for dc in range_constexpr(n_acc):
-                    dv[dc] = fmul(Vec(dv[dc]), drop_vec, ctx.fm_fast)
+                    dv[dc] = Vec(dv[dc]) * drop_vec
             store.store_accs(dv, "dv", hdim_vo)
             store.store_accs(dk, "dk", hdim_qk)
 
