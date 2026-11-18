@@ -29,7 +29,7 @@ namespace pyaotriton::lazy_tensor {
         }
         // An unconfigured LazyTensor has no callback, and free() leaves the
         // callback behind with a deleted context: calling either crashes.
-        if (!self.acquire || !self.cookie) {
+        if (!self.acquire || (self.dispose && !self.cookie)) {
           throw std::runtime_error("LazyTensor is not configured, or was already freed");
         }
         return (*self.acquire)(&self);
