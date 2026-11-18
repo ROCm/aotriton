@@ -41,7 +41,7 @@ Linux is assumed for all nodes.
 - `rsync` - for deploying workdir to GPU workers
 
 **Docker base image** (shared across all workers):
-- Python >= 3.10
+- Python >= 3.12
 - git, bash
 - A Python venv with PyTorch pre-installed, or torch wheel files available at `/`
   - If using wheels, both `/torch-*.whl` and `/triton-*.whl` must be available

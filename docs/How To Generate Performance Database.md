@@ -63,7 +63,7 @@ They are canonical and written by `export`; never edit them by hand.
   checkout and the ROCm Python environment that `setup_session` prepares.
 
 Tools: `ssh`, `rsync`, `sqlite3` on the dev node; `psql` or `docker` for
-`initdb`; Python >= 3.10 with `psycopg` and the checkout's `aotriton` package
+`initdb`; Python >= 3.12 with `psycopg` and the checkout's `aotriton` package
 importable (`pip install -e .`, as in [How To Run Tests](How%20To%20Run%20Tests.md)).
 
 All commands are run from the repository root. The scripts take the workdir from
