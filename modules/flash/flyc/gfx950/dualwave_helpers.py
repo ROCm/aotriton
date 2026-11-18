@@ -1100,13 +1100,7 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         self.NUM_DMA_K = self.traits.SMEM_D_RPT * self.ISSUES_PER_WAVE
         self.NUM_DMA_V = self.NUM_DMA_K
         self.c_sm_scale = fx.Float32(self.sm_scale_arg)
-        self.c_sm_scale_log2e = fx.Float32(
-            arith.mulf(
-                fx.as_ir_value(fx.Float32(self.sm_scale_arg)),
-                fx.as_ir_value(fx.Float32(dualwave._LOG2E)),
-                fastmath=self.fm_fast,
-            )
-        )
+        self.c_sm_scale_log2e = fx.Float32(self.sm_scale_arg) * fx.Float32(dualwave._LOG2E)
 
     # -- runtime head counts ---------------------------------------------
 
@@ -1967,7 +1961,8 @@ class ParitySoftmaxHelper(dualwave.DualwaveSoftmaxHelper):
                         # type, not a one-lane vector, so it is wrapped
                         # directly rather than through `Vec(...)[0]`.
                         b = fx.Float32(ctx.elem_dtype(one).to(fx.Float32))
-                        values[elem0 + j] = fadd(values[elem0 + j], fmul(b, log2e, fm_bias), fm_bias)
+                        with fx.fastmath(fm_bias):
+                            values[elem0 + j] = fx.Float32(values[elem0 + j]) + b * log2e
                     continue
                 span = buffer_ops.buffer_load(
                     ctx.bias_rsrc,
@@ -1977,7 +1972,8 @@ class ParitySoftmaxHelper(dualwave.DualwaveSoftmaxHelper):
                 )
                 for j in range_constexpr(width):
                     b = fx.Float32(Vec(span, (width,), ctx.elem_dtype)[j].to(fx.Float32))
-                    values[elem0 + j] = fadd(values[elem0 + j], fmul(b, log2e, fm_bias), fm_bias)
+                    with fx.fastmath(fm_bias):
+                        values[elem0 + j] = fx.Float32(values[elem0 + j]) + b * log2e
 
     def bias_to_lists(self, v_s, tile_idx):
         """`v_s_vec_to_lists`, with the bias folded in on the way through.
@@ -2032,12 +2028,12 @@ class ParitySoftmaxHelper(dualwave.DualwaveSoftmaxHelper):
         """
         if const_expr(self.traits.D_CHUNKS != 1):
             return super().rescale_o(v_o, m_row, l_row, m_tile_max, v_p)
-        m_new = fmax(m_row, m_tile_max, self.fm_fast)
-        corr = rocdl.exp2(T.f32, as_mlir_value(fsub(m_row, m_new, self.fm_fast)))
+        m_new = fx.maxnumf(fx.Float32(m_row), m_tile_max)
+        corr = rocdl.exp2(T.f32, as_mlir_value(fx.Float32(m_row) - m_new))
         self.scale_o(v_o, corr)
         v_o = _anchor_v_o(self.traits, v_o)
         v_p = dualwave._scale_v_p(self.traits, v_p, corr, elem_dtype=self.elem_dtype, fm_fast=self.fm_fast)
-        l_row = fmul(l_row, corr, self.fm_fast)
+        l_row = fx.Float32(l_row) * corr
         return v_o, m_new, l_row, v_p
 
     def safe_l_inv(self, l_row):
@@ -2051,7 +2047,7 @@ class ParitySoftmaxHelper(dualwave.DualwaveSoftmaxHelper):
         """
         inv = super().safe_l_inv(l_row)
         if const_expr(self.traits.ENABLE_DROPOUT):
-            inv = fmul(inv, fx.Float32(self.ctx_ref.dropout_scale_arg), self.fm_fast)
+            inv = fx.Float32(inv) * fx.Float32(self.ctx_ref.dropout_scale_arg)
         return inv
 
     def cast_p(self, v_p, tile_idx=None):
@@ -2217,11 +2213,11 @@ class ParitySoftmaxHelper(dualwave.DualwaveSoftmaxHelper):
 
         Otherwise identical to `rescale_o`, term for term.
         """
-        m_new = fmax(m_row, m_tile_max, self.fm_fast)
-        corr = rocdl.exp2(T.f32, as_mlir_value(fsub(m_row, m_new, self.fm_fast)))
+        m_new = fx.maxnumf(fx.Float32(m_row), m_tile_max)
+        corr = rocdl.exp2(T.f32, as_mlir_value(fx.Float32(m_row) - m_new))
         self.scale_o(v_o, corr)
         v_o = _anchor_v_o(self.traits, v_o)
-        l_row = fmul(l_row, corr, self.fm_fast)
+        l_row = fx.Float32(l_row) * corr
         return v_o, m_new, l_row
 
 
@@ -2377,11 +2373,7 @@ class ParityStoreHelper(dualwave.DualwaveStoreHelper):
             self.batch_idx * per_batch_bytes,
             per_batch_bytes,
         )
-        lse_val = fadd(
-            fmul(m_row, self.c_ln2_f, self.fm_fast),
-            fmath.log(as_mlir_value(l_row), fastmath=self.fm_fast),
-            self.fm_fast,
-        )
+        lse_val = fx.Float32(m_row) * self.c_ln2_f + fmath.log(fx.Float32(l_row))
         # A Q block that attends nothing gets **+inf**, and the formula above
         # does not produce it. Two separate things are wrong without this
         # select.
