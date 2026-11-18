@@ -1,6 +1,6 @@
 FROM almalinux:8 AS base
 
-ARG PYVER=3.11
+ARG PYVER=3.12
 
 # Python >= 3.13 isn't packaged in AlmaLinux 8's AppStream repos (verified via
 # `dnf list --all python3.13`) -- build it from source instead, using

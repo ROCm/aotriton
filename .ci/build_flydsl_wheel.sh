@@ -42,7 +42,7 @@ Options:
                             <base>+git<sha8><s>.llvm<sha12>.p<patches>.
      --pat_environ <VAR>    Name (not value) of an environment variable
                             holding a GitHub PAT, for a private origin.
-         --python <X.Y>     CPython to build for. Default 3.11. flydsl wheels
+         --python <X.Y>     CPython to build for. Default 3.12. flydsl wheels
                             are ABI specific, so this is part of the cache key.
            --rocm <ver>     TheRock version for the build image. Default
                             10.1.0, the newest release in the release suite's
@@ -63,7 +63,7 @@ FLYDSL_ORIGIN=""
 LLVM_TARBALL=""
 VERSION_SUFFIX=""
 PAT_ENVIRON=""
-PYVER="3.11"
+PYVER="3.12"
 ROCMVER="10.1.0"
 JOBS=""
 while [[ "$1" == --* ]]; do
