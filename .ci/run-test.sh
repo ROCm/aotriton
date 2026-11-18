@@ -194,9 +194,11 @@ fi
   # By pid, not via the terminal: Ctrl+\\ never reaches either of them, both
   # having inherited SIG_IGN for SIGQUIT. `wait` reaps; `:-` covers "not
   # started" and "no watchdog".
+  # `|| true`: common-vars.sh sets -e, and a failed kill of a cleared pid would
+  # end the pass with status 1 before the watchdog is stopped.
   _stop_pass() {
-    kill -s TERM "${pytest_pid:-}" 2>/dev/null; wait "${pytest_pid:-}" 2>/dev/null
-    kill -s TERM "${watchdog_pid:-}" 2>/dev/null; wait "${watchdog_pid:-}" 2>/dev/null
+    kill -s TERM "${pytest_pid:-}" 2>/dev/null || true; wait "${pytest_pid:-}" 2>/dev/null || true
+    kill -s TERM "${watchdog_pid:-}" 2>/dev/null || true; wait "${watchdog_pid:-}" 2>/dev/null || true
   }
   # Single-quoted, so the body is re-parsed when the trap fires and picks up
   # `pytest_pid` and `watchdog_pid`, assigned below. Double quotes bake in "".
