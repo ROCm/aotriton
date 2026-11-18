@@ -5,8 +5,8 @@
 ATI description of the flash bwd dK/dV FlyDSL backend (gfx1201 and gfx950).
 
 The backward half of `flyc_attn_fwd.py`, and it works the same way: no perf
-axes (`gfx1201.tuning_dkdv.resolve_knobs` is the sole producer of a
-schedule), no functional axes of its own (it inherits `op_attn_bwd`'s and
+axes (`tuning_dkdv.resolve_knobs`, dispatching to `<arch>/tuning_dkdv.py`, is
+the sole producer of a schedule), no functional axes of its own (it inherits `op_attn_bwd`'s and
 narrows them with `@ati.disable`), and a declared kernel-argument list, because
 the hsaco's layout comes from `bwd_dkdv_kernel` and nothing else can supply
 it.

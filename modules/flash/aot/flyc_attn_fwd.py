@@ -22,8 +22,9 @@ already has:
 
 Three consequences, each handled below:
 
-1. **The tuning table is programmatic.** `gfx1201.tuning_fwd.resolve_knobs()` is
-   the sole producer of a schedule, so there is no `@ati.tune.schema`, no
+1. **The tuning table is programmatic.** `tuning_fwd.resolve_knobs(arch, meta)`,
+   which dispatches to the arch's `<arch>/tuning_fwd.py`, is the sole producer of
+   a schedule, so there is no `@ati.tune.schema`, no
    `@ati.tune.configs`, and no perf axes — ATI enumerates no perf variants here.
 
    That is NOT the same as one hsaco per functional. Today the count is one, but
