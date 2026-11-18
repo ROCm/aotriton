@@ -378,6 +378,101 @@ at configure time. Triton kernels that another backend's metro borrows are kept
 regardless, by name, because skipping them would not give "Triton operators do
 not work, everything else does" — it would give a metro with a missing step.
 
+## Moving to a new FlyDSL release
+
+The 0.3.1 -> 0.4.2 move passed every test and lost up to 17% of forward
+throughput on gfx950. None of the loss was the compiler. This list is what
+caught it, and what to check before the next move.
+
+### What breaks without a test failing
+
+- **Helper behaviour, not only helper APIs.** Our kernels subclass or alias
+  about 50 names from `kernels/attention/flash_attn_utils.py`. Read
+  `git log <old>..<new> -- kernels/attention/` in full, including fp8 and
+  "consolidate" commits. 826efd04 (an fp8 change) moved the stagger split from
+  wave 4 to `num_waves // 2`. Every 4-wave forward build then staggered for
+  the first time and lost 7-22%. The fix was a knob policy (`_with_stagger`),
+  not a vendored helper.
+- **Removed helpers and new trait fields.** 0.4.2 removed
+  `_fadd/_fsub/_fmul/_fmax` and `kernels_common._if_then`, added
+  `DualwaveSwpTraits.HEAD_DIM_V`, and changed `lds_kv_base_ptr` from an LLVM
+  pointer to a fly pointer. The drift guard in `gfx950/standalone.py` catches
+  trait fields only. The others surface as trace errors, or as different code.
+- **Compile hints.** FlyDSL reads lower-case keys only (`fast_fp_math`,
+  `unsafe_fp_math`, `llvm_options`). Set them on the JitFunction
+  (`launch.compile_hints = ...`). `aotriton.flyc_compile` calls the
+  JitFunction directly, so hints set in a `CompilationContext.compile_hints`
+  block around a JIT call never reach a library build. Moving hints from JIT
+  to AOT is a performance change: measure every option one at a time.
+  `enable-post-misched: False` cost the forward 2-8%
+  (`fmha_utils.compile_hints`).
+- **Function attributes.** `value_attrs` keys for LLVM function attributes
+  need the `llvm.` prefix (`llvm.passthrough`, `llvm.denormal_fpenv`). The
+  gpu.func lowering drops a bare `passthrough` without an error. LLVM no longer
+  reads the `denormal-fp-math-f32` string, so DAZ goes through
+  `llvm.denormal_fpenv` (`fmha_utils.kernel_attrs`).
+- **Fastmath.** A plain operator (`a - b`, `a * b`) takes the ambient fastmath,
+  which is `fast` only under `fast_fp_math`. `fx.maxnumf` ignores the ambient
+  flags; pass `fastmath=` when it matters. Upstream replaced its explicit-flag
+  wrappers with plain operators, so check the flags in the IR, not the source.
+
+### Checking that options reach LLVM
+
+- JIT with `FLYDSL_DUMP_IR=1 FLYDSL_DUMP_DIR=<dir>` and
+  `FLYDSL_RUNTIME_ENABLE_CACHE=0` writes `21_llvm_ir.ll` and
+  `22_final_isa.s` per kernel.
+- In the IR, check the function attributes (`"amdgpu-waves-per-eu"`,
+  `"amdgpu-flat-work-group-size"`, `denormal_fpenv`, `passthrough` entries)
+  and the `fast`/`contract` flags on `fmul`/`fadd`/`fma`/`maxnum`.
+- In the ISA or a library hsaco, check `.amdhsa_float_denorm_mode_32` (0 is
+  DAZ, 3 keeps denormals), `.vgpr_count`, `.agpr_count`,
+  `.vgpr_spill_count`, `.private_segment_fixed_size` and
+  `.group_segment_fixed_size`. For a library hsaco use `llvm-objdump -D
+  --disassemble-symbols=<kernel>.kd` and `llvm-readelf --notes`. The hsaco
+  of a configuration is listed in `<build>/v3src/Fly.compile`. Its knobs are
+  in the `.json` beside it and in `v3src/flash/flyc.<kernel>.cc`.
+- `llvm_options` leave no mark in the IR. Check them with an ISA diff with
+  and without the option.
+- Diff the ISA with operands, not only opcodes. The stagger change was one
+  immediate (`s_lshr_b32 ..., 7` against `8` on the thread id) in
+  otherwise near-identical hsacos, and those hsacos were 15% apart.
+
+### Measuring
+
+- Use the benchmark's own dtype and scale. `performance_forward.py` runs
+  fp16 at `sm_scale = 1.3`, B4 H48.
+- Library A/B: run each build on each GPU in rotation in the same session.
+  Report medians with min-max. Run the test scripts from one worktree, so
+  that only the library differs. Before a run, check `amd-smi metric -u -m`
+  for busy GPUs. mi355-large GPUs differ by up to ~3%, and a neighbour's job
+  or a running build makes a sample worthless.
+- JIT A/B: build all arms in one process, then interleave them and rotate
+  their order each round. Order alone is worth ~5%
+  (`devtools/bench_fwd_wpe_sweep.py`). Compare across processes, such as a
+  different wheel or kernel tree, only on one GPU, with two passes in opposite
+  orders. Expect ~2% noise.
+- `rocprofv3 --kernel-trace --stats` separates kernel time from host time.
+  Its grid, scratch and VGPR columns confirm which image ran.
+
+### Bisecting a regression
+
+1. **Compiler or kernels.** Trace the old port against the old kernel tree
+   with the new wheel. An old wheel overlays the new one through `PYTHONPATH`
+   (a directory holding only `flydsl/` and its dist-info). If it fails to load
+   `libmlir_apfloat_wrappers`, put ROCm's `lib/llvm/lib` copy on
+   `LD_LIBRARY_PATH`. For 0.4.2, old code with the v0.3.1 tree ran at the same
+   speed under both wheels.
+2. **Helpers.** Extract `git archive <commit> kernels` for each upstream
+   commit that touches `kernels/attention/` and point
+   `AOTRITON_FLYDSL_KERNEL_ROOT` at it. Where the port cannot trace an
+   intermediate tree, use the port commit that matches it. Keep port commits
+   that follow an API change separate from behaviour changes, so each one can
+   pair with a tree.
+3. **Options.** Patch `fmha_utils.COMPILE_HINTS`, `compile_hints` and
+   `kernel_attrs` before the first call, and drop one option per arm.
+4. **Our port.** Compare the hsaco of the exact configuration across our
+   commits. The refactors claimed to be hsaco-identical should be.
+
 ## Dispatch: choosing the backend at runtime
 
 The backend index is public ABI. It is generated, per family, into
