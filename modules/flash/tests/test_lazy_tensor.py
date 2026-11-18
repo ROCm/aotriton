@@ -117,6 +117,22 @@ def test_free_releases_memory():
     assert torch.cuda.memory_allocated() == before
 
 
+def test_acquire_is_idempotent():
+    # 6 * 512 bytes: a whole number of allocator blocks
+    sizes = (2, 3, 16, 8)
+    before = torch.cuda.memory_allocated()
+    acc = lazy_tensor.dq_acc(_like(sizes), torch.cuda.current_device())
+    first = acc.acquire()
+    second = acc.acquire()
+    # A second allocation would hand out a different block
+    assert _address(second) == _address(first)
+    assert tuple(second.sizes) == sizes
+    torch.cuda.synchronize()
+    assert torch.cuda.memory_allocated() - before == 6 * 512
+    acc.free()
+    assert torch.cuda.memory_allocated() == before
+
+
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason='needs two GPUs')
 def test_honors_device_index():
     sizes = (2, 2, 16, 16)

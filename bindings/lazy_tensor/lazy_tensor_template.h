@@ -24,9 +24,14 @@ struct LazyTensorHelper {
     std::array<uint64_t, kRank> tensor_strides;
   };
 
+  // Idempotent: the tensor is allocated by the first call, and later calls
+  // return a view of the same one. Allocating again would invalidate the
+  // pointer that earlier calls handed out.
   static aotriton::TensorView<kRank> acquire(aotriton::LazyTensor<kRank>* self) {
     auto ctx = (context*)self->cookie;
-    create_tensor(ctx);
+    if (!ctx->tensor.get()) {
+      create_tensor(ctx);
+    }
     return aotriton::TensorView<kRank>(reinterpret_cast<intptr_t>(ctx->tensor.data_ptr()),
                                        ctx->like_tensor.sizes(),
                                        ctx->tensor_strides,
@@ -47,13 +52,16 @@ private:
     for (int i = 0; i < kRank; i++) {
       sizes[i] = static_cast<int64_t>(ctx->like_tensor.size(i));
     }
-    ctx->tensor = torch_stable_min::empty_float32(sizes, ctx->device_index);
+    // Keep ctx untouched until the tensor is complete: if zero_ throws, a
+    // later acquire() must allocate again, not return an unzeroed tensor.
+    auto tensor = torch_stable_min::empty_float32(sizes, ctx->device_index);
     if constexpr (kRequireZeros) {
-      torch_stable_min::zero_(ctx->tensor);
+      torch_stable_min::zero_(tensor);
     }
     for (int i = 0; i < kRank; i++) {
-      ctx->tensor_strides[i] = static_cast<uint64_t>(ctx->tensor.stride(i));
+      ctx->tensor_strides[i] = static_cast<uint64_t>(tensor.stride(i));
     }
+    ctx->tensor = std::move(tensor);
   }
 
 }; // LazyTensorHelper
