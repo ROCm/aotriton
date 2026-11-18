@@ -31,6 +31,7 @@ much larger than that where they matter at all.
 from dataclasses import dataclass, replace
 
 from fmha_knobs import pinned
+from fmha_meta import FmhaInputMetadata
 from .knobs import BwdDqKnobs
 
 # ---------------------------------------------------------------------------
@@ -299,51 +300,14 @@ def _kv_addr_hoist(head_dim: int, causal: bool) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# The two halves of a build request. Same split as the forward's, for the same
-# reason: a caller states a problem, the tuning policy answers with a schedule.
-# Both frozen so the pair can be an `lru_cache` key.
+# The two halves of a build request, `fmha_meta.FmhaInputMetadata` and the
+# knobs. Same split as the forward's, for the same reason: a caller states a
+# problem, the tuning policy answers with a schedule.
+#
+# There is only one compiled tile here (`block_dmodel_v` is not read), so it
+# covers the wider of `head_dim` and `head_dim_v` and the narrower rides as a
+# masked runtime extent, which `padded_head` has to reflect.
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class BwdDqInputMetadata:
-    """What to compute. Set by the caller; never by policy."""
-
-    num_heads: int
-    head_dim: int
-    # The V/O extent, when it differs from the QK one. `None` means "same".
-    #
-    # There is only ONE compiled tile here, unlike dK/dV which carries a second
-    # `block_dmodel_v`, so the tile must cover the *wider* of the two and the
-    # narrower axis rides as a masked runtime extent. That is what
-    # `padded_head` has to reflect: the kernel's `vo_cols` is
-    # `MaskedAxis(hdim_vo, active=PADDED_HEAD)`, so with the flag off the V/O
-    # axis is not bounded at all and a narrower V is walked to the full tile.
-    head_dim_v: int | None = None
-    causal: bool = True
-    dtype_str: str = "bf16"
-    sm_scale: float | None = None
-    causal_type: int | None = None
-    dropout: bool = False
-    # Attention bias, matching the forward's `BIAS_TYPE`: a (B, H, Sq, Sk)
-    # matrix added to the scores after the scale and before the mask.
-    #
-    # It has to be an input, not just an output question. The forward folds the
-    # bias into the score *and* into the logsumexp it stores, and this kernel
-    # recomputes `P` from that logsumexp -- so without the bias term the
-    # recomputed P is off by `exp(-bias)` and dQ, dK and dV are all wrong.
-    #
-    # A bias build emits dB too, always: dB is `dS`, which the kernel already
-    # forms for its last GEMM, so gating it would save a store and cost a
-    # build axis. `dbias=` is therefore required alongside `bias=`.
-    bias: bool = False
-
-    # The compiled tile and whether the real extents are narrower. Inputs, not
-    # knobs: a functional's BLOCK_DMODEL and PADDED_HEAD fix them. `plan`
-    # derives them from the real head dims; a caller whose head dims already
-    # fill the tile uses `with_direct_tile`.
-    block_dmodel: int | None = None
-    padded_head: bool | None = None
 
 
 _KNOBS_FALLBACK = BwdDqKnobs(
@@ -363,7 +327,7 @@ def _head_dim_v(meta) -> int:
     return meta.head_dim_v if meta.head_dim_v is not None else meta.head_dim
 
 
-def resolve_knobs(meta: BwdDqInputMetadata, overrides: "BwdDqKnobs | None" = None) -> BwdDqKnobs:
+def resolve_knobs(meta: FmhaInputMetadata, overrides: "BwdDqKnobs | None" = None) -> BwdDqKnobs:
     """The complete configuration for `meta`.
 
     `overrides` is applied *first*, so a pinned knob participates in deriving
@@ -409,11 +373,11 @@ def resolve_knobs(meta: BwdDqInputMetadata, overrides: "BwdDqKnobs | None" = Non
 class BwdDqPlan:
     """Everything a host needs for one build, from one call."""
 
-    meta: BwdDqInputMetadata
+    meta: FmhaInputMetadata
     knobs: BwdDqKnobs
 
 
-def with_direct_tile(meta: BwdDqInputMetadata) -> BwdDqInputMetadata:
+def with_direct_tile(meta: FmhaInputMetadata) -> FmhaInputMetadata:
     """`meta` for a caller whose head dims are already compiled tile widths.
 
     The tile is the wider of the two axes: one tile serves both, and the
@@ -429,7 +393,7 @@ def with_direct_tile(meta: BwdDqInputMetadata) -> BwdDqInputMetadata:
     return replace(meta, block_dmodel=block_dmodel, padded_head=padded_head)
 
 
-def plan(request: BwdDqInputMetadata, overrides: BwdDqKnobs | None = None) -> BwdDqPlan:
+def plan(request: FmhaInputMetadata, overrides: BwdDqKnobs | None = None) -> BwdDqPlan:
     """The one entry point into tuning: the caller's inputs in, a full plan out.
 
     The rounding up to a compiled tile lands in `BwdDqPlan.meta.block_dmodel`,
@@ -456,26 +420,13 @@ def plan(request: BwdDqInputMetadata, overrides: BwdDqKnobs | None = None) -> Bw
     return BwdDqPlan(meta, resolve_knobs(meta, overrides))
 
 
-# Unified entry (flyc/tuning_dq.py): the arch-neutral metadata, adapted.
-
-
-def _entry_meta(meta) -> BwdDqInputMetadata:
-    return BwdDqInputMetadata(num_heads=meta.num_heads,
-                              head_dim=meta.block_dmodel,
-                              head_dim_v=meta.block_dmodel,
-                              causal=meta.causal_type != 0,
-                              causal_type=meta.causal_type,
-                              dtype_str=meta.dtype_str,
-                              bias=meta.bias,
-                              dropout=meta.dropout,
-                              block_dmodel=meta.block_dmodel,
-                              padded_head=meta.padded_head)
+# Unified entry (flyc/tuning_dq.py): the shared metadata.
 
 
 def entry_resolve(meta, *, overrides=None) -> BwdDqKnobs:
-    return resolve_knobs(_entry_meta(meta), pinned(BwdDqKnobs, overrides))
+    return resolve_knobs(meta, pinned(BwdDqKnobs, overrides))
 
 
 def entry_build(meta, knobs: BwdDqKnobs):
     from .dq import build_bwd_dq_module_primary
-    return build_bwd_dq_module_primary(_entry_meta(meta), knobs)
+    return build_bwd_dq_module_primary(meta, knobs)

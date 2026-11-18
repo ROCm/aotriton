@@ -157,7 +157,6 @@ def dq_fn():
 
     return kernel.build_bwd_dq_module(num_heads=NUM_HEADS,
                                       head_dim=HEAD_DIM,
-                                      causal=True,
                                       causal_type=3,
                                       dtype_str="f16")
 

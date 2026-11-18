@@ -106,8 +106,8 @@ from dataclasses import fields
 
 import fmha_utils as fmha
 from . import utils
+from fmha_meta import FmhaInputMetadata
 from .tuning_dq import (  # noqa: F401
-    BwdDqInputMetadata,
     BwdDqKnobs,
     resolve_knobs,
     with_direct_tile,
@@ -309,14 +309,8 @@ def build_bwd_dq_module_primary(meta, knobs):
     # ever sees 0 or 3** -- 1 and 2 are host-side conveniences that resolve to
     # a sentinel window before dispatch, and the sentinel is resolved against
     # *this sequence's* lengths inside the kernel.
-    if causal_type is None:
-        HOST_CAUSAL_TYPE = 1 if causal else 0
-    else:
-        HOST_CAUSAL_TYPE = causal_type
-    if HOST_CAUSAL_TYPE not in (0, 1, 2, 3):
-        raise ValueError(f"causal_type must be 0, 1, 2 or 3, got {HOST_CAUSAL_TYPE}")
-    if bool(HOST_CAUSAL_TYPE) != bool(causal):
-        raise ValueError(f"causal={causal} disagrees with causal_type={HOST_CAUSAL_TYPE}")
+    # `FmhaInputMetadata` checks the range, and derives `causal` from it.
+    HOST_CAUSAL_TYPE = causal_type
     CAUSAL_TYPE = 0 if HOST_CAUSAL_TYPE == 0 else 3  # noqa: F841
 
     # Dropout, AOTriton's ENABLE_DROPOUT. A build axis, so a build without it
@@ -1667,11 +1661,11 @@ def build_bwd_dq_module(**kwargs):
     resolved by `resolve_knobs`. This is what keeps "the tuning module is the
     only producer of a schedule" true even for callers who never mention one.
     """
-    meta_fields = {f.name for f in fields(BwdDqInputMetadata)}
+    meta_fields = {f.name for f in fields(FmhaInputMetadata)}
     knob_fields = {f.name for f in fields(BwdDqKnobs)}
     unknown = set(kwargs) - meta_fields - knob_fields
     if unknown:
         raise TypeError(f"unknown build parameter(s): {sorted(unknown)}")
-    meta = with_direct_tile(BwdDqInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
+    meta = with_direct_tile(FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
     overrides = BwdDqKnobs(**{k: v for k, v in kwargs.items() if k in knob_fields})
     return build_bwd_dq_module_primary(meta, resolve_knobs(meta, overrides))
