@@ -352,9 +352,24 @@ class Gfx950Knobs(FmhaKnobs):
             ._checked_modes()
             ._with_widths(meta)
             ._with_wave_geometry(meta)
+            ._with_stagger()
             ._with_occupancy_target(meta)
             ._checked_against_traits(meta)
         )
+
+    def _with_stagger(self):
+        """Stagger the two wave groups of an 8-wave workgroup only.
+
+        The stagger splits the workgroup into two groups of
+        `num_waves // 2` (FlyDSL 0.4.2, 826efd04). Up to 0.3.1 it split at
+        wave 4, so a 4-wave build had one group and never staggered; that is
+        the schedule every 4-wave rung was tuned on. Staggering it costs
+        7-22% at every 4-wave rung (hd128 causal: 704 -> 818 TFLOPS off) and
+        turning it off at the 8-wave rungs costs 2-9%. Output is identical.
+        """
+        if self.stagger is not None:
+            return self
+        return replace(self, stagger=self.num_waves == 8)
 
     def _with_occupancy_target(self, meta):
         """Ask for two waves per EU only where two workgroups can exist.
@@ -783,7 +798,8 @@ _GFX950_FALLBACK = Gfx950Knobs(
     # a sweep that wants the old schedule still has it, infinities included.
     lazy_rescale=False,
     setprio=True,
-    stagger=True,
+    # `None`: `_with_stagger` decides from the wave count.
+    stagger=None,
     lpt_tile_order=False,
     paged=False,
     kv_cache_layout="linear",
