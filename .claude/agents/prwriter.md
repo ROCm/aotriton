@@ -141,9 +141,9 @@ in the Overview. Fold tiny mechanical fixes into a single trailing
 ### Variant: Jumbo / Multi-Subsystem PR
 
 Keep the canonical section headers (`## Major Changes`, `## Minor Changes`,
-`## Known Issues`). Inside `## Major Changes`, group bullets under named
-`###` subsections (`### Tuner v3.5 Core`, `### WebUI`,
-`### Testing Infrastructure`, …) so the table of contents stays navigable.
+`## Known Issues`). **Never add `###` subsections under `## Major Changes`**:
+every change is a top-level `*` item directly under it. Keep related items
+adjacent instead, and let their `[tag]` prefixes show the subsystem.
 If a correctness-critical fix ships alongside the feature, put it under
 `## Critical Bug Fix` BEFORE Major Changes — as narrative prose, not
 bullets.
@@ -177,8 +177,7 @@ bullets.
 - Top level `*`, second level `+`, third level `-` (use 3rd sparingly — best
   for enumerating concrete format examples).
 - Every substantive bullet starts with a `[tag]` prefix, *except* in cleanup
-  PRs where unprefixed bullets are normal, and in scope-scoped subsections
-  with a single-line preamble ("All under `dockerfile/`:").
+  PRs where unprefixed bullets are normal.
 - Multiple tags allowed for one bullet: `[build,codegen]` (comma-joined, no
   spaces).
 - Backtick the tag when the tag is a literal module/tool name:
