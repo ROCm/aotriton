@@ -337,9 +337,10 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
     if seqlen_q * seqlen_k * HDIM_MAX * dtype.itemsize > 2048 * 2048 * 64 * 2:
         gc.collect()
         torch.cuda.empty_cache()
-    if 'gfx11' in torch.cuda.get_device_properties(0).gcnArchName:
+    if any(arch in torch.cuda.get_device_properties(0).gcnArchName
+           for arch in ('gfx110', 'gfx115')):
         if HDIM_MAX > 256:
-            pytest.skip("Skip hdim > 256 on gfx11 arch due to register pressure.")
+            pytest.skip("Skip hdim > 256 on RDNA 3/3.5 due to register pressure.")
     utname = os.environ.get('PYTEST_CURRENT_TEST')
     use_adiff_entry = adiffs.get(utname, None)
     if use_adiff_entry == "OOM":
@@ -734,13 +735,15 @@ def core_test_sm_scale_magnitude(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, cau
     irrelevant to it, and `_do_test_op_fwd` lives in test_forward.py, which
     conftest.py excludes from directory collection.
     '''
-    # Same bound core_test_op_bwd applies, for the same reason: gfx11 has no
-    # kernel above hdim 256. Coverage survives it -- the bf16 hdim 256 cases
+    # Same bound core_test_op_bwd applies: RDNA 3/3.5 has no kernel above
+    # hdim 256. gfx117x is RDNA 4m and supports the full hdim axis. Coverage
+    # survives the bound -- the bf16 hdim 256 cases
     # are 0.1165 and 0.1246 Q-folded against a 0.03 bound, so the defect is
     # still caught on a chip that never reaches 512.
-    if 'gfx11' in torch.cuda.get_device_properties(0).gcnArchName:
+    if any(arch in torch.cuda.get_device_properties(0).gcnArchName
+           for arch in ('gfx110', 'gfx115')):
         if D_HEAD > 256:
-            pytest.skip("Skip hdim > 256 on gfx11 arch due to register pressure.")
+            pytest.skip("Skip hdim > 256 on RDNA 3/3.5 due to register pressure.")
     if sm_scale == 'l1':
         sm_scale = 1.0 / D_HEAD
     elif sm_scale == 'l2':
