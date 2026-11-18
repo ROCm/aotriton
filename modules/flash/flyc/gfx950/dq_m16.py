@@ -69,9 +69,6 @@ from .dualwave_helpers import (  # ParityKernelContext documents the base this r
     _ds_read_tr_v4f16_imm,
     _slab_span_elems,
     exp2_wait_state,
-    fadd,
-    fmul,
-    fsub,
     mfma_operand_wait_state,
 )
 from .mfma16 import MFMA16_M
@@ -417,11 +414,10 @@ class M16DqSoftmax:
         bf16 puts `|S| * 2^-8` into the *exponent*, which `dQ` does not
         normalise away. Measured at 10.9x the error ratio at `sm_scale` 1.0.
         """
-        fm = self.ctx.fm_fast
         scale_v = Vec.from_elements([fx.Float32(qk_scale)], fx.Float32).broadcast_to(self.n)
-        neg = fsub(self.ctx.c_zero_f, lse2, fm)
-        neg_v = Vec.from_elements([fx.Float32(neg)], fx.Float32).broadcast_to(self.n)
-        return tuple(as_mlir_value(fmath.fma(Vec(h), scale_v, neg_v, fastmath=fm)) for h in v_s)
+        neg = self.ctx.c_zero_f - fx.Float32(lse2)
+        neg_v = Vec.from_elements([neg], fx.Float32).broadcast_to(self.n)
+        return tuple(as_mlir_value(fmath.fma(Vec(h), scale_v, neg_v)) for h in v_s)
 
     def kv_col(self, tile_idx, lane, step, i):
         """The KV column of score element `(step, i)`.
@@ -469,7 +465,7 @@ class M16DqSoftmax:
         `M16TileBody` loop), so there is no wide case to keep.
         """
         ctx = self.ctx
-        fm = arith.FastMathFlags.contract | arith.FastMathFlags.reassoc
+        fm_bias = arith.FastMathFlags.contract | arith.FastMathFlags.reassoc
         log2e = fx.Float32(dualwave._LOG2E)
         row_base = q_row * fx.Index(ctx.stride_b_seq_q)
         lists = self.to_lists(v_s)
@@ -484,7 +480,8 @@ class M16DqSoftmax:
                 )
                 # `vec_width=1` returns a **scalar**, not a one-lane vector.
                 b = fx.Float32(ctx.elem_dtype(one).to(fx.Float32))
-                lists[step][i] = fadd(lists[step][i], fmul(b, log2e, fm), fm)
+                with fx.fastmath(fm_bias):
+                    lists[step][i] = fx.Float32(lists[step][i]) + b * log2e
         return self.to_vecs(lists)
 
     def seq_pad_mask(self, v_s, tile_idx, lane):
@@ -627,15 +624,14 @@ class M16DqSoftmax:
             )
             keep = rng.keep_span(ctx.philox_seed, first, self.n, ctx.idropout_p)
             for i in range_constexpr(self.n):
-                kept = fmul(dp_lists[step][i], scale, ctx.fm_fast)
-                dp_lists[step][i] = keep[i].select(fx.Float32(kept), zero)
+                kept = fx.Float32(dp_lists[step][i]) * scale
+                dp_lists[step][i] = keep[i].select(kept, zero)
         return dp_lists
 
     def dscores(self, p_lists, dp, delta):
         """`dS = P * (dP - delta)`, elementwise. `dp` is already a list pair."""
-        fm = self.ctx.fm_fast
         return tuple(
-            [fmul(p_lists[h][r], fsub(dp[h][r], delta, fm), fm) for r in range_constexpr(self.n)]
+            [fx.Float32(p_lists[h][r]) * (fx.Float32(dp[h][r]) - delta) for r in range_constexpr(self.n)]
             for h in (0, 1)
         )
 
@@ -796,7 +792,7 @@ def make_m16_dq_body(
         v_dq = [loop_results[i] for i in range_constexpr(n_chunks)]
         scale = Vec.from_elements([ctx.c_sm_scale], fx.Float32).broadcast_to(acc_elems(traits))
         for c in range_constexpr(n_chunks):
-            v_dq[c] = fmul(Vec(v_dq[c]), scale, ctx.fm_fast)
+            v_dq[c] = Vec(v_dq[c]) * scale
         _s_barrier()
         store.store(v_dq, q_row, lane)
 
