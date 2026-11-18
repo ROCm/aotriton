@@ -1688,7 +1688,8 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         return int(wl), int(wr)
 
     # On the JitFunction, not around the call, so AOT compiles get them too.
-    launch_fmha_bwd_dq_gfx950.compile_hints = dict(fmha.COMPILE_HINTS)
+    # The post-RA scheduler cuts dQ time 1.5-4%; dK/dV is faster without it.
+    launch_fmha_bwd_dq_gfx950.compile_hints = fmha.compile_hints(post_misched=True)
 
     def _args(
         Q,
