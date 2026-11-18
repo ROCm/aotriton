@@ -111,7 +111,7 @@ the last `(batch, head)` slab is past the end of the tensor.
 
 P0 (this ABI, runtime scale/head counts/strides, LSE), P1 (runtime
 `hdim_qk`/`hdim_vo` with `PADDED_HEAD`), P3 (generalized sliding windows --
-`window=True` plus the runtime `window_left`/`window_right` pair) and P4 (the
+`causal_type=3` plus the runtime `window_left`/`window_right` pair) and P4 (the
 five `VarlenBits` modes, including the LSE token pitch, row origin and the
 `_HT`/`_TH` layout bits) and P5 (a `(B, H, Sq, Sk)` bias, on both kernel
 bodies) and P6 (philox dropout, both bodies) are in -- the AOTriton feature
@@ -139,7 +139,8 @@ from .dualwave_helpers import (
     wire_ptr,
     wire_view,
 )
-from .tuning_fwd import FmhaInputMetadata, fmha_knobs, plan
+from fmha_meta import FmhaInputMetadata
+from .tuning_fwd import fmha_knobs, plan
 from .fwd_wide import (
     WideGemmHelper,
     WideKernelContext,
@@ -1129,7 +1130,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         if not traits.WINDOW:
             if window is not None:
                 raise ValueError(
-                    "this build is not compiled for windows; pass window=True in FmhaInputMetadata "
+                    "this build is not compiled for windows; pass causal_type=3 in FmhaInputMetadata "
                     "to get generalized sliding-window attention"
                 )
             # Bottom-right causal, which is what `delta = seqlen_kv - seqlen_q`
@@ -1572,8 +1573,8 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
 def build_flash_attn_func_gfx950_module(arch="gfx950", **kwargs):
     """Keyword front end: name a problem, get the policy's schedule.
 
-    Splits `kwargs` on which object owns each name and hands the rest to the
-    factory. Neither `varlen` nor `cross_seqlen` is nameable any more: the
+    Splits `kwargs` on which object owns each name (`FmhaInputMetadata`'s
+    fields, masking as `causal_type`) and hands the rest to the factory. Neither `varlen` nor `cross_seqlen` is nameable any more: the
     kernel decodes `varlen_bits` at runtime, so passing either raises from the
     `Gfx950Knobs` constructor, which is the check.
     """

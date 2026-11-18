@@ -31,6 +31,7 @@ deciding whether a change needs a benchmark or a correctness argument:
 from dataclasses import dataclass, replace
 
 from fmha_knobs import pinned
+from fmha_meta import FmhaInputMetadata
 from .knobs import FmhaKnobs
 
 # ---------------------------------------------------------------------------
@@ -407,7 +408,7 @@ MAX_HEAD_DIM = _BLOCK_DMODEL_LADDER[-1]
 
 
 # ---------------------------------------------------------------------------
-# The two halves of a build request.
+# The two halves of a build request: `fmha_meta.FmhaInputMetadata` and the knobs.
 #
 # Split on *who decides*, which is the distinction the 26-parameter signature
 # they replace could not express: a caller states a problem, the tuning policy
@@ -419,29 +420,6 @@ MAX_HEAD_DIM = _BLOCK_DMODEL_LADDER[-1]
 # Both frozen: a schedule is used as part of a build-cache key, and a mutable
 # key is a bug waiting for a second caller.
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class FmhaInputMetadata:
-    """What to compute. Set by the caller; never by policy."""
-
-    num_heads: int
-    head_dim: int
-    causal: bool = True
-    dtype_str: str = "bf16"
-    head_dim_v: int | None = None
-    sm_scale: float | None = None
-    causal_type: int | None = None
-    bias: bool = False
-    dropout: bool = False
-
-    # The compiled tile widths and whether the real extents are narrower. They
-    # are inputs, not knobs: a functional's BLOCK_DMODEL and PADDED_HEAD fix
-    # them. `plan` derives them from a real head_dim; a caller whose head_dim is
-    # already a tile uses `with_direct_tile`.
-    block_dmodel: int | None = None
-    block_dmodel_v: int | None = None
-    padded_head: bool | None = None
 
 
 _KNOBS_FALLBACK = FmhaKnobs(
@@ -561,26 +539,13 @@ def plan(request: FmhaInputMetadata, overrides: FmhaKnobs | None = None) -> Fmha
     return FmhaPlan(meta, resolve_knobs(meta, overrides))
 
 
-# Unified entry (flyc/tuning_fwd.py): the arch-neutral metadata, adapted and pinned.
-
-
-def _entry_meta(meta) -> FmhaInputMetadata:
-    return FmhaInputMetadata(num_heads=meta.num_heads,
-                             head_dim=meta.block_dmodel,
-                             causal=meta.causal_type != 0,
-                             causal_type=meta.causal_type,
-                             dtype_str=meta.dtype_str,
-                             bias=meta.bias,
-                             dropout=meta.dropout,
-                             block_dmodel=meta.block_dmodel,
-                             block_dmodel_v=meta.block_dmodel,
-                             padded_head=meta.padded_head)
+# Unified entry (flyc/tuning_fwd.py): the shared metadata, pinned.
 
 
 def entry_resolve(meta, *, overrides=None) -> FmhaKnobs:
     # Strides are runtime arguments: one binary serves every layout, which is
     # also what keeps `num_heads` out of the emitted code.
-    knobs = resolve_knobs(_entry_meta(meta), pinned(FmhaKnobs, overrides, strides_constexpr=False))
+    knobs = resolve_knobs(meta, pinned(FmhaKnobs, overrides, strides_constexpr=False))
     assert not knobs.strides_constexpr, \
         'num_heads is only safe to ignore while STRIDE_TOKEN stays behind strides_constexpr'
     return knobs
@@ -588,4 +553,4 @@ def entry_resolve(meta, *, overrides=None) -> FmhaKnobs:
 
 def entry_build(meta, knobs: FmhaKnobs):
     from .fwd import build_flash_attn_func_aiw_module_primary
-    return build_flash_attn_func_aiw_module_primary(_entry_meta(meta), knobs)
+    return build_flash_attn_func_aiw_module_primary(meta, knobs)

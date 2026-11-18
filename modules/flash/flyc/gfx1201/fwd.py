@@ -95,8 +95,8 @@ from dataclasses import fields
 
 import fmha_utils as fmha
 from . import utils
+from fmha_meta import FmhaInputMetadata
 from .tuning_fwd import (  # noqa: F401
-    FmhaInputMetadata,
     FmhaKnobs,
     default_block_m,
     default_block_n,
@@ -586,14 +586,8 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     # PyTorch's is_causal=True is top-left; see
     # https://github.com/pytorch/pytorch/issues/108108 for the debate about
     # changing that default.
-    if causal_type is None:
-        HOST_CAUSAL_TYPE = 1 if causal else 0
-    else:
-        HOST_CAUSAL_TYPE = causal_type
-    if HOST_CAUSAL_TYPE not in (0, 1, 2, 3):
-        raise ValueError(f"causal_type must be 0, 1, 2 or 3, got {HOST_CAUSAL_TYPE}")
-    if bool(HOST_CAUSAL_TYPE) != bool(causal):
-        raise ValueError(f"causal={causal} disagrees with causal_type={HOST_CAUSAL_TYPE}")
+    # `FmhaInputMetadata` checks the range, and derives `causal` from it.
+    HOST_CAUSAL_TYPE = causal_type
     # **The kernel only ever sees 0 or 3.** 1 and 2 are host-side conveniences
     # that resolve to a window before dispatch, which is what AOTriton ships
     # (`@ati.scalar('CAUSAL_TYPE', options=[0, 3])`). Keeping them in the

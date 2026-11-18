@@ -257,7 +257,8 @@ from .dualwave_helpers import (
 from .dualwave_helpers import _k_read_base as _parity_k_read_base
 from .dualwave_helpers import _ks_offset as _parity_ks_offset
 from .tuning_dq import BwdDqKnobs, bwd_dq_knobs
-from .tuning_fwd import FmhaInputMetadata, plan
+from fmha_meta import FmhaInputMetadata
+from .tuning_fwd import plan
 from .standalone import buffer_ops, dualwave
 from philox import Philox
 
@@ -1702,7 +1703,7 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         if not traits.WINDOW:
             if window is not None:
                 raise ValueError(
-                    "this build is not compiled for windows; pass window=True in the builder to get "
+                    "this build is not compiled for windows; pass causal_type=3 in FmhaInputMetadata to get "
                     "generalized sliding-window attention"
                 )
             # Bottom-right causal, which is what `delta = seqlen_kv - seqlen_q`
@@ -1958,18 +1959,13 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
 def build_fmha_bwd_dq_gfx950_module(arch="gfx950", **kwargs):
     """Keyword front end: name a problem, get the policy's schedule.
 
-    `causal` defaults to **False** here where `FmhaInputMetadata` defaults it
-    to True. B2 implements only the dense case and `build_traits` refuses the
-    other, so inheriting the forward's default would make every unqualified
-    call raise -- and a caller who wants causal should be told it is B4, not
-    told to pass an argument that is then rejected.
+    `FmhaInputMetadata`'s fields name the problem (masking as `causal_type`,
+    which has no default); the rest are knob overrides.
     """
     from dataclasses import fields as _fields
 
     meta_fields = {f.name for f in _fields(FmhaInputMetadata)}
-    meta_kwargs = {"causal": False}
-    meta_kwargs.update({k: v for k, v in kwargs.items() if k in meta_fields})
-    meta = plan(FmhaInputMetadata(**meta_kwargs))
+    meta = plan(FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
     knob_kwargs = {k: v for k, v in kwargs.items() if k not in meta_fields}
     knobs = bwd_dq_knobs(arch, **knob_kwargs)
     if not isinstance(knobs, BwdDqKnobs):  # pragma: no cover -- defensive, the factory is typed

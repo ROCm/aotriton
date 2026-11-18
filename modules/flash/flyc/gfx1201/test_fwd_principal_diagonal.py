@@ -119,7 +119,6 @@ def _build(head_dim):
 
     return build_flash_attn_func_aiw_module(num_heads=NUM_HEADS,
                                             head_dim=head_dim,
-                                            causal=True,
                                             causal_type=3,
                                             dtype_str="bf16")
 

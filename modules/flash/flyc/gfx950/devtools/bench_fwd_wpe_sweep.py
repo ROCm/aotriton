@@ -125,7 +125,8 @@ import torch  # noqa: E402
 from gfx950.fwd import (  # noqa: E402
     build_flash_attn_func_gfx950_module_primary as build_primary,
 )
-from gfx950.tuning_fwd import FmhaInputMetadata, fmha_knobs, plan  # noqa: E402
+from fmha_meta import FmhaInputMetadata  # noqa: E402
+from gfx950.tuning_fwd import fmha_knobs, plan  # noqa: E402
 
 # Every head_dim with a shipped `flyc_attn_fwd` build. 384 is deliberately
 # absent: it is a supported geometry in the tuning policy but not a rung the
@@ -226,7 +227,7 @@ def run(hd, dt, fixed_order, rounds):
         name = "+".join(k for k in ("causal", "dropout") if feat[k]) or "dense"
         tensors = make_inputs(hd, B, H, S, dt)
         meta = FmhaInputMetadata(
-            num_heads=H, head_dim=hd, causal=feat["causal"], dropout=feat["dropout"],
+            num_heads=H, head_dim=hd, causal_type=2 if feat["causal"] else 0, dropout=feat["dropout"],
             dtype_str={torch.bfloat16: "bf16", torch.float16: "fp16"}[dt],
         )
         meta = plan(meta)

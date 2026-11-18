@@ -124,12 +124,13 @@ def _build(head_dim, dtype_str, causal=False, bias=False):
     from .fwd import (
         build_flash_attn_func_gfx950_module_primary as build_primary,
     )
-    from .tuning_fwd import FmhaInputMetadata, fmha_knobs, plan
+    from fmha_meta import FmhaInputMetadata
+    from .tuning_fwd import fmha_knobs, plan
 
     meta = FmhaInputMetadata(
         num_heads=NUM_HEADS,
         head_dim=head_dim,
-        causal=causal,
+        causal_type=2 if causal else 0,
         bias=bias,
         dtype_str=dtype_str,
     )

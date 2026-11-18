@@ -45,7 +45,7 @@ from dataclasses import dataclass, fields, replace
 from fmha_knobs import pinned
 from .knobs import BwdDqKnobFields
 from .traits import ParityDualwaveTraits, make_traits
-from .tuning_fwd import LADDER, FmhaInputMetadata, Gfx950Knobs, tile_width_for
+from .tuning_fwd import LADDER, Gfx950Knobs, tile_width_for
 
 __all__ = [
     "BWD_DQ_LADDER",
@@ -541,13 +541,6 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
                     f"{name}=True is not implemented by the backward dQ kernel yet; B6 adds dropout "
                     "and is the last feature phase. See sdpa-bwd-plan-gfx950.md."
                 )
-        if meta.window and not meta.causal:
-            # `make_traits` says the same thing, and this repeats it only so the
-            # message names the *kernel* rather than the traits constructor: a
-            # window is a left bound on top of the causal right one, and
-            # dropping it silently would return dense attention -- right shape,
-            # finite, wrong.
-            raise ValueError("window=True requires causal=True; it is a left bound on top of the causal one")
         if self.num_kv_splits != 1:
             raise NotImplementedError("split-K is out of scope for every backward kernel; see plan section 9")
         for name, value in (("d_stages", self.d_stages), ("qk_shards", self.qk_shards), ("vo_shards", self.vo_shards)):
@@ -660,22 +653,7 @@ _BWD_DQ_FALLBACK = BwdDqKnobs(
 )
 
 
-# Unified entry (flyc/tuning_dq.py): the arch-neutral metadata, adapted and pinned.
-
-def _entry_meta(meta) -> FmhaInputMetadata:
-    # gfx950 knows only causal and window, and its window requires causal; the
-    # functional's CAUSAL_TYPE is 0 or 3, so both follow it.
-    assert meta.causal_type in (0, 3), f'gfx950 flyc takes CAUSAL_TYPE 0 or 3, got {meta.causal_type}'
-    return FmhaInputMetadata(num_heads=meta.num_heads,
-                         head_dim=meta.block_dmodel,
-                         causal=meta.causal_type != 0,
-                         window=meta.causal_type != 0,
-                         dtype_str=meta.dtype_str,
-                         bias=meta.bias,
-                         dropout=meta.dropout,
-                         block_dmodel=meta.block_dmodel,
-                         padded_head=meta.padded_head)
-
+# Unified entry (flyc/tuning_dq.py): the shared metadata, pinned.
 
 def entry_resolve(meta, *, overrides=None) -> BwdDqKnobs:
     knobs = pinned(BwdDqKnobs,
@@ -685,7 +663,7 @@ def entry_resolve(meta, *, overrides=None) -> BwdDqKnobs:
                    paged=False,
                    num_kv_splits=1,
                    # dB is written exactly when there is a bias.
-                   store_db=meta.bias).resolve(_entry_meta(meta))
+                   store_db=meta.bias).resolve(meta)
     assert knobs.store_db == meta.bias, 'dB is written exactly when there is a bias'
     assert not knobs.paged and knobs.num_kv_splits == 1, \
         'the flyc backward pins paged=False, num_kv_splits=1'
@@ -694,4 +672,4 @@ def entry_resolve(meta, *, overrides=None) -> BwdDqKnobs:
 
 def entry_build(meta, knobs: BwdDqKnobs):
     from .dq import build_fmha_bwd_dq_gfx950_module_primary
-    return build_fmha_bwd_dq_gfx950_module_primary(_entry_meta(meta), knobs)
+    return build_fmha_bwd_dq_gfx950_module_primary(meta, knobs)

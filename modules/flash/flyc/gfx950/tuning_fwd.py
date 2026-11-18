@@ -48,13 +48,13 @@ floor, and it is an instruction limit rather than a staging one.
 from dataclasses import dataclass, fields, replace
 
 from fmha_knobs import pinned
+from fmha_meta import CAUSAL_TOP_LEFT, FmhaInputMetadata
 from .knobs import Gfx950KnobFields
 from .traits import make_traits
 
 __all__ = [
     "LADDER",
     "LADDER_PLANNED",
-    "FmhaInputMetadata",
     "FmhaKnobs",
     "Gfx950Knobs",
     "fmha_knobs",
@@ -207,44 +207,19 @@ def tile_width_for(head_dim):
 
 
 # ---------------------------------------------------------------------------
-# What to compute
+# What to compute: `fmha_meta.FmhaInputMetadata`, shared by every arch
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class FmhaInputMetadata:
-    """What to compute. Set by the caller; never by policy, and never by arch."""
+def check_causal_type(meta):
+    """Refuse top-left causal, which gfx950 builds only as a window.
 
-    num_heads: int
-    head_dim: int
-    causal: bool = True
-    dtype_str: str = "bf16"
-    num_kv_heads: int | None = None
-    head_dim_v: int | None = None
-    sm_scale: float | None = None
-
-    # The compiled tile and whether the real extents are narrower. Inputs, not
-    # knobs: a functional's BLOCK_DMODEL and PADDED_HEAD fix them. `plan`
-    # derives them from the real head dims. `resolve` reads them and never
-    # changes them; a missing one is an error.
-    block_dmodel: int | None = None
-    padded_head: bool | None = None
-
-    # P3. Whether this build reads the runtime `window_left`/`window_right`
-    # pair and applies a left bound as well as the causal right one --
-    # AOTriton's `CAUSAL_TYPE == 3`. The bounds are runtime arguments, so they
-    # are not here; only the decision to compile for them is. Requires
-    # `causal`, since a window is a left bound *on top of* the causal one.
-    window: bool = False
-
-    # P5. Whether this build reads a (B, H, Sq, Sk) bias matrix. Mutually
-    # exclusive with `causal`; see `make_traits`.
-    bias: bool = False
-
-    # P6. Whether this build applies a philox dropout mask to P. The rate and
-    # the seed are runtime arguments; only the decision to compile for them is
-    # here.
-    dropout: bool = False
+    A causal build without a window masks bottom-right (`delta = seqlen_k -
+    seqlen_q`); top-left is `causal_type=3` with `WINDOW_TOPLEFT` bounds.
+    """
+    if meta.causal_type == CAUSAL_TOP_LEFT:
+        raise ValueError("gfx950 has no top-left causal build: use causal_type 3 with "
+                         "window=(WINDOW_TOPLEFT, WINDOW_TOPLEFT), or 2 for bottom-right")
 
 
 def plan(request: FmhaInputMetadata) -> FmhaInputMetadata:
@@ -306,6 +281,7 @@ class FmhaKnobs(Gfx950KnobFields):
         `tile_width_for`'s. The tile and `padded_head` are inputs (see
         `plan`), so this only validates them.
         """
+        check_causal_type(meta)
         block_dmodel = meta.block_dmodel
         if block_dmodel is None or meta.padded_head is None:
             raise ValueError("meta.block_dmodel and meta.padded_head must be set: use plan(meta)")
@@ -848,22 +824,7 @@ def fmha_knobs(arch: str, **overrides) -> FmhaKnobs:
     raise ValueError(f"no FMHA knobs for arch {arch!r}; known: {sorted(_BY_ARCH)}")
 
 
-# Unified entry (flyc/tuning_fwd.py): the arch-neutral metadata, adapted and pinned.
-
-def _entry_meta(meta) -> FmhaInputMetadata:
-    # gfx950 knows only causal and window, and its window requires causal; the
-    # functional's CAUSAL_TYPE is 0 or 3, so both follow it.
-    assert meta.causal_type in (0, 3), f'gfx950 flyc takes CAUSAL_TYPE 0 or 3, got {meta.causal_type}'
-    return FmhaInputMetadata(num_heads=meta.num_heads,
-                         head_dim=meta.block_dmodel,
-                         causal=meta.causal_type != 0,
-                         window=meta.causal_type != 0,
-                         dtype_str=meta.dtype_str,
-                         bias=meta.bias,
-                         dropout=meta.dropout,
-                         block_dmodel=meta.block_dmodel,
-                         padded_head=meta.padded_head)
-
+# Unified entry (flyc/tuning_fwd.py): the shared metadata, pinned.
 
 def entry_resolve(meta, *, overrides=None) -> FmhaKnobs:
     knobs = pinned(Gfx950Knobs,
@@ -878,7 +839,7 @@ def entry_resolve(meta, *, overrides=None) -> FmhaKnobs:
                    num_kv_splits=1,
                    # A null L is a runtime test in the kernel, so every binary
                    # keeps the LSE store; upstream's default compiles it away.
-                   return_lse=True).resolve(_entry_meta(meta))
+                   return_lse=True).resolve(meta)
     assert not knobs.strides_constexpr, \
         'num_heads is only safe to ignore while STRIDE_TOKEN stays behind strides_constexpr'
     assert knobs.return_lse, 'every binary must keep the LSE store'
@@ -889,4 +850,4 @@ def entry_resolve(meta, *, overrides=None) -> FmhaKnobs:
 
 def entry_build(meta, knobs: FmhaKnobs):
     from .fwd import build_flash_attn_func_gfx950_module_primary
-    return build_flash_attn_func_gfx950_module_primary(_entry_meta(meta), knobs)
+    return build_flash_attn_func_gfx950_module_primary(meta, knobs)

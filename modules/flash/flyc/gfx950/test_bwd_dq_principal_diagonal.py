@@ -95,12 +95,12 @@ def _build(mfma_rows):
     """A causal, window-capable dQ build at HEAD_DIM, compiled in-process."""
     from .dq import build_fmha_bwd_dq_gfx950_module_primary
     from .tuning_dq import bwd_dq_knobs
-    from .tuning_fwd import FmhaInputMetadata, plan
+    from fmha_meta import FmhaInputMetadata
+    from .tuning_fwd import plan
 
     meta = FmhaInputMetadata(num_heads=NUM_HEADS,
                              head_dim=HEAD_DIM,
-                             causal=True,
-                             window=True,
+                             causal_type=3,
                              dtype_str="bf16")
     meta = plan(meta)
     knobs = bwd_dq_knobs("gfx950", mfma_rows=mfma_rows).resolve(meta)

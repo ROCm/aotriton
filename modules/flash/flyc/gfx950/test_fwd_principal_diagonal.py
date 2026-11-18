@@ -103,12 +103,12 @@ def _build(head_dim):
     from .fwd import (
         build_flash_attn_func_gfx950_module_primary as build_primary,
     )
-    from .tuning_fwd import FmhaInputMetadata, fmha_knobs, plan
+    from fmha_meta import FmhaInputMetadata
+    from .tuning_fwd import fmha_knobs, plan
 
     meta = FmhaInputMetadata(num_heads=NUM_HEADS,
                              head_dim=head_dim,
-                             causal=True,
-                             window=True,
+                             causal_type=3,
                              dtype_str="bf16")
     meta = plan(meta)
     return build_primary(meta, fmha_knobs("gfx950", return_lse=True).resolve(meta))
