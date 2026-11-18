@@ -226,8 +226,6 @@ def build_bwd_dkdv_module_primary(meta: FmhaInputMetadata, knobs: BwdDkDvKnobs):
     SCHED_STRATEGY = knobs.sched_strategy
     FP_MODE = knobs.fp_mode
     DENORMALS_ARE_ZERO = knobs.denormals_are_zero
-    UNSAFE_FP_MATH = knobs.unsafe_fp_math
-    FAST_FP_MATH = knobs.fast_fp_math
     ADDR_HOIST = knobs.addr_hoist
 
     # ---- WMMA / wave32 constants ----
@@ -1337,11 +1335,8 @@ def build_bwd_dkdv_module_primary(meta: FmhaInputMetadata, knobs: BwdDkDvKnobs):
             stream=stream,
         )
 
-    launch_bwd_dkdv.compile_hints = {
-        "FAST_FP_MATH": FAST_FP_MATH,
-        "UNSAFE_FP_MATH": UNSAFE_FP_MATH,
-        "llvm_options": {"enable-post-misched": False, "lsr-drop-solution": True},
-    }
+    # On the JitFunction, not around the call, so AOT compiles get them too.
+    launch_bwd_dkdv.compile_hints = dict(fmha.COMPILE_HINTS)
 
     def _launch(
         Q,

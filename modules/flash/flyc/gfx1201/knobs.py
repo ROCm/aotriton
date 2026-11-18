@@ -47,26 +47,12 @@ class FmhaKnobs(FlycQKnobs):
     shards: int | None = None
     sched_strategy: str | None = None
 
-    # Three floating-point knobs, which looks like two too many until you see
-    # that they act at three different levels:
-    #
-    #   fp_mode        the explicit `arith.FastMathFlags` set put on the
-    #                  *softmax* operations -- "fast", "noninf" or "safe".
-    #                  This is the one that has been measured; "fast" includes
-    #                  `ninf`, which silently deleted the KV tail mask once.
-    #   fast_fp_math   the *ambient* fastmath for traced operations that do not
-    #                  carry their own flags (`effective_fastmath_hint`).
-    #   unsafe_fp_math a ROCm *backend* option, `unsafe-math`, applied to the
-    #                  whole compilation (`compiler/backends/rocm.py`).
-    #
-    # So they are per-op, per-op-default and whole-compilation respectively.
-    # Only `fp_mode` is ever varied in practice; the other two have been True
-    # for every build ever made here, which means their effect is measured only
-    # in combination and collapsing them would need its own experiment.
+    # The explicit `arith.FastMathFlags` set put on the *softmax* operations
+    # -- "fast", "noninf" or "safe". "fast" includes `ninf`, which silently
+    # deleted the KV tail mask once. The whole-compilation options are build
+    # options, not knobs: `fmha_utils.COMPILE_HINTS`.
     fp_mode: str | None = None
     denormals_are_zero: bool | None = None
-    unsafe_fp_math: bool | None = None
-    fast_fp_math: bool | None = None
     strides_constexpr: bool | None = None
 
     lpt_tile_order: bool | None = None
@@ -100,8 +86,7 @@ class BwdDqKnobs(FlycQKnobs):
     flat_work_group_size: int | None = None
     sched_strategy: str | None = None
 
-    # Three floating-point knobs acting at three levels; see the forward tuning
-    # module's note. Only `fp_mode` is ever varied in practice.
+    # Per-op fastmath flags; see `FmhaKnobs.fp_mode`.
     #
     # "noninf" is load-bearing here for the same reason it is there and one
     # more: this kernel writes -inf into the scores of masked columns *and*
@@ -109,8 +94,6 @@ class BwdDqKnobs(FlycQKnobs):
     # licenses the compiler to assume neither exists.
     fp_mode: str | None = None
     denormals_are_zero: bool | None = None
-    unsafe_fp_math: bool | None = None
-    fast_fp_math: bool | None = None
 
     lpt_tile_order: bool | None = None
 
@@ -141,16 +124,12 @@ class BwdDkDvKnobs(FlycKVKnobs):
     contraction_shards: int | None = None
     transposed_source: str | None = None
 
-    # Function attributes and floating-point latitude. Same three-level split
-    # as the forward's: `fp_mode` is the explicit flag set on the softmax-ish
-    # arithmetic, `fast_fp_math` the ambient default, `unsafe_fp_math` a
-    # whole-compilation backend option.
+    # Function attributes and floating-point latitude. `fp_mode` is the
+    # forward's: the explicit flag set on the softmax-ish arithmetic.
     waves_per_eu: int | None = None
     sched_strategy: str | None = None
     fp_mode: str | None = None
     denormals_are_zero: bool | None = None
-    unsafe_fp_math: bool | None = None
-    fast_fp_math: bool | None = None
 
     # Whether the Q/dO address hoists `row * stride_seq` out of the loop. See
     # `kv_off` in `utils.make_addr_pair`.

@@ -213,8 +213,6 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     PADDED_HEAD = meta.padded_head
     ROW_SUBTILES = knobs.row_subtiles
     SHARDS = knobs.shards
-    UNSAFE_FP_MATH = knobs.unsafe_fp_math
-    FAST_FP_MATH = knobs.fast_fp_math
     DENORMALS_ARE_ZERO = knobs.denormals_are_zero
     SCHED_STRATEGY_KNOB = knobs.sched_strategy
     LPT_TILE_ORDER_KNOB = knobs.lpt_tile_order
@@ -2235,12 +2233,6 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
             stream=stream,
         )
 
-    _fmha_compile_hints = {
-        "FAST_FP_MATH": FAST_FP_MATH,
-        "UNSAFE_FP_MATH": UNSAFE_FP_MATH,
-        "llvm_options": {"enable-post-misched": False, "lsr-drop-solution": True},
-    }
-
     # Causal alignment is expressed as a *sentinel* window, resolved in the
     # kernel against each sequence's own lengths (`parse_window` in the
     # prologue). The host does not resolve it.
@@ -2287,7 +2279,8 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
             raise ValueError(f"bias must have a contiguous last (Sk) dimension, got " f"stride(3)={bias.stride(3)}")
         return (fmha.ptr_arg(bias), bias.stride(0), bias.stride(1), bias.stride(2))
 
-    launch_flash_attn_aiw.compile_hints = dict(_fmha_compile_hints)
+    # On the JitFunction, not around the call, so AOT compiles get them too.
+    launch_flash_attn_aiw.compile_hints = dict(fmha.COMPILE_HINTS)
 
     def _args(
         Q,

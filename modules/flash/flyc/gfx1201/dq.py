@@ -191,8 +191,6 @@ def build_bwd_dq_module_primary(meta, knobs):
     LPT_TILE_ORDER_KNOB = knobs.lpt_tile_order
     FP_MODE = knobs.fp_mode
     DENORMALS_ARE_ZERO = knobs.denormals_are_zero
-    UNSAFE_FP_MATH = knobs.unsafe_fp_math
-    FAST_FP_MATH = knobs.fast_fp_math
 
     # ---- WMMA / wave32 constants ----
     # RDNA4 is wave32 and its WMMA is 16x16x16. The last two are derived, not
@@ -1450,11 +1448,8 @@ def build_bwd_dq_module_primary(meta, knobs):
             stream=stream,
         )
 
-    launch_bwd_dq.compile_hints = {
-        "FAST_FP_MATH": FAST_FP_MATH,
-        "UNSAFE_FP_MATH": UNSAFE_FP_MATH,
-        "llvm_options": {"enable-post-misched": False, "lsr-drop-solution": True},
-    }
+    # On the JitFunction, not around the call, so AOT compiles get them too.
+    launch_bwd_dq.compile_hints = dict(fmha.COMPILE_HINTS)
 
     # Causal alignment is expressed as a *sentinel* window, resolved in the
     # kernel against each sequence's own lengths. The host does not resolve it:

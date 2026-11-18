@@ -316,8 +316,6 @@ _KNOBS_FALLBACK = BwdDqKnobs(
     waves_per_eu=2,
     fp_mode="noninf",
     denormals_are_zero=True,
-    unsafe_fp_math=True,
-    fast_fp_math=True,
     lpt_tile_order=True,
 )
 

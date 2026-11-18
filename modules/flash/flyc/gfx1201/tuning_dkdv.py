@@ -407,8 +407,6 @@ _KNOBS_FALLBACK = BwdDkDvKnobs(
     # KV tail mask.
     fp_mode="noninf",
     denormals_are_zero=True,
-    unsafe_fp_math=True,
-    fast_fp_math=True,
     # The loop body holds four WMMA chains and two LDS staging passes; the
     # default GCN scheduler sinks each LDS load next to its consumer. Same
     # reasoning as the forward's causal builds, untested here.
