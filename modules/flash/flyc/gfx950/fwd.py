@@ -1201,15 +1201,6 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         else:
             grid_z = bs_idx
 
-        passthrough_entries = (
-            [
-                ["denormal-fp-math-f32", "preserve-sign,preserve-sign"],
-                ["no-nans-fp-math", "true"],
-                ["unsafe-fp-math", "true"],
-            ]
-            if const_expr(traits.DAZ)
-            else None
-        )
         # Grid axis order is the production one: head fastest. Not a free
         # choice -- on gfx950 the q_block-fastest arrangement was measured to
         # cost 7% under causal (see `_init_dualwave_thread_mapping`), the
@@ -1262,11 +1253,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
             stride_b_head,
             stride_b_seq_q,
             block_table_stride,
-            value_attrs={
-                "rocdl.waves_per_eu": traits.WAVES_PER_EU,
-                "rocdl.flat_work_group_size": f"{traits.BLOCK_SIZE},{traits.BLOCK_SIZE}",
-                "passthrough": passthrough_entries,
-            },
+            value_attrs=fmha.kernel_attrs(traits.BLOCK_SIZE, traits.WAVES_PER_EU),
         ).launch(
             grid=(num_head_q, num_q_blocks, grid_z),
             block=(traits.BLOCK_SIZE, 1, 1),

@@ -47,6 +47,7 @@ from philox import dropout_threshold
 
 import flydsl.compiler as flyc
 import flydsl.expr as fx
+from flydsl._mlir import ir
 from flydsl.expr import gpu, range_constexpr
 from flydsl.expr.typing import Vector as Vec
 
@@ -102,6 +103,7 @@ __all__ = [
     "u64_scalar",
     "varlen_args",
     "COMPILE_HINTS",
+    "kernel_attrs",
     "run_compiled",
     "new_compiled_cache",
     "dtype_to_elem_type",
@@ -1458,6 +1460,33 @@ COMPILE_HINTS = {
         "lsr-drop-solution": True,
     },
 }
+
+# f32 denormals flushed (DAZ); f16/f64 stay IEEE.
+_F32_DAZ = (
+    "#llvm.denormal_fpenv<default_output_mode = ieee, default_input_mode = ieee,"
+    " float_output_mode = preservesign, float_input_mode = preservesign>"
+)
+
+
+def kernel_attrs(block_size, waves_per_eu=None, sched_strategy=""):
+    """`value_attrs` for an attention kernel's `gpu.func`; call while tracing.
+
+    Every kernel flushes f32 denormals. The LLVM function attributes take the
+    `llvm.` prefix: the gpu.func lowering keeps `llvm.passthrough` and
+    `llvm.denormal_fpenv`, and silently drops `passthrough` and any other bare
+    `llvm.func` attribute name. `denormal_fpenv` because LLVM no longer reads
+    the `denormal-fp-math-f32` string attribute of an in-memory module.
+    """
+    attrs = {
+        "rocdl.flat_work_group_size": f"{block_size},{block_size}",
+        "llvm.denormal_fpenv": ir.Attribute.parse(_F32_DAZ),
+    }
+    if waves_per_eu:
+        attrs["rocdl.waves_per_eu"] = int(waves_per_eu)
+    if sched_strategy:
+        attrs["llvm.passthrough"] = [["amdgpu-sched-strategy", sched_strategy]]
+    return attrs
+
 
 def run_compiled(cache, exe, *args):
     """First call compiles and runs; later calls fast-dispatch the compiled fn.

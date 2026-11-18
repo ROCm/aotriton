@@ -1589,15 +1589,6 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         bs_idx = fx.Index(num_seqlens if num_seqlens != fx.Int32(0) else batch_size)
         num_q_blocks = (fx.Index(max_seqlen_q) + traits.BLOCK_M - 1) // traits.BLOCK_M
 
-        passthrough_entries = (
-            [
-                ["denormal-fp-math-f32", "preserve-sign,preserve-sign"],
-                ["no-nans-fp-math", "true"],
-                ["unsafe-fp-math", "true"],
-            ]
-            if const_expr(traits.DAZ)
-            else None
-        )
         # Head-fastest, the forward's order. Not a free choice there -- it is
         # an L2-locality lever on MI355X's 8 XCDs -- and this kernel streams
         # the same K/V per (batch, head), so it inherits the reasoning.
@@ -1652,11 +1643,7 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
             stride_db_batch,
             stride_db_head,
             stride_db_seq_q,
-            value_attrs={
-                "rocdl.waves_per_eu": traits.WAVES_PER_EU,
-                "rocdl.flat_work_group_size": f"{traits.BLOCK_SIZE},{traits.BLOCK_SIZE}",
-                "passthrough": passthrough_entries,
-            },
+            value_attrs=fmha.kernel_attrs(traits.BLOCK_SIZE, traits.WAVES_PER_EU),
         ).launch(
             grid=(num_head_q, num_q_blocks, bs_idx),
             block=(traits.BLOCK_SIZE, 1, 1),

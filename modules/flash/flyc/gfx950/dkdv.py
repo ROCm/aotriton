@@ -2224,15 +2224,6 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         # num_seqlens=N`; using the batch extent there launches one program for
         # N sequences.
         bs_idx = fx.Index(num_seqlens if num_seqlens != fx.Int32(0) else batch_size)
-        passthrough_entries = (
-            [
-                ["denormal-fp-math-f32", "preserve-sign,preserve-sign"],
-                ["no-nans-fp-math", "true"],
-                ["unsafe-fp-math", "true"],
-            ]
-            if const_expr(traits.DAZ)
-            else None
-        )
         fmha_bwd_dkdv_gfx950_kernel(
             Q,
             K,
@@ -2284,11 +2275,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
             stride_b_batch,
             stride_b_head,
             stride_b_seq_q,
-            value_attrs={
-                "rocdl.waves_per_eu": traits.WAVES_PER_EU,
-                "rocdl.flat_work_group_size": f"{traits.BLOCK_SIZE},{traits.BLOCK_SIZE}",
-                "passthrough": passthrough_entries,
-            },
+            value_attrs=fmha.kernel_attrs(traits.BLOCK_SIZE, traits.WAVES_PER_EU),
         ).launch(
             # **Head on the fast axis, and measured rather than inherited.**
             # Every workgroup here streams the whole of Q and dO, so putting
