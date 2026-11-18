@@ -408,7 +408,9 @@ _KNOBS_FALLBACK = BwdDkDvKnobs(
     fp_mode="noninf",
     # The loop body holds four WMMA chains and two LDS staging passes; the
     # default GCN scheduler sinks each LDS load next to its consumer. Same
-    # reasoning as the forward's causal builds, untested here.
+    # reasoning as the forward's causal builds. Against the default scheduler
+    # (B=1 H=8 N=4096 f16, JIT): +13% / +17% at head_dim 128 non-causal /
+    # causal, +2% / +5% at 512, within noise at 64 and 256.
     sched_strategy="max-memory-clause",
     addr_hoist=False,
 )
