@@ -76,7 +76,7 @@ def flyc_bwd_disabled(f, *, head_dims):
 
 def flyc_input_metadata(choices):
     """The arch-neutral problem a flyc functional describes, for every kernel."""
-    from fmha_fwd_tuning import FmhaInputMetadata
+    from tuning_fwd import FmhaInputMetadata
     # `num_heads` reaches a kernel only through STRIDE_TOKEN, which the arch
     # adapters keep behind strides_constexpr=False; 1 keeps it off the axes.
     return FmhaInputMetadata(num_heads=1,

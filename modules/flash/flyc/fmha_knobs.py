@@ -3,6 +3,11 @@
 
 """Knob base classes shared by every flyc attention kernel.
 
+Keeps the `fmha_` prefix: `<arch>/knobs.py` imports this by bare name, and as
+`knobs.py` that import would resolve to itself whenever its own directory is on
+`sys.path`. Only root modules no arch module imports (the `tuning_*.py`
+dispatchers) share a name with an arch module.
+
 flydsl-free on purpose: the code generator imports the knobs classes (through
 the tuning modules) to record them, and it runs with no flydsl installed.
 

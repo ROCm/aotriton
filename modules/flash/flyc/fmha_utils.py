@@ -3,6 +3,11 @@
 
 """Helpers shared by every arch's flyc attention kernels.
 
+Keeps the `fmha_` prefix: arch modules import this by bare name, and as
+`utils.py` it would be shadowed by `gfx1201/utils.py` whenever that directory
+is on `sys.path`. Only root modules no arch module imports (the `tuning_*.py`
+dispatchers) share a name with an arch module.
+
 Two halves. The device half emits IR: column masking (`MaskedAxis`),
 varlen and LSE addressing, sliding-window resolution, and the Philox
 seed/offset plumbing. Like `gfx1201/utils.py`, nothing in it is

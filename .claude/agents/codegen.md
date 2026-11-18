@@ -103,7 +103,7 @@ A flyc description (`modules/flash/aot/flyc_*.py`, `@ati.flyc.kernel`) returns
 `flyc_kernel_name` locate the kernel for `ir/flyc/kdesc.py`, and the rest becomes
 the psel the C++ `grid_calculator()` reads (`block_m`, `block_kv`,
 `GRID_AXIS_ORDER`). Knobs come from the unified entries in
-`modules/flash/flyc/fmha_*_tuning.py`, which must stay flydsl-free; see
+`modules/flash/flyc/tuning_*.py`, which must stay flydsl-free; see
 `docs/FlyDSL.md`.
 
 ### What this agent can help with

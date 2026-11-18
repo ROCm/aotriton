@@ -561,7 +561,7 @@ def plan(request: FmhaInputMetadata, overrides: FmhaKnobs | None = None) -> Fmha
     return FmhaPlan(meta, resolve_knobs(meta, overrides))
 
 
-# Unified entry (fmha_fwd_tuning): the arch-neutral metadata, adapted and pinned.
+# Unified entry (flyc/tuning_fwd.py): the arch-neutral metadata, adapted and pinned.
 
 
 def _entry_meta(meta) -> FmhaInputMetadata:

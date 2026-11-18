@@ -898,7 +898,7 @@ def bwd_dkdv_knobs(arch="gfx950", **overrides):
     return BwdDkDvKnobs(**overrides)
 
 
-# Unified entry (fmha_dkdv_tuning): the arch-neutral metadata, adapted and pinned.
+# Unified entry (flyc/tuning_dkdv.py): the arch-neutral metadata, adapted and pinned.
 
 def _entry_meta(meta) -> BwdDkDvInputMetadata:
     # gfx950 knows only causal and window, and its window requires causal; the

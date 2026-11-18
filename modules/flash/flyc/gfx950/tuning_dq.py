@@ -660,7 +660,7 @@ _BWD_DQ_FALLBACK = BwdDqKnobs(
 )
 
 
-# Unified entry (fmha_dq_tuning): the arch-neutral metadata, adapted and pinned.
+# Unified entry (flyc/tuning_dq.py): the arch-neutral metadata, adapted and pinned.
 
 def _entry_meta(meta) -> FmhaInputMetadata:
     # gfx950 knows only causal and window, and its window requires causal; the

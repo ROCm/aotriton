@@ -456,7 +456,7 @@ def plan(request: BwdDqInputMetadata, overrides: BwdDqKnobs | None = None) -> Bw
     return BwdDqPlan(meta, resolve_knobs(meta, overrides))
 
 
-# Unified entry (fmha_dq_tuning): the arch-neutral metadata, adapted.
+# Unified entry (flyc/tuning_dq.py): the arch-neutral metadata, adapted.
 
 
 def _entry_meta(meta) -> BwdDqInputMetadata:

@@ -51,7 +51,7 @@ FlyDSL ("flyc") attention kernels live in `modules/flash/flyc/` (see `docs/FlyDS
 
 ```
 modules/flash/flyc/
-├── fmha_fwd_tuning.py, fmha_dq_tuning.py, fmha_dkdv_tuning.py
+├── tuning_fwd.py, tuning_dq.py, tuning_dkdv.py
 │                                 # unified entries: resolve_knobs(arch, meta,
 │                                 #   *, overrides=None), builder(arch, meta, knobs)
 ├── fmha_knobs.py                 # FlycKnobs / FlycQKnobs / FlycKVKnobs bases

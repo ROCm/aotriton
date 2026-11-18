@@ -454,14 +454,14 @@ def flyc_attn_fwd(arch, choices, hints):
     `asdict(knobs)` for the psel here, and nothing downstream would notice the
     two falling out of step — the psel is what the C++ side reads for the grid.
     """
-    from fmha_fwd_tuning import resolve_knobs
+    from tuning_fwd import resolve_knobs
 
     meta = flyc_input_metadata(choices)
     knobs = resolve_knobs(arch, meta)
 
     def build():
         """Deferred: imports flydsl, so only `aotriton.flyc_compile` calls it."""
-        from fmha_fwd_tuning import builder
+        from tuning_fwd import builder
         return builder(arch, meta, knobs)
 
     return build, asdict(knobs)

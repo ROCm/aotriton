@@ -848,7 +848,7 @@ def fmha_knobs(arch: str, **overrides) -> FmhaKnobs:
     raise ValueError(f"no FMHA knobs for arch {arch!r}; known: {sorted(_BY_ARCH)}")
 
 
-# Unified entry (fmha_fwd_tuning): the arch-neutral metadata, adapted and pinned.
+# Unified entry (flyc/tuning_fwd.py): the arch-neutral metadata, adapted and pinned.
 
 def _entry_meta(meta) -> FmhaInputMetadata:
     # gfx950 knows only causal and window, and its window requires causal; the

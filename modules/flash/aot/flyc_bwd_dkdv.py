@@ -187,14 +187,14 @@ def flyc_bwd_dkdv(arch, choices, hints):
     and for the invariant this owes (`meta` a pure function of `choices` alone)
     -- true here on both arches for the same reason it is there.
     """
-    from fmha_dkdv_tuning import resolve_knobs
+    from tuning_dkdv import resolve_knobs
 
     meta = flyc_input_metadata(choices)
     knobs = resolve_knobs(arch, meta)
 
     def build():
         """Deferred: imports flydsl, so only `aotriton.flyc_compile` calls it."""
-        from fmha_dkdv_tuning import builder
+        from tuning_dkdv import builder
         return builder(arch, meta, knobs)
 
     return build, asdict(knobs)

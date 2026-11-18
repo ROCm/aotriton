@@ -175,8 +175,8 @@ architecture at all — the build host is typically neither of the targets.
 
 The attention family's descriptions (`flyc_attn_fwd.py`, `flyc_bwd_dq.py`,
 `flyc_bwd_dkdv.py`) know no architecture. Each calls a unified entry in
-`modules/flash/flyc/` (`fmha_fwd_tuning.py`, `fmha_dq_tuning.py`,
-`fmha_dkdv_tuning.py`), which looks the arch up in its `_ARCH_MODULES` table and
+`modules/flash/flyc/` (`tuning_fwd.py`, `tuning_dq.py`,
+`tuning_dkdv.py`), which looks the arch up in its `_ARCH_MODULES` table and
 hands the arch-neutral `FmhaInputMetadata` to that arch's tuning module. A new
 architecture therefore needs:
 

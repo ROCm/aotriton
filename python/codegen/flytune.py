@@ -71,7 +71,7 @@ class FlycTuneCodeGenerator(BaseTuneCodeGenerator):
             f'flyc kernel {kdesc.NAME!r} has no builder_fn '
             f'(linker.py:_build_flycs must thread builder_fn=decl.fn)')
         # The description imports the unified entries by bare name (e.g.
-        # `fmha_fwd_tuning`, which imports `gfx1201.tuning_fwd`), resolved relative to
+        # `tuning_fwd`, which imports `gfx1201.tuning_fwd`), resolved relative to
         # kdesc.source_path -- the vendored flyc DIRECTORY itself. A path, not
         # flydsl -- fine for the generator.
         kernel_dir = str(kdesc.source_path)

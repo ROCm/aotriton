@@ -535,7 +535,7 @@ def plan(request: BwdDkDvMetadata, overrides: BwdDkDvKnobs | None = None) -> Bwd
     return BwdDkDvPlan(meta, resolve_knobs(meta, overrides))
 
 
-# Unified entry (fmha_dkdv_tuning): the arch-neutral metadata, adapted.
+# Unified entry (flyc/tuning_dkdv.py): the arch-neutral metadata, adapted.
 
 
 def _entry_meta(meta) -> BwdDkDvMetadata:

@@ -2,10 +2,10 @@
 
 """Unified entry for every arch's flyc attention dK/dV kernel.
 
-Same contract as `fmha_fwd_tuning`, whose `FmhaInputMetadata` it takes.
+Same contract as `tuning_fwd`, whose `FmhaInputMetadata` it takes.
 """
 
-from fmha_fwd_tuning import FmhaInputMetadata, arch_module  # noqa: F401
+from tuning_fwd import FmhaInputMetadata, arch_module  # noqa: F401
 
 _ARCH_MODULES = {
     'gfx950': 'gfx950.tuning_dkdv',
