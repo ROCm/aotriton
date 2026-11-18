@@ -1261,7 +1261,9 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         )
 
     # On the JitFunction, not around the call, so AOT compiles get them too.
-    launch_flash_attn_func_gfx950.compile_hints = dict(fmha.COMPILE_HINTS)
+    # The post-RA scheduler buys 2-8% (hd64 +7.6%, hd128 +4%, hd512 +3-6%,
+    # hd256 0); 0.3.1's AOT builds never had it off.
+    launch_flash_attn_func_gfx950.compile_hints = fmha.compile_hints(post_misched=True)
 
     def _args(
         Q,

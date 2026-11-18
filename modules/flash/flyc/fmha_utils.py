@@ -103,6 +103,7 @@ __all__ = [
     "u64_scalar",
     "varlen_args",
     "COMPILE_HINTS",
+    "compile_hints",
     "kernel_attrs",
     "run_compiled",
     "new_compiled_cache",
@@ -1451,7 +1452,9 @@ def varlen_args(strides_constexpr, varlen, seqlen_q, seqlen_k, q, batch_size, nu
 #   unsafe_fp_math  the ROCDL target's `unsafe-math`. That and `fast` only set
 #                   ocml's `__oclc_*` controls, so both are inert while no
 #                   kernel calls ocml; kept so that one that does agrees.
-#   llvm_options    LLVM cl::opts for the whole compile.
+#   llvm_options    LLVM cl::opts for the whole compile. `compile_hints`
+#                   drops `enable-post-misched` for a kernel that is faster
+#                   with LLVM's post-RA scheduler.
 COMPILE_HINTS = {
     "fast_fp_math": True,
     "unsafe_fp_math": True,
@@ -1460,6 +1463,15 @@ COMPILE_HINTS = {
         "lsr-drop-solution": True,
     },
 }
+
+
+def compile_hints(post_misched=False):
+    """A copy of `COMPILE_HINTS`; `post_misched` leaves the post-RA scheduler on."""
+    hints = dict(COMPILE_HINTS, llvm_options=dict(COMPILE_HINTS["llvm_options"]))
+    if post_misched:
+        del hints["llvm_options"]["enable-post-misched"]
+    return hints
+
 
 # f32 denormals flushed (DAZ); f16/f64 stay IEEE.
 _F32_DAZ = (
