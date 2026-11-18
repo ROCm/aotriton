@@ -109,8 +109,8 @@ from . import utils
 from fmha_meta import FmhaInputMetadata
 from .tuning_dq import (  # noqa: F401
     BwdDqKnobs,
+    entry_plan,
     resolve_knobs,
-    with_direct_tile,
 )
 from kernels.common import buffer_ops
 from kernels.common import kernels_common as common_kernels
@@ -1657,15 +1657,11 @@ def build_bwd_dq_module_primary(meta, knobs):
 def build_bwd_dq_module(**kwargs):
     """Keyword front end: name a problem, get the policy's schedule.
 
-    Any `BwdDqKnobs` field may be passed as a keyword to pin it; the rest are
-    resolved by `resolve_knobs`. This is what keeps "the tuning module is the
-    only producer of a schedule" true even for callers who never mention one.
+    `FmhaInputMetadata`'s fields name the problem; any other keyword pins a
+    knob. The real head dims are rounded up the ladder, as the dispatchers'
+    `plan` does.
     """
     meta_fields = {f.name for f in fields(FmhaInputMetadata)}
-    knob_fields = {f.name for f in fields(BwdDqKnobs)}
-    unknown = set(kwargs) - meta_fields - knob_fields
-    if unknown:
-        raise TypeError(f"unknown build parameter(s): {sorted(unknown)}")
-    meta = with_direct_tile(FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
-    overrides = BwdDqKnobs(**{k: v for k, v in kwargs.items() if k in knob_fields})
-    return build_bwd_dq_module_primary(meta, resolve_knobs(meta, overrides))
+    meta = FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields})
+    meta, knobs = entry_plan(meta, overrides={k: v for k, v in kwargs.items() if k not in meta_fields})
+    return build_bwd_dq_module_primary(meta, knobs)

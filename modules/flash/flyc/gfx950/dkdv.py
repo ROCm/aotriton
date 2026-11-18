@@ -148,7 +148,7 @@ from .dualwave_helpers import (
     wire_view,
 )
 from fmha_meta import FmhaInputMetadata
-from .tuning_dkdv import bwd_dkdv_knobs, plan
+from .tuning_dkdv import entry_plan
 from .standalone import buffer_ops, dualwave
 from philox import Philox, keep_mask
 
@@ -1704,7 +1704,7 @@ class BwdDkDvTileBody(dualwave.DualwaveKernelContext):
 def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
     """Build the dK/dV kernel for a resolved (meta, knobs) pair."""
     if meta.block_dmodel is None or knobs.hdim_qk_floor is None:
-        raise ValueError("meta must come from `plan(meta)` and knobs from `bwd_dkdv_knobs(arch, ...).resolve(meta)`")
+        raise ValueError("meta and knobs must come from `tuning_dkdv.plan` or `resolve_knobs`")
     traits = knobs.build_traits(meta)
     BLOCK_DMODEL = meta.block_dmodel
     PADDED_HEAD = meta.padded_head
@@ -2684,11 +2684,16 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
     return _launch
 
 
-def build_fmha_bwd_dkdv_gfx950_module(arch="gfx950", **kwargs):
-    """Keyword front end: name a problem, get the policy's schedule."""
-    from dataclasses import fields as _fields
+def build_fmha_bwd_dkdv_gfx950_module(**kwargs):
+    """Keyword front end: name a problem, get the policy's schedule.
 
-    meta_fields = {f.name for f in _fields(FmhaInputMetadata)}
-    meta = plan(FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
-    knob_kwargs = {k: v for k, v in kwargs.items() if k not in meta_fields}
-    return build_fmha_bwd_dkdv_gfx950_module_primary(meta, bwd_dkdv_knobs(arch, **knob_kwargs).resolve(meta))
+    `FmhaInputMetadata`'s fields name the problem; any other keyword pins a
+    knob. The real head dims are rounded up the ladder, as the dispatchers'
+    `plan` does.
+    """
+    from dataclasses import fields
+
+    meta_fields = {f.name for f in fields(FmhaInputMetadata)}
+    meta = FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields})
+    meta, knobs = entry_plan(meta, overrides={k: v for k, v in kwargs.items() if k not in meta_fields})
+    return build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs)

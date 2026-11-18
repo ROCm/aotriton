@@ -89,8 +89,11 @@ class FlycKVKnobs(FlycKnobs):
     block_kv: int | None = None
 
 
+def knobs_of(cls, overrides):
+    """`overrides` (a dict, a `cls` or None) as a `cls`, or None."""
+    return cls(**overrides) if isinstance(overrides, dict) else overrides
+
+
 def pinned(cls, overrides, **pins):
     """A `cls` from `overrides` (a dict, a `cls` or None) with `pins` on top."""
-    if isinstance(overrides, dict):
-        overrides = cls(**overrides)
-    return (overrides or cls()).merge(cls(**pins))
+    return (knobs_of(cls, overrides) or cls()).merge(cls(**pins))

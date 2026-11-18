@@ -256,9 +256,8 @@ from .dualwave_helpers import (
 # beats transcribing.
 from .dualwave_helpers import _k_read_base as _parity_k_read_base
 from .dualwave_helpers import _ks_offset as _parity_ks_offset
-from .tuning_dq import BwdDqKnobs, bwd_dq_knobs
+from .tuning_dq import entry_plan
 from fmha_meta import FmhaInputMetadata
-from .tuning_fwd import plan
 from .standalone import buffer_ops, dualwave
 from philox import Philox
 
@@ -1170,7 +1169,7 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
     nothing here falls back to a policy.
     """
     if meta.block_dmodel is None or knobs.hdim_qk_floor is None:
-        raise ValueError("meta must come from `plan(meta)` and knobs from `bwd_dq_knobs(arch, ...).resolve(meta)`")
+        raise ValueError("meta and knobs must come from `tuning_dq.plan` or `resolve_knobs`")
     traits = knobs.build_traits(meta)
 
     BLOCK_DMODEL = meta.block_dmodel
@@ -1956,18 +1955,16 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
     return _launch
 
 
-def build_fmha_bwd_dq_gfx950_module(arch="gfx950", **kwargs):
+def build_fmha_bwd_dq_gfx950_module(**kwargs):
     """Keyword front end: name a problem, get the policy's schedule.
 
-    `FmhaInputMetadata`'s fields name the problem (masking as `causal_type`,
-    which has no default); the rest are knob overrides.
+    `FmhaInputMetadata`'s fields name the problem; any other keyword pins a
+    knob. The real head dims are rounded up the ladder, as the dispatchers'
+    `plan` does.
     """
-    from dataclasses import fields as _fields
+    from dataclasses import fields
 
-    meta_fields = {f.name for f in _fields(FmhaInputMetadata)}
-    meta = plan(FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
-    knob_kwargs = {k: v for k, v in kwargs.items() if k not in meta_fields}
-    knobs = bwd_dq_knobs(arch, **knob_kwargs)
-    if not isinstance(knobs, BwdDqKnobs):  # pragma: no cover -- defensive, the factory is typed
-        raise TypeError(f"expected BwdDqKnobs, got {type(knobs).__name__}")
-    return build_fmha_bwd_dq_gfx950_module_primary(meta, knobs.resolve(meta))
+    meta_fields = {f.name for f in fields(FmhaInputMetadata)}
+    meta = FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields})
+    meta, knobs = entry_plan(meta, overrides={k: v for k, v in kwargs.items() if k not in meta_fields})
+    return build_fmha_bwd_dq_gfx950_module_primary(meta, knobs)

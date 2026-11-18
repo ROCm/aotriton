@@ -30,7 +30,7 @@ deciding whether a change needs a benchmark or a correctness argument:
 
 from dataclasses import dataclass, replace
 
-from fmha_knobs import pinned
+from fmha_knobs import knobs_of, pinned
 from fmha_meta import FmhaInputMetadata
 from .knobs import FmhaKnobs
 
@@ -452,7 +452,7 @@ def resolve_knobs(meta: FmhaInputMetadata, overrides: "FmhaKnobs | None" = None)
     """
     s = _KNOBS_FALLBACK.merge(overrides)
     if meta.block_dmodel is None:
-        raise ValueError("meta.block_dmodel is unset; see plan() and with_direct_tile()")
+        raise ValueError("meta.block_dmodel is unset; see plan()")
     # Everything below is keyed on the width baked into the binary, not on the
     # caller's real extent. They coincide for a direct builder call and differ
     # whenever `plan` has rounded one up.
@@ -499,21 +499,6 @@ class FmhaPlan:
     knobs: FmhaKnobs
 
 
-def with_direct_tile(meta: FmhaInputMetadata) -> FmhaInputMetadata:
-    """`meta` for a caller whose `head_dim` is already a compiled tile width.
-
-    No rounding and no padding. `block_dmodel_v` defaults to `head_dim_v`, and
-    to the full width if that is unset: a build that does not slice the V/output
-    side computes all of it.
-    """
-    block_dmodel = meta.head_dim if meta.block_dmodel is None else meta.block_dmodel
-    block_dmodel_v = meta.block_dmodel_v
-    if block_dmodel_v is None:
-        block_dmodel_v = block_dmodel if meta.head_dim_v is None else meta.head_dim_v
-    padded_head = False if meta.padded_head is None else meta.padded_head
-    return replace(meta, block_dmodel=block_dmodel, block_dmodel_v=block_dmodel_v, padded_head=padded_head)
-
-
 def plan(request: FmhaInputMetadata, overrides: FmhaKnobs | None = None) -> FmhaPlan:
     """The one entry point into tuning: the caller's inputs in, a full plan out.
 
@@ -549,6 +534,11 @@ def entry_resolve(meta, *, overrides=None) -> FmhaKnobs:
     assert not knobs.strides_constexpr, \
         'num_heads is only safe to ignore while STRIDE_TOKEN stays behind strides_constexpr'
     return knobs
+
+
+def entry_plan(meta, *, overrides=None):
+    p = plan(meta, knobs_of(FmhaKnobs, overrides))
+    return p.meta, p.knobs
 
 
 def entry_build(meta, knobs: FmhaKnobs):

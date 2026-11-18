@@ -42,10 +42,10 @@ had to stop stating in prose.
 
 from dataclasses import dataclass, fields, replace
 
-from fmha_knobs import pinned
+from fmha_knobs import knobs_of, pinned
 from .knobs import BwdDqKnobFields
 from .traits import ParityDualwaveTraits, make_traits
-from .tuning_fwd import LADDER, Gfx950Knobs, tile_width_for
+from .tuning_fwd import LADDER, Gfx950Knobs, plan, tile_width_for
 
 __all__ = [
     "BWD_DQ_LADDER",
@@ -668,6 +668,12 @@ def entry_resolve(meta, *, overrides=None) -> BwdDqKnobs:
     assert not knobs.paged and knobs.num_kv_splits == 1, \
         'the flyc backward pins paged=False, num_kv_splits=1'
     return knobs
+
+
+def entry_plan(meta, *, overrides=None):
+    # dB is written exactly when there is a bias, as in AOT's binaries.
+    meta = plan(meta)
+    return meta, BwdDqKnobs(store_db=meta.bias).merge(knobs_of(BwdDqKnobs, overrides)).resolve(meta)
 
 
 def entry_build(meta, knobs: BwdDqKnobs):

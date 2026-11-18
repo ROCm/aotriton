@@ -30,7 +30,7 @@ much larger than that where they matter at all.
 
 from dataclasses import dataclass, replace
 
-from fmha_knobs import pinned
+from fmha_knobs import knobs_of, pinned
 from fmha_meta import FmhaInputMetadata
 from .knobs import BwdDqKnobs
 
@@ -336,7 +336,7 @@ def resolve_knobs(meta: FmhaInputMetadata, overrides: "BwdDqKnobs | None" = None
     """
     s = _KNOBS_FALLBACK.merge(overrides)
     if meta.block_dmodel is None:
-        raise ValueError("meta.block_dmodel is unset; see plan() and with_direct_tile()")
+        raise ValueError("meta.block_dmodel is unset; see plan()")
     hd = meta.block_dmodel
 
     if s.shards is None:
@@ -377,22 +377,6 @@ class BwdDqPlan:
     knobs: BwdDqKnobs
 
 
-def with_direct_tile(meta: FmhaInputMetadata) -> FmhaInputMetadata:
-    """`meta` for a caller whose head dims are already compiled tile widths.
-
-    The tile is the wider of the two axes: one tile serves both, and the
-    narrower one rides as a masked runtime extent. `padded_head` is derived
-    here rather than defaulted to False, which would leave `vo_cols` unmasked
-    whenever the V/O extent is the narrower one.
-    """
-    head_dim_v = _head_dim_v(meta)
-    block_dmodel = max(meta.head_dim, head_dim_v) if meta.block_dmodel is None else meta.block_dmodel
-    padded_head = meta.padded_head
-    if padded_head is None:
-        padded_head = (block_dmodel != meta.head_dim) or (block_dmodel != head_dim_v)
-    return replace(meta, block_dmodel=block_dmodel, padded_head=padded_head)
-
-
 def plan(request: FmhaInputMetadata, overrides: BwdDqKnobs | None = None) -> BwdDqPlan:
     """The one entry point into tuning: the caller's inputs in, a full plan out.
 
@@ -425,6 +409,11 @@ def plan(request: FmhaInputMetadata, overrides: BwdDqKnobs | None = None) -> Bwd
 
 def entry_resolve(meta, *, overrides=None) -> BwdDqKnobs:
     return resolve_knobs(meta, pinned(BwdDqKnobs, overrides))
+
+
+def entry_plan(meta, *, overrides=None):
+    p = plan(meta, knobs_of(BwdDqKnobs, overrides))
+    return p.meta, p.knobs
 
 
 def entry_build(meta, knobs: BwdDqKnobs):

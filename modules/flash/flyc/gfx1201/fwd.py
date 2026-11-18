@@ -103,10 +103,10 @@ from .tuning_fwd import (  # noqa: F401
     default_prefetch_dist,
     q_tiles_per_block,
     qk_shards,
+    entry_plan,
     resolve_knobs,
     resolve_shards,
     vo_chunks,
-    with_direct_tile,
 )
 from kernels.common import buffer_ops
 # Import rewrite: the only symbol this file takes from `kernels.common.utils`
@@ -2401,19 +2401,11 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
 def build_flash_attn_func_aiw_module(**kwargs):
     """Keyword front end: name a problem, get the policy's schedule.
 
-    Any `FmhaKnobs` field may be passed as a keyword to pin it; the rest are
-    resolved by `resolve_knobs`. This is what keeps "the tuning module is the
-    only producer of a schedule" true even for callers who never mention one.
+    `FmhaInputMetadata`'s fields name the problem; any other keyword pins a
+    knob. The real head dims are rounded up the ladder, as the dispatchers'
+    `plan` does.
     """
     meta_fields = {f.name for f in fields(FmhaInputMetadata)}
-    knob_fields = {f.name for f in fields(FmhaKnobs)}
-    unknown = set(kwargs) - meta_fields - knob_fields
-    if unknown:
-        raise TypeError(f"unknown build parameter(s): {sorted(unknown)}")
-    # `with_direct_tile`, not `plan`: this front end takes a *compiled tile
-    # width* and must keep rejecting anything off the ladder. Rounding a real
-    # head_dim up is the interface's job, because only it also arranges the
-    # runtime extent and the padded_head contract that make the rounding safe.
-    meta = with_direct_tile(FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
-    overrides = FmhaKnobs(**{k: v for k, v in kwargs.items() if k in knob_fields})
-    return build_flash_attn_func_aiw_module_primary(meta, resolve_knobs(meta, overrides))
+    meta = FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields})
+    meta, knobs = entry_plan(meta, overrides={k: v for k, v in kwargs.items() if k not in meta_fields})
+    return build_flash_attn_func_aiw_module_primary(meta, knobs)

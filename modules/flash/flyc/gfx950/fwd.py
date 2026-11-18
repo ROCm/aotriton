@@ -140,7 +140,7 @@ from .dualwave_helpers import (
     wire_view,
 )
 from fmha_meta import FmhaInputMetadata
-from .tuning_fwd import fmha_knobs, plan
+from .tuning_fwd import entry_plan
 from .fwd_wide import (
     WideGemmHelper,
     WideKernelContext,
@@ -356,7 +356,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
     configuration that call produced.
     """
     if meta.block_dmodel is None or knobs.hdim_qk_floor is None:
-        raise ValueError("meta must come from `plan(meta)` and knobs from `fmha_knobs(arch, ...).resolve(meta)`")
+        raise ValueError("meta and knobs must come from `tuning_fwd.plan` or `resolve_knobs`")
     traits = knobs.build_traits(meta)
 
     BLOCK_DMODEL = meta.block_dmodel
@@ -1570,17 +1570,16 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
     return _launch
 
 
-def build_flash_attn_func_gfx950_module(arch="gfx950", **kwargs):
+def build_flash_attn_func_gfx950_module(**kwargs):
     """Keyword front end: name a problem, get the policy's schedule.
 
-    Splits `kwargs` on which object owns each name (`FmhaInputMetadata`'s
-    fields, masking as `causal_type`) and hands the rest to the factory. Neither `varlen` nor `cross_seqlen` is nameable any more: the
-    kernel decodes `varlen_bits` at runtime, so passing either raises from the
-    `Gfx950Knobs` constructor, which is the check.
+    `FmhaInputMetadata`'s fields name the problem; any other keyword pins a
+    knob. The real head dims are rounded up the ladder, as the dispatchers'
+    `plan` does.
     """
-    from dataclasses import fields as _fields
+    from dataclasses import fields
 
-    meta_fields = {f.name for f in _fields(FmhaInputMetadata)}
-    meta = plan(FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
-    knob_kwargs = {k: v for k, v in kwargs.items() if k not in meta_fields}
-    return build_flash_attn_func_gfx950_module_primary(meta, fmha_knobs(arch, **knob_kwargs).resolve(meta))
+    meta_fields = {f.name for f in fields(FmhaInputMetadata)}
+    meta = FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields})
+    meta, knobs = entry_plan(meta, overrides={k: v for k, v in kwargs.items() if k not in meta_fields})
+    return build_flash_attn_func_gfx950_module_primary(meta, knobs)

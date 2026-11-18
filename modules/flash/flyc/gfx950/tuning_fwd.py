@@ -47,7 +47,7 @@ floor, and it is an instruction limit rather than a staging one.
 
 from dataclasses import dataclass, fields, replace
 
-from fmha_knobs import pinned
+from fmha_knobs import knobs_of, pinned
 from fmha_meta import CAUSAL_TOP_LEFT, FmhaInputMetadata
 from .knobs import Gfx950KnobFields
 from .traits import make_traits
@@ -846,6 +846,12 @@ def entry_resolve(meta, *, overrides=None) -> FmhaKnobs:
     assert not knobs.paged and knobs.num_kv_splits == 1, \
         'the Workspace/BlockTable/block_table_stride fold needs paged=False, num_kv_splits=1'
     return knobs
+
+
+def entry_plan(meta, *, overrides=None):
+    # The LSE store stays, as in AOT's binaries, so every arch takes an `lse=`.
+    meta = plan(meta)
+    return meta, Gfx950Knobs(return_lse=True).merge(knobs_of(Gfx950Knobs, overrides)).resolve(meta)
 
 
 def entry_build(meta, knobs: FmhaKnobs):

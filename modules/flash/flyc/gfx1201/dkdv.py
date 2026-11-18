@@ -148,8 +148,8 @@ from .tuning_dkdv import (  # noqa: F401
     LDS_PAD,
     ROWS_PER_WAVE,
     BwdDkDvKnobs,
+    entry_plan,
     resolve_knobs,
-    with_direct_tile,
 )
 from kernels.common import buffer_ops
 # Import rewrite: the only symbol this file takes from `kernels.common.utils`
@@ -1438,12 +1438,13 @@ def build_bwd_dkdv_module_primary(meta: FmhaInputMetadata, knobs: BwdDkDvKnobs):
 
 
 def build_bwd_dkdv_module(**kwargs):
-    """Keyword front end: name a problem, get the policy's schedule."""
+    """Keyword front end: name a problem, get the policy's schedule.
+
+    `FmhaInputMetadata`'s fields name the problem; any other keyword pins a
+    knob. The real head dims are rounded up the ladder, as the dispatchers'
+    `plan` does.
+    """
     meta_fields = {f.name for f in fields(FmhaInputMetadata)}
-    knob_fields = {f.name for f in fields(BwdDkDvKnobs)}
-    unknown = set(kwargs) - meta_fields - knob_fields
-    if unknown:
-        raise TypeError(f"unknown build parameter(s): {sorted(unknown)}")
-    meta = with_direct_tile(FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields}))
-    overrides = BwdDkDvKnobs(**{k: v for k, v in kwargs.items() if k in knob_fields})
-    return build_bwd_dkdv_module_primary(meta, resolve_knobs(meta, overrides))
+    meta = FmhaInputMetadata(**{k: v for k, v in kwargs.items() if k in meta_fields})
+    meta, knobs = entry_plan(meta, overrides={k: v for k, v in kwargs.items() if k not in meta_fields})
+    return build_bwd_dkdv_module_primary(meta, knobs)

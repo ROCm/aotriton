@@ -58,7 +58,7 @@ decomposition knobs are for, and the crossovers are all spill boundaries:
 
 from dataclasses import dataclass, replace
 
-from fmha_knobs import pinned
+from fmha_knobs import knobs_of, pinned
 from fmha_meta import FmhaInputMetadata
 from .knobs import BwdDkDvKnobs
 
@@ -427,7 +427,7 @@ def resolve_knobs(meta: FmhaInputMetadata, overrides: "BwdDkDvKnobs | None" = No
     """
     s = _KNOBS_FALLBACK.merge(overrides)
     if meta.block_dmodel is None or meta.block_dmodel_v is None:
-        raise ValueError("meta.block_dmodel is unset; see plan() and with_direct_tile()")
+        raise ValueError("meta.block_dmodel is unset; see plan()")
     hd, hdv = meta.block_dmodel, meta.block_dmodel_v
     if s.contraction_shards is None:
         s = replace(s, contraction_shards=default_contraction_shards(hd, hdv))
@@ -458,20 +458,6 @@ class BwdDkDvPlan:
 
     meta: FmhaInputMetadata
     knobs: BwdDkDvKnobs
-
-
-def with_direct_tile(meta: FmhaInputMetadata) -> FmhaInputMetadata:
-    """`meta` for a caller whose head dims are already compiled tile widths.
-
-    No rounding and no padding; `block_dmodel_v` follows `head_dim_v`, or the
-    QK tile if that is unset.
-    """
-    block_dmodel = meta.head_dim if meta.block_dmodel is None else meta.block_dmodel
-    block_dmodel_v = meta.block_dmodel_v
-    if block_dmodel_v is None:
-        block_dmodel_v = block_dmodel if meta.head_dim_v is None else meta.head_dim_v
-    padded_head = False if meta.padded_head is None else meta.padded_head
-    return replace(meta, block_dmodel=block_dmodel, block_dmodel_v=block_dmodel_v, padded_head=padded_head)
 
 
 def plan(request: FmhaInputMetadata, overrides: BwdDkDvKnobs | None = None) -> BwdDkDvPlan:
@@ -507,6 +493,11 @@ def plan(request: FmhaInputMetadata, overrides: BwdDkDvKnobs | None = None) -> B
 
 def entry_resolve(meta, *, overrides=None) -> BwdDkDvKnobs:
     return resolve_knobs(meta, pinned(BwdDkDvKnobs, overrides))
+
+
+def entry_plan(meta, *, overrides=None):
+    p = plan(meta, knobs_of(BwdDkDvKnobs, overrides))
+    return p.meta, p.knobs
 
 
 def entry_build(meta, knobs: BwdDkDvKnobs):

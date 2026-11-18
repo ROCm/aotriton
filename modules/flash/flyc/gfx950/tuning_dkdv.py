@@ -58,7 +58,7 @@ behind it are recorded there.
 from dataclasses import dataclass, fields, replace
 
 from .traits import ParityDualwaveTraits, make_traits
-from fmha_knobs import pinned
+from fmha_knobs import knobs_of, pinned
 from fmha_meta import FmhaInputMetadata
 from .knobs import BwdDkDvKnobFields
 from .tuning_fwd import check_causal_type
@@ -820,6 +820,11 @@ def entry_resolve(meta, *, overrides=None) -> BwdDkDvKnobs:
                   hdim_qk_floor=0,
                   # Strides are runtime arguments: one binary serves every layout.
                   strides_constexpr=False).resolve(meta)
+
+
+def entry_plan(meta, *, overrides=None):
+    meta = plan(meta)
+    return meta, BwdDkDvKnobs().merge(knobs_of(BwdDkDvKnobs, overrides)).resolve(meta)
 
 
 def entry_build(meta, knobs: BwdDkDvKnobs):
