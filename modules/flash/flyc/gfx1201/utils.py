@@ -8,41 +8,30 @@ plumbing) are in `fmha_utils.py`; this module keeps the WMMA, LDS staging and
 transposed-V machinery that only gfx1201's schedules use.
 
 
-Why the branching helpers live here
------------------------------------
+Why the branching helpers are free functions
+--------------------------------------------
 
-Nothing in this file is AST-rewritten. The rewrite from Python's `if` to
-`scf.if` is lexical per `@flyc.kernel` function, so a module-level helper gets
-a branch only by building the `scf.IfOp` itself -- which is exactly what
-`stage`, `publish`, `publish_transposed`, `write_v8` and
-`fmha_utils.cond_load` do.
-
-That is a feature, not a tax, and it is why those five are free functions
-while `Aperture`'s non-branching operations are methods. Two problems
-disappear at the module boundary:
-
-**Objects can be held in ordinary variables.** In kernel code an object live
-across a dynamic `if` becomes region state, which has to be MLIR-backed:
+`_over_batches` (behind `stage` and `publish`), `publish_transposed` and
+`write_v8` branch at run time. They are `@flyc.jit`, so FlyDSL rewrites their
+Python `if` into `scf.if`, as it does in a kernel. Each branch only calls a
+function it was handed (`body`, `write`) and assigns nothing, which keeps
+objects out of the branch state. That state has to be MLIR-backed:
 
     fastmath = FastMath(FP_MODE)
     -> TypeError: state variable 'fastmath' is FastMath, not an MLIR Value
 
-Here, `with ir.InsertionPoint(...)` is not a function boundary. An aperture
-referenced inside the region is a plain Python local, and the IR values it
-holds were materialised before the `IfOp`, so they dominate the region and
-need no block arguments. (`flydsl.compiler.protocol`'s carry protocol --
-`__get_ir_types__` and friends -- is the other way to solve this, for objects
-that must cross a *rewritten* `if`. `MaskedAxis` and `Aperture` implemented it
-until the branching helpers moved here; removing it broke no test, so it is
-gone. Reach for it again only if kernel code has to method-call one of these
-objects under a dynamic `if`.)
+An aperture referenced only inside `body` is a closure variable, and the IR
+values it holds were materialised before the branch, so they dominate it.
+(`flydsl.compiler.protocol`'s carry protocol -- `__get_ir_types__` and
+friends -- is the way to let an object cross a rewritten `if` as state; reach
+for it only if code has to method-call one of these objects under a dynamic
+`if`.)
 
-**The guarded and unguarded arms stop being duplicated.** A `const_expr` test
-in kernel code cannot wrap a single call -- `if const_expr(needs_guard): if
-pred: body()` / `else: body()` has to spell `body()` twice -- so every staging
-site carried two copies. `_over_batches` writes it once.
+The guarded and unguarded arms are also written once: the guard is a
+`const_expr` test around a single call, which kernel code would have to spell
+twice.
 
-One trap remains for kernel-side code. `ast_rewriter._collect_assigned_vars`
+One trap remains, in kernel code and in these helpers alike. `ast_rewriter._collect_assigned_vars`
 counts `name.method(...)` under a dynamic `if` as a use of carried state and
 assigns `name` back after the region. If `name` came from an *enclosing*
 scope, that makes it a local of the inner function, unbound on any sibling
@@ -57,21 +46,20 @@ alias before the branch, which is what `_check_local_var` recommends in its
 own warning.
 """
 
-from kernels.common import buffer_ops, kernels_common
+from kernels.common import buffer_ops
 # Import rewrite: `wmma_ops`, and every symbol this file takes from
 # `kernels.common.utils` -- ssel, smin, smax, sdiv_rd_pow2 -- are branch-local
 # and absent from the released tag the build clones, so both names alias the
-# polyfill wholesale and no call site below changes. `buffer_ops` and
-# `kernels_common` are NOT rewritten: their symbols are in the released tree,
-# except `_if_then`, which FlyDSL 0.4.2 dropped; it is `common_utils.if_then`.
+# polyfill wholesale and no call site below changes. `buffer_ops` is NOT
+# rewritten: its symbols are in the released tree.
 import flyc_polyfill as wmma_ops
 import flyc_polyfill as common_utils
 
+import flydsl.compiler as flyc
 import flydsl.expr as fx
 from flydsl._mlir import ir
 from flydsl._mlir.dialects import llvm as _llvm
-from flydsl._mlir.dialects import scf as _scf
-from flydsl.expr import arith, gpu, range_constexpr, rocdl
+from flydsl.expr import arith, const_expr, gpu, range_constexpr, rocdl
 from flydsl.expr.typing import Vector as Vec
 
 from fmha_utils import bitcast_i32
@@ -605,6 +593,7 @@ class Aperture:
 # --------------------------------------------------------------------------
 
 
+@flyc.jit
 def _over_batches(aperture, base_row, block_rows, body):
     """`body(batch, row)` for each cooperative-load batch, under the row guard.
 
@@ -612,18 +601,11 @@ def _over_batches(aperture, base_row, block_rows, body):
     batches, so the last one can overshoot and leave some lanes with no row.
     Whether it is needed is `aperture.needs_guard`, a `const_expr`, so the
     unguarded configs emit no branch at all.
-
-    An explicit `IfOp`, not Python's `if`: the rewrite from `if` to `scf.if`
-    is lexical per `@flyc.kernel` function, so a module-level helper only gets
-    a branch by writing one. That is also what removes the guarded/unguarded
-    duplication -- the kernel had to spell both arms because the `const_expr`
-    test could not wrap a single call.
     """
     for batch in range_constexpr(aperture.num_batches):
         row = aperture.batch_row(base_row, batch)
-        if aperture.needs_guard:
-            if_op = _scf.IfOp(fx.as_ir_value(row < block_rows))
-            with common_utils.if_then(if_op):
+        if const_expr(aperture.needs_guard):
+            if row < block_rows:
                 body(batch, row)
         else:
             body(batch, row)
@@ -830,6 +812,7 @@ def read_transposed(aperture, tiling, read, col_extra=0):
     return out
 
 
+@flyc.jit
 def publish_transposed(aperture, tiling, lds_ptr, vecs):
     """Registers -> LDS for the transposed layout.
 
@@ -852,14 +835,14 @@ def publish_transposed(aperture, tiling, lds_ptr, vecs):
         )
 
     for step in range_constexpr(tiling.loads):
-        if tiling.overshoots(step):
-            if_op = _scf.IfOp(fx.as_ir_value(tiling.tile(step) < fx.Index(tiling.tiles)))
-            with common_utils.if_then(if_op):
+        if const_expr(tiling.overshoots(step)):
+            if tiling.tile(step) < fx.Index(tiling.tiles):
                 body(step)
         else:
             body(step)
 
 
+@flyc.jit
 def write_v8(aperture, write, row, col, val):
     """Store one 8-wide chunk at (row, col), skipped if `col` is past `hdim`.
 
@@ -872,19 +855,16 @@ def write_v8(aperture, write, row, col, val):
     guard it is already in range.
 
     A free function and not an `Aperture` method, like `stage` and `publish`
-    and unlike `read_v8`: anything that emits a branch has to build the
-    `scf.IfOp` itself, which only module-level code may do. Writing
-    `utils.write_v8(ap, ...)` also keeps `ap` out of
+    and unlike `read_v8`: writing `utils.write_v8(ap, ...)` keeps `ap` out of
     `_collect_assigned_vars` -- `ap.write_v8(...)` inside a dynamic `if`
     would be collected as region state and make the enclosing `scf.if` yield
     the aperture back.
     """
-    if not aperture.cols.active:
+    if const_expr(not aperture.cols.active):
         write(row, col, val)
-        return
-    if_op = _scf.IfOp(fx.as_ir_value(aperture.cols.valid(col)))
-    with common_utils.if_then(if_op):
-        write(row, col, val)
+    else:
+        if aperture.cols.valid(col):
+            write(row, col, val)
 
 
 # --------------------------------------------------------------------------

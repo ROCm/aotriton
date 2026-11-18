@@ -10,9 +10,8 @@ dispatchers) share a name with an arch module.
 
 Two halves. The device half emits IR: column masking (`MaskedAxis`),
 varlen and LSE addressing, sliding-window resolution, and the Philox
-seed/offset plumbing. Like `gfx1201/utils.py`, nothing in it is
-AST-rewritten; that module explains why branching helpers are free
-functions. The host half is the attention ABI: plain Python that turns
+seed/offset plumbing. Helpers that branch at run time are `@flyc.jit`, so
+FlyDSL rewrites their Python `if` into `scf.if`. The host half is the attention ABI: plain Python that turns
 torch tensors and Python arguments into the kernel signature's scalars
 and pointers before a launch, and emits no IR.
 
@@ -48,10 +47,7 @@ from philox import dropout_threshold
 
 import flydsl.compiler as flyc
 import flydsl.expr as fx
-from flydsl._mlir import ir
-from flydsl._mlir.dialects import scf as _scf
 from flydsl.expr import gpu, range_constexpr
-from flydsl.expr.typing import T
 from flydsl.expr.typing import Vector as Vec
 
 __all__ = [
@@ -341,6 +337,7 @@ class MaskedAxis:
 # --------------------------------------------------------------------------
 
 
+@flyc.jit
 def cond_load(cond, addr, default):
     """Load i32 from `addr` when `cond`, else `default`. The load is skipped.
 
@@ -349,19 +346,13 @@ def cond_load(cond, addr, default):
     evaluates both arms -- would fault. Inside the region the load is never
     issued; verified against a null pointer.
 
-    Built as an explicit `IfOp` rather than Python's `if`, which is what lets
-    this live in a module at all: the rewrite from `if` to `scf.if` is lexical
-    per `@flyc.kernel` function, but an `IfOp` written out needs no rewriting.
-
     `addr` is computed by the caller and may be derived from a null pointer --
     address arithmetic touches no memory.
     """
-    if_op = _scf.IfOp(fx.as_ir_value(cond), results_=[T.i32], has_else=True)
-    with ir.InsertionPoint(if_op.then_block):
-        _scf.YieldOp([fx.as_ir_value(fx.ptr_load(addr, fx.Int32))])
-    with ir.InsertionPoint(if_op.else_block):
-        _scf.YieldOp([fx.as_ir_value(default)])
-    return fx.Int32(if_op.results[0])
+    value = fx.Int32(default)
+    if cond:
+        value = fx.Int32(fx.ptr_load(addr, fx.Int32))
+    return value
 
 
 def philox_offset_base(offset1, offset2):
@@ -381,10 +372,7 @@ def philox_offset_base(offset1, offset2):
     are drop-in for each other.
 
     A null `offset1` is the uncaptured case. The load is *skipped*, not
-    selected away -- `select` evaluates both arms and would fault. Same
-    explicit `IfOp` and the same reason as `cond_load`, at i64: written out
-    rather than as a Python `if` because the rewrite to `scf.if` is lexical
-    per `@flyc.kernel`, and this is module level.
+    selected away -- `select` evaluates both arms and would fault.
     """
     return fx.Int64(offset2) + _load_u64_or_zero(offset1)
 
@@ -403,6 +391,7 @@ def philox_seed_value(seed_ptr):
     return _load_u64_or_zero(seed_ptr)
 
 
+@flyc.jit
 def philox_report(seed_output, offset_output, seed, offset_base):
     """Write back the `(seed, offset)` this launch actually drew from.
 
@@ -427,32 +416,29 @@ def philox_report(seed_output, offset_output, seed, offset_base):
         & (fx.Index(gpu.block_idx.y) == fx.Index(0))
         & (fx.Index(gpu.block_idx.z) == fx.Index(0))
     )
-    with common_utils.if_then(_scf.IfOp(fx.as_ir_value(first))):
+    if first:
         _store_u64_if_nonnull(seed_output, seed)
         _store_u64_if_nonnull(offset_output, offset_base)
 
 
+@flyc.jit
 def _load_u64_or_zero(ptr):
     """`*ptr` as an i64, or 0 when `ptr` is null.
 
     The load is *skipped*, not selected away -- `select` evaluates both arms
-    and would fault on the null. Same explicit `IfOp` and the same reason as
-    `cond_load`, at i64: written out rather than as a Python `if` because the
-    rewrite to `scf.if` is lexical per `@flyc.kernel`, and this is module
-    level.
+    and would fault on the null.
     """
     nonnull = fx.Int64(fx.ptrtoint(ptr)) != fx.Int64(0)
-    if_op = _scf.IfOp(fx.as_ir_value(nonnull), results_=[T.i64], has_else=True)
-    with ir.InsertionPoint(if_op.then_block):
-        _scf.YieldOp([fx.as_ir_value(fx.ptr_load(fx.recast_iter(_i64_global_ptr_ty(), ptr), fx.Int64))])
-    with ir.InsertionPoint(if_op.else_block):
-        _scf.YieldOp([fx.as_ir_value(fx.Int64(0))])
-    return fx.Int64(if_op.results[0])
+    value = fx.Int64(0)
+    if nonnull:
+        value = fx.Int64(fx.ptr_load(fx.recast_iter(_i64_global_ptr_ty(), ptr), fx.Int64))
+    return value
 
 
+@flyc.jit
 def _store_u64_if_nonnull(ptr, value):
     nonnull = fx.Int64(fx.ptrtoint(ptr)) != fx.Int64(0)
-    with common_utils.if_then(_scf.IfOp(fx.as_ir_value(nonnull))):
+    if nonnull:
         fx.ptr_store(fx.Int64(value), fx.recast_iter(_i64_global_ptr_ty(), ptr))
 
 
