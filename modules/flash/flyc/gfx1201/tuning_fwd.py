@@ -424,7 +424,6 @@ MAX_HEAD_DIM = _BLOCK_DMODEL_LADDER[-1]
 
 _KNOBS_FALLBACK = FmhaKnobs(
     v_prefetch_dist=1,
-    waves_per_eu=2,
     fp_mode="noninf",
     strides_constexpr=False,
     d_offset=0,

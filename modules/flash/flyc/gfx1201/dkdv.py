@@ -220,7 +220,6 @@ def build_bwd_dkdv_module_primary(meta: FmhaInputMetadata, knobs: BwdDkDvKnobs):
     LPT_TILE_ORDER = knobs.lpt_tile_order
     SPLIT_HEAD_DIM = knobs.split_head_dim
     PADDED_HEAD = meta.padded_head
-    WAVES_PER_EU = knobs.waves_per_eu
     SCHED_STRATEGY = knobs.sched_strategy
     FP_MODE = knobs.fp_mode
     ADDR_HOIST = knobs.addr_hoist
@@ -1292,7 +1291,7 @@ def build_bwd_dkdv_module_primary(meta: FmhaInputMetadata, knobs: BwdDkDvKnobs):
             stride_b_batch,
             stride_b_head,
             stride_b_seq_q,
-            value_attrs=fmha.kernel_attrs(BLOCK_SIZE, WAVES_PER_EU, SCHED_STRATEGY),
+            value_attrs=fmha.kernel_attrs(BLOCK_SIZE, sched_strategy=SCHED_STRATEGY),
         )
 
         launcher.launch(

@@ -36,7 +36,6 @@ class FmhaKnobs(FlycQKnobs):
     v_prefetch_dist: int | None = None
     v_lds_layout: str | None = None
     row_subtiles: int | None = None
-    waves_per_eu: int | None = None
     kv_addr_hoist: bool | None = None
 
     # The two knobs `resolve_knobs` cannot fill. Both are derived from
@@ -81,7 +80,6 @@ class BwdDqKnobs(FlycQKnobs):
     kv_addr_hoist: bool | None = None
     kv_prefetch_dist: int | None = None
 
-    waves_per_eu: int | None = None
     flat_work_group_size: int | None = None
     sched_strategy: str | None = None
 
@@ -124,7 +122,6 @@ class BwdDkDvKnobs(FlycKVKnobs):
 
     # Function attributes and floating-point latitude. `fp_mode` is the
     # forward's: the explicit flag set on the softmax-ish arithmetic.
-    waves_per_eu: int | None = None
     sched_strategy: str | None = None
     fp_mode: str | None = None
 

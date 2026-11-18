@@ -410,7 +410,6 @@ _KNOBS_FALLBACK = BwdDkDvKnobs(
     # default GCN scheduler sinks each LDS load next to its consumer. Same
     # reasoning as the forward's causal builds, untested here.
     sched_strategy="max-memory-clause",
-    waves_per_eu=None,
     addr_hoist=False,
 )
 

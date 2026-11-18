@@ -313,7 +313,6 @@ def _kv_addr_hoist(head_dim: int, causal: bool) -> bool:
 _KNOBS_FALLBACK = BwdDqKnobs(
     kt_lds_layout=_DEFAULT_KT_LDS_LAYOUT,
     kv_prefetch_dist=_DEFAULT_KV_PREFETCH_DIST,
-    waves_per_eu=2,
     fp_mode="noninf",
     lpt_tile_order=True,
 )

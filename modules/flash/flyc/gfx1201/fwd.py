@@ -197,7 +197,6 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     bias = meta.bias
     dropout = meta.dropout
 
-    WAVES_PER_EU = knobs.waves_per_eu
     FLAT_WORK_GROUP_SIZE = knobs.flat_work_group_size
     BLOCK_M_KNOB = knobs.block_m
     BLOCK_N_KNOB = knobs.block_n
@@ -2171,7 +2170,7 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
             stride_b_batch,
             stride_b_head,
             stride_b_seq_q,
-            value_attrs=fmha.kernel_attrs(BLOCK_SIZE, WAVES_PER_EU, SCHED_STRATEGY),
+            value_attrs=fmha.kernel_attrs(BLOCK_SIZE, sched_strategy=SCHED_STRATEGY),
         )
 
         launcher.launch(

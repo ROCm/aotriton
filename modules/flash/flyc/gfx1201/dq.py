@@ -182,7 +182,6 @@ def build_bwd_dq_module_primary(meta, knobs):
     KT_LDS_LAYOUT = knobs.kt_lds_layout
     KV_ADDR_HOIST = knobs.kv_addr_hoist
     KV_PREFETCH_DIST = knobs.kv_prefetch_dist
-    WAVES_PER_EU = knobs.waves_per_eu
     FLAT_WORK_GROUP_SIZE = knobs.flat_work_group_size
     SCHED_STRATEGY_KNOB = knobs.sched_strategy
     PADDED_HEAD = meta.padded_head
@@ -1393,7 +1392,7 @@ def build_bwd_dq_module_primary(meta, knobs):
             stride_db_batch,
             stride_db_head,
             stride_db_seq_q,
-            value_attrs=fmha.kernel_attrs(BLOCK_SIZE, WAVES_PER_EU, SCHED_STRATEGY),
+            value_attrs=fmha.kernel_attrs(BLOCK_SIZE, sched_strategy=SCHED_STRATEGY),
         )
 
         launcher.launch(
