@@ -728,7 +728,6 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
             # zeros by construction. Nothing here reads the flag.
             dtype_str=meta.dtype_str,
             waves_per_eu=self.waves_per_eu,
-            daz=self.daz,
         )
         traits = _as_bwd_traits(base, NUM_STREAM_BUFFERS=self.num_stream_buffers, MFMA_ROWS=self.mfma_rows)
         if self.mfma_rows not in (16, 32):
@@ -775,12 +774,9 @@ class BwdDkDvKnobs(BwdDkDvKnobFields):
         return traits
 
 
-# Defaults the policy has no shape-dependent opinion about. `daz` is the
-# forward's, so a default build runs under the same denormal regime it was
-# measured on. `waves_per_eu` is deliberately absent: it is per-width and
-# `_with_geometry` supplies it.
+# Defaults the policy has no shape-dependent opinion about. `waves_per_eu` is
+# deliberately absent: it is per-width and `_with_geometry` supplies it.
 _FALLBACK = BwdDkDvKnobs(
-    daz=True,
     strides_constexpr=False,
 )
 

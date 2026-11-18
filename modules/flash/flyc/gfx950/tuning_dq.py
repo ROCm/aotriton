@@ -586,7 +586,6 @@ class BwdDqKnobs(Gfx950Knobs, BwdDqKnobFields):
             window=meta.window,
             dtype_str=meta.dtype_str,
             waves_per_eu=self.waves_per_eu,
-            daz=self.daz,
             lazy_rescale=self.lazy_rescale,
             setprio=self.setprio,
             stagger=self.stagger,
@@ -641,7 +640,6 @@ _BWD_DQ_FALLBACK = BwdDqKnobs(
     # **Deliberately absent**: `waves_per_eu`. The forward pins 2 here; this
     # kernel wants 1 and `_with_wave_geometry` says why, with the measurement.
     # Left `None` so that step decides it and a caller can still override.
-    daz=True,
     lazy_rescale=True,
     setprio=True,
     stagger=True,

@@ -188,7 +188,6 @@ def build_bwd_dq_module_primary(meta, knobs):
     PADDED_HEAD = meta.padded_head
     LPT_TILE_ORDER_KNOB = knobs.lpt_tile_order
     FP_MODE = knobs.fp_mode
-    DENORMALS_ARE_ZERO = knobs.denormals_are_zero
 
     # ---- WMMA / wave32 constants ----
     # RDNA4 is wave32 and its WMMA is 16x16x16. The last two are derived, not

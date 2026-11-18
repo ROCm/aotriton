@@ -223,7 +223,6 @@ def build_bwd_dkdv_module_primary(meta: FmhaInputMetadata, knobs: BwdDkDvKnobs):
     WAVES_PER_EU = knobs.waves_per_eu
     SCHED_STRATEGY = knobs.sched_strategy
     FP_MODE = knobs.fp_mode
-    DENORMALS_ARE_ZERO = knobs.denormals_are_zero
     ADDR_HOIST = knobs.addr_hoist
 
     # ---- WMMA / wave32 constants ----

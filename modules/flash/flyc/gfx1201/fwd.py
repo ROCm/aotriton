@@ -211,7 +211,6 @@ def build_flash_attn_func_aiw_module_primary(meta, knobs):
     PADDED_HEAD = meta.padded_head
     ROW_SUBTILES = knobs.row_subtiles
     SHARDS = knobs.shards
-    DENORMALS_ARE_ZERO = knobs.denormals_are_zero
     SCHED_STRATEGY_KNOB = knobs.sched_strategy
     LPT_TILE_ORDER_KNOB = knobs.lpt_tile_order
     UNSAFE_NO_KV_CLAMP = knobs.unsafe_no_kv_clamp

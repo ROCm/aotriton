@@ -426,7 +426,6 @@ _KNOBS_FALLBACK = FmhaKnobs(
     v_prefetch_dist=1,
     waves_per_eu=2,
     fp_mode="noninf",
-    denormals_are_zero=True,
     strides_constexpr=False,
     d_offset=0,
     lpt_tile_order=True,

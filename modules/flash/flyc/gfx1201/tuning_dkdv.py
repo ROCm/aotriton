@@ -406,7 +406,6 @@ _KNOBS_FALLBACK = BwdDkDvKnobs(
     # a row with no live keys. The forward records the same hazard deleting its
     # KV tail mask.
     fp_mode="noninf",
-    denormals_are_zero=True,
     # The loop body holds four WMMA chains and two LDS staging passes; the
     # default GCN scheduler sinks each LDS load next to its consumer. Same
     # reasoning as the forward's causal builds, untested here.

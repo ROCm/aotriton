@@ -315,7 +315,6 @@ _KNOBS_FALLBACK = BwdDqKnobs(
     kv_prefetch_dist=_DEFAULT_KV_PREFETCH_DIST,
     waves_per_eu=2,
     fp_mode="noninf",
-    denormals_are_zero=True,
     lpt_tile_order=True,
 )
 

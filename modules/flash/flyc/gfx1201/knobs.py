@@ -52,7 +52,6 @@ class FmhaKnobs(FlycQKnobs):
     # deleted the KV tail mask once. The whole-compilation options are build
     # options, not knobs: `fmha_utils.COMPILE_HINTS`.
     fp_mode: str | None = None
-    denormals_are_zero: bool | None = None
     strides_constexpr: bool | None = None
 
     lpt_tile_order: bool | None = None
@@ -93,7 +92,6 @@ class BwdDqKnobs(FlycQKnobs):
     # reads a +inf logsumexp for rows the forward found no keys for. `ninf`
     # licenses the compiler to assume neither exists.
     fp_mode: str | None = None
-    denormals_are_zero: bool | None = None
 
     lpt_tile_order: bool | None = None
 
@@ -129,7 +127,6 @@ class BwdDkDvKnobs(FlycKVKnobs):
     waves_per_eu: int | None = None
     sched_strategy: str | None = None
     fp_mode: str | None = None
-    denormals_are_zero: bool | None = None
 
     # Whether the Q/dO address hoists `row * stride_seq` out of the loop. See
     # `kv_off` in `utils.make_addr_pair`.

@@ -63,7 +63,6 @@ class Gfx950KnobFields(FlycQKnobs):
 
     # Dual-wave schedule.
     waves_per_eu: int | None = None
-    daz: bool | None = None
     lazy_rescale: bool | None = None
     setprio: bool | None = None
     stagger: bool | None = None
@@ -136,7 +135,6 @@ class BwdDkDvKnobFields(FlycKVKnobs):
     waves_per_eu: int | None = None
     tight_registers: bool | None = None
 
-    daz: bool | None = None
     strides_constexpr: bool | None = None
 
     FLYC_SOURCE = "gfx950/dkdv.py"

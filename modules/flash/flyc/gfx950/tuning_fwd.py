@@ -698,7 +698,6 @@ class Gfx950Knobs(FmhaKnobs):
             lpt_tile_order=self.lpt_tile_order,
             dtype_str=meta.dtype_str,
             waves_per_eu=self.waves_per_eu,
-            daz=self.daz,
             lazy_rescale=self.lazy_rescale,
             setprio=self.setprio,
             stagger=self.stagger,
@@ -730,7 +729,6 @@ class Gfx950Knobs(FmhaKnobs):
 # nobody pinned it -- production's value survives as what that step derives at
 # every rung where the hardware can honour it.
 _GFX950_FALLBACK = Gfx950Knobs(
-    daz=True,
     # **`False`, against upstream's `True`. A LOCAL DIVERGENCE, and the one
     # place in this file where the default gives up measured speed.**
     #
