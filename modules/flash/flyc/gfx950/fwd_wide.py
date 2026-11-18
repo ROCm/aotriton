@@ -73,7 +73,7 @@ import contextlib
 from dataclasses import replace
 
 from fmha_utils import MaskedAxis
-from .dualwave import (
+from .dualwave_helpers import (
     ParityGemmHelper,
     ParityKernelContext,
     ParityKvLdsToVgprLoader,

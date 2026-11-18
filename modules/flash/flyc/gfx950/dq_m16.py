@@ -64,7 +64,7 @@ anything else was written.
 """
 
 import fmha_utils as fmha  # noqa: F401  (kept for the shared row addressing)
-from .dualwave import (  # ParityKernelContext documents the base this rides on
+from .dualwave_helpers import (  # ParityKernelContext documents the base this rides on
     ParityKernelContext,  # noqa: F401
     _ds_read_tr_v4f16_imm,
     _slab_span_elems,

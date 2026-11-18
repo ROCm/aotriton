@@ -229,7 +229,7 @@ from dataclasses import replace
 
 import fmha_utils as fmha
 from .dq_m16 import make_m16_dq_body
-from .dualwave import (
+from .dualwave_helpers import (
     ParityGemmHelper,
     ParityKernelContext,
     ParityKvGmemToLdsLoader,
@@ -254,8 +254,8 @@ from .dualwave import (
 # and the alternative is a second copy of two formulas the read and write sides
 # of an LDS layout both depend on. Reaching across within one kernel family
 # beats transcribing.
-from .dualwave import _k_read_base as _parity_k_read_base
-from .dualwave import _ks_offset as _parity_ks_offset
+from .dualwave_helpers import _k_read_base as _parity_k_read_base
+from .dualwave_helpers import _ks_offset as _parity_ks_offset
 from .tuning_dq import BwdDqKnobs, bwd_dq_knobs
 from .tuning_fwd import FmhaInputMetadata, plan
 from .standalone import buffer_ops, dualwave
@@ -1266,7 +1266,7 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         stride_db_seq_q: fx.Int64,
     ):
         # Nine pointers in, nine nominal views out -- `wire_view` in
-        # `dualwave.py` has the argument. Everything below this line
+        # `dualwave_helpers.py` has the argument. Everything below this line
         # is unchanged by the move, because every extent the kernel bounds a
         # descriptor with was already built from the strides and seqlens on the
         # wire rather than read off a tensor.

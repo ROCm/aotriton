@@ -82,8 +82,8 @@ It also leaves a lane's four accumulator rows **contiguous** (`8*(lane//16) +
 """
 
 from fmha_utils import MaskedAxis
-from .dualwave import _ds_read_tr16_b64_imm, exp2_wait_state, mfma_operand_wait_state
-from .dualwave import fadd, fmul, fsub
+from .dualwave_helpers import _ds_read_tr16_b64_imm, exp2_wait_state, mfma_operand_wait_state
+from .dualwave_helpers import fadd, fmul, fsub
 from .mfma16 import MFMA16_M, a16_chunk_offset, a16_read_base, lds_elem, tok_off, tok_off_dyn
 from .standalone import buffer_ops, dualwave
 

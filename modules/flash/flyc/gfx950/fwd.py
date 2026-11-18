@@ -21,7 +21,7 @@ architectures; schedules do not.
 --- What this file is ------------------------------------------------------
 
 The body below is the production dualwave pipeline, copied rather than
-imported. The *helpers* subclass cleanly (see `dualwave.py`), but
+imported. The *helpers* subclass cleanly (see `dualwave_helpers.py`), but
 the pipeline itself is inline in `build_flash_attn_dualwave_swp_module`, and
 every remaining phase -- windows, bias, dropout -- rewrites parts of it. A copy
 that diverges on purpose is honest; an import that has to be special-cased at
@@ -90,7 +90,7 @@ That cuts both ways and both ways are load-bearing:
   that stops at `head_dim` does not merely decline the pad: gfx950 range-checks
   a multi-dword buffer op per dword and drops any dword not wholly inside
   `num_records`, so it takes the real column `head_dim - 1` with it.
-  `_slab_span_elems` in `dualwave.py` is where that is spent, and
+  `_slab_span_elems` in `dualwave_helpers.py` is where that is spent, and
   carries the measurement of what the mistake cost.
 - **Round no other axis, ever, by any amount.** There is no slack on the
   sequence, head or batch axes to rely on, so a bound may only ever end on an
@@ -127,7 +127,7 @@ with two supported wave geometries and requires identical output.
 """
 
 import fmha_utils as fmha
-from .dualwave import (
+from .dualwave_helpers import (
     ParityGemmHelper,
     ParityKernelContext,
     ParityKvGmemToLdsLoader,
@@ -166,8 +166,8 @@ KERNEL_NAME = "flash_attn_func_gfx950_kernel"
 # it does there. Imported, not re-implemented -- these are the scheduling
 # primitives the hand-built pipeline is made of, and a second copy of any of
 # them would be a second thing to keep in step.
-from .dualwave import _anchor_v_o  # noqa: E402  (one-accumulator safe)
-from .dualwave import exp2_wait_state  # noqa: E402  (issue 10)
+from .dualwave_helpers import _anchor_v_o  # noqa: E402  (one-accumulator safe)
+from .dualwave_helpers import exp2_wait_state  # noqa: E402  (issue 10)
 
 _anchor_v_p = dualwave._anchor_v_p
 _dualwave_sync_barrier = dualwave._dualwave_sync_barrier
@@ -228,7 +228,7 @@ class _KvTailCausalMaskMixin:
 
     True -- for the `delta` that sentence names. But a window build re-points
     `delta_i32` at the resolved `window_right` (`init_tile_bounds` in
-    `dualwave.py`), and that is what makes the argument fail:
+    `dualwave_helpers.py`), and that is what makes the argument fail:
     top-left causal is `window_right == 0`, so the bound is `col <= row`, and
     for `row >= seqlen_kv` that admits columns the K buffer does not have.
     Those columns come back as zero from the out-of-range buffer load, which is
@@ -509,7 +509,7 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         block_table_stride: _BTS_ANN,
     ):
         # The six tensor operands arrive as bare pointers -- see `wire_ptr` in
-        # `dualwave.py` for why, and `wire_view` for why they are
+        # `dualwave_helpers.py` for why, and `wire_view` for why they are
         # wrapped back up here rather than at each use. Doing it once, at the
         # boundary, is what leaves the addressing code below untouched: every
         # extent it needs is a wire scalar already, so the only thing the

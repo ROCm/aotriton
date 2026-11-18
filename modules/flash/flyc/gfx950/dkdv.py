@@ -12,7 +12,7 @@ first.
 
 **dK/dV is the forward loop transposed.** K and V stay resident in registers
 while Q and dO stream past through LDS, exactly mirroring the forward's
-resident Q and streaming K/V. Every helper in `dualwave.py` was
+resident Q and streaming K/V. Every helper in `dualwave_helpers.py` was
 written against "a tensor, its bounds and where it lands" rather than against
 K or V by name, so the roles swap by re-pointing four descriptors and nothing
 else. The two tensor slots the staging machinery calls *K* and *V* carry **Q**
@@ -128,7 +128,7 @@ import fmha_utils as fmha
 from . import dkdv_m16 as m16
 import fmha_utils as fmha
 from fmha_utils import MaskedAxis
-from .dualwave import (
+from .dualwave_helpers import (
     ParityGemmHelper,
     ParityKernelContext,
     ParityKvGmemToLdsLoader,
@@ -1805,7 +1805,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         stride_b_seq_q: fx.Int64,
     ):
         # Nine pointers in, nine nominal views out -- `wire_view` in
-        # `dualwave.py` has the argument. Everything below this line
+        # `dualwave_helpers.py` has the argument. Everything below this line
         # is unchanged by the move, because every extent the kernel bounds a
         # descriptor with was already built from the strides and seqlens on the
         # wire rather than read off a tensor.
@@ -2377,7 +2377,7 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         bound may round the D axis up -- it must, or the hardware's per-dword
         range check drops the tail chunk and takes the real column `hdim - 1`
         with it -- and may round no other axis by any amount. `_slab_span_elems`
-        in `dualwave.py` is where both halves are spent, and
+        in `dualwave_helpers.py` is where both halves are spent, and
         `fwd`'s module docstring states the contract in full.
 
         Two separate requirements, and the pitch is only the first. *Alignment*:
