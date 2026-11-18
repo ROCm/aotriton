@@ -241,9 +241,6 @@ from .dualwave_helpers import (
     _bias_slab_num_records_bytes,
     _score_column_runs,
     exp2_wait_state,
-    fmax,
-    fmul,
-    fsub,
     mfma_operand_wait_state,
     wire_ptr,
     wire_view,
@@ -656,7 +653,7 @@ class BwdDqKernelContext(ParityKernelContext):
         # every exponent downstream is `exp2`, so the conversion happens once
         # here rather than per element. AOTriton's `l_i = tl.load(...) *
         # RCP_LN2` is the same fold.
-        lse2 = fmul(fx.Float32(lse), fx.Float32(dualwave._LOG2E), self.fm_fast)
+        lse2 = fx.Float32(lse) * fx.Float32(dualwave._LOG2E)
         # **Floored, because `LSE` can legitimately be `-inf`** and this is an
         # *input*. A causal row with no live key -- every row below
         # `seqlen_q - seqlen_kv` under bottom-right alignment, which is every
@@ -688,7 +685,7 @@ class BwdDqKernelContext(ParityKernelContext):
         # pack and the dQ store, and neither is upstream of this. So the
         # argument is about `fastmath<fast>`'s `ninf` on an f32 FMA and is
         # dtype-independent.
-        lse2 = fmax(fx.Float32(lse2), self.c_neg_floor, self.fm_fast)
+        lse2 = fx.maxnumf(lse2, self.c_neg_floor)
         return lse2, fx.Float32(delta)
 
 
@@ -751,10 +748,10 @@ class BwdDqSoftmaxHelper(ParitySoftmaxHelper):
         s_lo, s_hi = v_s
         acc = self.traits.ACC_ELEMS
         scale_v = Vec.from_elements([fx.Float32(qk_scale)], fx.Float32).broadcast_to(acc)
-        neg_lse2 = fsub(self.c_zero_f, lse2, self.fm_fast)
+        neg_lse2 = self.c_zero_f - fx.Float32(lse2)
         neg_v = Vec.from_elements([fx.Float32(neg_lse2)], fx.Float32).broadcast_to(acc)
-        lo = fmath.fma(Vec(s_lo), scale_v, neg_v, fastmath=self.fm_fast)
-        hi = fmath.fma(Vec(s_hi), scale_v, neg_v, fastmath=self.fm_fast)
+        lo = fmath.fma(Vec(s_lo), scale_v, neg_v)
+        hi = fmath.fma(Vec(s_hi), scale_v, neg_v)
         return as_mlir_value(lo), as_mlir_value(hi)
 
     def cast_p(self, v_p, tile_idx=None):
@@ -883,8 +880,8 @@ class BwdDqSoftmaxHelper(ParitySoftmaxHelper):
                 )
                 keep = rng.keep_span(ctx.philox_seed, first, width, ctx.idropout_p)
                 for j in range_constexpr(width):
-                    kept = fmul(values[elem0 + j], scale, self.fm_fast)
-                    values[elem0 + j] = keep[j].select(fx.Float32(kept), zero)
+                    kept = fx.Float32(values[elem0 + j]) * scale
+                    values[elem0 + j] = keep[j].select(kept, zero)
         return (lo, hi)
 
 
@@ -1464,8 +1461,8 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
                 ds_lo = [None] * ACC_ELEMS
                 ds_hi = [None] * ACC_ELEMS
                 for r in range_constexpr(ACC_ELEMS):
-                    ds_lo[r] = fmul(v_p[0][r], fsub(dp_lo[r], delta, ctx.fm_fast), ctx.fm_fast)
-                    ds_hi[r] = fmul(v_p[1][r], fsub(dp_hi[r], delta, ctx.fm_fast), ctx.fm_fast)
+                    ds_lo[r] = fx.Float32(v_p[0][r]) * (fx.Float32(dp_lo[r]) - delta)
+                    ds_hi[r] = fx.Float32(v_p[1][r]) * (fx.Float32(dp_hi[r]) - delta)
 
                 # -- GEMM3. dQ += dS . K, with K read transposed out of the V
                 #    slot. `cast_p` gives dS the same K permutation P has, and
