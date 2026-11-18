@@ -3,30 +3,12 @@
 """Unified entry for every arch's flyc attention forward.
 
 flydsl-free: the code generator calls `resolve_knobs`. `builder` imports the
-kernel, so only the build driver calls it. Descriptions describe the problem
-with the arch-neutral `FmhaInputMetadata`; each arch's tuning module adapts it
+kernel, so only the build driver calls it. Every caller describes the problem
+with `fmha_meta.FmhaInputMetadata`; each arch's tuning module takes it as is
 (`entry_resolve`, `entry_build`) and owns its pins.
 """
 
 import importlib
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True)
-class FmhaInputMetadata:
-    """One attention problem, as every flyc kernel (fwd, dQ, dK/dV) sees it."""
-
-    num_heads: int
-    # The functional's BLOCK_DMODEL and PADDED_HEAD: the compiled tile, and
-    # whether calls may bring a smaller head dim.
-    block_dmodel: int
-    padded_head: bool
-    # AOTriton's CAUSAL_TYPE: 0 none, 1 top-left, 2 bottom-right, 3 window.
-    causal_type: int
-    dtype_str: str
-    bias: bool
-    dropout: bool
-
 
 _ARCH_MODULES = {
     'gfx950': 'gfx950.tuning_fwd',
