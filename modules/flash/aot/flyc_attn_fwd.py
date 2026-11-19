@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-ATI description of the flash attn_fwd FlyDSL backend (gfx1201 and gfx950).
+ATI description of the flash attn_fwd FlyDSL backend (gfx1201, gfx950 and gfx942).
 
 Registered as backend 2 of `op_attn_fwd`, through `metro_fwd_flyc`.
 `python -m aotriton.flyc_compile` on this file also produces an hsaco for

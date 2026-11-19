@@ -53,7 +53,7 @@ class FlycBwdHints:
 #
 # WMMA (gfx1201): from gfx1201.tuning_fwd._BLOCK_DMODEL_LADDER and its dQ/dK/dV twins.
 FLYC_WMMA_HEAD_DIMS = frozenset({16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512})
-# MFMA (gfx950; gfx942 and gfx90a would share it): the MFMA shapes limit it to
+# MFMA (gfx950, gfx942; gfx90a would share it): the MFMA shapes limit it to
 # multiples of 32 (PV_MFMA_N). 96 IS included, as in gfx950.tuning_fwd.LADDER. The
 # note above that LADDER saying 96 "computes the wrong answer" predates the fix:
 # ROCm/FlyDSL commit 98493cc7 ("gfx950 parity: fix the head_dim 96 wait-state
@@ -65,6 +65,7 @@ FLYC_MFMA_HEAD_DIMS = frozenset({32, 64, 96, 128, 160, 192, 224, 256, 512})
 FLYC_HEAD_DIMS_BY_ARCH = {
     'gfx1201': FLYC_WMMA_HEAD_DIMS,
     'gfx950': FLYC_MFMA_HEAD_DIMS,
+    'gfx942': FLYC_MFMA_HEAD_DIMS,
 }
 
 # The BLOCK_DMODEL marker's options: one decorator stack serves every arch.

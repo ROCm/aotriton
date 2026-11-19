@@ -16,6 +16,7 @@ Everything here but `builder` is flydsl-free.
 import importlib
 
 _ARCH_MODULES = {
+    'gfx942': 'gfx942.tuning_fwd',
     'gfx950': 'gfx950.tuning_fwd',
     'gfx1201': 'gfx1201.tuning_fwd',
 }
