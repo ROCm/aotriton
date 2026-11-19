@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: MIT
 
 """
-Shared pieces of the flyc BACKWARD descriptions (`flyc_bwd_dkdv.py`,
-`flyc_bwd_dq.py`).
+Shared pieces of the flyc descriptions: mostly the BACKWARD ones'
+(`flyc_bwd_dkdv.py`, `flyc_bwd_dq.py`); the head-dim ladders and the input
+metadata serve the forward too.
 
 Separate from `_common.py`, which is the *Triton* flash descriptions' shared
 vocabulary — `flash_disabled` is imported from there below rather than
@@ -42,21 +43,43 @@ class FlycBwdHints:
     batch: int = 0
 
 
-def flyc_bwd_disabled(f, *, head_dims):
-    """Everything a flyc backward kernel cannot serve, in one predicate.
+# The compiled head-dim ladder per arch, shared by every flyc kernel (forward, dQ,
+# dK/dV). Literals: the generator parses these modules and has no flydsl; the
+# builders re-validate the tile, so a drift fails loudly at build.
+#
+# The kernels serve more rungs than these (gfx1201's tuning ladders have 384, and
+# dK/dV 320 and 448; the MFMA kernels have 384, JIT), but no surveyed LLM uses a head
+# dim in 257-511 (HF configs, 2026-11), so those run padded on 512.
+#
+# WMMA (gfx1201): from gfx1201.tuning_fwd._BLOCK_DMODEL_LADDER and its dQ/dK/dV twins.
+FLYC_WMMA_HEAD_DIMS = frozenset({16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512})
+# MFMA (gfx950; gfx942 and gfx90a would share it): the MFMA shapes limit it to
+# multiples of 32 (PV_MFMA_N). 96 IS included, as in gfx950.tuning_fwd.LADDER. The
+# note above that LADDER saying 96 "computes the wrong answer" predates the fix:
+# ROCm/FlyDSL commit 98493cc7 ("gfx950 parity: fix the head_dim 96 wait-state
+# hazard, 579 -> 932 TF"), which our vendored kernel carries
+# (gfx950.dualwave_helpers.mfma_operand_wait_state).
+FLYC_MFMA_HEAD_DIMS = frozenset({32, 64, 96, 128, 160, 192, 224, 256, 512})
 
-    `head_dims` is a `{arch: ladder}` mapping: the caller's own
-    `FLYC_BWD_*_HEAD_DIMS`, one ladder per arch it serves, since dK/dV and dQ
-    each have their own per-arch ladders (dK/dV compiles 320 and 448 as well on
-    gfx1201; gfx950's ladder is the same `(32, ..., 512)` tuple for both
-    kernels, but is still looked up per arch here rather than assumed).
+# Which arches the flyc kernels serve, and each one's ladder.
+FLYC_HEAD_DIMS_BY_ARCH = {
+    'gfx1201': FLYC_WMMA_HEAD_DIMS,
+    'gfx950': FLYC_MFMA_HEAD_DIMS,
+}
+
+# The BLOCK_DMODEL marker's options: one decorator stack serves every arch.
+FLYC_HEAD_DIM_OPTIONS = sorted(set().union(*FLYC_HEAD_DIMS_BY_ARCH.values()))
+
+
+def flyc_bwd_disabled(f):
+    """Everything a flyc backward kernel cannot serve, in one predicate.
 
     Arch lives here rather than in a declaration for the same reason it does in
     the forward's `_flyc_fwd_disabled`: it is one more exclusion among several,
     and splitting it across two mechanisms means two places to look when a
     functional unexpectedly has no flyc kernel.
     """
-    if f.arch not in head_dims:
+    if f.arch not in FLYC_HEAD_DIMS_BY_ARCH:
         return True
     # Also excludes causal+bias, which both kernels assert against directly
     # ("bias and causal are mutually exclusive, as in the forward").
@@ -65,11 +88,8 @@ def flyc_bwd_disabled(f, *, head_dims):
     # f16/bf16 WMMA only.
     if '*fp32' in check_value(f, ['Q']):
         return True
-    # Off-ladder head dims are rejected outright by `resolve_knobs`/`resolve()`,
-    # not rounded: rounding is the *interface*'s job, because it also has to
-    # arrange the runtime extent and the padded-head contract that make the
-    # rounding safe.
-    if check_value(f, ['BLOCK_DMODEL']) not in head_dims[f.arch]:
+    # Flyc kernels are not specialized for hdim that cannot be addressed by MFMA/WMMA directly.
+    if check_value(f, ['BLOCK_DMODEL']) not in FLYC_HEAD_DIMS_BY_ARCH[f.arch]:
         return True
     return False
 

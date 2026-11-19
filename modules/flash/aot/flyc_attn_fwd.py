@@ -67,7 +67,7 @@ from dataclasses import dataclass, asdict
 
 import aotriton.template_instantiation as ati
 from ._common import flash_disabled, check_value
-from ._flyc_common import flyc_input_metadata
+from ._flyc_common import FLYC_HEAD_DIM_OPTIONS, FLYC_HEAD_DIMS_BY_ARCH, flyc_input_metadata
 
 
 @dataclass
@@ -97,34 +97,6 @@ class FlycFwdHints:
     batch: int = 0
 
 
-# The compiled tile ladder, from gfx1201.tuning_fwd._BLOCK_DMODEL_LADDER. A literal,
-# not an import: the generator parses this module and has no flydsl. `flyc_build`
-# (build time) does import flydsl, and `resolve_knobs` re-validates the tile, so a
-# drift here fails loudly at build rather than silently emitting the wrong kernel.
-FLYC_HEAD_DIMS = frozenset({16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 384, 512})
-
-# gfx950's ladder, from gfx950.tuning_fwd.LADDER -- a literal for the same reason
-# as FLYC_HEAD_DIMS above. Narrower than gfx1201's: no 16/48/80 (PV_MFMA_N is 32,
-# so only multiples of 32 are compiled). 96 IS
-# included, matching upstream's LADDER verbatim: a comment right above that tuple
-# in gfx950/tuning_fwd.py claims 96 "computes the wrong answer", but that is
-# stale prose left behind when the bug it described was fixed the same day
-# (upstream `98493cc7`, an ancestor of the vendored commit; it added 96 to the
-# tuple in the same change). Do not re-derive this by excluding 96 "to be safe":
-# that would silently give up a rung upstream measured at 932 TF against 579 for
-# the 128-tile fallback, on the strength of a comment its own repository had
-# already superseded.
-FLYC_GFX950_HEAD_DIMS = frozenset({32, 64, 96, 128, 160, 192, 224, 256, 384, 512})
-
-# Per-arch ladder lookup, keyed the same way the disable predicate and the
-# builder branch below are. Also what `_flyc_fwd_disabled` uses to decide which
-# arches this backend serves at all -- `f.arch in _FLYC_FWD_LADDERS`.
-_FLYC_FWD_LADDERS = {
-    'gfx1201': FLYC_HEAD_DIMS,
-    'gfx950': FLYC_GFX950_HEAD_DIMS,
-}
-
-
 def _flyc_fwd_disabled(f):
     """Everything this backend cannot serve, in one predicate.
 
@@ -133,22 +105,19 @@ def _flyc_fwd_disabled(f):
     places to look when a functional unexpectedly has no flyc kernel. (`aiter_fwd.py`
     uses @ati.affine.arch; that predates `f.arch` being available to predicates.)
 
-    `_FLYC_FWD_LADDERS` maps each served arch to its own compiled ladder;
+    `FLYC_HEAD_DIMS_BY_ARCH` maps each served arch to its own compiled ladder;
     everything else about the predicate -- the WMMA dtype restriction, the cited
     flash_disabled() call -- is arch-independent.
     """
-    if f.arch not in _FLYC_FWD_LADDERS:
+    if f.arch not in FLYC_HEAD_DIMS_BY_ARCH:
         return True
     if flash_disabled(f):
         return True
     # f16/bf16 WMMA only.
     if '*fp32' in check_value(f, ['Q']):
         return True
-    # Off-ladder head dims are rejected outright by `resolve_knobs`/`resolve()`,
-    # not rounded: rounding is the *interface*'s job, because it also has to
-    # arrange the runtime extent and the padded-head contract that make the
-    # rounding safe.
-    if check_value(f, ['BLOCK_DMODEL']) not in _FLYC_FWD_LADDERS[f.arch]:
+    # Flyc kernels are not specialized for hdim that cannot be addressed by MFMA/WMMA directly.
+    if check_value(f, ['BLOCK_DMODEL']) not in FLYC_HEAD_DIMS_BY_ARCH[f.arch]:
         return True
     return False
 
@@ -159,7 +128,7 @@ def _flyc_fwd_disabled(f):
 # predicate calls flash_disabled(f) unconditionally and only narrows further
 # (arch membership, the WMMA dtype restriction, the per-arch ladder), so every
 # functional the cited predicate disables is disabled here too -- gfx950 head_dim
-# 16 in particular is excluded via _FLYC_FWD_LADDERS['gfx950'] (see the ladder's
+# 16 in particular is excluded via FLYC_HEAD_DIMS_BY_ARCH['gfx950'] (see the ladder's
 # own comment), which is a strict superset of the cited predicate's {16} on that
 # axis alone. Measured while gfx1201 was the only served arch: of 576
 # functionals the cited predicate disables 144, and all 144 were disabled here
@@ -377,15 +346,13 @@ def _flyc_fwd_disabled(f):
 # kernel re-rounded to a wider rung with `PADDED_HEAD` left false is a silent
 # wrong answer, not a build error.
 #
-# The `options=` lists restate each ladder as free documentation, not as a
+# The `options=` list restates the ladders as free documentation, not as a
 # second source of truth: the digit's real range comes from the OPERATOR's
 # axis, and the backend's own disable predicate is what enforces the subset.
-# One shared marker declaration serves both architectures (like the
+# One shared marker declaration serves every arch (like the
 # Workspace/BlockTable declaration above, this decorator stack does not vary by
-# arch), so `options=` is the UNION of both ladders rather than either alone --
-# neither is a subset of the other, so one arch's list would under-document the
-# other's compiled rungs.
-@ati.scalar('BLOCK_DMODEL', options=sorted(FLYC_HEAD_DIMS | FLYC_GFX950_HEAD_DIMS),
+# arch), so `options=` is the UNION of the per-arch ladders.
+@ati.scalar('BLOCK_DMODEL', options=FLYC_HEAD_DIM_OPTIONS,
             wires_to=ati.context_helper('flyc_block_dmodel'))
 @ati.scalar('PADDED_HEAD', options=[False, True],
             wires_to=ati.context_helper('flyc_padded_head'))
