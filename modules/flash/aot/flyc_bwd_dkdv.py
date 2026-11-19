@@ -142,8 +142,8 @@ from ._flyc_common import FLYC_HEAD_DIM_OPTIONS, FlycBwdHints, flyc_bwd_disabled
 # not part of `bwd_dkdv_kernel`'s signature at all, they are build-time
 # Python values.
 #
-# `options=` is the union of the per-arch ladders (_flyc_common.py); the
-# disable predicate narrows it per arch.
+# `options=` is this backend's own BLOCK_DMODEL axis, the union of the per-arch
+# ladders; the disable predicate narrows it per arch.
 @ati.scalar('BLOCK_DMODEL',
             options=FLYC_HEAD_DIM_OPTIONS,
             wires_to=ati.context_helper('flyc_block_dmodel'))
