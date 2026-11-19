@@ -185,9 +185,12 @@ class is the only input metadata: there is no per-arch one, and every caller
 
 The unified entries serve two callers:
 
-- **AOT**: `resolve_knobs(arch, meta, *, overrides=None)`. The functional fixes
-  `block_dmodel` and `padded_head` (`BLOCK_DMODEL`, `PADDED_HEAD`), and the real
-  head dims equal the tile.
+- **AOT**: `resolve_knobs(arch, meta, *, overrides=None)`. Only the compiled
+  tile and the padding flag are known: the functional fixes `block_dmodel` and
+  `padded_head` (`BLOCK_DMODEL`, `PADDED_HEAD`), and `head_dim`/`head_dim_v`
+  are None. The real head dims arrive at run time, and a padded binary serves
+  any that fit the tile, so an arch's tuner must not read `meta.head_dim` on
+  this path.
 - **JIT**: `plan(arch, meta, *, overrides=None)` returns `(meta, knobs)`, with
   the caller's real head dims rounded up the arch's ladder into `block_dmodel`
   (and `block_dmodel_v`) and `padded_head` set.
