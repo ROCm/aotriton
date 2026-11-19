@@ -60,7 +60,7 @@ def narrow_to_prime(t, prime_d, poison=float('nan')):
 
     **The 8xD input contract, handed to the kernel the way the contract says.**
     Loads and stores are 8 columns wide, so the kernel touches `ceil8(hdim)`
-    columns of every row; `flash_attn_func_gfx950.py` states that and `_args`
+    columns of every row; `gfx950/fwd.py` states that and `_args`
     enforces it, but the C++ launcher never calls `_args`, so nothing checks it
     on the shipped path. A tightly-packed odd width -- which is what
     `torch.rand(3, 5, 1033, 57)` gives you, and the reason `PRIME_HEADDIMS` was

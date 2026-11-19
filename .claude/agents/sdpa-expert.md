@@ -47,6 +47,39 @@ python/tune/gpu_utils.py          # target_fudge_factor, adiff1/2,
                                   #   mk_aotensor_{cpu,cuda}torch
 ```
 
+FlyDSL ("flyc") attention kernels live in `modules/flash/flyc/` (see `docs/FlyDSL.md`):
+
+```
+modules/flash/flyc/
+├── tuning_fwd.py, tuning_dq.py, tuning_dkdv.py
+│                                 # unified entries: resolve_knobs(arch, meta,
+│                                 #   *, overrides=None) (AOT), plan(arch, meta,
+│                                 #   *, overrides=None) -> (meta, knobs) (JIT),
+│                                 #   builder(arch, meta, knobs), arches()
+├── fmha_meta.py                  # FmhaInputMetadata: the one input metadata,
+│                                 #   every kernel and arch; causal_type only
+├── fmha_knobs.py                 # FlycKnobs / FlycQKnobs / FlycKVKnobs bases
+├── fmha_utils.py                 # helpers shared by every arch (device + host ABI)
+├── philox.py                     # Philox-4x32-10 dropout RNG (width always 32)
+├── flyc_polyfill.py              # fallbacks for helpers a FlyDSL release lacks
+├── tests/                        # arch-neutral JIT tests: build through plan +
+│                                 #   builder for the GPU's arch, skip an arch
+│                                 #   the dispatcher has no row for
+├── gfx950/, gfx1201/             # one package per arch: knobs.py, tuning_*.py
+│                                 #   (entry_resolve/entry_plan/entry_build),
+│                                 #   fwd.py, dq.py, dkdv.py, ...; test_*.py only
+│                                 #   for what is arch-specific
+modules/flash/aot/flyc_*.py       # ATI descriptions; no arch branches
+```
+
+There is no per-arch metadata class: every caller builds `fmha_meta.FmhaInputMetadata`.
+`BLOCK_DMODEL` and `PADDED_HEAD` are functional axes, so they reach a flyc kernel
+as input metadata (`block_dmodel`, `padded_head`), not knobs; JIT callers get
+them from `plan`. Masking is `causal_type` (AOTriton's CAUSAL_TYPE); gfx950's
+non-window causal build is bottom-right, so it refuses 1. JIT tests run from
+`modules/flash/flyc` (`python -m pytest tests`, one GPU per suite) with
+`ROCM_PATH=$(rocm-sdk path --root)` and `AOTRITON_FLYDSL_KERNEL_ROOT` set.
+
 ## SDPA math reference
 
 PyTorch's `torch.nn.functional.scaled_dot_product_attention` computes:

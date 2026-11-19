@@ -97,7 +97,7 @@ flyc_classify_varlen(int32_t varlen_bits, const T4& q,
 }
 
 // The i32 dropout threshold. FlyDSL's `philox.dropout_threshold` (in
-// modules/flash/flyc/philox.py, reached from fmha_abi_gfx1201.py's
+// modules/flash/flyc/philox.py, reached from fmha_utils.py's
 // dropout_args): a uniform u32 reinterpreted as i32 is uniform on
 // [-2**31, 2**31), so comparing against `(p - 0.5) * 0xFFFFFFFF` keeps a
 // `1 - p` fraction with one signed compare and no per-element float
@@ -160,13 +160,11 @@ flyc_round_up_rung(int32_t hdim, const int16_t* table, int count) {
 }
 
 // The two axis orders a flyc grid can walk, mirrored (same names, same integer
-// values) from FlyDSL's fmha_tuning_gfx950.GRID_AXIS_HEAD_FASTEST /
-// GRID_AXIS_TILE_FASTEST. Every flyc description puts one of
-// these two values into its knobs under 'GRID_AXIS_ORDER' -- gfx1201's by a
-// literal assignment (there is no upstream knob to carry it), gfx950's as a
-// flat field `resolve()` already produces -- so a grid_calculator() reads one
-// perf() key and switches, instead of assuming a fixed order that only held
-// for gfx1201 before gfx950 arrived with a different one for dK/dV.
+// values) from `fmha_knobs.GRID_AXIS_HEAD_FASTEST` / `GRID_AXIS_TILE_FASTEST`.
+// Every flyc kernel's `resolve` puts one of these two values into its knobs
+// under 'GRID_AXIS_ORDER' (a `FlycKnobs` field), so a grid_calculator() reads
+// one perf() key and switches, instead of assuming a fixed order. All three
+// grid_calculator()s implement both orders.
 enum FlycGridAxisOrder : int64_t {
   kFlycGridAxisHeadFastest = 0,
   kFlycGridAxisTileFastest = 1,

@@ -81,7 +81,7 @@ FlycBwdDkdvContext::flyc_padded_head() const {
 // the axis order here -- this is not a formality, both are real, measured
 // launchers:
 //
-// gfx1201 (`launch_bwd_dkdv` in fmha_bwd_dkdv_gfx1201_kernel.py), TILE_FASTEST:
+// gfx1201 (`launch_bwd_dkdv` in gfx1201/dkdv.py), TILE_FASTEST:
 //
 //   nseq_idx     = num_seqlens != 0 ? num_seqlens : batch_size
 //   num_kv_tiles = cdiv(max_seqlen_k, BLOCK_N)
@@ -100,13 +100,9 @@ FlycBwdDkdvContext::flyc_padded_head() const {
 // flyc_common.h's flyc_grid_axis_order for why this reads perf() rather than
 // assuming either.
 //
-// The KV tile size is also NOT resolved the same way on both arches -- on
-// gfx1201 it is not a resolve_knobs output at all, but BLOCK_N derived by
-// this file's own description as `ROWS_PER_WAVE * NUM_TEAMS` (see the
-// knob note in modules/flash/aot/flyc_bwd_dkdv.py); on gfx950 it IS a flat
-// resolved field, `BwdDkDvKnobs.block_kv`. Both land under the same knob
-// key, 'block_kv', normalised in Python (the derivation differs; the wire
-// concept and its name do not), so this reads exactly one key.
+// The KV tile size is the `block_kv` field of `FlycKVKnobs`, filled by each
+// arch's resolve (gfx1201 derives it as `ROWS_PER_WAVE * NUM_TEAMS`, gfx950
+// resolves it as a knob), so this reads exactly one key.
 dim3
 FlycBwdDkdvContext::grid_calculator() const {
   const auto row = classify(*params);

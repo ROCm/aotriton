@@ -75,10 +75,12 @@ absent, and no gate short of a numerical test would catch it.
 
 ## The vendoring contract
 
-`modules/<family>/flyc/` is a **bare directory of Python files**, modelled on
-`modules/<family>/kernel/`: no `__init__.py`, not a package, flat sibling
-imports between the files. Anything that imports from it puts the directory on
-`sys.path` first — the same contract the Triton kernel directory already uses.
+`modules/<family>/flyc/` holds the modules every architecture shares at its
+root, and one package per architecture (`gfx950/`, `gfx1201/`). Anything that
+imports from it puts `flyc/` on `sys.path` first, the same contract the Triton
+kernel directory uses. Shared modules are imported by bare name; an arch
+package's modules import each other relatively. Keep the arch packages'
+`__init__.py` empty: the code generator imports their tuning modules.
 
 Rules that make a re-sync cheap, and that a re-syncer must keep:
 
@@ -148,7 +150,14 @@ architecture at all — the build host is typically neither of the targets.
 5. **Describe the kernel** in `modules/<family>/aot/`: mark the builder with
    `@ati.flyc.kernel` and `@ati.flyc.hints`, declare the kernel arguments with
    their types and alignments, and have the builder return the FlyDSL module
-   and the knobs it resolved.
+   and the knobs it resolved. The description holds no arch branch: it builds
+   the family's one input metadata class from the functional (attention:
+   `fmha_meta.FmhaInputMetadata`) and calls the family's
+   unified entry, `resolve_knobs(arch, meta)` for the knobs and
+   `builder(arch, meta, knobs)` inside the deferred build. The knobs must carry
+   `flyc_source` (the kernel file, relative to `modules/<family>/flyc/`, e.g.
+   `gfx950/fwd.py`) and `flyc_kernel_name` (the `@flyc.kernel` def); derive the
+   knobs class from `FlycKnobs` (`fmha_knobs.py`), whose `resolve` fills both.
 6. **Compile one, by hand,** before wiring anything into the build:
    `AOTRITON_FLYDSL_KERNEL_ROOT=<flydsl source tree> python -m
    aotriton.flyc_compile <description> --kernel_name <name> --target <arch>
@@ -158,10 +167,68 @@ architecture at all — the build host is typically neither of the targets.
    without it and there is no default outside CMake. That check needs no GPU
    and no AOTriton build, and it is the cheapest place to find out that a
    kernel argument is misdeclared.
-7. **Put development tools in `modules/<family>/flyc/devtools/`,** not in
+7. **Put development tools in `modules/<family>/flyc/<arch>/devtools/`,** not in
    `modules/<family>/tests/`. The latter is reserved for tests of the built
    library; a harness that imports the vendored kernels directly and times them
    is a different thing and should not need an AOTriton build to run.
+
+## Adding an architecture to a family
+
+The attention family's descriptions (`flyc_attn_fwd.py`, `flyc_bwd_dq.py`,
+`flyc_bwd_dkdv.py`) know no architecture. Each calls a unified entry in
+`modules/flash/flyc/` (`tuning_fwd.py`, `tuning_dq.py`,
+`tuning_dkdv.py`), which looks the arch up in its `_ARCH_MODULES` table and
+hands `fmha_meta.FmhaInputMetadata` to that arch's tuning module as is. That
+class is the only input metadata: there is no per-arch one, and every caller
+(descriptions, JIT tests, devtools) builds it. Masking is its `causal_type`
+(AOTriton's CAUSAL_TYPE); `causal` and `window` are properties derived from it.
+
+The unified entries serve two callers:
+
+- **AOT**: `resolve_knobs(arch, meta, *, overrides=None)`. Only the compiled
+  tile and the padding flag are known: the functional fixes `block_dmodel` and
+  `padded_head` (`BLOCK_DMODEL`, `PADDED_HEAD`), and `head_dim`/`head_dim_v`
+  are None. The real head dims arrive at run time, and a padded binary serves
+  any that fit the tile, so an arch's tuner must not read `meta.head_dim` on
+  this path.
+- **JIT**: `plan(arch, meta, *, overrides=None)` returns `(meta, knobs)`, with
+  the caller's real head dims rounded up the arch's ladder into `block_dmodel`
+  (and `block_dmodel_v`) and `padded_head` set.
+- **Both**: `builder(arch, meta, knobs)` constructs the module; `arches()` lists
+  the rows.
+
+A new architecture therefore needs:
+
+1. **A package `modules/flash/flyc/<arch>/`** with an empty `__init__.py` and
+   its kernels under short names (`fwd.py`, `dq.py`, `dkdv.py`, ...).
+2. **`<arch>/knobs.py`**: the knobs classes, deriving from `FlycQKnobs` (forward,
+   dQ) or `FlycKVKnobs` (dK/dV), flydsl-free, with the `FLYC_SOURCE`,
+   `FLYC_KERNEL_NAME` and `FLYC_GRID_AXIS_ORDER` class constants.
+3. **`<arch>/tuning_fwd.py`, `tuning_dq.py`, `tuning_dkdv.py`**, each defining
+   `entry_resolve(meta, *, overrides=None)` (AOT: apply the arch's pins with
+   `fmha_knobs.pinned`, so pins win over `overrides`, and assert them),
+   `entry_plan(meta, *, overrides=None)` (JIT: round the head dims up the
+   ladder, then resolve; return `(meta, knobs)`) and `entry_build(meta, knobs)`.
+   They read `FmhaInputMetadata` directly and refuse a `causal_type` the arch
+   cannot build. `BLOCK_DMODEL` and `PADDED_HEAD` arrive as metadata, never as
+   knobs.
+4. **One row per unified entry** in its `_ARCH_MODULES` table, naming
+   `<arch>.tuning_fwd` and so on.
+5. **The arch's head-dim ladder** in the descriptions' disable predicates, so
+   functionals off the ladder are not built.
+6. **Nothing in `modules/flash/flyc/tests/`**, which is arch-neutral: its suites
+   build through `plan` and `builder` for the first GPU's arch
+   (`gcnArchName` without feature suffixes) and skip an arch a dispatcher has no
+   row for. The built module must take the shared host ABI (`fmha_utils.py`)
+   the suites call it with; a difference between arches belongs behind the
+   dispatcher, not in a test. A case only some arch can run (a head dim one
+   ladder lacks, a knob only one arch has) is a skip with the reason. Only a
+   test of something genuinely arch-specific goes in `<arch>/test_*.py`, with a
+   `conftest.py` there that turns FlyDSL's JIT cache off.
+
+Helpers more than one architecture uses live at the `flyc/` root
+(`fmha_utils.py`, `philox.py`, `flyc_polyfill.py`) and are imported by bare name;
+modules inside an arch package import each other relatively.
 
 ## Code generation: what the description turns into
 
@@ -290,8 +357,9 @@ one new compile rule and no new packaging.
 **Nothing in the generator ever invokes the FlyDSL compiler.** A description's
 builder returns `(build, knobs)`: `knobs` is a plain dict, already resolved, and
 `build` is a deferred callable that would construct the FlyDSL module. The
-generator reads `knobs` and two plain strings off `build`, and discards it
-without calling it. Only `flyc_compile`, run by ninja, calls it. Getting that
+generator reads `knobs` (which include the two plain strings `flyc_source` and
+`flyc_kernel_name`, like every other knob) and discards `build` without calling
+it. Only `flyc_compile`, run by ninja, calls it. Getting that
 wrong would put every kernel compile inside `cmake` configure.
 
 **A flyc kernel has no autotune LUT.** Every functional resolves to exactly one
@@ -312,6 +380,101 @@ It produces an INCOMPLETE image set and must never be shipped; the build says so
 at configure time. Triton kernels that another backend's metro borrows are kept
 regardless, by name, because skipping them would not give "Triton operators do
 not work, everything else does" — it would give a metro with a missing step.
+
+## Moving to a new FlyDSL release
+
+The 0.3.1 -> 0.4.2 move passed every test and lost up to 17% of forward
+throughput on gfx950. None of the loss was the compiler. This list is what
+caught it, and what to check before the next move.
+
+### What breaks without a test failing
+
+- **Helper behaviour, not only helper APIs.** Our kernels subclass or alias
+  about 50 names from `kernels/attention/flash_attn_utils.py`. Read
+  `git log <old>..<new> -- kernels/attention/` in full, including fp8 and
+  "consolidate" commits. 826efd04 (an fp8 change) moved the stagger split from
+  wave 4 to `num_waves // 2`. Every 4-wave forward build then staggered for
+  the first time and lost 7-22%. The fix was a knob policy (`_with_stagger`),
+  not a vendored helper.
+- **Removed helpers and new trait fields.** 0.4.2 removed
+  `_fadd/_fsub/_fmul/_fmax` and `kernels_common._if_then`, added
+  `DualwaveSwpTraits.HEAD_DIM_V`, and changed `lds_kv_base_ptr` from an LLVM
+  pointer to a fly pointer. The drift guard in `gfx950/standalone.py` catches
+  trait fields only. The others surface as trace errors, or as different code.
+- **Compile hints.** FlyDSL reads lower-case keys only (`fast_fp_math`,
+  `unsafe_fp_math`, `llvm_options`). Set them on the JitFunction
+  (`launch.compile_hints = ...`). `aotriton.flyc_compile` calls the
+  JitFunction directly, so hints set in a `CompilationContext.compile_hints`
+  block around a JIT call never reach a library build. Moving hints from JIT
+  to AOT is a performance change: measure every option one at a time.
+  `enable-post-misched: False` cost the forward 2-8%
+  (`fmha_utils.compile_hints`).
+- **Function attributes.** `value_attrs` keys for LLVM function attributes
+  need the `llvm.` prefix (`llvm.passthrough`, `llvm.denormal_fpenv`). The
+  gpu.func lowering drops a bare `passthrough` without an error. LLVM no longer
+  reads the `denormal-fp-math-f32` string, so DAZ goes through
+  `llvm.denormal_fpenv` (`fmha_utils.kernel_attrs`).
+- **Fastmath.** A plain operator (`a - b`, `a * b`) takes the ambient fastmath,
+  which is `fast` only under `fast_fp_math`. `fx.maxnumf` ignores the ambient
+  flags; pass `fastmath=` when it matters. Upstream replaced its explicit-flag
+  wrappers with plain operators, so check the flags in the IR, not the source.
+
+### Checking that options reach LLVM
+
+- JIT with `FLYDSL_DUMP_IR=1 FLYDSL_DUMP_DIR=<dir>` and
+  `FLYDSL_RUNTIME_ENABLE_CACHE=0` writes `21_llvm_ir.ll` and
+  `22_final_isa.s` per kernel.
+- In the IR, check the function attributes (`"amdgpu-waves-per-eu"`,
+  `"amdgpu-flat-work-group-size"`, `denormal_fpenv`, `passthrough` entries)
+  and the `fast`/`contract` flags on `fmul`/`fadd`/`fma`/`maxnum`.
+- In the ISA or a library hsaco, check `.amdhsa_float_denorm_mode_32` (0 is
+  DAZ, 3 keeps denormals), `.vgpr_count`, `.agpr_count`,
+  `.vgpr_spill_count`, `.private_segment_fixed_size` and
+  `.group_segment_fixed_size`. For a library hsaco use `llvm-objdump -D
+  --disassemble-symbols=<kernel>.kd` and `llvm-readelf --notes`. The hsaco
+  of a configuration is listed in `<build>/v3src/Fly.compile`. Its knobs are
+  in the `.json` beside it and in `v3src/flash/flyc.<kernel>.cc`.
+- `llvm_options` leave no mark in the IR. Check them with an ISA diff with
+  and without the option.
+- Diff the ISA with operands, not only opcodes. The stagger change was one
+  immediate (`s_lshr_b32 ..., 7` against `8` on the thread id) in
+  otherwise near-identical hsacos, and those hsacos were 15% apart.
+
+### Measuring
+
+- Use the benchmark's own dtype and scale. `performance_forward.py` runs
+  fp16 at `sm_scale = 1.3`, B4 H48.
+- Library A/B: run each build on each GPU in rotation in the same session.
+  Report medians with min-max. Run the test scripts from one worktree, so
+  that only the library differs. Before a run, check `amd-smi metric -u -m`
+  for busy GPUs. mi355-large GPUs differ by up to ~3%, and a neighbour's job
+  or a running build makes a sample worthless.
+- JIT A/B: build all arms in one process, then interleave them and rotate
+  their order each round. Order alone is worth ~5%
+  (`devtools/bench_fwd_wpe_sweep.py`). Compare across processes, such as a
+  different wheel or kernel tree, only on one GPU, with two passes in opposite
+  orders. Expect ~2% noise.
+- `rocprofv3 --kernel-trace --stats` separates kernel time from host time.
+  Its grid, scratch and VGPR columns confirm which image ran.
+
+### Bisecting a regression
+
+1. **Compiler or kernels.** Trace the old port against the old kernel tree
+   with the new wheel. An old wheel overlays the new one through `PYTHONPATH`
+   (a directory holding only `flydsl/` and its dist-info). If it fails to load
+   `libmlir_apfloat_wrappers`, put ROCm's `lib/llvm/lib` copy on
+   `LD_LIBRARY_PATH`. For 0.4.2, old code with the v0.3.1 tree ran at the same
+   speed under both wheels.
+2. **Helpers.** Extract `git archive <commit> kernels` for each upstream
+   commit that touches `kernels/attention/` and point
+   `AOTRITON_FLYDSL_KERNEL_ROOT` at it. Where the port cannot trace an
+   intermediate tree, use the port commit that matches it. Keep port commits
+   that follow an API change separate from behaviour changes, so each one can
+   pair with a tree.
+3. **Options.** Patch `fmha_utils.COMPILE_HINTS`, `compile_hints` and
+   `kernel_attrs` before the first call, and drop one option per arm.
+4. **Our port.** Compare the hsaco of the exact configuration across our
+   commits. The refactors claimed to be hsaco-identical should be.
 
 ## Dispatch: choosing the backend at runtime
 

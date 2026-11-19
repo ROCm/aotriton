@@ -21,10 +21,10 @@ something specific (the generated C++ dispatch layer), so reusing the word
 here would mislead.
 
 **This module must import with no ``flydsl`` installed.** ``DualwaveSwpTraits``
-below is reached by the *generator*, through ``gfx950_standalone``'s fallback,
+below is reached by the *generator*, through ``gfx950.standalone``'s fallback,
 and the generator has no flydsl by design. So every ``flydsl`` import here is
 function-local -- the same laziness applied to torch in
-``fmha_abi_gfx1201.py``, and for the same reason. The two ``ir.Type``
+``fmha_utils.py``, and for the same reason. The two ``ir.Type``
 annotations are quoted for the same reason: an annotation on a ``def`` is
 evaluated when the ``def`` executes.
 """
@@ -168,19 +168,19 @@ except ImportError:
 # byte-identical on ``upstream/main`` and the gfx950 branch alike). It is
 # copied anyway because of *where* it lives: ``kernels/attention/
 # flash_attn_utils.py``, whose module scope imports ``flydsl.compiler``. The
-# generator reaches this class -- ``fmha_traits_gfx950.ParityDualwaveTraits``
+# generator reaches this class -- ``gfx950.traits.ParityDualwaveTraits``
 # subclasses it, and ``fmha_tuning_*_gfx950.resolve()`` constructs one to
 # validate a configuration -- and the generator must never import flydsl.
 #
 # So the retiring condition here is not "when the symbol lands upstream"; it
-# already has. It is **when ``fmha_traits_gfx950`` no longer needs a
+# already has. It is **when ``gfx950.traits`` no longer needs a
 # flydsl-bearing module for its base class** -- when ``DualwaveSwpTraits``
 # moves to a module importing no flydsl, or when the generator stops
 # constructing traits.
 #
-# Copied verbatim from FlyDSL ``70b2dbc5``,
-# ``kernels/attention/flash_attn_utils.py`` lines 1476-1582 (107 lines,
-# sha256 6750ff4e...). Do not reformat, rename or reorder it: the safety
+# Copied verbatim from FlyDSL ``97677775`` (v0.4.2),
+# ``kernels/attention/flash_attn_utils.py`` lines 1482-1589 (108 lines,
+# sha256 d25d655d...). Do not reformat, rename or reorder it: the safety
 # argument below is that it is an exact copy, and
 # ``assert_dualwave_swp_traits_equivalent`` is what proves that claim at
 # build time rather than asserting it in a comment.
@@ -199,6 +199,7 @@ class DualwaveSwpTraits:
     BLOCK_SIZE: int
     ROWS_PER_WAVE: int
     HEAD_DIM: int
+    HEAD_DIM_V: int
     K_STEP_QK: int
     K_STEPS_QK: int
     D_CHUNK: int
@@ -299,8 +300,8 @@ def assert_dualwave_swp_traits_equivalent(upstream, local=DualwaveSwpTraits) -> 
     """Fail loudly if the copy above has drifted from ``upstream``'s class.
 
     Compares ``dataclasses.fields()`` -- **names, types and order**. For a
-    78-field dataclass whose every field is supplied by keyword at every
-    construction (``fmha_traits_gfx950.make_traits`` passes all 78, including
+    79-field dataclass whose every field is supplied by keyword at every
+    construction (``gfx950.traits.make_traits`` passes all 79, including
     the only two that carry defaults), that comparison is *total*, not a
     sample: any upstream add, remove, rename, reorder or retype lands here.
 
@@ -311,7 +312,7 @@ def assert_dualwave_swp_traits_equivalent(upstream, local=DualwaveSwpTraits) -> 
     Same philosophy as ``flyc_compile._verify_elf``: check the assumption
     where it can be checked, and stop the build when it moves.
 
-    **The caller is ``gfx950_standalone``, and deliberately not this module's
+    **The caller is ``gfx950.standalone``, and deliberately not this module's
     own scope.** The obvious spelling -- a module-scope
     ``try: from kernels.attention.flash_attn_utils import DualwaveSwpTraits``
     here, matching the six helpers above -- would run this comparison during
@@ -321,7 +322,7 @@ def assert_dualwave_swp_traits_equivalent(upstream, local=DualwaveSwpTraits) -> 
     across older tags: at ``v0.3.0`` it is 105 fields-and-lines, against 107
     at the merge-base, ``upstream/main`` and the gfx950 branch alike. So that
     spelling would let a gfx950 concern fail a gfx1201 build over a class
-    gfx1201 never touches. Calling from ``gfx950_standalone`` runs the check
+    gfx1201 never touches. Calling from ``gfx950.standalone`` runs the check
     on exactly the builds that use the class, and no others.
     """
     if upstream is local:

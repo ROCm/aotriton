@@ -95,7 +95,7 @@ FlycAttnFwdContext::flyc_padded_head() const {
 }
 
 // Grid shape, derived from the vendored kernel's own launcher --
-// `launch_flash_attn_aiw` in modules/flash/flyc/flash_attn_func_gfx1201_aiw.py:
+// `launch_flash_attn_aiw` in modules/flash/flyc/gfx1201/fwd.py:
 //
 //   nseq_idx    = num_seqlens != 0 ? num_seqlens : batch_size
 //   num_q_tiles = cdiv(max_seqlen_q, BLOCK_M)
@@ -111,7 +111,7 @@ FlycAttnFwdContext::flyc_padded_head() const {
 // the caller; see TritonKernel::invoke.
 //
 // NEITHER LAUNCHER'S SPLIT-K MULTIPLIER IS REPRODUCED, and that is a pin, not
-// an equivalence. gfx950's `flash_attn_func_gfx950.py` computes
+// an equivalence. `gfx950/fwd.py` computes
 // `grid_z = bs_idx * traits.NUM_KV_SPLITS` under `if const_expr(traits.SPLITK)`
 // and `bs_idx` otherwise; this function always computes the `bs_idx` form. It
 // agrees because every flyc forward description pins `num_kv_splits=1`, which
@@ -122,11 +122,9 @@ FlycAttnFwdContext::flyc_padded_head() const {
 // `num_kv_splits`, this z extent becomes NUM_KV_SPLITS times too small and
 // nothing else in the tree will say so.
 //
-// The axis order itself is not hardcoded -- both arches' descriptions
-// put HEAD_FASTEST in the knobs for this kernel today (gfx1201 by literal
-// assignment, gfx950 as `Gfx950Knobs.GRID_AXIS_ORDER`, a flat resolved field),
-// but this reads perf() rather than assuming so, per flyc_common.h's
-// flyc_grid_axis_order.
+// The axis order itself is not hardcoded: it is the `GRID_AXIS_ORDER` knob the
+// kernel's resolve filled (HEAD_FASTEST for every arch today), read from perf()
+// per flyc_common.h's flyc_grid_axis_order. Both orders are implemented.
 dim3
 FlycAttnFwdContext::grid_calculator() const {
   const auto row = classify(*params);
@@ -146,10 +144,8 @@ FlycAttnFwdContext::grid_calculator() const {
     case kFlycGridAxisHeadFastest:
       return dim3 { num_head_q, num_q_tiles, nseq_idx };
     case kFlycGridAxisTileFastest:
-      // No knob set has ever asked the forward for this order; fail loudly
-      // rather than silently walk the axes in the wrong shape.
-      AOTRITON_LOG(LOG_ERROR, "flyc fwd grid_calculator: TILE_FASTEST is not implemented for this kernel");
-      throw std::runtime_error("flyc fwd grid_calculator: unsupported GRID_AXIS_ORDER (TILE_FASTEST)");
+      // A head's q tiles run together, so they share K/V in L2.
+      return dim3 { num_q_tiles, num_head_q, nseq_idx };
   }
   throw std::runtime_error("flyc fwd grid_calculator: unreachable GRID_AXIS_ORDER");
 }

@@ -17,7 +17,7 @@
 #   configure. Pass it to build against local FlyDSL kernel changes. No
 #   head-dim range needs it: the gfx950 kernels above head_dim 128 want an
 #   LDS-transpose emitter the pinned FlyDSL release lacks, but those five
-#   emitters are vendored in modules/flash/flyc/fmha_dualwave_gfx950.py, so
+#   emitters are vendored in modules/flash/flyc/gfx950/dualwave_helpers.py, so
 #   the default clone builds them correctly. See docs/FlyDSL.md.
 #
 # --flydsl_wheel: for an unreleased build, one carrying a compiler patch say.

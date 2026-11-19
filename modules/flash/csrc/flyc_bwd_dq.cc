@@ -72,7 +72,7 @@ FlycBwdDqContext::flyc_padded_head() const {
 }
 
 // Grid shape, derived from the vendored kernel's own launcher -- `launch_bwd_dq`
-// in modules/flash/flyc/fmha_bwd_dq_gfx1201_kernel.py:
+// in modules/flash/flyc/gfx1201/dq.py:
 //
 //   nseq_idx    = num_seqlens != 0 ? num_seqlens : batch_size
 //   num_q_tiles = cdiv(max_seqlen_q, BLOCK_M)
@@ -85,10 +85,8 @@ FlycBwdDqContext::flyc_padded_head() const {
 // `block_m` is a resolve_knobs output here, so unlike dK/dV's block_n it needs
 // no derivation on the description side.
 //
-// As in the forward, the axis order is read from perf() rather than
-// assumed -- both arches' descriptions put HEAD_FASTEST in the knobs for
-// this kernel today, but the switch below is what makes that a fact this
-// function checks rather than one it silently depends on.
+// As in the forward, the axis order is read from perf() rather than assumed
+// (HEAD_FASTEST for every arch today); both orders are implemented.
 dim3
 FlycBwdDqContext::grid_calculator() const {
   const auto row = classify(*params);
@@ -109,8 +107,8 @@ FlycBwdDqContext::grid_calculator() const {
     case kFlycGridAxisHeadFastest:
       return dim3 { num_head_q, num_q_tiles, nseq_idx };
     case kFlycGridAxisTileFastest:
-      AOTRITON_LOG(LOG_ERROR, "flyc dq grid_calculator: TILE_FASTEST is not implemented for this kernel");
-      throw std::runtime_error("flyc dq grid_calculator: unsupported GRID_AXIS_ORDER (TILE_FASTEST)");
+      // A head's q tiles run together, so they share K/V in L2.
+      return dim3 { num_q_tiles, num_head_q, nseq_idx };
   }
   throw std::runtime_error("flyc dq grid_calculator: unreachable GRID_AXIS_ORDER");
 }

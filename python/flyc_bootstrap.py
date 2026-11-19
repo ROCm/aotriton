@@ -175,7 +175,7 @@ def _find_flydsl_checkout_root() -> Path:
     FlyDSL enters this build twice, and the two pins are independent:
 
     * ``third_party/flydsl-compiler.txt`` -- the pip pin for the *compiler*
-      (``flydsl==0.3.1``), installed into the build venv.
+      (FlyDSL v0.4.2, by commit), installed into the build venv.
     * ``third_party/flydsl-kernel.txt`` -- the git ref for the *source tree*,
       shallow-cloned like ``third_party/aiter.txt``, which is what this
       function points at. The wheel does not ship ``kernels/common``, and the

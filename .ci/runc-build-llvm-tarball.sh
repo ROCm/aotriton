@@ -127,7 +127,7 @@ NANOBIND_DIR=$(python -c "import nanobind, os; print(os.path.dirname(nanobind.__
 # --- Configure ---
 # These flags are FlyDSL's, not ours. They are transcribed from FlyDSL's
 # scripts/build_llvm.sh at the tag third_party/flydsl-compiler.txt pins
-# (v0.3.1, commit 421935cc), because FlyDSL's CMakeLists.txt does a plain
+# (v0.4.2, commit 97677775, its default `full` profile), because FlyDSL's CMakeLists.txt does a plain
 # `find_package(MLIR REQUIRED CONFIG)` against MLIR_PATH/lib/cmake/mlir and
 # inherits whatever that build decided:
 #
@@ -150,9 +150,11 @@ NANOBIND_DIR=$(python -c "import nanobind, os; print(os.path.dirname(nanobind.__
 #   BUILD_SHARED_LIBS / *_DYLIB=OFF        FlyDSL links MLIR statically into its
 #                                          own extension module.
 #
-# Do not "improve" this list. If FlyDSL's build_llvm.sh changes -- it gained an
-# amd-minimal profile and an ROCDL lld patch after v0.3.1 -- the change belongs
-# here, in the same commit that moves flydsl-compiler.txt.
+# Do not "improve" this list. If FlyDSL's build_llvm.sh changes, the change
+# belongs here, in the same commit that moves flydsl-compiler.txt. Not taken
+# from v0.4.2: LLVM_INSTALL_GTEST=ON (installs gtest, which FlyDSL's wheel does
+# not use) and the LLVM extensions in its thirdparty/llvm-build-info.json,
+# which this script does not apply.
 #
 # NOT set here on purpose: Python3_EXECUTABLE picks up whatever python is on
 # PATH, and that is fine. The tarball is *not* Python-ABI specific and is not

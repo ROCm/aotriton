@@ -15,8 +15,8 @@
 # actually constructs the FlyDSL module (and, in the standalone
 # `flyc_compile.py` driver, transitively imports flydsl), while `knobs` is a
 # plain dict already known by the time `fn(arch, choices, hints)` returns.
-# This generator calls `fn(arch, choices, hints)` for `knobs` (plus two plain
-# string attributes off `build` -- `flyc_source`/`flyc_kernel_name`) and
+# This generator calls `fn(arch, choices, hints)` for `knobs` (which carry the
+# two plain strings `flyc_source`/`flyc_kernel_name`) and
 # discards `build` without ever CALLING it, so a configure never pays for
 # hundreds of FlyDSL compiles. `knobs` is what feeds `ir/flyc/ksignature.py`'s
 # `psel_section`; the true on-disk `<hsaco>.json` knobs file is a separate,
@@ -70,8 +70,8 @@ class FlycTuneCodeGenerator(BaseTuneCodeGenerator):
         assert kdesc.builder_fn is not None, (
             f'flyc kernel {kdesc.NAME!r} has no builder_fn '
             f'(linker.py:_build_flycs must thread builder_fn=decl.fn)')
-        # The description imports its vendored kernel/tuning modules by bare name
-        # (e.g. `import fmha_tuning_gfx1201`), resolved relative to
+        # The description imports the unified entries by bare name (e.g.
+        # `tuning_fwd`, which imports `gfx1201.tuning_fwd`), resolved relative to
         # kdesc.source_path -- the vendored flyc DIRECTORY itself. A path, not
         # flydsl -- fine for the generator.
         kernel_dir = str(kdesc.source_path)
@@ -84,9 +84,9 @@ class FlycTuneCodeGenerator(BaseTuneCodeGenerator):
         # takes (arch, choices, hints), with arch arriving as an argument in
         # its own right rather than smuggled into choices.
         build, knobs = kdesc.builder_fn(f.arch, choices, hints)
-        # `build.flyc_source`/`build.flyc_kernel_name` are the only two
-        # attributes read off `build` -- never call it (see above).
-        kdesc.ensure_stub_resolved(f.arch, build)
+        # `knobs['flyc_source']`/`knobs['flyc_kernel_name']` locate the kernel
+        # stub; `build` is never called (see above).
+        kdesc.ensure_stub_resolved(f.arch, knobs)
         yield KernelSignature(f, psels=knobs)
 
     def generate(self):
@@ -167,7 +167,7 @@ class FlycTuneCodeGenerator(BaseTuneCodeGenerator):
         `@flyc.kernel` function has one fixed Python signature: `window_left`,
         `window_right`, `philox_offset2`, `hdim_qk` and `hdim_vo` are always
         formal `fx.Int32`/`fx.Int64` parameters of the compiled kernel, resolved
-        at runtime inside the kernel body (`fmha_common_gfx1201.resolve_window`
+        at runtime inside the kernel body (`fmha_utils.resolve_window`
         and friends), never elided from the kernarg ABI because the operator
         description happens to derive a constant for them. `real_param_order` is
         an arch-wide AST parse of that fixed signature, and `flyc_compile.py`'s
