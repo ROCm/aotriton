@@ -4,7 +4,9 @@
 
 Compile from source: FlyDSL's JIT cache key leaves out helpers outside the
 kernel's own directory (`fmha_utils.py`, `philox.py`), so a cached binary can
-outlive an edit to them.
+outlive an edit to them. The one cache-key test,
+`test_fwd_qk_scale.test_bias_survives_a_same_shape_bias_free_build`, turns the
+cache back on in a temporary directory.
 
 `flyc/` goes on `sys.path` for the dispatchers and shared modules (this
 directory has no `__init__.py`, so pytest adds only `tests/`), and the FlyDSL

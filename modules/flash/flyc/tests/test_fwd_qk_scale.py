@@ -272,8 +272,13 @@ def test_qk_scale_under_causal(dtype_str, head_dim, sm_scale):
     )
 
 
+def _cache_entries(root):
+    """Compiled kernels FlyDSL's disk cache holds under `root`."""
+    return len(list(Path(root).rglob("*.pkl")))
+
+
 @pytest.mark.parametrize("sm_scale", [0.0, 1.0], ids=["ScaleZero", "ScaleOne"])
-def test_bias_survives_a_same_shape_bias_free_build(sm_scale):
+def test_bias_survives_a_same_shape_bias_free_build(sm_scale, monkeypatch, tmp_path):
     """A bias build must apply its bias, **even after a bias-free one is built**.
 
     The second half is the whole test and is why the bias-free build is made
@@ -300,7 +305,13 @@ def test_bias_survives_a_same_shape_bias_free_build(sm_scale):
     domain, as a free FMA fusion of `qk_scale` into `sub_m` would have needed.
 
     Bias excludes causal on every arch, so this is the dense path only.
+
+    The suite compiles from source (`conftest.py`), which would hide exactly
+    this collision, so the test turns FlyDSL's disk cache back on, in an empty
+    directory of its own. FlyDSL reads both settings on every access.
     """
+    monkeypatch.setenv("FLYDSL_RUNTIME_ENABLE_CACHE", "1")
+    monkeypatch.setenv("FLYDSL_RUNTIME_CACHE_DIR", str(tmp_path))
     head_dim = 64
     q, k, v, out = _inputs(head_dim, torch.bfloat16, seed=7)
     bias = torch.randn(
@@ -312,10 +323,17 @@ def test_bias_survives_a_same_shape_bias_free_build(sm_scale):
     plain = _build(head_dim, "bf16")
     plain_out = torch.full_like(out, float("nan"))
     plain(q, k, v, plain_out, BATCH, SEQLEN_Q, seqlen_k=SEQLEN_K, scale=sm_scale, lse=_lse())
+    plain_entries = _cache_entries(tmp_path)
+    assert plain_entries > 0, "the disk cache stayed empty: the test is not exercising it"
 
     fn = _build(head_dim, "bf16", bias=True)
     fn(q, k, v, out, BATCH, SEQLEN_Q, seqlen_k=SEQLEN_K, scale=sm_scale, bias=bias, lse=_lse())
     torch.cuda.synchronize()
+
+    assert _cache_entries(tmp_path) > plain_entries, (
+        f"sm_scale={sm_scale:g}: the bias build added no cache entry -- it reused "
+        f"the bias-free build's key; see traits_cache_key"
+    )
 
     assert _max_err(out, plain_out.double()) > 0.0, (
         f"sm_scale={sm_scale:g}: the bias build returned the bias-free build's "
