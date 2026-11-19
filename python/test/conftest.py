@@ -10,8 +10,8 @@ on the real flash sources under modules/. We only put the test dir on sys.path s
 
 The exceptions are test_gpu_targets.py, which shells out to the real installed
 `aotriton.gpu_targets` CLI rather than a fake, and test_buildable_decl.py, which
-links the real modules/ tree for a genuine FlycDecl (the fake family has no flyc
-description). Neither needs a GPU.
+links the real modules/ tree for a genuine FlycDecl (the fake family's flyc
+description is a stub). Neither needs a GPU.
 """
 
 import sys
