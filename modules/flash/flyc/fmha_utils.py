@@ -48,12 +48,13 @@ from philox import dropout_threshold
 import flydsl.compiler as flyc
 import flydsl.expr as fx
 from flydsl._mlir import ir
-from flydsl.expr import gpu, range_constexpr
+from flydsl.expr import gpu, range_constexpr, rocdl
 from flydsl.expr.typing import Vector as Vec
 
 __all__ = [
     "lse_row_addressing",
     "bitcast_i32",
+    "bf16_round_nonan_pack",
     "MaskedAxis",
     "cond_load",
     "seqinfo_addr",
@@ -82,6 +83,7 @@ __all__ = [
     "VARLEN_COMPACT_SIDE",
     "CAUSAL_SENTINEL",
     "varlen_bits",
+    "principal_diagonal_bits",
     "varlen_dense",
     "varlen_is_dense",
     "dense_row_shape",
@@ -108,6 +110,11 @@ __all__ = [
     "run_compiled",
     "new_compiled_cache",
     "dtype_to_elem_type",
+    "builder_causal_types",
+    "check_head_dims",
+    "make_fwd_launch",
+    "make_dq_launch",
+    "make_dkdv_launch",
 ]
 
 
@@ -176,6 +183,21 @@ def lse_row_step_per_head(varlen_bits, tokens):
 
 def bitcast_i32(value):
     return fx.Float32(value).bitcast(fx.Int32)
+
+
+def bf16_round_nonan_pack(f32_vals, elem_dtype):
+    """Pack an even count of f32 values into bf16, rounding to nearest, ties away.
+
+    `gfx1201.utils.bf16_round_nonan_pack_v8` for any length: same rounding, same
+    caveat (a NaN may come out as a zero, so only for values that cannot be NaN,
+    such as P).
+    """
+    pairs = []
+    for j in range_constexpr(len(f32_vals) // 2):
+        lo = bitcast_i32(f32_vals[j * 2]) + fx.Int32(0x8000)
+        hi = bitcast_i32(f32_vals[j * 2 + 1]) + fx.Int32(0x8000)
+        pairs.append(fx.Int32(rocdl.perm_b32(hi, lo, fx.Int32(0x07060302))))
+    return Vec.from_elements(pairs, fx.Int32).bitcast(elem_dtype).ir_value()
 
 
 class MaskedAxis:
@@ -817,6 +839,19 @@ def varlen_bits(q_side=0,
         if (b >> 1) & 3 == 3 or (b >> 3) & 3 == 3:
             raise ValueError(f"{name}={b:#04x} uses a reserved code")
     return q_side | (k_side << 8) | lse_layout | principal_diagonal
+
+
+def principal_diagonal_bits(bits, principal_diagonal):
+    """`bits` with bit 18 set from a launcher's `principal_diagonal=`; raises if `bits` already says otherwise."""
+    if principal_diagonal is None:
+        return bits
+    choices = (VARLEN_PRINCIPAL_DIAGONAL_TOP_LEFT, VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT)
+    if principal_diagonal not in choices:
+        raise ValueError(f"principal_diagonal must be VARLEN_PRINCIPAL_DIAGONAL_* or None: {principal_diagonal!r}")
+    bit = VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT
+    if bits & bit and principal_diagonal != bit:
+        raise ValueError("varlen['bits'] selects BOTTOM_RIGHT but principal_diagonal= selects TOP_LEFT")
+    return bits | principal_diagonal
 
 
 VARLEN_DENSE = 0  # noqa: F841  (ditto)
@@ -1538,3 +1573,273 @@ def dtype_to_elem_type(dtype_str):
     if dtype_str == "bf16":
         return fx.BFloat16
     raise ValueError(f"unsupported dtype: {dtype_str!r} (expected 'f16' or 'bf16')")
+
+
+# Host launchers for kernels with gfx1201's kernel ABI (the gfx942 bodies):
+# each wraps a `@flyc.jit` launch in the matching gfx1201 call interface.
+
+
+def builder_causal_types(causal, causal_type, bias):
+    """`(host_causal_type, causal_type)`: 1/2 are host sentinels, 3 is gSWA; all compile to 3."""
+    host_causal_type = (1 if causal else 0) if causal_type is None else causal_type
+    if host_causal_type not in (0, 1, 2, 3):
+        raise ValueError(f'causal_type must be 0-3, got {host_causal_type}')
+    causal_type = 0 if host_causal_type == 0 else 3
+    if bias and causal_type:
+        raise ValueError('bias with a causal mask is not served (aot/_common.py flash_disabled)')
+    return host_causal_type, causal_type
+
+
+def check_head_dims(meta, head_dim, padded_head):
+    """Raise unless `prep_tensors`' (hdim_qk, hdim_vo) fit a `head_dim` build."""
+    if padded_head:
+        if not (0 < max(meta[2], meta[3]) <= head_dim):
+            raise ValueError(f'head dims {meta[2:]} do not fit a padded {head_dim} build')
+    elif meta[2] != head_dim or meta[3] != head_dim:
+        raise ValueError(f'head dims {meta[2:]} on an unpadded {head_dim} build; pass padded_head=True')
+
+
+def _check_dropout_p(dropout, dropout_p):
+    if dropout_p and not dropout:
+        raise ValueError('dropout_p= on a build without dropout')
+
+
+def make_fwd_launch(launch, tr, causal_type, host_causal_type, bias, dropout):
+    """gfx1201/fwd.py's call interface for the `@flyc.jit` `launch`;
+    `tr` gives D (the compiled head dim) and PADDED."""
+    compiled = new_compiled_cache()
+    has_bias = bias
+
+    def _launch(Q,
+                K,
+                V,
+                O,  # noqa: E741
+                batch_size,
+                seqlen_q,
+                seqlen_k=None,
+                num_seqlens=0,
+                scale=None,
+                stream=None,
+                lse=None,
+                window=None,
+                varlen=None,
+                bias=None,
+                dropout_p=None,
+                philox_seed=0,
+                philox_offset1=None,
+                philox_offset2=0,
+                philox_seed_output=None,
+                philox_offset_output=None,
+                principal_diagonal=None):
+        seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
+        ptrs, meta, st = prep_tensors([("Q", Q), ("K", K), ("V", V), ("O", O)], q_heads=("O",))
+        check_head_dims(meta, tr.D, tr.PADDED)
+        lse_p = lse_args(lse, seqlen_q, varlen, meta[0])
+        wl, wr = window_args(causal_type, host_causal_type, window, seqlen_q, seqlen_k)
+        vb, sq0, sq1, sk0, sk1, mq, mk = varlen_args(False, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
+        vb = principal_diagonal_bits(vb, principal_diagonal)
+        bp, _, sb, _ = bias_args(has_bias, False, bias, None, Q)
+        _check_dropout_p(dropout, dropout_p)
+        # `hold` keeps a materialised philox scalar alive across the launch (u64_scalar).
+        ps, po1, po2, ip, dsc, hold = dropout_args(dropout,
+                                                   dropout_p,
+                                                   philox_seed,
+                                                   philox_offset1,
+                                                   philox_offset2,
+                                                   Q.device,
+                                                   stream)
+        so, oo = dropout_outputs(dropout, philox_seed_output, philox_offset_output)
+        run_compiled(compiled,
+                     launch,
+                     *ptrs[:3],
+                     bp,
+                     ptrs[3],
+                     lse_p,
+                     sq0,
+                     sq1,
+                     sk0,
+                     sk1,
+                     vb,
+                     batch_size,
+                     num_seqlens,
+                     mq,
+                     mk,
+                     wl,
+                     wr,
+                     ps,
+                     po1,
+                     po2,
+                     so,
+                     oo,
+                     ip,
+                     dsc,
+                     *meta,
+                     resolve_scale(Q, scale, tr.PADDED, tr.D ** -0.5),
+                     *st,
+                     *sb,
+                     fx.Stream(stream))
+        del hold
+
+    _launch.traits = tr
+    return _launch
+
+
+def make_dq_launch(launch, tr, causal_type, host_causal_type, bias, dropout):
+    """gfx1201/dq.py's `_launch` interface for the `@flyc.jit` `launch`."""
+    compiled = new_compiled_cache()
+    has_bias = bias
+
+    def _launch(Q,
+                K,
+                V,
+                DO,
+                DQ,
+                lse,
+                delta,
+                batch_size,
+                seqlen_q,
+                seqlen_k=None,
+                num_seqlens=0,
+                scale=None,
+                stream=None,
+                window=None,
+                varlen=None,
+                principal_diagonal=None,
+                dropout_p=None,
+                philox_seed=0,
+                philox_offset1=None,
+                philox_offset2=0,
+                bias=None,
+                dbias=None):
+        seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
+        ptrs, meta, st = prep_tensors([("Q", Q), ("K", K), ("V", V), ("DO", DO), ("DQ", DQ)], q_heads=("DO", "DQ"))
+        check_head_dims(meta, tr.D, tr.PADDED)
+        lp = row_tensor_arg(lse, "logsumexp", meta[0], seqlen_q, varlen)
+        dp = row_tensor_arg(delta, "delta", meta[0], seqlen_q, varlen)
+        wl, wr = window_args(causal_type, host_causal_type, window, seqlen_q, seqlen_k)
+        vb, sq0, sq1, sk0, sk1, mq, mk = varlen_args(False, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
+        vb = principal_diagonal_bits(vb, principal_diagonal)
+        _check_dropout_p(dropout, dropout_p)
+        ps, po1, po2, ip, dsc, hold = dropout_args(dropout,
+                                                   dropout_p,
+                                                   philox_seed,
+                                                   philox_offset1,
+                                                   philox_offset2,
+                                                   Q.device,
+                                                   stream)
+        bp, dbp, bs, dbs = bias_args(has_bias, True, bias, dbias, Q)
+        run_compiled(compiled,
+                     launch,
+                     *ptrs[:3],
+                     bp,
+                     ptrs[3],
+                     ptrs[4],
+                     dbp,
+                     lp,
+                     dp,
+                     sq0,
+                     sq1,
+                     sk0,
+                     sk1,
+                     vb,
+                     batch_size,
+                     num_seqlens,
+                     mq,
+                     mk,
+                     wl,
+                     wr,
+                     ps,
+                     po1,
+                     po2,
+                     ip,
+                     dsc,
+                     *meta,
+                     resolve_scale(Q, scale, tr.PADDED, tr.D ** -0.5),
+                     *st,
+                     *bs,
+                     *dbs,
+                     fx.Stream(stream))
+        del hold
+
+    _launch.traits = tr
+    return _launch
+
+
+def make_dkdv_launch(launch, tr, causal_type, host_causal_type, bias, dropout):
+    """gfx1201/dkdv.py's `_launch` interface for the `@flyc.jit` `launch`."""
+    compiled = new_compiled_cache()
+    has_bias = bias
+
+    def _launch(Q,
+                K,
+                V,
+                DO,
+                DK,
+                DV,
+                L,
+                Delta,
+                batch_size,
+                seqlen_q,
+                seqlen_k=None,
+                num_seqlens=0,
+                scale=None,
+                stream=None,
+                window=None,
+                varlen=None,
+                principal_diagonal=None,
+                dropout_p=None,
+                philox_seed=0,
+                philox_offset1=None,
+                philox_offset2=0,
+                bias=None):
+        seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
+        ptrs, meta, st = prep_tensors([("Q", Q), ("K", K), ("V", V), ("DO", DO), ("DK", DK), ("DV", DV)],
+                                      q_heads=("DO",),
+                                      k_heads=("DK", "DV"))
+        check_head_dims(meta, tr.D, tr.PADDED)
+        lp = row_tensor_arg(L, "logsumexp", meta[0], seqlen_q, varlen)
+        dp = row_tensor_arg(Delta, "delta", meta[0], seqlen_q, varlen)
+        wl, wr = window_args(causal_type, host_causal_type, window, seqlen_q, seqlen_k)
+        vb, sq0, sq1, sk0, sk1, mq, mk = varlen_args(False, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
+        vb = principal_diagonal_bits(vb, principal_diagonal)
+        _check_dropout_p(dropout, dropout_p)
+        ps, po1, po2, ip, dsc, hold = dropout_args(dropout,
+                                                   dropout_p,
+                                                   philox_seed,
+                                                   philox_offset1,
+                                                   philox_offset2,
+                                                   Q.device,
+                                                   stream)
+        bp, _, bs, _ = bias_args(has_bias, False, bias, None, Q)
+        run_compiled(compiled,
+                     launch,
+                     *ptrs[:3],
+                     bp,
+                     *ptrs[3:],
+                     lp,
+                     dp,
+                     sq0,
+                     sq1,
+                     sk0,
+                     sk1,
+                     vb,
+                     batch_size,
+                     num_seqlens,
+                     mq,
+                     mk,
+                     wl,
+                     wr,
+                     ps,
+                     po1,
+                     po2,
+                     ip,
+                     dsc,
+                     *meta,
+                     resolve_scale(Q, scale, tr.PADDED, tr.D ** -0.5),
+                     *st,
+                     *bs,
+                     fx.Stream(stream))
+        del hold
+
+    _launch.traits = tr
+    return _launch
