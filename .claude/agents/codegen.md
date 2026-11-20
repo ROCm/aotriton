@@ -106,6 +106,14 @@ the psel the C++ `grid_calculator()` reads (`block_m`, `block_kv`,
 `modules/flash/flyc/tuning_*.py`, which must stay flydsl-free; see
 `docs/FlyDSL.md`.
 
+### Kernel sources are not build dependencies
+
+The kernel toolchain has no `gcc -MD` equivalent, so ninja never sees edits to
+kernel sources, and none is planned. Do not try to fix this in the generated
+build rules. After a kernel edit, clean the kernel's `.hsaco`, `.aks2` and
+packaged `.zip` by hand (recipe in the `sdpa-expert` agent, "Rebuilding after
+a kernel edit"). Edits to `modules/*/aot/*.py` need `cmake .` before `ninja`.
+
 ### What this agent can help with
 
 - Adding a new kernel or operator to `v3python/rules/`
