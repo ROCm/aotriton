@@ -49,8 +49,8 @@ whatever contract a caller builds on top:
 
 Which is faster is a property of the target's integer ALU, so it is a
 parameter here and a per-arch default in the caller. On gfx1201 the 32-bit
-variant needs one ``v_mul_hi_u32`` per high product while the 64-bit one needs
-a multi-instruction sequence; see ``kernels/microbench/philox_bench.py``.
+variant forms each product with one ``v_mad_co_u64_u32`` while the 64-bit one
+needs a multi-instruction sequence; see ``kernels/microbench/philox_bench.py``.
 
 Both widths take a **64-bit seed and a 64-bit offset**. That does not require
 64-bit arithmetic: at width 32 the seed fills the two key words and the offset
@@ -64,6 +64,7 @@ from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
 import flydsl.expr as fx
+from flydsl._mlir import ir
 from flydsl._mlir.dialects import arith
 
 __all__ = [
@@ -184,10 +185,6 @@ def _const(width: PhiloxWidth, name: str) -> Word:
 # because `fx.Int32` truncates what it is handed, which is the wrap by luck.
 # `arith.addi`/`muli`/`xori` wrap at the declared width, which is the semantics
 # this PRNG is defined in.
-def _mul_lo(a: Word, b: Word, width: PhiloxWidth) -> Word:
-    return _ty(width)(arith.muli(fx.as_ir_value(a), fx.as_ir_value(b)))
-
-
 def _xor(a: Word, b: Word, width: PhiloxWidth) -> Word:
     return _ty(width)(arith.xori(fx.as_ir_value(a), fx.as_ir_value(b)))
 
@@ -196,16 +193,24 @@ def _add(a: Word, b: Word, width: PhiloxWidth) -> Word:
     return _ty(width)(arith.addi(fx.as_ir_value(a), fx.as_ir_value(b)))
 
 
-def _mul_hi(a: Word, b: Word, width: PhiloxWidth) -> Word:
-    """High half of an unsigned product.
+def _mul_lohi(a: Word, b: Word, width: PhiloxWidth) -> tuple[Word, Word]:
+    """(low, high) halves of an unsigned product.
 
-    `arith.mului_extended` yields both halves in one op, which lowers to
-    `v_mul_hi_u32` on gfx1201 rather than a shift of a widened product. At width
-    64 the backend expands it; that expansion is exactly what makes the 64-bit
-    variant expensive, and is the thing the microbenchmark prices.
+    Width 32 zero-extends to one 64-bit multiply, which LLVM lowers to a single
+    `v_mad_u64_u32` (`v_mad_co_u64_u32` on gfx1201) yielding both halves;
+    `mului_extended` would cost a `v_mul_lo_u32` plus a `v_mul_hi_u32`. Width 64
+    has no wider type, so the backend expands the high half; that expansion is
+    what makes the 64-bit variant expensive.
     """
-    op = arith.MulUIExtendedOp(fx.as_ir_value(a), fx.as_ir_value(b))
-    return _ty(width)(op.high)
+    if width == 32:
+        i32 = ir.IntegerType.get_signless(32)
+        i64 = ir.IntegerType.get_signless(64)
+        p = arith.muli(arith.extui(i64, fx.as_ir_value(a)), arith.extui(i64, fx.as_ir_value(b)))
+        hi = arith.shrui(p, arith.constant(i64, 32))
+        return fx.Int32(arith.trunci(i32, p)), fx.Int32(arith.trunci(i32, hi))
+    lo = arith.muli(fx.as_ir_value(a), fx.as_ir_value(b))
+    hi = arith.MulUIExtendedOp(fx.as_ir_value(a), fx.as_ir_value(b)).high
+    return fx.Int64(lo), fx.Int64(hi)
 
 
 def philox_4x(
@@ -234,10 +239,11 @@ def philox_4x(
     KA, KB = _const(width, "KEY_A"), _const(width, "KEY_B")
     for _ in range(n_rounds):
         _c0, _c2 = c0, c2
-        c0 = _xor(_xor(_mul_hi(B, _c2, width), c1, width), k0, width)
-        c2 = _xor(_xor(_mul_hi(A, _c0, width), c3, width), k1, width)
-        c1 = _mul_lo(B, _c2, width)
-        c3 = _mul_lo(A, _c0, width)
+        lo_b, hi_b = _mul_lohi(B, _c2, width)
+        lo_a, hi_a = _mul_lohi(A, _c0, width)
+        c0 = _xor(_xor(hi_b, c1, width), k0, width)
+        c2 = _xor(_xor(hi_a, c3, width), k1, width)
+        c1, c3 = lo_b, lo_a
         k0 = _add(k0, KA, width)
         k1 = _add(k1, KB, width)
     return c0, c1, c2, c3
