@@ -24,7 +24,7 @@ def flash_disabled(f, *, gfx950_bad_hdims=()):
     bias_type = f.choices.BIAS_TYPE
     if causal != 0 and bias_type != 0:
         return True
-    if f.arch.startswith('gfx11') and hdim > 256:
+    if f.arch.startswith(('gfx110', 'gfx115')) and hdim > 256:
         return True
     if f.arch == 'gfx950' and hdim in gfx950_bad_hdims:
         return True

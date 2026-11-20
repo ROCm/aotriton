@@ -114,12 +114,12 @@ class FlashTune(TuningDescription):
         return True
 
     def validate_hw_feature(self, arch: str, entry: FlashEntry) -> tuple[bool, str]:
-        # gfx11xx (RDNA 3, 32-lane wavesize) lacks LDS/register resources for hdim > 256.
-        # The code generator also disables these combinations in _common.py; reject here
-        # to avoid dispatching tuning tasks that would produce no compiled kernels.
-        if arch.startswith('gfx11') and entry.hdim > 256:
+        # RDNA 3/3.5 targets lack LDS/register resources for hdim > 256.
+        # gfx117x is RDNA 4m and is intentionally not covered by this restriction.
+        # The code generator applies the same architecture-specific exclusion.
+        if arch.startswith(('gfx110', 'gfx115')) and entry.hdim > 256:
             return False, (f'arch {arch} does not support hdim={entry.hdim} '
-                           f'(gfx11xx maximum is 256; larger hdim exceeds LDS/register limits)')
+                           f'(RDNA 3/3.5 maximum is 256; larger hdim exceeds LDS/register limits)')
         if arch in ('gfx1250', 'gfx1250-strict') and entry.hdim > 256:
             return False, (f'arch {arch} does not support hdim={entry.hdim} '
                            f'(no shipped candidate is numerically accurate at hdim > 256)')

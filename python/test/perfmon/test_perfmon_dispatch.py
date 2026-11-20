@@ -126,6 +126,16 @@ def test_entries_the_arch_rejects_are_reported_and_not_dispatched(workdir, capsy
     assert 'gfx1100 does not support hdim > 256' in capsys.readouterr().out
 
 
+def test_gfx117x_dispatches_hdim512(workdir, capsys):
+    options = ['--subject', S13, '--hdim', '64', '512',
+               '--causal', '0', '--seqlen', '16']
+    for arch in ('gfx1170', 'gfx1171'):
+        (workdir / 'installed' / 'perfmon' / arch / S13).mkdir(parents=True)
+        _, _, specs = _plan(workdir, *options, pool=arch)
+        assert {s.payload['entry']['hdim_qk'] for s in specs} == {64, 512}
+        assert len(specs) == 8
+    assert 'does not support hdim > 256' not in capsys.readouterr().out
+
 def test_llm_cases_are_dispatched_with_their_own_sizes(workdir):
     _, _, specs = _plan(workdir, '--subject', S13, '--entry_set', 'llm')
     entries = [s.payload['entry'] for s in specs]

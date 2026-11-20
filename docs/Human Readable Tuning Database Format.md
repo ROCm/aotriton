@@ -559,10 +559,10 @@ name files of the same interface. The section takes one of three forms:
 The database uses `<iface>.*` throughout:
 
 ```
-# amd/gfx1170/attn_fwd.txtdb
+# amd/gfx1171/attn_fwd.txtdb
 #!/usr/bin/env -S python -m aotriton.database.interpreter
 #! base
-../gfx1150/attn_fwd.*
+../gfx1170/attn_fwd.*
 ```
 
 - Each form says exactly which files it shares; none is a default the
@@ -591,24 +591,24 @@ The effective gfx1150 database is the gfx1100 one with gfx1150's own entries
 on top. Retuning gfx1100 updates gfx1150 automatically, except for the cells
 gfx1150 overrides.
 
-An architecture that has no tuning of its own is only base references,
-without any patch. These replace the former reuse map of the build, which
-gave gfx1152, gfx1153, gfx1170 and gfx1171 gfx1100's tuning, and gfx1150 and
-gfx1151 too, ignoring their own:
+An architecture that has no kernel tuning of its own is only base references,
+without any patch:
 
-| Architecture                                | Base    |
-|---------------------------------------------|---------|
-| gfx1101, gfx1102, gfx1103                   | gfx1100 |
-| gfx1170                                     | gfx1150 |
-| gfx1152, gfx1153, gfx1171                   | gfx1151 |
-| gfx1200                                     | gfx1201 |
-| gfx1250-strict                              | gfx1250 |
+| Architecture                                | Kernel base |
+|---------------------------------------------|-------------|
+| gfx1101, gfx1102, gfx1103                   | gfx1100     |
+| gfx1152, gfx1153                            | gfx1151     |
+| gfx1171                                     | gfx1170     |
+| gfx1200                                     | gfx1201     |
+| gfx1250-strict                              | gfx1250     |
 
-gfx1152, gfx1153, gfx1170 and gfx1171 thus get gfx1100's tensors with
-gfx1150's or gfx1151's patches on top.
+gfx1170 has standalone kernel tensors tuned through sequence length 8192;
+gfx1171 shares them through base references. Operator precedence is tuned
+separately: `op_attn_bwd.txtdb` for gfx1170 and gfx1171 directly references
+gfx1100 because the gfx1170 campaign covered kernels, not operator selection.
 
 Tuning such an architecture later means adding a `.dbpatch` next to its
-references.
+references, or replacing a reference with a complete standalone tensor.
 
 Base references are part of the format rather than filesystem symlinks, so
 the database works the same on every platform and in every tool: Git on
