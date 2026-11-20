@@ -279,10 +279,11 @@ def test_problem_and_size_rows_roundtrip(desc, prime):
 
 def test_workloads_are_the_first_list(desc):
     cases = desc.llm_cases()
-    assert len(cases) == 10
+    assert len(cases) == 17
     assert [c.model for c in cases[:4]] == ['roberta-large', 'bert-large-uncased',
                                             'distilbert-base-uncased', 'gpt2']
-    assert all(c.phase == 'fwd_bwd' and not c.pending for c in cases)
+    assert all(c.phase == 'fwd_bwd' and not c.pending for c in cases[:10])
+    assert all(c.phase == 'fwd' and not c.pending for c in cases[10:])
     sweep = [c.entry for c in cases if c.model == 'roberta-large']
     assert len(sweep) == 7
     # the sweep keeps batch x seqlen
