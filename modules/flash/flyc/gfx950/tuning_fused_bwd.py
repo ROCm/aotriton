@@ -46,7 +46,7 @@ from dataclasses import dataclass, fields, replace
 from fmha_knobs import knobs_of, pinned
 from fmha_meta import FmhaInputMetadata
 from .knobs import BwdFusedKnobFields
-from .tuning_dkdv import LDS_CAP_BYTES, BwdDkDvKnobs, BwdDkDvTraits
+from .tuning_dkdv import LDS_CAP_BYTES, BwdDkDvKnobs, BwdDkDvTraits, tile_width_for
 from .tuning_dkdv import plan as dkdv_plan
 
 __all__ = [
@@ -445,6 +445,7 @@ def prefer_fused(
     seqlen_q,
     seqlen_k,
     head_dim_v=None,
+    bias=False,
     dropout=False,
     arch="gfx950",
 ):
@@ -452,26 +453,33 @@ def prefer_fused(
 
     `seqlen_q`/`seqlen_k` are the *maximum* lengths of the call (the varlen
     `max_seqlen_*`), since the build serves every sequence up to them. Causal,
-    windows, bias, GQA, varlen, bf16 and f16 do not change the answer: every
-    measured point inside the region won, and every feature there is tested.
-    Dropout does not change it either; `dropout` is accepted so a caller can
-    pass the whole call, and so an exclusion can be keyed on it again.
+    windows, GQA, varlen, bf16 and f16 do not change the answer. Bias and
+    dropout do only at the 128-row KV block, where the 0ed41226 coverage
+    sweep found the split path faster for the cases excluded below.
     """
     # TODO: dropout is admitted only because `fused_bwd.FusedKvOutputs`
     # works around a gfx950 backend miscompile (see the FIXME there). That workaround
     # covers the dK/dV epilogue only; if a dropout build fails the 112-build matrix
     # after a FlyDSL or LLVM bump, exclude that exact build here (keyed on head_dim
     # rung, kv tile, causal, dtype, dropout) rather than all dropout.
-    del dropout
     if arch != "gfx950":
         return False
-    if max(head_dim, head_dim if head_dim_v is None else head_dim_v) > _FUSED_MAX_HEAD_DIM:
+    widest = max(head_dim, head_dim if head_dim_v is None else head_dim_v)
+    if widest > _FUSED_MAX_HEAD_DIM:
         return False
+    rung = tile_width_for(widest)
     if seqlen_k > _FUSED_MAX_SEQLEN_K:
         return False
     block_q = 64
     rows_needed = (-(-seqlen_q // block_q) + 2) * block_q
-    return rows_needed <= _FALLBACK.q_rows_cap + 2 * block_q
+    if rows_needed > _FALLBACK.q_rows_cap + 2 * block_q:
+        return False
+    if seqlen_k > block_q:  # the 128-row KV block
+        if rung == 96 and (bias or seqlen_q <= block_q or (dropout and seqlen_q <= 2 * block_q)):
+            return False
+        if rung == 128 and dropout and block_q < seqlen_q <= 2 * block_q:
+            return False
+    return True
 
 
 # Unified entry (flyc/tuning_fused_bwd.py): the shared metadata, pinned.

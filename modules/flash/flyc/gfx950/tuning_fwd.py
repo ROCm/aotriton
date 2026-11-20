@@ -80,10 +80,9 @@ __all__ = [
 #    384    4      128     64     2       1      112     0    100 KB     803
 #    512    4       64     64     2       2       91     0    133 KB     479
 #
-# Three families. **A** (granule 64, 8 waves) serves 64 and 128; **B/S**
-# (4 waves) serve the rest up to 256, with granule 32 where the width is not a
-# multiple of 64; **W** stages the D axis (`D_STAGES`) and shards it
-# (`VO_SHARDS`) for 384 and 512, on the separate body in `fwd_wide.py`.
+# Three default families. **B/S** (4 waves) serve every width up to 256, with
+# granule 32 where the width is not a multiple of 64 (**A**, 8 waves, is
+# pin-only); **W** stages the D axis (`D_STAGES`) and shards it (`VO_SHARDS`) for 384 and 512, on the separate body in `fwd_wide.py`.
 #
 # The break at 384 is not a tuning preference, it is LDS: two KV tiles in
 # flight need `2 * BLOCK_N * head_dim * ~8.3 B`, which is 199.5 KB at 384 and
@@ -352,10 +351,25 @@ class Gfx950Knobs(FmhaKnobs):
             ._checked_modes()
             ._with_widths(meta)
             ._with_wave_geometry(meta)
+            ._with_kv_walk()
             ._with_stagger()
             ._with_occupancy_target(meta)
             ._checked_against_traits(meta)
         )
+
+    def _with_kv_walk(self):
+        """End the KV walk at the last live tile wherever the body can.
+
+        Only the dual-wave body supports it (see `make_traits`). There the
+        0ed41226 sweep found it at or near the best build at every head dim,
+        mask and sequence length.
+        """
+        if self.exact_kv_tiles is not None:
+            return self
+        dual_wave = self.d_stages == 1 and self.vo_shards == 1 and self.num_kv_splits == 1 and not self.paged
+        # FIXME: 96 < head_dim < 128 spills 38-72 VGPRs with this on (4-26% at
+        # seqlen_k > 128, masks not top-left); rare widths, so no second build.
+        return replace(self, exact_kv_tiles=dual_wave)
 
     def _with_stagger(self):
         """Stagger the two wave groups of an 8-wave workgroup only.
@@ -469,9 +483,9 @@ class Gfx950Knobs(FmhaKnobs):
 
         | family | tile width | waves | BLOCK_M | BLOCK_N | granule |
         |---|---|---|---|---|---|
-        | S | <= 32 | 8 | 256 | 128 | 32 |
-        | A | <= 128 | 8 | 256 | 64 | 64 |
-        | B | > 128 | 4 | 128 | 128 | 64 |
+        | S | <= 256, not a multiple of 64 | 4 | 128 | 64 | 32 |
+        | B | 64, 128, 192, 256 | 4 | 128 | 64 | 64 |
+        | A | pinned only | 8 | 256 | 64 | 64 |
 
         **A** is measured saturated at head_dim 128 -- 248 of 256 VGPRs, zero
         spills -- so **B** halves the wave count to double the per-lane
@@ -501,14 +515,11 @@ class Gfx950Knobs(FmhaKnobs):
             )
         if block_dmodel % 64:
             return replace(me, num_waves=4, block_m=128, block_n=64, head_dim_granule=32)  # family S
-        if block_dmodel == 128 and meta.causal:
-            # Causal hd128 (e.g. GR00T): family B beats family A, which was tuned
-            # non-causal. 4 waves/block_m=128 -> two workgroups co-resident per CU
-            # and 2x per-lane registers; 1.36x at B=1, numerically identical.
-            return replace(me, num_waves=4, block_m=128, block_n=64, head_dim_granule=64)  # family B (causal hd128)
-        if block_dmodel <= 128:
-            return replace(me, num_waves=8, block_m=256, block_n=64, head_dim_granule=64)  # family A
         if block_dmodel <= 256:
+            # Also at 64 and 128: family A's 256-row Q tile wastes work on short
+            # sequences and causal tails (0ed41226 coverage sweep).
+            # TODO: within 3% of the best swept build in 86% of hd<=128 cells;
+            # the 3-8% pockets may be timing noise. Re-measure with perfmon.
             return replace(me, num_waves=4, block_m=128, block_n=64, head_dim_granule=64)  # family B
         # Family W, the wide path. Four waves, like B and for the same reason
         # -- halving the wave count doubles the per-lane register file -- but
@@ -816,7 +827,8 @@ _GFX950_FALLBACK = Gfx950Knobs(
     # head count is a multiple of 8, and the L2 affinity the others add for the
     # remaining counts is worth under 1%. See `ParityKernelContext._map_workgroup`.
     xcd_map="none",
-    exact_kv_tiles=False,
+    # `None`: `_with_kv_walk` decides from the body.
+    exact_kv_tiles=None,
     q_heads_per_wg=1,
     paged=False,
     kv_cache_layout="linear",

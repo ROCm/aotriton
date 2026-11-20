@@ -498,11 +498,10 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
     # `ParityKernelContext._drop_padding_tiles`. The wide body walks one tile
     # at a time and is left as it was.
     #
-    # Opt-in, by the `exact_kv_tiles` knob (`traits.EXACT_KV_TILES`), which
-    # `make_traits` refuses for the bodies above. It pays where the padding is
-    # a large share of the walk (+69% at seqlen_k 64, +33% at 128) and costs
-    # 1.5-2% at four tiles or more, where the four whole-body arms only add
-    # code; off, the kernel is the single padded body it always was.
+    # The `exact_kv_tiles` knob (`traits.EXACT_KV_TILES`), which `make_traits`
+    # refuses for the bodies above and `resolve` turns on everywhere else. It
+    # pays where the padding is a large share of the walk (+69% at seqlen_k
+    # 64, +33% at 128); off, the kernel is the single padded body it always was.
     EXACT_TILE_COUNT = traits.EXACT_KV_TILES
 
     # A scale baked into the build configuration. `None` means "derive it",

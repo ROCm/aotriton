@@ -1177,7 +1177,11 @@ def make_policy_pick(group):
     from gfx950.tuning_fused_bwd import prefer_fused
 
     def pick(name, sq, sk):
-        fused = prefer_fused(head_dim=group["hd"], seqlen_q=sq, seqlen_k=sk)
+        fused = prefer_fused(head_dim=group["hd"],
+                             seqlen_q=sq,
+                             seqlen_k=sk,
+                             bias=group["feature"] == "bias",
+                             dropout=group["feature"] == "dropout")
         return name == ("fused" if fused else "split")
     return pick
 
