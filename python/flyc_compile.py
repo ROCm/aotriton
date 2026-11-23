@@ -41,6 +41,7 @@ from pathlib import Path
 from . import flyc_bootstrap
 from .gpu_targets import AOTRITON_ARCH_WARPSIZE
 from .template_instantiation.ir.choices import ChoiceView, ChoiceVarAbsent
+from .template_instantiation.ir.flyc.builds import flyc_shipped_build
 from .utils import parse_pon
 
 
@@ -932,7 +933,7 @@ def do_compile(args):
     # `args.target` is the builder's first argument: every flyc
     # description takes (arch, choices, hints), arch arriving first, not
     # smuggled into choices.
-    build, knobs = fn(args.target, choices, hints)
+    build, knobs = flyc_shipped_build(fn(args.target, choices, hints))
     built = build()
 
     jf = jit_function_of(built)

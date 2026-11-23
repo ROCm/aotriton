@@ -27,6 +27,7 @@ from pathlib import Path
 
 from ..template_instantiation.ir import Functional
 from ..template_instantiation.ir.flyc import KernelSignature
+from ..template_instantiation.ir.flyc.builds import flyc_shipped_build
 from .template import get_template
 from ..utils import LazyFile, log
 from .basetune import BaseTuneCodeGenerator
@@ -83,7 +84,7 @@ class FlycTuneCodeGenerator(BaseTuneCodeGenerator):
         # `f.arch` is the builder's FIRST argument: every flyc description
         # takes (arch, choices, hints), with arch arriving as an argument in
         # its own right rather than smuggled into choices.
-        build, knobs = kdesc.builder_fn(f.arch, choices, hints)
+        build, knobs = flyc_shipped_build(kdesc.builder_fn(f.arch, choices, hints))
         # `knobs['flyc_source']`/`knobs['flyc_kernel_name']` locate the kernel
         # stub; `build` is never called (see above).
         kdesc.ensure_stub_resolved(f.arch, knobs)

@@ -17,9 +17,11 @@ Environment, as for `bench_fwd_wpe_sweep.py`:
 """
 
 import argparse
+import json
 import os
 import statistics
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -124,19 +126,34 @@ def main():
                              dtype_str={"bf16": "bf16", "fp16": "f16"}[args.dtype])
     # No LSE store unless asked: `plan` keeps it on, as AOT binaries do.
     overrides = {"return_lse": False, **parse_overrides(args.knob)}
-    meta, knobs = tuning_fwd.plan("gfx950", meta, overrides=overrides)
-    fn = tuning_fwd.builder("gfx950", meta, knobs)
-    t = fn.traits
-    print(f"# {torch.cuda.get_device_name(0)}  hd={hd} H={H} {args.dtype} causal={args.causal}")
-    print(f"# waves={t.NUM_WAVES} BLOCK_M={t.BLOCK_M} BLOCK_N={t.BLOCK_N} wpe={knobs.waves_per_eu} "
+    print(f"# {torch.cuda.get_device_name(0)}  hd={hd} H={H} {args.dtype} causal={args.causal} "
           f"overrides={overrides}")
-    print(f"{'Sq':>6} {'Sk':>6} {'B':>6} {'WGs':>7} {'us':>9} {'TFLOPs':>8} {'host_us':>8}" + (f" {'max_err':>8}" if args.check else ""))
+    print(f"{'Sq':>6} {'Sk':>6} {'B':>6} {'WGs':>7} {'us':>9} {'TFLOPs':>8} {'host_us':>8} {'build':>5}"
+          + (f" {'max_err':>8}" if args.check else ""))
+
+    # The policy plans every cell, per-call rules included; cells whose knobs
+    # agree share a build. --knob pins win over the rules.
+    built = {}
+
+    def build_for(sq, sk):
+        planned, knobs = tuning_fwd.plan("gfx950", meta, overrides=overrides, seqlen_q=sq, seqlen_k=sk)
+        key = json.dumps(asdict(knobs), sort_keys=True)
+        if key not in built:
+            fn = tuning_fwd.builder("gfx950", planned, knobs)
+            t = fn.traits
+            built[key] = (len(built), fn)
+            print(f"# build {len(built) - 1}: waves={t.NUM_WAVES} BLOCK_M={t.BLOCK_M} BLOCK_N={t.BLOCK_N} "
+                  f"wpe={knobs.waves_per_eu} exact_kv_tiles={knobs.exact_kv_tiles} "
+                  f"hdim_qk_floor={knobs.hdim_qk_floor}", flush=True)
+        return built[key]
 
     sks = args.seqlens_k or args.seqlens_q
     for sq in args.seqlens_q:
         for sk in sks:
             if args.diagonal_only and sq != sk:
                 continue
+            build_index, fn = build_for(sq, sk)
+            t = fn.traits
             B = max(1, round(REF_WORK * args.work_scale / (H * sq * sk)))
             B = min(B, 65535)
             q = torch.randn(B, H, sq, hd, device="cuda", dtype=dt)
@@ -157,6 +174,7 @@ def main():
             flops = 4.0 * B * H * pairs * hd
             wgs = B * H // t.Q_HEADS_PER_WG * -(-sq // t.BLOCK_M)
             print(f"{sq:>6} {sk:>6} {B:>6} {wgs:>7} {sec * 1e6:>9.1f} {flops / sec * 1e-12:>8.1f} {host * 1e6:>8.1f}"
+                  f" {build_index:>5}"
                   + (f" {max_err(q, k, v, o, args.causal):>8.1e}" if args.check else ""), flush=True)
             del q, k, v, o
             torch.cuda.empty_cache()

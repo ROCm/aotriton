@@ -22,17 +22,15 @@ already has:
 
 Three consequences, each handled below:
 
-1. **The tuning table is programmatic.** `tuning_fwd.resolve_knobs(arch, meta)`,
+1. **The tuning table is programmatic.** `tuning_fwd.aot_builds(arch, meta)`,
    which dispatches to the arch's `<arch>/tuning_fwd.py`, is the sole producer of
    a schedule, so there is no `@ati.tune.schema`, no
    `@ati.tune.configs`, and no perf axes — ATI enumerates no perf variants here.
 
-   That is NOT the same as one hsaco per functional. Today the count is one, but
-   only because the shipped schedule targets long sequences and short ones fall to
-   the Triton backend; a seqlen-dependent FlyDSL tuner will emit several. Nothing
-   downstream may assume the count — hsacos are packed into per-functional .aks2
-   archives exactly as Triton's are, which is also what keeps Triton's autotune
-   code generator reusable for flyc later.
+   That is NOT the same as one hsaco per functional: the arch's per-call rules
+   (`variants`) can give a functional several builds, each serving a box of
+   runtime values. Nothing downstream may assume the count — hsacos are packed
+   into per-functional .aks2 archives exactly as Triton's are.
 
 2. **No functional axes are declared here as kernel ARGUMENTS.** They belong to
    the operator (owned by the default triton backend); this backend inherits
@@ -63,7 +61,7 @@ Three consequences, each handled below:
    description's real payload.
 """
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 
 import aotriton.template_instantiation as ati
 from ._common import flash_disabled, check_value
@@ -397,10 +395,13 @@ def flyc_attn_fwd(arch, choices, hints):
 
     Executed by `aotriton.flyc_compile` at build time, in a venv that has flydsl —
     never by the generator, which only reads the decorators above. Returns
-    `(built, knobs)`: `built` is whatever the builder returns (the driver drives
-    it to a code object), and `knobs` is a JSON-serialisable dict of whatever
-    this description wants recorded alongside the hsaco. Here that is
-    `asdict(knobs)` — `resolve_knobs` is the only place `block_m` (and everything
+    `tuning_fwd.aot_builds`: `(built, knobs)` when one build serves every call,
+    else a generator of `(boxes, built, knobs)`, one per build, `boxes` being the
+    calls it serves (see `ir/flyc/builds.py`). `built` is whatever the builder
+    returns (the driver drives it to a code object), and `knobs` is a
+    JSON-serialisable dict of whatever this description wants recorded alongside
+    the hsaco. Here that is `asdict(knobs)` — the tuning module is the only place
+    `block_m` (and everything
     else the driver records alongside the hsaco, bar `block_size`, which it
     recovers itself from the compiled IR's `known_block_size`) is known, and it
     would otherwise go out of scope on return: `built` is the `_launch` closure,
@@ -435,12 +436,11 @@ def flyc_attn_fwd(arch, choices, hints):
     explicit FIRST parameter (from `f.arch` / `--target`), not smuggled into
     `choices`.
 
-    Today `resolve_knobs` reads no field of `hints` — FlyDSL's tuner is currently
-    seqlen-independent, so the count stays at one per functional and every field sits
-    at its default. The parameter exists so that stops being an API change — and the
-    packaging is already N-capable, so neither is the artifact layout.
+    `hints` is unused: the per-call choices are the tuning module's
+    `fmha_variants` rules, which read runtime values (`hdim_qk`, `seqlen_k`, ...)
+    and come back as `boxes`, not as a hint to optimize one build for.
 
-    `resolve_knobs`, NOT the dispatcher's `plan`: `plan()` is the JIT
+    `aot_builds`, NOT the dispatcher's `plan`: `plan()` is the JIT
     entry point, which takes a *real* head_dim and rounds it up the ladder,
     deriving `padded_head` on the way. AOT already knows the tile — it IS
     `BLOCK_DMODEL` — and `PADDED_HEAD` is its own functional axis, so `plan()`
@@ -454,14 +454,6 @@ def flyc_attn_fwd(arch, choices, hints):
     `asdict(knobs)` for the psel here, and nothing downstream would notice the
     two falling out of step — the psel is what the C++ side reads for the grid.
     """
-    from tuning_fwd import resolve_knobs
+    from tuning_fwd import aot_builds
 
-    meta = flyc_input_metadata(choices)
-    knobs = resolve_knobs(arch, meta)
-
-    def build():
-        """Deferred: imports flydsl, so only `aotriton.flyc_compile` calls it."""
-        from tuning_fwd import builder
-        return builder(arch, meta, knobs)
-
-    return build, asdict(knobs)
+    return aot_builds(arch, flyc_input_metadata(choices))

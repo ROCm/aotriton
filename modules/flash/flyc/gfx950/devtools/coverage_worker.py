@@ -545,20 +545,45 @@ def group_meta(group, heads):
                              dtype_str=space.DTYPE_STR[group["dtype"]])
 
 
+def policy_builds(group):
+    """`[(name, boxes, overrides)]`: the policy's builds for the group's functional.
+
+    One per distinct override set of the per-call rules (`tuning_fwd.variants`);
+    `default` when one build serves every call, else `default0`, `default1`, ...
+    """
+    from gfx950.tuning_fwd import plan as plan_tile
+    from fmha_variants import builds
+
+    found = builds(tuning_fwd.variants(ARCH, plan_tile(group_meta(group, BUILD_HEADS))))
+    if len(found) == 1:
+        return [("default", *found[0])]
+    return [(f"default{i}", boxes, over) for i, (boxes, over) in enumerate(found)]
+
+
 def fwd_candidates(group):
-    from gfx950.tuning_fwd import Gfx950Knobs
+    from gfx950.tuning_fwd import Gfx950Knobs, entry_plan
+
+    from fmha_variants import overrides_at
+    from gfx950.tuning_fwd import plan as plan_tile
 
     meta = group_meta(group, BUILD_HEADS)
-    variants = [("default", {}), ("exact_kv_tiles", dict(exact_kv_tiles=True))]
+    # The policy's builds, then builds pinned past the per-call rules: a
+    # candidate is one build, whatever the cell. The pinned ones take the D
+    # floor the rules give this head dim, so they differ from the policy's
+    # builds only in what they pin.
+    floor_rules = [r for r in tuning_fwd.variants(ARCH, plan_tile(meta)) if "hdim_qk_floor" in r.overrides]
+    floor = overrides_at(floor_rules, {"hdim_qk": group["hd"]})
+    variants = [(name, over) for name, _, over in policy_builds(group)]
+    variants.append(("exact_kv_tiles", dict(floor, exact_kv_tiles=True)))
     for g in Gfx950Knobs._SUPPORTED_GEOMETRIES:
         w, bm, bn, gr = g
         variants.append((f"geom_w{w}_m{bm}_n{bn}_g{gr}",
-                         dict(num_waves=w, block_m=bm, block_n=bn, head_dim_granule=gr)))
+                         dict(floor, num_waves=w, block_m=bm, block_n=bn, head_dim_granule=gr)))
     out, seen = [], {}
     for name, over in variants:
         try:
-            # `plan` keeps the LSE store, as AOT binaries do.
-            planned, kn = tuning_fwd.plan(ARCH, meta, overrides=over)
+            # `entry_plan` keeps the LSE store, as AOT binaries do.
+            planned, kn = entry_plan(meta, overrides=over or None)
         except (ValueError, NotImplementedError, TypeError) as e:
             out.append(FwdCandidate(name, meta, None, status="REFUSED", error=_short(e)))
             continue
@@ -1173,7 +1198,14 @@ def run_time(group, cands, seqlens, done, check_status, policy_pick):
 
 def make_policy_pick(group):
     if group["kernel"] == "fwd":
-        return lambda name, sq, sk: name == "default"
+        from fmha_variants import contains
+
+        boxes_of = {name: boxes for name, boxes, _ in policy_builds(group)}
+
+        def pick_fwd(name, sq, sk):
+            values = {"hdim_qk": group["hd"], "seqlen_q": sq, "seqlen_k": sk}
+            return any(contains(b, values) for b in boxes_of.get(name, ()))
+        return pick_fwd
     from gfx950.tuning_fused_bwd import prefer_fused
 
     def pick(name, sq, sk):

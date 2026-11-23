@@ -48,7 +48,8 @@ floor, and it is an instruction limit rather than a staging one.
 from dataclasses import dataclass, fields, replace
 
 from fmha_knobs import knobs_of, pinned
-from fmha_meta import CAUSAL_TOP_LEFT, FmhaInputMetadata
+from fmha_meta import CAUSAL_BOTTOM_RIGHT, CAUSAL_NONE, CAUSAL_TOP_LEFT, FmhaInputMetadata
+from fmha_variants import derive, gt, le
 from .knobs import Gfx950KnobFields
 from .traits import make_traits
 
@@ -60,6 +61,7 @@ __all__ = [
     "fmha_knobs",
     "plan",
     "tile_width_for",
+    "variants",
 ]
 
 # ---------------------------------------------------------------------------
@@ -367,8 +369,7 @@ class Gfx950Knobs(FmhaKnobs):
         if self.exact_kv_tiles is not None:
             return self
         dual_wave = self.d_stages == 1 and self.vo_shards == 1 and self.num_kv_splits == 1 and not self.paged
-        # FIXME: 96 < head_dim < 128 spills 38-72 VGPRs with this on (4-26% at
-        # seqlen_k > 128, masks not top-left); rare widths, so no second build.
+        # Turned off per call where it spills: see `variants`.
         return replace(self, exact_kv_tiles=dual_wave)
 
     def _with_stagger(self):
@@ -859,14 +860,48 @@ def fmha_knobs(arch: str, **overrides) -> FmhaKnobs:
     raise ValueError(f"no FMHA knobs for arch {arch!r}; known: {sorted(_BY_ARCH)}")
 
 
+# ---------------------------------------------------------------------------
+# Per-call rules (`fmha_variants`): JIT applies the ones matching a call, AOT
+# builds one image per distinct override set and selects among them per call.
+# ---------------------------------------------------------------------------
+
+# The exact KV walk spills in the BLOCK_DMODEL=128, PADDED_HEAD=True build:
+# 38-72 VGPRs against 0-13 for the padded walk (0ed41226 sweep, family B,
+# floor 96, measured at head_dim 100). Below three KV tiles skipping the
+# padding still wins; from three up the spill costs 4-26%. Within 3% of the
+# best build at head_dim 100: 86.0% of cells with this rule, 75.5% without.
+_EXACT_WALK_MAX_SEQLEN_K = 128
+
+
+def variants(meta: FmhaInputMetadata):
+    """The per-call rules of `meta`'s functional."""
+    if meta.padded_head:
+        # Mask only the D steps that can hold pad: with no floor every step is
+        # masked. `hdim_qk <= floor` reaches this tile only when Q and V head
+        # dims differ or the compiled ladder lacks the rung below.
+        floor = rung_below(meta.block_dmodel)
+        yield derive('hdim_qk_floor', floor, when=gt('hdim_qk', floor))
+        yield derive('hdim_qk_floor', 0, when=le('hdim_qk', floor))
+    else:
+        # The floor only gates the padded-head masks; pin one value so JIT and
+        # AOT resolve identical knobs.
+        yield derive('hdim_qk_floor', 0, when=())
+    # FIXME: windows anchored bottom-right qualify too, once whether a window
+    # is anchored top-left is a runtime value.
+    if (meta.block_dmodel == 128
+            and meta.padded_head
+            and meta.causal_type in (CAUSAL_NONE, CAUSAL_BOTTOM_RIGHT)):
+        yield derive('exact_kv_tiles', False, when=gt('seqlen_k', _EXACT_WALK_MAX_SEQLEN_K))
+
+
 # Unified entry (flyc/tuning_fwd.py): the shared metadata, pinned.
 
 def entry_resolve(meta, *, overrides=None) -> FmhaKnobs:
+    # The tile comes from the functional's ladder: unless a rule claims a
+    # floor, claim none, so the kernel masks every D column.
+    base = Gfx950Knobs(hdim_qk_floor=0).merge(knobs_of(Gfx950Knobs, overrides))
     knobs = pinned(Gfx950Knobs,
-                   overrides,
-                   # The tile comes from the functional's ladder: claim no
-                   # floor, so the kernel masks every D column.
-                   hdim_qk_floor=0,
+                   base,
                    # Strides are runtime arguments: one binary serves every layout.
                    strides_constexpr=False,
                    # What makes Workspace/BlockTable/block_table_stride constexpr 0.
