@@ -9,7 +9,7 @@ Authoring surface:
     type_var, scalar_var       - named choice variables (§3.1, §3.2)
     tensor, scalar             - bind args to a variable / literal type (§3.1, §3.2)
     overrides                  - conditional value rules (§3.3)
-    eq, ne, lt, gt             - predicate builders for overrides / metro `if`
+    eq, ne, lt, gt, le, ge     - predicate builders for overrides / metro `if`
     describe                   - attach a spec to a pure-Triton kernel (§3.4 Mode B)
     start                      - terminal stacked-@ decorator finalizing a kernel/
                                  operator/affine description (§3.4 Mode A)
@@ -37,14 +37,14 @@ from .builder import DescriptionError
 from .decorators import metro_kernel
 from .decorators import (
     type_var, scalar_var, tensor, scalar,
-    derives, overrides, disable, no_disable, cite, source, eq, ne, lt, gt,
+    derives, overrides, disable, no_disable, cite, source, eq, ne, lt, gt, le, ge,
     operator, backend,
 )
 
 __all__ = [
     'affine', 'hints', 'flyc', 'context_helper',
     'type_var', 'scalar_var', 'tensor', 'scalar',
-    'derives', 'overrides', 'disable', 'no_disable', 'cite', 'source', 'eq', 'ne', 'lt', 'gt',
+    'derives', 'overrides', 'disable', 'no_disable', 'cite', 'source', 'eq', 'ne', 'lt', 'gt', 'le', 'ge',
     'describe', 'start', 'operator', 'backend', 'union_params', 'metro_kernel',
     'tune', 'DescriptionError',
 ]

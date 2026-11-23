@@ -100,10 +100,11 @@ def ge(var_name, operand): return Predicate(var_name, '>=', operand)
 class Override(StackedSpec):
     """Rewrite `targets` to `value` for functionals where `predicate` fires.
 
-    `predicate` is either a structured `Predicate` (var op operand, over a free
-    choice axis) or a plain CALLABLE taking the functional and returning bool —
-    e.g. `when=lambda f: f.arch in ('gfx942', 'gfx950')`. The callable form can
-    read any functional state (arch, several choices) without growing a predicate
+    `predicate` is a structured `Predicate` (var op operand, over a free choice
+    axis), a tuple of them (all must hold; `()` always holds), or a plain
+    CALLABLE taking the functional and returning bool — e.g.
+    `when=lambda f: f.arch in ('gfx942', 'gfx950')`. The callable form can read
+    any functional state (arch, several choices) without growing a predicate
     operator/var vocabulary."""
     __slots__ = ('targets', 'predicate', 'value')
 
@@ -111,17 +112,20 @@ class Override(StackedSpec):
         if isinstance(targets, str):
             targets = (targets,)
         self.targets = tuple(targets)
-        assert isinstance(predicate, Predicate) or callable(predicate), \
-            f'Override needs a Predicate or a callable, got {predicate!r}'
+        assert (isinstance(predicate, Predicate)
+                or (isinstance(predicate, tuple) and all(isinstance(p, Predicate) for p in predicate))
+                or callable(predicate)), \
+            f'Override needs a Predicate, a tuple of them or a callable, got {predicate!r}'
         self.predicate = predicate
         self.value = value          # literal | str type | VarRef
 
     def fires(self, functional) -> bool:
-        """Whether this override applies to `functional`. Dispatches on the
-        predicate kind: a structured Predicate reads the choice dict; a callable
-        receives the functional itself."""
+        """Whether this override applies to `functional`. Structured Predicates
+        read the choice dict; a callable receives the functional itself."""
         if isinstance(self.predicate, Predicate):
             return self.predicate.holds(functional.choice)
+        if isinstance(self.predicate, tuple):
+            return all(p.holds(functional.choice) for p in self.predicate)
         return bool(self.predicate(functional))
 
     def materialize(self, ctx) -> 'TypedChoice':
@@ -143,6 +147,9 @@ class Override(StackedSpec):
         # Predicates are checked against the free axes.
         if isinstance(self.predicate, Predicate):
             self.predicate.validate(free_var_names)
+        if isinstance(self.predicate, tuple):
+            for p in self.predicate:
+                p.validate(free_var_names)
         if isinstance(self.value, VarRef):
             assert self.value.var_name in free_var_names, (
                 f'override value {self.value!r} references {self.value.var_name!r}, '
