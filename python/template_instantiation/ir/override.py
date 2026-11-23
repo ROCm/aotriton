@@ -60,7 +60,12 @@ class ValueFn:
 
 
 class Predicate:
-    """`(var_name <op> operand)` over a free-axis choice value."""
+    """`(var_name <op> operand)` over a free-axis choice value.
+
+    Also a per-call predicate, over a runtime value, when its `Override` is a
+    per-call rule (see `runtime_rules.py`): `interval`/`holds_at` serve that
+    reading, `holds`/`validate` the compile-time one.
+    """
     __slots__ = ('var_name', 'op', 'operand')
 
     def __init__(self, var_name: str, op: str, operand):
@@ -84,6 +89,21 @@ class Predicate:
             f'predicate references {self.var_name!r}, which is not a free choice '
             f'axis; predicates may read free axes only')
 
+    def interval(self, domain):
+        """Per-call: the inclusive interval of the integer runtime value, within
+        `domain` (lo, hi), where this predicate holds. `!=` is two intervals,
+        so a per-call rule does not take it."""
+        lo, hi = domain
+        c = self.operand
+        if self.op == '!=' or isinstance(c, bool) or not isinstance(c, int):
+            raise ValueError(f'{self!r}: a per-call predicate compares a runtime value '
+                             f'with an int by ==, <, <=, > or >=')
+        return {'==': (c, c), '<': (lo, c - 1), '<=': (lo, c), '>': (c + 1, hi), '>=': (c, hi)}[self.op]
+
+    def holds_at(self, values) -> bool:
+        """Per-call: whether the call's runtime `values` (name -> int) satisfy it."""
+        return _OPS[self.op](values[self.var_name], self.operand)
+
     def __repr__(self):
         return f'Predicate({self.var_name!r} {self.op} {self.operand!r})'
 
@@ -105,7 +125,12 @@ class Override(StackedSpec):
     CALLABLE taking the functional and returning bool — e.g.
     `when=lambda f: f.arch in ('gfx942', 'gfx950')`. The callable form can read
     any functional state (arch, several choices) without growing a predicate
-    operator/var vocabulary."""
+    operator/var vocabulary.
+
+    Where it is written decides what it means. In a decorator stack it is
+    compile-time, as above. Yielded by a tuning module's `variants(meta)` it is
+    a per-call rule: its predicates read runtime values and its targets are
+    knobs (`runtime_rules.py`)."""
     __slots__ = ('targets', 'predicate', 'value')
 
     def __init__(self, targets, predicate, value):

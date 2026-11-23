@@ -32,6 +32,12 @@ def derives(targets, *, to, when=None):
     over a free choice axis, a tuple of them (all must hold), or a callable
     `f -> bool`. Omit it (callable `to`) to always fire.
 
+    Yielded by a tuning module's `variants(meta)` instead of stacked on a
+    kernel, the same call is a per-call rule: `when` reads runtime values and
+    `targets` are knobs (`ir/runtime_rules.py`):
+
+      ati.derives('exact_kv_tiles', to=False, when=ati.gt('seqlen_k', 128))
+
       ati.derives('encoded_softmax', to=0, when=ati.eq('RETURN_ENCODED_SOFTMAX', False))
       ati.derives('Hdim_qk', to='BLOCK_DMODEL', when=ati.eq('PADDED_HEAD', False))
       ati.derives('PERSISTENT_TYPE', to=2, when=ati.ne('CAUSAL_TYPE', 0))
