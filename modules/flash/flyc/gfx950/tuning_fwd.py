@@ -49,7 +49,8 @@ from dataclasses import dataclass, fields, replace
 
 from fmha_knobs import knobs_of, pinned
 from fmha_meta import CAUSAL_BOTTOM_RIGHT, CAUSAL_NONE, CAUSAL_TOP_LEFT, FmhaInputMetadata
-from fmha_variants import derive, gt, le
+import ati_bootstrap  # noqa: F401  (aotriton from this checkout)
+import aotriton.template_instantiation as ati
 from .knobs import Gfx950KnobFields
 from .traits import make_traits
 
@@ -861,8 +862,9 @@ def fmha_knobs(arch: str, **overrides) -> FmhaKnobs:
 
 
 # ---------------------------------------------------------------------------
-# Per-call rules (`fmha_variants`): JIT applies the ones matching a call, AOT
-# builds one image per distinct override set and selects among them per call.
+# Per-call rules (`ati.derives` yielded, `ir/runtime_rules.py`): JIT applies the
+# ones holding for a call, AOT builds one image per distinct override set and
+# selects among them per call.
 # ---------------------------------------------------------------------------
 
 # The exact KV walk spills in the BLOCK_DMODEL=128, PADDED_HEAD=True build:
@@ -880,18 +882,18 @@ def variants(meta: FmhaInputMetadata):
         # masked. `hdim_qk <= floor` reaches this tile only when Q and V head
         # dims differ or the compiled ladder lacks the rung below.
         floor = rung_below(meta.block_dmodel)
-        yield derive('hdim_qk_floor', floor, when=gt('hdim_qk', floor))
-        yield derive('hdim_qk_floor', 0, when=le('hdim_qk', floor))
+        yield ati.derives('hdim_qk_floor', to=floor, when=ati.gt('hdim_qk', floor))
+        yield ati.derives('hdim_qk_floor', to=0, when=ati.le('hdim_qk', floor))
     else:
         # The floor only gates the padded-head masks; pin one value so JIT and
         # AOT resolve identical knobs.
-        yield derive('hdim_qk_floor', 0, when=())
+        yield ati.derives('hdim_qk_floor', to=0)
     # FIXME: windows anchored bottom-right qualify too, once whether a window
     # is anchored top-left is a runtime value.
     if (meta.block_dmodel == 128
             and meta.padded_head
             and meta.causal_type in (CAUSAL_NONE, CAUSAL_BOTTOM_RIGHT)):
-        yield derive('exact_kv_tiles', False, when=gt('seqlen_k', _EXACT_WALK_MAX_SEQLEN_K))
+        yield ati.derives('exact_kv_tiles', to=False, when=ati.gt('seqlen_k', _EXACT_WALK_MAX_SEQLEN_K))
 
 
 # Unified entry (flyc/tuning_fwd.py): the shared metadata, pinned.

@@ -18,6 +18,17 @@ CAUSAL_TOP_LEFT = 1
 CAUSAL_BOTTOM_RIGHT = 2
 CAUSAL_WINDOW = 3
 
+# The runtime values a per-call rule may read (`ati.derives` yielded by a
+# tuning module's `variants`), each with the range of the C++ value it is wired
+# to: every value C++ can hold must select a build. `hdim_qk` is the call's Q/K
+# head dim, the sequence lengths are the call's maxima.
+_INT32 = (-2**31, 2**31 - 1)
+RUNTIME_VALUES = {
+    'hdim_qk': _INT32,
+    'seqlen_q': _INT32,
+    'seqlen_k': _INT32,
+}
+
 
 @dataclass(frozen=True, kw_only=True)
 class FmhaInputMetadata:

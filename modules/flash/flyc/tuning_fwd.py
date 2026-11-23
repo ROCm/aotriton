@@ -5,8 +5,8 @@
 Every caller describes the problem with `fmha_meta.FmhaInputMetadata`, and
 each arch's tuning module takes it as is and owns its pins. Its schedule has
 two layers: per functional, `resolve` (inside `entry_resolve`/`entry_plan`);
-per call, the `fmha_variants` rules its optional `variants(meta)` yields. Both
-paths read both layers:
+per call, the `ati.derives` rules its optional `variants(meta)` yields
+(`ir/runtime_rules.py`). Both paths read both layers:
 
 - AOT: `aot_builds` (the functional fixes the tiles), one build per distinct
   override set of the rules;
@@ -21,7 +21,9 @@ Everything here but `builder` is flydsl-free.
 import importlib
 from dataclasses import asdict, fields
 
-from fmha_variants import builds, overrides_at
+import ati_bootstrap  # noqa: F401  (aotriton from this checkout)
+from aotriton.template_instantiation.ir import runtime_rules
+from fmha_meta import RUNTIME_VALUES
 
 _ARCH_MODULES = {
     'gfx950': 'gfx950.tuning_fwd',
@@ -68,7 +70,7 @@ def aot_builds(arch, meta):
 
     `(build, knobs)` when one build serves every call, as before the rules
     existed; otherwise a generator of `(boxes, build, knobs)`, one per distinct
-    override set, `boxes` being the calls it serves (`fmha_variants.builds`).
+    override set, `boxes` being the calls it serves (`runtime_rules.builds`).
     `knobs` is the `asdict` the code generator records beside the hsaco;
     `build` is deferred because it imports flydsl.
     """
@@ -82,7 +84,7 @@ def aot_builds(arch, meta):
             return entry.entry_build(meta, knobs)
         return build, asdict(knobs)
 
-    found = builds(variants(arch, meta))
+    found = runtime_rules.builds(variants(arch, meta), RUNTIME_VALUES)
     if len(found) == 1 and found[0][0] == [{}]:
         return one(found[0][1])
     return ((boxes, *one(overrides)) for boxes, overrides in found)
@@ -106,9 +108,9 @@ def plan(arch, meta, *, overrides=None, seqlen_q=None, seqlen_k=None):
         user = {f.name: getattr(overrides, f.name)
                 for f in fields(overrides) if getattr(overrides, f.name) is not None}
     meta, _ = entry.entry_plan(meta, overrides=user or None)
-    rules = [r for r in variants(arch, meta) if not r.overrides.keys() <= user.keys()]
+    rules = [r for r in variants(arch, meta) if not runtime_rules.overrides(r).keys() <= user.keys()]
     values = {'hdim_qk': meta.head_dim, 'seqlen_q': seqlen_q, 'seqlen_k': seqlen_k}
-    pins = overrides_at(rules, values) | user
+    pins = runtime_rules.overrides_at(rules, values, RUNTIME_VALUES) | user
     return entry.entry_plan(meta, overrides=pins or None)
 
 

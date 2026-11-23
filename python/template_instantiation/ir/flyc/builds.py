@@ -11,7 +11,7 @@ The function returns either
                                   one build per distinct set of per-call knob
                                   overrides, `boxes` being the calls it serves:
                                   a list of `{runtime value: (lo, hi)}`, inclusive
-                                  (see `modules/flash/flyc/fmha_variants.py`).
+                                  (see `ir/runtime_rules.py`).
 
 `build` is deferred (it imports flydsl); `knobs` is the JSON-serialisable dict
 recorded beside the hsaco.
@@ -31,7 +31,7 @@ def flyc_shipped_build(result):
 
     TODO(flyc conditional builds): the code generator does not emit the
     per-call selector yet, so a functional with several builds ships only the
-    first, which `fmha_variants.builds` orders as the build for the smallest
+    first, which `runtime_rules.builds` orders as the build for the smallest
     runtime values -- for the gfx950 forward, today's build (no D floor, the
     exact KV walk). Remove once flytune.py emits every build and the selector.
     """

@@ -551,10 +551,11 @@ def policy_builds(group):
     One per distinct override set of the per-call rules (`tuning_fwd.variants`);
     `default` when one build serves every call, else `default0`, `default1`, ...
     """
+    from aotriton.template_instantiation.ir.runtime_rules import builds
+    from fmha_meta import RUNTIME_VALUES
     from gfx950.tuning_fwd import plan as plan_tile
-    from fmha_variants import builds
 
-    found = builds(tuning_fwd.variants(ARCH, plan_tile(group_meta(group, BUILD_HEADS))))
+    found = builds(tuning_fwd.variants(ARCH, plan_tile(group_meta(group, BUILD_HEADS))), RUNTIME_VALUES)
     if len(found) == 1:
         return [("default", *found[0])]
     return [(f"default{i}", boxes, over) for i, (boxes, over) in enumerate(found)]
@@ -563,7 +564,8 @@ def policy_builds(group):
 def fwd_candidates(group):
     from gfx950.tuning_fwd import Gfx950Knobs, entry_plan
 
-    from fmha_variants import overrides_at
+    from aotriton.template_instantiation.ir.runtime_rules import overrides, overrides_at
+    from fmha_meta import RUNTIME_VALUES
     from gfx950.tuning_fwd import plan as plan_tile
 
     meta = group_meta(group, BUILD_HEADS)
@@ -571,8 +573,8 @@ def fwd_candidates(group):
     # candidate is one build, whatever the cell. The pinned ones take the D
     # floor the rules give this head dim, so they differ from the policy's
     # builds only in what they pin.
-    floor_rules = [r for r in tuning_fwd.variants(ARCH, plan_tile(meta)) if "hdim_qk_floor" in r.overrides]
-    floor = overrides_at(floor_rules, {"hdim_qk": group["hd"]})
+    floor_rules = [r for r in tuning_fwd.variants(ARCH, plan_tile(meta)) if "hdim_qk_floor" in overrides(r)]
+    floor = overrides_at(floor_rules, {"hdim_qk": group["hd"]}, RUNTIME_VALUES)
     variants = [(name, over) for name, _, over in policy_builds(group)]
     variants.append(("exact_kv_tiles", dict(floor, exact_kv_tiles=True)))
     for g in Gfx950Knobs._SUPPORTED_GEOMETRIES:
@@ -1198,7 +1200,7 @@ def run_time(group, cands, seqlens, done, check_status, policy_pick):
 
 def make_policy_pick(group):
     if group["kernel"] == "fwd":
-        from fmha_variants import contains
+        from aotriton.template_instantiation.ir.runtime_rules import contains
 
         boxes_of = {name: boxes for name, boxes, _ in policy_builds(group)}
 
