@@ -26,6 +26,7 @@ cache key), `ROCM_PATH`; see `coverage_sweep.py`.
 """
 
 import argparse
+import collections
 import json
 import math
 import os
@@ -561,7 +562,9 @@ def policy_builds(group):
     return [(f"default{i}", boxes, over) for i, (boxes, over) in enumerate(found)]
 
 
-def fwd_candidates(group):
+def fwd_candidates(group, cross_exact=False):
+    """The group's forward candidates. `cross_exact`: every geometry with the
+    exact KV walk both on and off, for sweeping where the walk should change."""
     from gfx950.tuning_fwd import Gfx950Knobs, entry_plan
 
     from aotriton.template_instantiation.ir.runtime_rules import overrides, overrides_at
@@ -577,10 +580,14 @@ def fwd_candidates(group):
     floor = overrides_at(floor_rules, {"hdim_qk": group["hd"]}, RUNTIME_VALUES)
     variants = [(name, over) for name, _, over in policy_builds(group)]
     variants.append(("exact_kv_tiles", dict(floor, exact_kv_tiles=True)))
+    walks = (("_exact", True), ("_padded", False)) if cross_exact else (("", None),)
     for g in Gfx950Knobs._SUPPORTED_GEOMETRIES:
         w, bm, bn, gr = g
-        variants.append((f"geom_w{w}_m{bm}_n{bn}_g{gr}",
-                         dict(floor, num_waves=w, block_m=bm, block_n=bn, head_dim_granule=gr)))
+        for suffix, exact in walks:
+            pins = dict(floor, num_waves=w, block_m=bm, block_n=bn, head_dim_granule=gr)
+            if exact is not None:
+                pins["exact_kv_tiles"] = exact
+            variants.append((f"geom_w{w}_m{bm}_n{bn}_g{gr}{suffix}", pins))
     out, seen = [], {}
     for name, over in variants:
         try:
@@ -1057,13 +1064,16 @@ def choose_batch(group, sq, sk, heads):
     return B, pairs
 
 
-def run_time(group, cands, seqlens, done, check_status, policy_pick):
+def run_time(group, cands, seqlens, done, check_status, policy_pick, contenders=None):
+    """`contenders`: if given, `{(sq, sk): {candidate, ...}}`; a cell times only
+    those (racing on an earlier run: re-time just what could still win)."""
     is_fwd = group["kernel"] == "fwd"
     H = TIME_HEADS
     for sq in seqlens:
         for sk in seqlens:
             pending = [c for c in cands
-                       if space.record_key(base_record(group, "dense", sq, sk, c.name, "time")) not in done]
+                       if space.record_key(base_record(group, "dense", sq, sk, c.name, "time")) not in done
+                       and (contenders is None or c.name in contenders.get((sq, sk), ()))]
             if not pending:
                 continue
             t_cell = time.time()
@@ -1073,6 +1083,10 @@ def run_time(group, cands, seqlens, done, check_status, policy_pick):
             calls = {}
             recs = {}
             stats = {}
+            # One output for every forward candidate: they run one after
+            # another and nothing reads the output, while one output each
+            # outgrows TIME_MEM_CAP's budget (inputs only) with many candidates.
+            fwd_out = None
             for c in pending:
                 rec = base_record(group, "dense", sq, sk, c.name, "time")
                 rec.update(build_id=c.build_id(sk),
@@ -1101,8 +1115,9 @@ def run_time(group, cands, seqlens, done, check_status, policy_pick):
                         emit(dict(rec, status="BUILD_ERROR", error=c.build_error))
                         recs.pop(c.name)
                         continue
-                    o = like(pb.q)
-                    lse = torch.empty(pb.lse_shape(), device="cuda")
+                    if fwd_out is None:
+                        fwd_out = (like(pb.q), torch.empty(pb.lse_shape(), device="cuda"))
+                    o, lse = fwd_out
                     calls[c.name] = (lambda fn=fn, o=o, lse=lse: launch_fwd(fn, pb, o, lse))
                     stats[c.name] = c
                 else:
@@ -1194,7 +1209,7 @@ def run_time(group, cands, seqlens, done, check_status, policy_pick):
                               stats=st,
                               check_status=check_status.get((sq, sk, n))))
             print(f"time {sq}x{sk} B={B} {time.time() - t_cell:.1f}s", flush=True)
-            del pb, calls
+            del pb, calls, fwd_out
             torch.cuda.empty_cache()
 
 
@@ -1229,13 +1244,20 @@ def main():
     p.add_argument("--out", required=True, help="records file to append to")
     p.add_argument("--seqlens", type=int, nargs="+", default=list(space.SEQLENS))
     p.add_argument("--crashed_builds", default="[]", help="JSON list of build ids that crashed this worker")
+    p.add_argument("--fwd_cross_exact",
+                   action="store_true",
+                   help="forward: every geometry with the exact KV walk both on and off")
+    p.add_argument("--contenders",
+                   default=None,
+                   help="time pass: JSON file of [kernel, hd, dtype, mask, feature, sq, sk, candidate] "
+                        "rows; a cell times only its listed candidates")
     args = p.parse_args()
     OUT = args.out
     group = json.loads(args.group)
     torch.cuda.init()
     done = space.done_keys(args.out_dir)
     if group["kernel"] == "fwd":
-        cands = fwd_candidates(group)
+        cands = fwd_candidates(group, cross_exact=args.fwd_cross_exact)
     elif args.pass_name == "compile":
         cands = [bwd_candidates(group, h) for h in (CHECK_HEADS, TIME_HEADS)]
     else:
@@ -1259,7 +1281,13 @@ def main():
             if (r.get("pass") == "check" and r.get("layout") == "dense"
                     and all(r.get(k) == group[k] for k in ("kernel", "hd", "dtype", "mask", "feature"))):
                 check_status[(r["sq"], r["sk"], r["candidate"])] = r["status"]
-        run_time(group, cands, args.seqlens, done, check_status, pick)
+        contenders = None
+        if args.contenders:
+            contenders = collections.defaultdict(set)
+            for row in json.load(open(args.contenders)):
+                if tuple(row[:5]) == tuple(group[k] for k in ("kernel", "hd", "dtype", "mask", "feature")):
+                    contenders[(row[5], row[6])].add(row[7])
+        run_time(group, cands, args.seqlens, done, check_status, pick, contenders)
 
 
 def philox_self_test():

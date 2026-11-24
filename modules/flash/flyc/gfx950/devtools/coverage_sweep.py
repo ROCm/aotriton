@@ -156,7 +156,9 @@ def run_group(group, pass_name, args, env, out_path, log_dir):
                 "--crashed_builds",
                 json.dumps(crashed),
                 "--seqlens",
-                *map(str, args.seqlens)]
+                *map(str, args.seqlens),
+                *(["--fwd_cross_exact"] if args.fwd_cross_exact else []),
+                *(["--contenders", args.contenders] if args.contenders else [])]
         t0 = time.time()
         rc, lines, stalled = run_worker(argv, env, log_path, args.stall_timeout, args.compile_timeout)
         if rc == 0 and not stalled:
@@ -201,6 +203,12 @@ def main():
     p.add_argument("--stall_timeout", type=int, default=300, help="seconds without output before a hang is declared")
     p.add_argument("--compile_timeout", type=int, default=1800, help="the same, while a build compiles")
     p.add_argument("--max_restarts", type=int, default=200)
+    p.add_argument("--contenders",
+                   default=None,
+                   help="time pass: JSON file of the (group, cell, candidate) rows to time; others are not timed")
+    p.add_argument("--fwd_cross_exact",
+                   action="store_true",
+                   help="forward: every geometry with the exact KV walk both on and off")
     args = p.parse_args()
 
     for var in ("AOTRITON_FLYDSL_KERNEL_ROOT", "FLYDSL_EXTRA_SOURCE_DIRS", "ROCM_PATH"):
