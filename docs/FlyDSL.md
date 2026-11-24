@@ -77,11 +77,11 @@ absent, and no gate short of a numerical test would catch it.
 ## The vendoring contract
 
 `modules/<family>/flyc/` holds the modules every architecture shares at its
-root, and one package per architecture (`gfx950/`, `gfx1201/`). Anything that
-imports from it puts `flyc/` on `sys.path` first, the same contract the Triton
-kernel directory uses. Shared modules are imported by bare name; an arch
-package's modules import each other relatively. Keep the arch packages'
-`__init__.py` empty: the code generator imports their tuning modules.
+root, and one package per architecture (`gfx942/`, `gfx950/`, `gfx1201/`).
+Anything that imports from it puts `flyc/` on `sys.path` first, the same
+contract the Triton kernel directory uses. Shared modules are imported by bare
+name; an arch package's modules import each other relatively. Keep the arch
+packages' `__init__.py` empty: the code generator imports their tuning modules.
 
 Rules that make a re-sync cheap, and that a re-syncer must keep:
 
