@@ -784,6 +784,11 @@ _RE_FLAGS = re.compile(r'Flags:\s*(0x[0-9a-fA-F]+),\s*([^\s,]+)')
 _RE_KERNEL_NAME = re.compile(r'^\s*\.name:\s*(\S+)', re.MULTILINE)
 _RE_GROUP_SEGMENT = re.compile(r'^\s*\.group_segment_fixed_size:\s*(\d+)', re.MULTILINE)
 _RE_KERNARG_SEGMENT = re.compile(r'^\s*\.kernarg_segment_size:\s*(\d+)', re.MULTILINE)
+# One kernel argument of the AMDGPU metadata's `.args` list: its offset, size
+# and value kind, other keys allowed between them but not a next entry ("- ").
+_RE_KERNARG = re.compile(r'\.offset:\s*(\d+)(?:(?!\n\s*- )[\s\S])*?'
+                         r'\.size:\s*(\d+)(?:(?!\n\s*- )[\s\S])*?'
+                         r'\.value_kind:\s*(\S+)')
 
 
 def _readelf_report(readelf: Path, hsaco_path: Path) -> str:
@@ -809,6 +814,11 @@ def _elf_metadata(report: str) -> dict:
     kernel_name = _RE_KERNEL_NAME.search(report)
     shared = _RE_GROUP_SEGMENT.search(report)
     kernarg_size = _RE_KERNARG_SEGMENT.search(report)
+    # The arguments a launcher passes, without the `hidden_*` ones (block
+    # counts, group sizes, ...) that HIP appends itself when a kernel reads
+    # them -- e.g. `gpu.grid_dim`, 256 bytes after the explicit ones.
+    explicit = [int(o) + int(n) for o, n, kind in _RE_KERNARG.findall(report)
+                if not kind.startswith('hidden_')]
     return dict(
         machine=machine.group(1) if machine else None,
         flags_hex=flags.group(1) if flags else None,
@@ -816,6 +826,7 @@ def _elf_metadata(report: str) -> dict:
         kernel_name=kernel_name.group(1) if kernel_name else None,
         shared=int(shared.group(1)) if shared else None,
         kernarg_size=int(kernarg_size.group(1)) if kernarg_size else None,
+        explicit_kernarg_size=max(explicit) if explicit else None,
     )
 
 
@@ -861,10 +872,16 @@ def _verify_elf(meta: dict, target: str, report: str, node=None, expected_kernar
                 f"honouring an explicit `_name` verbatim.\n\nFull report:\n{report}"
             )
     if expected_kernarg_size is not None:
-        if meta['kernarg_size'] != expected_kernarg_size:
+        # Compare the explicit arguments only: the launch passes an argument
+        # array to hipModuleLaunchKernel, and HIP fills the hidden ones.
+        explicit = meta['explicit_kernarg_size']
+        if explicit is None:
+            explicit = meta['kernarg_size']
+        if explicit != expected_kernarg_size:
             raise RuntimeError(
-                f"--verify: this hsaco's real .kernarg_segment_size is "
-                f"{meta['kernarg_size']!r} bytes, but the launcher's declared "
+                f"--verify: this hsaco's explicit kernel arguments end at "
+                f"{explicit!r} bytes (.kernarg_segment_size "
+                f"{meta['kernarg_size']!r}, hidden ones included), but the launcher's declared "
                 f"signature (`_launcher_signature`, excluding the trailing "
                 f"`Stream` parameter) predicts {expected_kernarg_size} bytes "
                 f"(see _expected_kernarg_size).\n\n"
