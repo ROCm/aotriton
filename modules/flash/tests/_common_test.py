@@ -592,6 +592,21 @@ default_rtol = {torch.float16: 1e-3, torch.bfloat16: 1.6e-2, torch.float32: 1.3e
 
 SdpaParams = namedtuple('SdpaParams', ['causal', 'sm_scale', 'dropout_p', 'dropout_mask'])
 
+# Broadcast-bias spellings for the backward tests. Four chars over axes
+# [Batch, Head, Query, Key]: a letter is full extent, '1' is a size-1 broadcast
+# axis (stride 0 once expanded); K is always full. Query-broadcast spellings
+# (third char '1') are the stride-0 query axis of ROCm/aotriton#281.
+BIAS_BROADCAST_SPELLINGS = ('B11K', '111K', 'BH1K', '1H1K', '11QK', 'B1QK')
+
+def bias_broadcast_axes(bias_type):
+    '''A spelling above -> (broadcast_batch, broadcast_head, broadcast_q), else None.'''
+    letters = ('B', 'H', 'Q')
+    if not (isinstance(bias_type, str) and len(bias_type) == 4 and bias_type[3] == 'K'):
+        return None
+    if any(c not in ('1', L) for c, L in zip(bias_type[:3], letters)):
+        return None
+    return tuple(c == '1' for c in bias_type[:3])
+
 class SdpaContext(object):
     TENSOR_NAMES = ('q', 'k', 'v', 'b')
 
@@ -676,16 +691,19 @@ class SdpaContext(object):
         v = rng(vdims, 'v')
         if bias_type is None or bias_type == 0:
             b = None
-        elif bias_type == 'matrix' or bias_type == 1:
-            # b = torch.empty(bdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
-            # Allocated at `round_to_8x(seqlen_k)` and narrowed, so the bias
-            # carries the slack the kernel's 8-wide KV loads read past the end
-            # of a ragged row. That is a property of the LAST axis and survives
-            # any permutation of the other three, because the last axis is the
-            # one that never permutes.
-            b = rng(bdims, 'b')
+        elif bias_type == 'matrix' or bias_type == 1 or bias_broadcast_axes(bias_type) is not None:
+            # Dense ('matrix'/1) and broadcast biases share one path: the K axis
+            # is allocated at round_to_8x(seqlen_k) and narrowed (the ragged-tail
+            # slack the 8-wide KV loads read), and any axis the spelling marks '1'
+            # is size-1 then expand()-ed to full, so it reaches the kernel with
+            # stride 0 -- how SDPA passes a key-padding mask. 'matrix' broadcasts
+            # nothing and is drawn identically to before.
+            bcast = bias_broadcast_axes(bias_type) or (False, False, False)
+            lead = tuple(1 if flip else n for n, flip in zip((BATCH, Q_HEADS, seqlen_q), bcast))
+            b = rng(lead + (round_to_8x(seqlen_k),), 'b')
             b = b[:, :, :, :seqlen_k]
-            # b = b.expand(BATCH, Q_HEADS, b.shape[0], b.shape[1])
+            if any(bcast):
+                b = b.expand(BATCH, Q_HEADS, seqlen_q, seqlen_k)
         else:
             assert False, f'Unsupported bias_type {bias_type}'
         dout = rng(odims, 'dout') if with_backward else None

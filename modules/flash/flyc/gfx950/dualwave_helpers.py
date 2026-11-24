@@ -534,9 +534,11 @@ def _bias_slab_num_records_bytes(seqlen_q, seqlen_kv, stride_b_seq_q, elem_bytes
     `(seqlen_q - 1) * stride_b_seq_q + seqlen_k`. That subtraction wraps when
     `seqlen_q` is 0 -- a varlen empty sequence -- and an index that wraps
     becomes a `num_records` covering all of memory, which is the failure this
-    is fixing rather than a smaller version of it. `minui` against the
-    untightened span pins that case back to 0 and is a no-op everywhere else,
-    since `seqlen_k <= stride_b_seq_q` always holds.
+    is fixing rather than a smaller version of it. `minui` against
+    `seqlen_q * (stride_b_seq_q + seqlen_k)` pins that case back to 0 and is a
+    no-op otherwise. The cap must include `seqlen_k`: a query-broadcast bias
+    (`(B, 1, 1, Sk)` expanded, so `stride_b_seq_q == 0`) would otherwise get a
+    bound of 0, so every bias load reads 0 and the mask is silently dropped.
 
     **Do not round this up, and do not widen it back to `loose`.** The KV axis
     of a bias carries no padding contract at all -- `seqlen_k` is the width the
@@ -553,10 +555,10 @@ def _bias_slab_num_records_bytes(seqlen_q, seqlen_kv, stride_b_seq_q, elem_bytes
     inplace` solves it load-side, with 2-byte reads on the tiles that can hold
     that column. Buying those columns back here instead would mean reading
     memory the caller never handed us -- 2 bytes for a rounded-up bound, up to
-    `(stride_b_seq_q - seqlen_k) * elem_bytes` for `loose`, which is the fault
-    described above.
+    `(stride_b_seq_q - seqlen_k) * elem_bytes` for the untightened
+    `seqlen_q * stride_b_seq_q` span, which is the fault described above.
     """
-    loose = seqlen_q * fx.Index(stride_b_seq_q) * fx.Index(elem_bytes)
+    loose = seqlen_q * (fx.Index(stride_b_seq_q) + seqlen_kv) * fx.Index(elem_bytes)
     tight = (seqlen_q * fx.Index(stride_b_seq_q) - fx.Index(stride_b_seq_q) + seqlen_kv) * fx.Index(elem_bytes)
     return arith.minui(as_mlir_value(tight), as_mlir_value(loose))
 
