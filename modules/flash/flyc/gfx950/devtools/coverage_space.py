@@ -48,7 +48,9 @@ SEQLENS = (1, 16, 64, 100, 128, 256, 1000, 1024, 4096, 8192)
 MASKS = ("none", "causal_br", "causal_tl", "win_br_128_0", "win_tl_64_64")
 MASK_SPEC = {
     "none": dict(causal=False, window_build=False, window=None, principal_br=False),
-    "causal_br": dict(causal=True, window_build=False, window=None, principal_br=False),
+    # Causal bottom-right as AOT runs it: the window build with the
+    # bottom-right-aligned sentinel (AOT's CAUSAL_TYPE axis is [0, 3]).
+    "causal_br": dict(causal=True, window_build=True, window=("BR", "BR"), principal_br=False),
     "causal_tl": dict(causal=True, window_build=True, window=("TL", "TL"), principal_br=False),
     "win_br_128_0": dict(causal=True, window_build=True, window=(128, 0), principal_br=True),
     "win_tl_64_64": dict(causal=True, window_build=True, window=(64, 64), principal_br=False),
