@@ -4,7 +4,7 @@
 """TFLOPS of the gfx942 wide-head dQ kernels, with a fp64 check of one (batch, head).
 
 LSE and O come from the gfx942 forward, Delta = rowsum(dO * O) in fp32. dQ FLOPs
-are 3 * 2 * B * H * Sq * Sk * D, halved for causal.
+are 3 * 2 * B * H * pairs * D, with pairs the (q, kv) count the mask keeps.
 
     AOTRITON_FLYDSL_KERNEL_ROOT=<FlyDSL tree> python bench_bwd_dq_wide.py \
         --batch 2 --heads 32 --seqlen 8192 --head_dim 192 --causal
@@ -120,7 +120,11 @@ def main():
     e1.record()
     torch.cuda.synchronize()
     t = e0.elapsed_time(e1) / a.iters
-    fl = 6 * a.batch * a.heads * a.seqlen * sk * a.head_dim * (0.5 if a.causal else 1)
+    pairs = a.seqlen * sk
+    if a.causal:
+        d = sk - a.seqlen
+        pairs = sum(max(0, min(sk, i + d + 1)) for i in range(a.seqlen))
+    fl = 6 * a.batch * a.heads * pairs * a.head_dim
     print(f'dq B{a.batch} H{a.heads} S{a.seqlen} Sk{sk} D{a.head_dim} (rung {rung}) causal={a.causal} '
           f'bias={a.bias} p={a.dropout_p}: {t:.3f} ms {fl / t / 1e9:.1f} TFLOPS')
 

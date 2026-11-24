@@ -73,10 +73,12 @@ def main():
     p.add_argument('--grid_axis_order', type=int, default=None)
     p.add_argument('--lpt', type=int, default=None, help='1: longest q tiles first')
     p.add_argument('--bias', action='store_true', help='(B, H, Sq, Sk) attention bias, N(0, 1); writes dB')
-    p.add_argument('--dropout', type=float, default=0.0, help='dropout_p; timing only, --check ignores it')
+    p.add_argument('--dropout', type=float, default=0.0, help='dropout_p; timing only')
     p.add_argument('--iters', type=int, default=20)
     p.add_argument('--check', action='store_true', help='compare against fp64 (slow at long sequences)')
     a = p.parse_args()
+    if a.check and a.dropout > 0:
+        p.error('--check compares against a reference without dropout: drop --dropout (the tests cover it)')
     hk = a.heads_k or a.heads
     sk = a.seqlen_k or a.seqlen
     dt = torch.bfloat16 if a.dtype == 'bf16' else torch.float16

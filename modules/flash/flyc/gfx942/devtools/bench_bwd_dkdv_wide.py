@@ -4,7 +4,7 @@
 """TFLOPS (and an fp64 spot check) of the gfx942 dK/dV bodies for head dims 160..512:
 the body tuning_dkdv routes the rung to, or --body.
 
-dK/dV FLOPs are 4 GEMMs: 8 * B * H * pairs * D, with pairs halved (roughly) by causal.
+dK/dV FLOPs are 4 GEMMs: 8 * B * H * pairs * D, with pairs the (q, kv) count the mask keeps.
 LSE and Delta come from torch, so the time is the kernel's alone.
 
     AOTRITON_FLYDSL_KERNEL_ROOT=<FlyDSL tree> python bench_bwd_dkdv_wide.py \

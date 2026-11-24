@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: MIT
 
 """TFLOPS of the gfx942 dK/dV kernel (dkdv.py) alone, and its error against fp64.
+The rung's body serves (tuning_dkdv.body); --num_waves, --kv_blocks and
+--interleave_valu are narrow knobs, --kv_subs the other bodies'.
 
 FLOPs are the kernel's four GEMMs, 8 * B * H * pairs * D, with pairs the
 (q, kv) count the mask keeps. LSE and Delta come from torch.
@@ -75,6 +77,7 @@ def main():
     p.add_argument('--dtype', default='bf16', choices=['bf16', 'f16'])
     p.add_argument('--num_waves', type=int, default=None)
     p.add_argument('--kv_blocks', type=int, default=None)
+    p.add_argument('--kv_subs', type=int, default=None)
     p.add_argument('--waves_per_eu', type=int, default=None)
     p.add_argument('--grid_axis_order', type=int, default=None)
     p.add_argument('--interleave_valu', type=int, default=None)
@@ -91,17 +94,30 @@ def main():
     rung = tuning.rung(a.head_dim, a.head_dim)
     if rung is None:
         sys.exit(f'head_dim {a.head_dim} is past the ladder {tuning.LADDER}')
-    from gfx942.dkdv import build_fmha_bwd_dkdv_gfx942
+    from gfx942.dkdv import build_fmha_bwd_dkdv_gfx942_by_head_dim
 
-    names = ('num_waves', 'kv_blocks', 'waves_per_eu', 'grid_axis_order', 'interleave_valu', 'mask_at', 'dropout_scale_at')
+    names = ('num_waves',
+             'kv_blocks',
+             'kv_subs',
+             'waves_per_eu',
+             'grid_axis_order',
+             'interleave_valu',
+             'mask_at',
+             'dropout_scale_at')
     knobs = {n: getattr(a, n) for n in names if getattr(a, n) is not None}
-    launch = build_fmha_bwd_dkdv_gfx942(rung,
-                                        causal_type=2 if a.causal else 0,
-                                        bias=a.bias,
-                                        dropout=a.dropout_p > 0,
-                                        dtype_str=a.dtype,
-                                        padded_head=rung != a.head_dim,
-                                        **knobs)
+    narrow_only = {'num_waves', 'kv_blocks', 'interleave_valu'} & knobs.keys()
+    body = tuning.body(rung)
+    if body != 'narrow' and narrow_only:
+        sys.exit(f'{sorted(narrow_only)} are narrow-body knobs; head_dim {a.head_dim} runs the {body} body')
+    if body == 'narrow' and 'kv_subs' in knobs:
+        sys.exit(f'--kv_subs is not a knob of the narrow body, which head_dim {a.head_dim} runs')
+    launch = build_fmha_bwd_dkdv_gfx942_by_head_dim(rung,
+                                                    causal_type=2 if a.causal else 0,
+                                                    bias=a.bias,
+                                                    dropout=a.dropout_p > 0,
+                                                    dtype_str=a.dtype,
+                                                    padded_head=rung != a.head_dim,
+                                                    **knobs)
     torch.manual_seed(0)
     q = torch.randn(a.batch, a.heads, a.seqlen, a.head_dim, device='cuda', dtype=dt)
     k = torch.randn(a.batch, hk, sk, a.head_dim, device='cuda', dtype=dt)
@@ -161,7 +177,7 @@ def main():
     if a.causal:
         pairs = sum(max(0, min(sk, i + sk - a.seqlen + 1)) for i in range(a.seqlen))
     flops = 8 * a.batch * a.heads * pairs * a.head_dim
-    print(f'dkdv B{a.batch} H{a.heads}/{hk} S{a.seqlen}/{sk} D{a.head_dim} causal={a.causal} {a.dtype} {knobs}: '
+    print(f'dkdv B{a.batch} H{a.heads}/{hk} S{a.seqlen}/{sk} D{a.head_dim} ({body}) causal={a.causal} {a.dtype} {knobs}: '
           f'{ms:.3f} ms {flops / ms / 1e9:.1f} TFLOPS')
 
 
