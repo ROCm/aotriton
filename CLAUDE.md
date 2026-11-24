@@ -229,3 +229,22 @@ what pulls stray downloads and scratch files into commits in the first place.
 
 Removing or narrowing an existing `.gitignore` entry is subject to the same rule:
 suggest it, explain what would become visible or tracked, and wait.
+
+## Branch Workflow (Recommended, Not Enforced)
+
+1. Start the work on `<github_id>/dev/<topic>`.
+2. Work on it incrementally; major rewrites are fine there.
+3. Rewrite it cleanly onto `<github_id>/pr/<topic>`, and file the PR from that
+   branch.
+4. During review, incremental changes may go directly on
+   `<github_id>/pr/<topic>`. A major design revision may not: port it to
+   `<github_id>/dev/<topic>` and finish it there, because
+   `<github_id>/pr/<topic>` will have to be rewritten cleanly again once the
+   revision is done.
+
+An alternative layout, `<github_id>/<topic>/{pr,main,dev,dev0,dev1,rewrite0,rewrite1,...}`,
+is more recommended, but at risk of being blocked by an existing branch
+`<github_id>/<topic>`: once that branch exists, nothing can be added under
+`<github_id>/<topic>/`. Git stores a branch name as a path, so a name cannot be
+both a branch (a file) and a prefix of other branches (a directory), even
+though HTTP paths allow both.
