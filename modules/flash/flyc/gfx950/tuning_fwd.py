@@ -877,18 +877,15 @@ _EXACT_WALK_MAX_SEQLEN_K = 128
 # Per-sequence-length optima of BLOCK_DMODEL=128 (2026-11-23 sweep: both
 # dtypes, PADDED_HEAD False at head_dim 128 and True at 100, every mask and
 # feature, Sq x Sk over 16..8192, every geometry with the exact walk on and off;
-# one full run, then two racing runs that re-time each cell's contenders). Six
-# shared rules; a rule is kept only where it improved both racing runs. Cells
-# within 3% of the best build: 3384 -> 3538 of 4400 (a per-functional search
-# reaches 3769, at the cost of a rule table per functional).
+# one full run, then two racing runs that re-time each cell's contenders;
+# causal bottom-right re-swept on the window build). A rule is kept only where
+# it improved both racing runs and made no functional worse.
 # - No mask or feature, very short K: granule 32 (3-5%).
 # - No mask or feature, long Q and K: family A walking the padding (5-10%).
-# - Windows without a feature, short Q: BLOCK_M 64.
-# - Causal bottom-right without a feature, short Q and K: BLOCK_M 64; long Q
-#   and very long K: family A.
-# - Causal bottom-right, long K: walk the padding.
-# TODO: windows anchored bottom-right vs top-left share these rules until
-# the anchoring is a runtime value; the window functionals lag the most.
+# - Windows (both causal masks included) without a feature, short Q: BLOCK_M 64.
+# - Windows with dropout: granule 32 (not f16 padded).
+# TODO: the window functionals still lag the most (70-85% of cells within
+# 3%); causal and sliding windows share these rules.
 _SHORT_MAX_SEQLEN_K = 32
 _FAMILY_A = (8, 256, 64, 64)
 _GRANULE_32 = (4, 128, 64, 32)
@@ -914,69 +911,71 @@ def variants(meta: FmhaInputMetadata):
         # The floor only gates the padded-head masks; pin one value so JIT and
         # AOT resolve identical knobs.
         yield ati.derives('hdim_qk_floor', to=0)
-    # FIXME: windows anchored bottom-right qualify too, once whether a window
-    # is anchored top-left is a runtime value.
-    if (meta.block_dmodel == 128
-            and meta.padded_head
-            and meta.causal_type in (CAUSAL_NONE, CAUSAL_BOTTOM_RIGHT)):
+    # JIT's causal bottom-right build performs as the window build AOT runs
+    # causal bottom-right on (CAUSAL_TYPE is [0, 3] there), so it takes the
+    # window rules; the sweeps time causal bottom-right on the window build.
+    windowed = meta.causal_type in (CAUSAL_WINDOW, CAUSAL_BOTTOM_RIGHT)
+    if meta.block_dmodel == 128 and meta.padded_head and not windowed:
         yield ati.derives('exact_kv_tiles', to=False, when=ati.gt('max_seqlen_k', _EXACT_WALK_MAX_SEQLEN_K))
-    yield from _SEQLEN_OPTIMA.get(meta.block_dmodel, _no_rules)(meta)
+    yield from _SEQLEN_OPTIMA.get(meta.block_dmodel, _no_rules)(meta, windowed)
 
 
-def _seqlen_optima_128(meta: FmhaInputMetadata):
+def _seqlen_optima_128(meta: FmhaInputMetadata, windowed):
     """The BLOCK_DMODEL=128 per-call rules (see the sweep note above)."""
-    plain = not meta.bias and not meta.dropout
-    if meta.causal_type == CAUSAL_NONE and plain:
+    if windowed:
+        if meta.dropout and not (meta.padded_head and meta.dtype_str == 'f16'):
+            # Windows with dropout: granule 32 at every length.
+            yield from _geometry(_GRANULE_32, when=None)
+        elif not meta.dropout:
+            yield from _geometry(_BLOCK_M_64, when=(ati.le('max_seqlen_q', 32), ati.ge('max_seqlen_k', 64)))
+        return
+    if not meta.bias and not meta.dropout:
         long_q_long_k = (ati.ge('max_seqlen_q', 256), ati.ge('max_seqlen_k', 512))
         yield from _geometry(_GRANULE_32, when=ati.le('max_seqlen_k', _SHORT_MAX_SEQLEN_K))
         yield from _geometry(_FAMILY_A, when=long_q_long_k)
         if not meta.padded_head:
             # Padded, the padded-head rule already walks the padding from 129 keys.
             yield ati.derives('exact_kv_tiles', to=False, when=long_q_long_k)
-    if meta.causal_type == CAUSAL_WINDOW and plain:
-        yield from _geometry(_BLOCK_M_64, when=(ati.le('max_seqlen_q', 32), ati.ge('max_seqlen_k', 64)))
-    if meta.causal_type == CAUSAL_BOTTOM_RIGHT:
-        if not meta.dropout:  # (a bias never comes with a positional mask)
-            yield from _geometry(_BLOCK_M_64, when=(ati.le('max_seqlen_q', 64), ati.le('max_seqlen_k', 64)))
-            # The exact walk is off here already, by the long-K rule below or,
-            # padded, by the padded-head rule.
-            yield from _geometry(_FAMILY_A, when=(ati.ge('max_seqlen_q', 256), ati.ge('max_seqlen_k', 4096)))
-        if not meta.padded_head:
-            yield ati.derives('exact_kv_tiles', to=False, when=ati.ge('max_seqlen_k', 1024))
+
 
 # Tiles 64, 192 and 256 (2026-11-24 sweep, same method as 128 over every
-# other tile: 242 functionals' Sq x Sk grids, one full run, two racing runs).
-# Cells within 3% of the best build outside tile 128: 92.8% -> 96.0%; no
+# other tile: 242 functionals' Sq x Sk grids, one full run, two racing runs;
+# causal bottom-right re-swept on the window build). Forward cells within 3%
+# of the best build over all 28600: 90.2% (policy when swept) -> 93.9%; no
 # functional worse; the other tiles keep their one build.
-def _seqlen_optima_64(meta: FmhaInputMetadata):
-    """Tile 64: short Q takes BLOCK_M 64, long Q over short K family A (no feature)."""
+def _seqlen_optima_64(meta: FmhaInputMetadata, windowed):
+    """Tile 64: short Q takes BLOCK_M 64, long Q over short K family A."""
+    if windowed:
+        if meta.dropout and meta.dtype_str == 'bf16' and not meta.padded_head:
+            return
+        short_q = ati.le('max_seqlen_q', 64)
+        yield from _geometry(_BLOCK_M_64, when=short_q)
+        if meta.padded_head or (meta.dropout and meta.dtype_str == 'f16'):
+            yield from _geometry(_GRANULE_32, when=ati.gt('max_seqlen_q', 64))
+        return
     if meta.bias or meta.dropout:
         return
-    if meta.causal_type == CAUSAL_WINDOW:
-        yield from _geometry(_BLOCK_M_64, when=ati.le('max_seqlen_q', 64))
-    else:
-        yield from _geometry(_BLOCK_M_64, when=(ati.le('max_seqlen_q', 64), ati.le('max_seqlen_k', 128)))
-    if meta.causal_type == CAUSAL_NONE and not meta.padded_head:
+    yield from _geometry(_BLOCK_M_64, when=(ati.le('max_seqlen_q', 64), ati.le('max_seqlen_k', 128)))
+    if not meta.padded_head:
         yield from _geometry(_FAMILY_A, when=(ati.ge('max_seqlen_q', 256), ati.le('max_seqlen_k', 64)))
 
 
-def _seqlen_optima_192(meta: FmhaInputMetadata):
+def _seqlen_optima_192(meta: FmhaInputMetadata, windowed):
     """Tile 192: long Q over short K takes family A (78% -> 93% of cells within 3%)."""
-    if meta.causal_type != CAUSAL_BOTTOM_RIGHT:
-        yield from _geometry(_FAMILY_A, when=(ati.ge('max_seqlen_q', 256), ati.le('max_seqlen_k', 128)))
+    yield from _geometry(_FAMILY_A, when=(ati.ge('max_seqlen_q', 256), ati.le('max_seqlen_k', 128)))
 
 
-def _seqlen_optima_256(meta: FmhaInputMetadata):
+def _seqlen_optima_256(meta: FmhaInputMetadata, windowed):
     """Tile 256: short Q takes BLOCK_M 64; with dropout and no window, long K walks the padding."""
-    if meta.causal_type == CAUSAL_WINDOW:
+    if windowed:
         yield from _geometry(_BLOCK_M_64, when=ati.le('max_seqlen_q', 32))
-    else:
-        yield from _geometry(_BLOCK_M_64, when=(ati.le('max_seqlen_q', 32), ati.le('max_seqlen_k', 128)))
-    if meta.dropout and meta.causal_type != CAUSAL_WINDOW:
+        return
+    yield from _geometry(_BLOCK_M_64, when=(ati.le('max_seqlen_q', 32), ati.le('max_seqlen_k', 128)))
+    if meta.dropout:
         yield ati.derives('exact_kv_tiles', to=False, when=ati.ge('max_seqlen_k', 256))
 
 
-def _no_rules(meta: FmhaInputMetadata):
+def _no_rules(meta: FmhaInputMetadata, windowed):
     return
     yield
 

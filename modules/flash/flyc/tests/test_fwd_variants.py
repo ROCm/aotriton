@@ -74,10 +74,11 @@ def test_gfx950_fwd_build_counts():
     assert len(_aot(128, True)) == 8
     # {granule 32, default, family A with the padded walk}
     assert len(_aot(128, False)) == 3
-    # {BLOCK_M 64, default, padded walk from 1024 keys, family A}
-    assert len(_aot(128, False, CAUSAL_BOTTOM_RIGHT)) == 4
-    # {default, BLOCK_M 64 for short Q}
+    # {default, BLOCK_M 64 for short Q}; JIT's causal bottom-right takes the window rules.
     assert len(_aot(128, False, CAUSAL_WINDOW)) == 2
+    assert len(_aot(128, False, CAUSAL_BOTTOM_RIGHT)) == 2
+    # Windows with dropout: granule 32 everywhere, one build.
+    assert len(_aot(128, False, CAUSAL_WINDOW, dropout=True)) == 1
     # No rule for no-mask dropout at tile 128.
     assert len(_aot(128, False, dropout=True)) == 1
     # Tile 64: {BLOCK_M 64 for short Q, default, family A for long Q over short K}
@@ -118,13 +119,11 @@ def test_gfx950_fwd_jit_sequence_length_optima():
     assert geometry(128, CAUSAL_NONE, max_seqlen_q=64, max_seqlen_k=33) == (4, 128, 64, True)
     assert geometry(128, CAUSAL_NONE, max_seqlen_q=256, max_seqlen_k=512) == (8, 256, 64, False)
     assert geometry(128, CAUSAL_NONE, max_seqlen_q=255, max_seqlen_k=512) == (4, 128, 64, True)
-    # Causal bottom-right: BLOCK_M 64 when both are short, padded walk from 1024 keys.
-    assert geometry(128, CAUSAL_BOTTOM_RIGHT, max_seqlen_q=64, max_seqlen_k=64) == (4, 64, 64, True)
-    assert geometry(128, CAUSAL_BOTTOM_RIGHT, max_seqlen_q=64, max_seqlen_k=1024) == (4, 128, 64, False)
-    assert geometry(128, CAUSAL_BOTTOM_RIGHT, max_seqlen_q=256, max_seqlen_k=4096) == (8, 256, 64, False)
-    # Windows: BLOCK_M 64 for short Q.
-    assert geometry(128, CAUSAL_WINDOW, max_seqlen_q=32, max_seqlen_k=64) == (4, 64, 64, True)
-    assert geometry(128, CAUSAL_WINDOW, max_seqlen_q=33, max_seqlen_k=64) == (4, 128, 64, True)
+    # Windows (JIT's causal bottom-right too): BLOCK_M 64 for short Q.
+    for causal_type in (CAUSAL_WINDOW, CAUSAL_BOTTOM_RIGHT):
+        assert geometry(128, causal_type, max_seqlen_q=32, max_seqlen_k=64) == (4, 64, 64, True)
+        assert geometry(128, causal_type, max_seqlen_q=33, max_seqlen_k=64) == (4, 128, 64, True)
+        assert geometry(128, causal_type, max_seqlen_q=4096, max_seqlen_k=4096) == (4, 128, 64, True)
 
 
 def test_gfx950_fwd_jit_needs_the_values_its_rules_read():
