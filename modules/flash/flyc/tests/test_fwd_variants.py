@@ -78,9 +78,17 @@ def test_gfx950_fwd_build_counts():
     assert len(_aot(128, False, CAUSAL_BOTTOM_RIGHT)) == 4
     # {default, BLOCK_M 64 for short Q}
     assert len(_aot(128, False, CAUSAL_WINDOW)) == 2
-    # No rule for no-mask dropout, nor for other tiles.
+    # No rule for no-mask dropout at tile 128.
     assert len(_aot(128, False, dropout=True)) == 1
-    assert len(_aot(64, False)) == 1
+    # Tile 64: {BLOCK_M 64 for short Q, default, family A for long Q over short K}
+    assert len(_aot(64, False)) == 3
+    # Tile 192: {default, family A for long Q over short K}
+    assert len(_aot(192, False)) == 2
+    # Tile 256 with dropout: {BLOCK_M 64 for short Q, default, padded walk from 256 keys}
+    assert len(_aot(256, False, dropout=True)) == 3
+    # No rule at the other tiles.
+    assert len(_aot(32, False)) == 1
+    assert len(_aot(512, False)) == 1
 
 
 def _jit(head_dim, causal_type, **values):
