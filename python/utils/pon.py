@@ -25,7 +25,7 @@ here: it split a line on `;`, then on `=` with `maxsplit=1`, then called
 `eval(v)` on the value. Two problems. The `eval` executed whatever the wire
 carried -- and this wire carries text a worker process wrote, not text a human
 typed. And the separator was hard-coded to `;`, so a caller whose wire
-separator is something else (a space-separated `--signature`/`--hints` command
+separator is something else (a space-separated `--signature`/`--build_knobs` command
 line, say) could not reuse it and wrote its own splitter instead.
 
 `parse_pon` keeps the shape and fixes both: `ast.literal_eval` accepts exactly

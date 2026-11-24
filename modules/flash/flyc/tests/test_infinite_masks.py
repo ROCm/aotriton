@@ -104,8 +104,8 @@ def _shape_id(s):
 
 
 @functools.cache
-def _build(pass_name, build, causal_type, bias, dropout, seqlen_k=None):
-    """`seqlen_k`: the call's maximum, for the forward's per-call rules."""
+def _build(pass_name, build, causal_type, bias, dropout, max_seqlen_k=None):
+    """`max_seqlen_k`: the call's, for the forward's per-call rules."""
     head_dim, dtype_str = BUILDS[build]
     meta = FmhaInputMetadata(num_heads=NUM_HEADS,
                              block_dmodel=None,
@@ -114,7 +114,7 @@ def _build(pass_name, build, causal_type, bias, dropout, seqlen_k=None):
                              causal_type=causal_type,
                              bias=bias,
                              dropout=dropout)
-    runtime = {} if seqlen_k is None else {"seqlen_k": seqlen_k}
+    runtime = {} if max_seqlen_k is None else {"max_seqlen_k": max_seqlen_k}
     return jit_arch.build(PASSES[pass_name], ARCH, meta, **runtime)[0]
 
 
@@ -347,7 +347,7 @@ def _run(pass_name, build, pb, causal_type, label):
     head_dim, dtype_str = BUILDS[build]
     sm_scale = 1.0 / math.sqrt(head_dim)
     bias = pb.bias is not None
-    fwd = _build("fwd", build, causal_type, bias, pb.dropout, seqlen_k=pb.call_args()[2]["seqlen_k"])
+    fwd = _build("fwd", build, causal_type, bias, pb.dropout, max_seqlen_k=pb.call_args()[2]["seqlen_k"])
     keeps = _keep_masks(fwd, pb, sm_scale) if pb.dropout else [None] * pb.num_seqs
     refs = [_reference(pb, z, sm_scale, keeps[z]) for z in range(pb.num_seqs)]
     if pb.dropout:

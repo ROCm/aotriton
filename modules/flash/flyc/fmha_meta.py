@@ -20,13 +20,15 @@ CAUSAL_WINDOW = 3
 
 # The runtime values a per-call rule may read (`ati.derives` yielded by a
 # tuning module's `variants`), each with the range of the C++ value it is wired
-# to: every value C++ can hold must select a build. `hdim_qk` is the call's Q/K
-# head dim, the sequence lengths are the call's maxima.
+# to: every value C++ can hold must select a build. Named after the kernels'
+# own i32 scalar arguments, whose `@ati.scalar(..., wires_to=...)` tells the
+# code generator where C++ reads each: the call's Q/K head dim and its maximum
+# sequence lengths.
 _INT32 = (-2**31, 2**31 - 1)
 RUNTIME_VALUES = {
     'hdim_qk': _INT32,
-    'seqlen_q': _INT32,
-    'seqlen_k': _INT32,
+    'max_seqlen_q': _INT32,
+    'max_seqlen_k': _INT32,
 }
 
 

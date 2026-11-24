@@ -84,13 +84,15 @@ def aot_builds(arch, meta):
             return entry.entry_build(meta, knobs)
         return build, asdict(knobs)
 
-    found = runtime_rules.builds(variants(arch, meta), RUNTIME_VALUES)
+    # `verify`, not just `builds`: the code generator's selector relies on the
+    # boxes partitioning every call, and on each build being what JIT applies.
+    found = runtime_rules.verify(variants(arch, meta), RUNTIME_VALUES)
     if len(found) == 1 and found[0][0] == [{}]:
         return one(found[0][1])
     return ((boxes, *one(overrides)) for boxes, overrides in found)
 
 
-def plan(arch, meta, *, overrides=None, seqlen_q=None, seqlen_k=None):
+def plan(arch, meta, *, overrides=None, max_seqlen_q=None, max_seqlen_k=None):
     """JIT: `(meta, knobs)` for calls with these runtime values.
 
     Rounds `meta`'s real head dims up the ladder (setting the tiles and
@@ -109,7 +111,7 @@ def plan(arch, meta, *, overrides=None, seqlen_q=None, seqlen_k=None):
                 for f in fields(overrides) if getattr(overrides, f.name) is not None}
     meta, _ = entry.entry_plan(meta, overrides=user or None)
     rules = [r for r in variants(arch, meta) if not runtime_rules.overrides(r).keys() <= user.keys()]
-    values = {'hdim_qk': meta.head_dim, 'seqlen_q': seqlen_q, 'seqlen_k': seqlen_k}
+    values = {'hdim_qk': meta.head_dim, 'max_seqlen_q': max_seqlen_q, 'max_seqlen_k': max_seqlen_k}
     pins = runtime_rules.overrides_at(rules, values, RUNTIME_VALUES) | user
     return entry.entry_plan(meta, overrides=pins or None)
 

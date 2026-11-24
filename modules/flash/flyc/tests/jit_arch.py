@@ -52,7 +52,7 @@ def overrides(arch, variant):
 def build(dispatcher, arch, meta, variant=None, **runtime):
     """`(fn, knobs)`: `meta` planned for `arch` and built, overrides checked.
 
-    `runtime` is the call's runtime values (`seqlen_k=...`) for a dispatcher
+    `runtime` is the call's runtime values (`max_seqlen_k=...`) for a dispatcher
     whose per-call rules read them (`tuning_fwd.plan`).
     """
     pins = overrides(arch, variant)

@@ -1205,7 +1205,7 @@ def make_policy_pick(group):
         boxes_of = {name: boxes for name, boxes, _ in policy_builds(group)}
 
         def pick_fwd(name, sq, sk):
-            values = {"hdim_qk": group["hd"], "seqlen_q": sq, "seqlen_k": sk}
+            values = {"hdim_qk": group["hd"], "max_seqlen_q": sq, "max_seqlen_k": sk}
             return any(contains(b, values) for b in boxes_of.get(name, ()))
         return pick_fwd
     from gfx950.tuning_fused_bwd import prefer_fused

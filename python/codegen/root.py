@@ -7,6 +7,7 @@ from pathlib import Path, PurePath
 from concurrent.futures import ThreadPoolExecutor
 import subprocess
 from .linker import Linker
+from ..template_instantiation.ir.flyc.builds import render_build_knobs
 from .kernel import KernelShimGenerator
 from .flyc import FlycShimGenerator
 from .slim_affine import SlimAffineGenerator
@@ -397,14 +398,18 @@ class RootGenerator(object):
     def write_flyc_hsaco(self, kdesc, path, functional, ksig, rulefile):
         """One `Fly.compile` row:
 
-            VENVPYTHON;HSACO;DESC;KERNEL_NAME;TGTGPU;SIGNATURE;HINTS
+            VENVPYTHON;HSACO;DESC;KERNEL_NAME;TGTGPU;SIGNATURE;BUILD_KNOBS
+
+        BUILD_KNOBS names which of the functional's builds this row compiles:
+        the knobs whose values differ among its builds (`ksig.build_knobs`),
+        empty when it has one.
 
         VENVPYTHON is a SINGLE column here, unlike write_hsaco's two ('venv' and
         'python'): `aotriton.flyc_compile` takes no venv-name argument, and the
         CMake loop that consumes this file only `list(POP_FRONT)`s one field for
         it.
 
-        SIGNATURE and HINTS must be space-separated `key=value`, never `;`.
+        SIGNATURE and BUILD_KNOBS must be space-separated `key=value`, never `;`.
         `file(STRINGS)` keeps the whole line as one list element, but
         `list(POP_FRONT)` re-splits it on `;`, so a semicolon inside a payload is
         indistinguishable from a field boundary and silently truncates the row.
@@ -430,17 +435,16 @@ class RootGenerator(object):
                 f'a Fly.compile payload must be space-separated')
             return f'{name}={value}'
         signature = ' '.join(_kv(name, choice) for name, choice in functional.compact_choices.items())
-        # No hint tuning yet: every build uses the description's declared
-        # @ati.flyc.hints defaults, so HINTS is empty and the driver
-        # (flyc_compile._build_hints) applies no override.
-        hints = ''
+        # render_pon(sep=' ') is space-separated and refuses a value with a
+        # space or `;` in it, the same constraint as SIGNATURE above.
+        build_knobs = render_build_knobs(ksig.build_knobs)
         print(python.as_posix(),
               self._absobjfn(path, kdesc, ksig),
               kdesc.desc_path.as_posix(),
               kdesc.NAME,
               functional.arch,
               signature,
-              hints,
+              build_knobs,
               sep=';', file=rulefile)
 
     def write_cluster(self, base_dir, odp, path_entry_map, clusterfile):

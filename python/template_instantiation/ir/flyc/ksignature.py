@@ -9,10 +9,11 @@ subclass `ir/triton/ksignature.py`'s `KernelSignature`. That class carries Trito
 vocabulary (`num_warps` / `num_stages` / `waves_per_eu`, `COMPILER_OPTIONS`) that
 is specific to Triton's autotune model and does not apply here.
 
-flyc's perf vocabulary has no C struct and no grid choice among candidate
-images -- every functional resolves to exactly one hsaco, whose distinguishing
-knob set (all 23 `FmhaKnobs` fields, as returned by the description alongside
-its deferred builder) is carried verbatim in the entry name's `#P` section as a
+flyc's perf vocabulary has no C struct and no tuning grid: a functional
+resolves to one hsaco per build its tuning module's per-call rules give it,
+each serving `boxes` of runtime values, and each one's distinguishing knob set
+(the `FmhaKnobs` fields, as returned by the description alongside its deferred
+builder) is carried verbatim in the entry name's `#P` section as a
 PON (Plain / Python Object Notation) ';'-separated 'k=v' string, read at runtime
 by `class Pon` (`include/aotriton/_internal/pon.h`) rather than by a generated
 struct and accessors. `copt_section` stays permanently empty -- flyc has no
@@ -33,8 +34,15 @@ class KernelSignature:
     empty (see module docstring). Both names are the ones the Triton signature
     uses, so the two languages describe the entry name's sections alike."""
 
-    def __init__(self, f: 'Functional', *, psels: dict | None = None, copts: dict | None = None):
+    def __init__(self, f: 'Functional', *, psels: dict | None = None, copts: dict | None = None,
+                 boxes: list | None = None):
         self._functional = f
+        # The calls this image serves (`ir/runtime_rules.py`): `[{}]`, every
+        # call, for a functional with one build.
+        self.boxes = boxes if boxes is not None else [{}]
+        # The knobs that tell this build apart from the functional's others
+        # (`builds.build_knobs`); set by the code generator, which sees them all.
+        self.build_knobs = {}
         # The knob dict the description returned, kept verbatim. NEVER read back
         # from the on-disk <hsaco>.json: that file is produced later, at true
         # build time, by a different process.
@@ -42,6 +50,10 @@ class KernelSignature:
         # flyc has no compiler-option grid; the parameter exists so the two
         # sections stay symmetric with Triton's and with `copt_section` below.
         self._copts = dict(copts) if copts else {}
+
+    @property
+    def psels(self) -> dict:
+        return dict(self._psels)
 
     @property
     def psel_section(self) -> str:

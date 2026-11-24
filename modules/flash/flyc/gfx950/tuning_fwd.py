@@ -893,7 +893,7 @@ def variants(meta: FmhaInputMetadata):
     if (meta.block_dmodel == 128
             and meta.padded_head
             and meta.causal_type in (CAUSAL_NONE, CAUSAL_BOTTOM_RIGHT)):
-        yield ati.derives('exact_kv_tiles', to=False, when=ati.gt('seqlen_k', _EXACT_WALK_MAX_SEQLEN_K))
+        yield ati.derives('exact_kv_tiles', to=False, when=ati.gt('max_seqlen_k', _EXACT_WALK_MAX_SEQLEN_K))
 
 
 # Unified entry (flyc/tuning_fwd.py): the shared metadata, pinned.

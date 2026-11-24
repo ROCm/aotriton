@@ -136,7 +136,7 @@ def main():
     built = {}
 
     def build_for(sq, sk):
-        planned, knobs = tuning_fwd.plan("gfx950", meta, overrides=overrides, seqlen_q=sq, seqlen_k=sk)
+        planned, knobs = tuning_fwd.plan("gfx950", meta, overrides=overrides, max_seqlen_q=sq, max_seqlen_k=sk)
         key = json.dumps(asdict(knobs), sort_keys=True)
         if key not in built:
             fn = tuning_fwd.builder("gfx950", planned, knobs)

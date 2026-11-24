@@ -15,7 +15,14 @@ The function returns either
 
 `build` is deferred (it imports flydsl); `knobs` is the JSON-serialisable dict
 recorded beside the hsaco.
+
+The code generator emits one image per build and a selector over the boxes.
+Each image's `Fly.compile` row names its build to `aotriton.flyc_compile` by
+its *build knobs*: the knobs whose values differ among the functional's
+builds, which both sides compute from the same description.
 """
+
+from aotriton.utils import parse_pon, render_pon
 
 
 def flyc_builds(result):
@@ -26,14 +33,29 @@ def flyc_builds(result):
     return list(result)
 
 
-def flyc_shipped_build(result):
-    """`(build, knobs)` of the one image the code generator ships per functional.
+def build_knobs(all_knobs):
+    """For each build's knobs, the ones whose values differ among the builds.
 
-    TODO(flyc conditional builds): the code generator does not emit the
-    per-call selector yet, so a functional with several builds ships only the
-    first, which `runtime_rules.builds` orders as the build for the smallest
-    runtime values -- for the gfx950 forward, today's build (no D floor, the
-    exact KV walk). Remove once flytune.py emits every build and the selector.
+    `{}` for a functional with one build. Distinct builds have distinct knobs,
+    so the result is distinct per build.
     """
-    boxes, build, knobs = flyc_builds(result)[0]
-    return build, knobs
+    differ = sorted({k for knobs in all_knobs for k in knobs
+                     if len({repr(other.get(k)) for other in all_knobs}) > 1})
+    return [{k: knobs.get(k) for k in differ} for knobs in all_knobs]
+
+
+def render_build_knobs(knobs) -> str:
+    """`--build_knobs` text: space-separated `k=v`, like `--signature`."""
+    return render_pon(knobs, sep=' ')
+
+
+def flyc_build_for(result, build_knobs_text):
+    """`(build, knobs)` of the build `build_knobs_text` names; `''` names the only build."""
+    found = flyc_builds(result)
+    wanted = parse_pon(build_knobs_text, sep=' ') if build_knobs_text else {}
+    named = build_knobs([knobs for _, _, knobs in found])
+    matches = [(build, knobs) for (_, build, knobs), bk in zip(found, named) if bk == wanted]
+    if len(matches) != 1:
+        raise ValueError(f'--build_knobs {build_knobs_text!r} names {len(matches)} of this functional\'s '
+                         f'{len(found)} builds; it has {[render_build_knobs(bk) for bk in named]}')
+    return matches[0]

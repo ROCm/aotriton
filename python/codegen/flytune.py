@@ -3,10 +3,10 @@
 
 # Generate <family>/flytune.<kernel_name>/<functional>.cc
 #
-# The flyc analogue of AutotuneCodeGenerator (autotune.py), but degenerate: flyc
-# has no LUT, no binning, no PerfFields struct, and exactly ONE hsaco candidate
-# per surviving functional -- there is no autotune choice among several compiled
-# images the way Triton's shim has.
+# The flyc analogue of AutotuneCodeGenerator (autotune.py), but with no LUT, no
+# binning and no PerfFields struct: a functional has one hsaco per build of its
+# tuning module's per-call rules, and the entry selects among them with an
+# if-chain over the builds' boxes of runtime values (`ir/runtime_rules.py`).
 #
 # The generator must NEVER invoke the FlyDSL builder / compiler -- only
 # `python/flyc_compile.py`, run by ninja at build time, may do that. A flyc
@@ -27,7 +27,7 @@ from pathlib import Path
 
 from ..template_instantiation.ir import Functional
 from ..template_instantiation.ir.flyc import KernelSignature
-from ..template_instantiation.ir.flyc.builds import flyc_shipped_build
+from ..template_instantiation.ir.flyc.builds import build_knobs, flyc_builds
 from .template import get_template
 from ..utils import LazyFile, log
 from .basetune import BaseTuneCodeGenerator
@@ -45,16 +45,13 @@ class FlycTuneCodeGenerator(BaseTuneCodeGenerator):
         super().__init__(args, f, view, parent_repo)
         self._tuning_source = tuning_source(view, f)
         self._sigs = list(self._gen_signatures())
+        for sig, named in zip(self._sigs, build_knobs([s.psels for s in self._sigs])):
+            sig.build_knobs = named
 
     def _gen_signatures(self):
-        """Yield one KernelSignature per compiled image of this functional.
-
-        A generator, not a single value, because that is the shape flyc autotune
-        needs: once FlyDSL's schedule becomes `hints`-dependent, one
-        (choices, hints) resolves to SEVERAL (knobs, build) pairs and each one is
-        an image with its own `#P`. Today the count is one; nothing here assumes
-        it, so growing it is adding a loop, not reshaping the class.
-        """
+        """Yield one KernelSignature per compiled image of this functional:
+        one per build the description returns (`ir/flyc/builds.py`), each with
+        its own `#P` and the boxes of runtime values it serves."""
         f = self._f
         kdesc = f.meta_object
         # `f.choices` (a FunctionalChoiceView) is the real thing, not a dict
@@ -84,11 +81,11 @@ class FlycTuneCodeGenerator(BaseTuneCodeGenerator):
         # `f.arch` is the builder's FIRST argument: every flyc description
         # takes (arch, choices, hints), with arch arriving as an argument in
         # its own right rather than smuggled into choices.
-        build, knobs = flyc_shipped_build(kdesc.builder_fn(f.arch, choices, hints))
-        # `knobs['flyc_source']`/`knobs['flyc_kernel_name']` locate the kernel
-        # stub; `build` is never called (see above).
-        kdesc.ensure_stub_resolved(f.arch, knobs)
-        yield KernelSignature(f, psels=knobs)
+        for boxes, build, knobs in flyc_builds(kdesc.builder_fn(f.arch, choices, hints)):
+            # `knobs['flyc_source']`/`knobs['flyc_kernel_name']` locate the
+            # kernel stub; `build` is never called (see above).
+            kdesc.ensure_stub_resolved(f.arch, knobs)
+            yield KernelSignature(f, psels=knobs, boxes=boxes)
 
     def generate(self):
         log(lambda : f'Writing to {self._cc_file}')
@@ -111,6 +108,9 @@ class FlycTuneCodeGenerator(BaseTuneCodeGenerator):
             'func_name'             : f.unified_signature,
             'arch_name'             : f.arch,
             'meta_hsacos'           : meta_hsacos,
+            'total_kernels'         : len(self._sigs),
+            'selector_includes'     : self.codegen_selector_includes(),
+            'kernel_selection'      : self.codegen_kernel_selection(),
             'context_class_name'    : kdesc.context_class_name,
             'deduplicated_pp_args_function_index' : self.codegen_deduplicated_pp_args_function_index(),
             'arch_number'           : f.arch_number,
@@ -118,6 +118,68 @@ class FlycTuneCodeGenerator(BaseTuneCodeGenerator):
             'tuning'                : self._tuning_source,
         }
         print(self.FLYTUNE_TEMPLATE.format_map(d), file=fout)
+
+    # The range of the i32 runtime values (`kdesc.runtime_value_cxx` insists on
+    # i32): a bound at its end is no test.
+    _INT32 = (-2**31, 2**31 - 1)
+
+    def codegen_selector_includes(self):
+        """The operator's interface header, for a selector that reads its
+        params struct: the context's own header only forward-declares it."""
+        if len(self._sigs) == 1:
+            return ''
+        iface = self._f.meta_object.SHARED_IFACE
+        return f'\n#include "../{iface.FILE_PFX}.{iface.NAME}.h"'
+
+    def codegen_kernel_selection(self):
+        """The C++ that sets `kernel_index` from the call's runtime values.
+
+        The builds' boxes partition every value (`runtime_rules.verify` ran when
+        the description returned them), so an if-chain whose last build is the
+        `else` always selects exactly one -- there is no "no kernel" path.
+        """
+        sigs = self._sigs
+        if len(sigs) == 1:
+            assert sigs[0].boxes == [{}], f'one build serving only {sigs[0].boxes}'
+            return 'constexpr int kernel_index = 0;'
+        kdesc = self._f.meta_object
+        names = sorted({n for s in sigs for b in s.boxes for n in b})
+        lines = [f'const int64_t {n} = {kdesc.runtime_value_cxx(n)};' for n in names]
+        lines.append('int kernel_index;')
+        for i, sig in enumerate(sigs):
+            if i == len(sigs) - 1:
+                lines.append(f'else  // {self._cxx_boxes(sig.boxes)}')
+            else:
+                lines.append(f'{"if" if i == 0 else "else if"} ({self._cxx_boxes(sig.boxes)})')
+            lines.append(f'    kernel_index = {i};')
+        return '\n    '.join(lines)
+
+    @staticmethod
+    def _rounder(a, b):
+        """Whether `a` reads as the rounder constant: more trailing zero bits."""
+        def zeros(x):
+            return (x & -x).bit_length() if x else 64
+        return zeros(a) > zeros(b)
+
+    @classmethod
+    def _cxx_bound(cls, name, lo, hi):
+        """`name`'s interval as C++ terms, each spelled with its rounder constant:
+        `> 96` rather than `>= 97`, `< 1024` rather than `<= 1023`."""
+        terms = []
+        if lo > cls._INT32[0]:
+            terms.append(f'{name} > {lo - 1}' if cls._rounder(lo - 1, lo) else f'{name} >= {lo}')
+        if hi < cls._INT32[1]:
+            terms.append(f'{name} < {hi + 1}' if cls._rounder(hi + 1, hi) else f'{name} <= {hi}')
+        return terms
+
+    @classmethod
+    def _cxx_boxes(cls, boxes):
+        def one(box):
+            terms = [t for n, (lo, hi) in sorted(box.items()) for t in cls._cxx_bound(n, lo, hi)]
+            return ' && '.join(terms) or 'true'
+        if len(boxes) == 1:
+            return one(boxes[0])
+        return ' || '.join(f'({one(b)})' for b in boxes)
 
     def codegen_compact_kernels(self, ksigs, flatzip_path):
         """One TritonKernelCompactMeta row per image, same shape as

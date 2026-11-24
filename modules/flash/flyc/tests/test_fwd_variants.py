@@ -80,16 +80,16 @@ def _jit(head_dim, causal_type, **values):
 
 
 def test_gfx950_fwd_jit_padded_head_walk():
-    assert _jit(100, CAUSAL_NONE, seqlen_k=128).exact_kv_tiles is True
-    assert _jit(100, CAUSAL_NONE, seqlen_k=129).exact_kv_tiles is False
-    assert _jit(100, CAUSAL_NONE, seqlen_k=129).hdim_qk_floor == 96
+    assert _jit(100, CAUSAL_NONE, max_seqlen_k=128).exact_kv_tiles is True
+    assert _jit(100, CAUSAL_NONE, max_seqlen_k=129).exact_kv_tiles is False
+    assert _jit(100, CAUSAL_NONE, max_seqlen_k=129).hdim_qk_floor == 96
     # Windows and other tiles have no seqlen rule, so need no seqlen.
     assert _jit(100, CAUSAL_WINDOW).exact_kv_tiles is True
     assert _jit(128, CAUSAL_NONE).hdim_qk_floor == 0
 
 
 def test_gfx950_fwd_jit_needs_the_values_its_rules_read():
-    with pytest.raises(ValueError, match="'seqlen_k'"):
+    with pytest.raises(ValueError, match="'max_seqlen_k'"):
         _jit(100, CAUSAL_NONE)
     # Pinning the knob a rule decides makes the rule moot.
     meta = FmhaInputMetadata(num_heads=8,
