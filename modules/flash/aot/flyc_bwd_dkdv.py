@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-ATI description of the flash bwd dK/dV FlyDSL backend (gfx1201 and gfx950).
+ATI description of the flash bwd dK/dV FlyDSL backend (gfx1201, gfx950 and gfx942).
 
 The backward half of `flyc_attn_fwd.py`, and it works the same way: no perf
 axes (`tuning_dkdv.resolve_knobs`, dispatching to `<arch>/tuning_dkdv.py`, is

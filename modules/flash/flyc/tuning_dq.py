@@ -8,6 +8,7 @@ Same contract as `tuning_fwd`.
 from tuning_fwd import arch_module, require_head_dim, require_tile
 
 _ARCH_MODULES = {
+    'gfx942': 'gfx942.tuning_dq',
     'gfx950': 'gfx950.tuning_dq',
     'gfx1201': 'gfx1201.tuning_dq',
 }

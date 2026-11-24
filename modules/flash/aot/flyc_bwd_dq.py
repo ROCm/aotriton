@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-ATI description of the flash bwd dQ/dB FlyDSL backend (gfx1201 and gfx950).
+ATI description of the flash bwd dQ/dB FlyDSL backend (gfx1201, gfx950 and gfx942).
 
 The dQ/dB half of the flyc backward, and the sibling of `flyc_bwd_dkdv.py` --
 see that file for the shared rationale (no perf axes, no functional axes of its

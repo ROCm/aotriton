@@ -14,12 +14,13 @@ which one a build uses; the entry file's primary builder maps it to a source.
 from dataclasses import dataclass, replace
 
 from fmha_knobs import (
+    GRID_AXIS_HEAD_FASTEST,
     GRID_AXIS_TILE_FASTEST,
     FlycKVKnobs,
     FlycQKnobs,
 )
 
-__all__ = ["BwdDkDvKnobs", "FmhaKnobs"]
+__all__ = ["BwdDkDvKnobs", "BwdDqKnobs", "FmhaKnobs"]
 
 # dK/dV `mask_at`: where the band mask lands.
 MASK_SCORE = 'score'        # score -> -inf before exp2
@@ -55,6 +56,25 @@ class FmhaKnobs(_PolicyGridAxisOrder, FlycQKnobs):
     FLYC_KERNEL_NAME = "fmha_fwd_gfx942_kernel"
     # Non-causal; causal narrow and xwide builds take HEAD_FASTEST.
     FLYC_GRID_AXIS_ORDER = GRID_AXIS_TILE_FASTEST
+
+
+@dataclass(frozen=True)
+class BwdDqKnobs(_PolicyGridAxisOrder, FlycQKnobs):
+    """The dQ kernel's knobs. `None` means "policy decides"."""
+
+    body: str | None = None
+    num_waves: int | None = None
+    block_n: int | None = None
+    waves_per_eu: int | None = None
+    # Longest q tiles first (narrow body).
+    lpt: bool | None = None
+    # Query rows per wave (wide body).
+    wave_m: int | None = None
+
+    FLYC_SOURCE = "gfx942/dq.py"
+    FLYC_KERNEL_NAME = "fmha_bwd_dq_gfx942_kernel"
+    # The narrow body; the wide one takes TILE_FASTEST.
+    FLYC_GRID_AXIS_ORDER = GRID_AXIS_HEAD_FASTEST
 
 
 @dataclass(frozen=True)
