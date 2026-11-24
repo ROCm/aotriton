@@ -69,8 +69,9 @@ def default_block_n(head_dim):
 
 def default_grid_axis_order(causal):
     """Tile-fastest shares K/V in L2 across a head's q tiles; causal needs
-    head-fastest to spread its uneven tiles (B2 H64 S32k d128: 523 vs 495 TFLOPS
-    non-causal; B4 H32 S8k d128 causal: 402 vs 295)."""
+    head-fastest to spread its uneven tiles, longest first (B2 H64 S32k d128: 523
+    vs 495 TFLOPS non-causal; causal d128, head- vs tile-fastest: B4 H32 S8k 407
+    vs 294, B1 H32 S32k 457 vs 419)."""
     return GRID_AXIS_HEAD_FASTEST if causal else GRID_AXIS_TILE_FASTEST
 
 

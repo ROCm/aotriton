@@ -241,6 +241,11 @@ def build_fmha_fwd_gfx942(head_dim,
         else:
             head = fx.Index(gpu.block_idx.x)
             q_tile = fx.Index(gpu.block_idx.y)
+        if const_expr(tr.causal):
+            # Longest tiles first: under any causal window later rows see more keys.
+            # Count tiles as the C++ grid does; gpu.grid_dim would add hidden kernargs.
+            n_q_tiles = (fx.Index(max_seqlen_q) + tr.block_m - 1) // tr.block_m
+            q_tile = n_q_tiles - fx.Index(1) - q_tile
         z_i32 = fx.Int32(gpu.block_idx.z)
         head_k = head // (fx.Index(num_head_q) // fx.Index(num_head_k))
         sq_i32, q_row_off, q_batch = fmha.decode_addressing(varlen_bits, 0, max_seqlen_q, seqinfo_q0, seqinfo_q1, z_i32)
