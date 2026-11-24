@@ -138,6 +138,13 @@ def rescale(o_accs, corr, width=16):
     return out
 
 
+def rescale_always(o_accs, corr, width=16):
+    """O *= corr with no branch: same bits as `rescale` (x * 1.0 == x), and no
+    second copy of O for the skip path to keep live."""
+    corr_v = fx.full(width, fx.Float32(corr), fx.Float32)
+    return [Vec(o) * corr_v for o in o_accs]
+
+
 def head(ctx, s_raw, kv_start, masked, bias_vals=None, sched=None):
     """Scores of a new tile and the running max: sets ctx.s, ctx.m, ctx.corr.
     `sched` (optional) pins the cluster's order before the max exchange's branch."""

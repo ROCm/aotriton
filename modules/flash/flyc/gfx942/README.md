@@ -168,6 +168,22 @@ deliberately moved; it is the cheapest proof a refactor changed nothing.
   jit functions; not objects, classes or `module.func` calls. Hence the module
   digest in the cache tag. AOT builds and `conftest.py` run with the cache off.
 
+**Register pressure**
+- The narrow forward sits at 256 VGPRs. A masked tile whose buffer is known
+  only at run time (`_masked_step`) spilled resident Q when the lane's band and
+  key stayed live for it; rebuild such values at use behind asm LLVM cannot
+  hoist (`utils.lane_now`). Check `.vgpr_spill_count` and look for `scratch_`
+  in the loops, not just the total.
+- A skip branch in such a tile (`softmax.rescale`) kept a second copy of O for
+  the skip path; `softmax.rescale_always` (same bits) removed the last spills.
+
+**Causal grids**
+- Run the longest q tiles first (LPT). On a head-fastest grid that alone took
+  narrow causal hd128 from 381 to 457 TFLOPS at B1 H32 S32k.
+- Measured and not adopted for the narrow forward: pairing q tiles g and T-1-g
+  per block as the wide body does (spills; slower at S8k), and renumbering
+  blocks so each XCD's are consecutive (slower in every order tried).
+
 **Testing**
 - Fill every output with NaN before each run and assert none is left outside
   padded slack columns: every element a kernel owns must be written, fully

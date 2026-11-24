@@ -96,6 +96,16 @@ def smax(x, y):
     return (x > y).select(x, y)
 
 
+def lane_now():
+    """The lane id, rebuilt where used: behind asm LLVM cannot hoist, nothing derived
+    from it stays live across a loop."""
+    return fx.Int32(llvm.inline_asm(ir.IntegerType.get_signless(32),
+                                    [],
+                                    'v_mbcnt_lo_u32_b32 $0, -1, 0\n\tv_mbcnt_hi_u32_b32 $0, -1, $0',
+                                    '=v',
+                                    has_side_effects=True))
+
+
 def pin_values(vals, rc='v'):
     """Opaque copies in register class `rc`: LLVM can neither look through them nor move them."""
     irs = [raw(v) for v in vals]

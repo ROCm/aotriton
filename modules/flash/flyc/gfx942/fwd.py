@@ -315,9 +315,16 @@ def build_fmha_fwd_gfx942(head_dim,
         # Tiles: masked iterations bracket the clean ones; iteration j masks tile j+1.
         win_l, win_r = band_window(tr.causal, window_left, window_right, sq_i32, sk_i32, varlen_bits)
         q_first, q_last, kv_base, n_tiles = kv_tiles(q_start, tr.block_m, block_n, sq_i32, sk_i32, win_l, win_r)
-        band = row_band(q_row, win_l, win_r, sk_i32)
-        ctx.band = lambda: band
-        ctx.lane_key = lambda: ctx.kv_lane
+        if const_expr(tr.causal):
+            # Causal: a lane's band and key are rebuilt per masked tile from the lane
+            # id; kept live, their VGPRs made the masked loops spill Q.
+            q_wave = fx.Int32(rocdl.readfirstlane(fx.Int32.ir_type, fx.Int32(q_start + wave * WAVE_M)))
+            ctx.band = lambda: row_band(q_wave + (utils.lane_now() & fx.Int32(31)), win_l, win_r, sk_i32)
+            ctx.lane_key = lambda: (utils.lane_now() >> fx.Int32(3)) & fx.Int32(4)
+        else:
+            band = row_band(q_row, win_l, win_r, sk_i32)
+            ctx.band = lambda: band
+            ctx.lane_key = lambda: ctx.kv_lane
         lead, clean_end = clean_tiles(q_first, q_last, kv_base, block_n, sk_i32, win_l, win_r)
         if const_expr(bias):
             # Only the last tile can hold the dword that straddles the bias slab's end.
@@ -412,7 +419,8 @@ def build_fmha_fwd_gfx942(head_dim,
             kv_next = kv(j + 1)
             mem0(kv_next, b, masked)
             compute_begin()                                                     # C1(j)
-            ctx.o = softmax.rescale(ctx.o, ctx.corr)
+            # Causal masked tiles rescale O unconditionally: the skip branch kept a second O live.
+            ctx.o = (softmax.rescale_always if masked and tr.causal else softmax.rescale)(ctx.o, ctx.corr)
             s_next = gemm_mma(qk, ctx.k_reads, ctx.q_packs, a_masks=ctx.k_masks)  # QK(j+1)
             p = softmax.tail(ctx, kv(j))                                        # P(j)
             compute_end(f'C1.{b}')
