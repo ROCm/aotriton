@@ -62,6 +62,15 @@ def resolve_fields(knobs, defaults):
                              if getattr(knobs, f.name) is None and f.name in defaults})
 
 
+def derive(knobs, field, value):
+    """`knobs` with `field`, derived from the resolved geometry, set to `value`;
+    an explicit `field` must agree."""
+    given = getattr(knobs, field)
+    if given is not None and given != value:
+        raise ValueError(f'{field}={given} conflicts with the build, which covers {value}')
+    return replace(knobs, **{field: value})
+
+
 def default_block_n(head_dim):
     """Keep 32 MFMAs per KV tile: small heads take a longer tile."""
     return 64 if head_dim <= 64 else 32
@@ -82,28 +91,41 @@ def body(head_dim):
     return 'wide' if head_dim <= 256 else 'xwide'
 
 
-def policy(head_dim, causal):
-    """The build of one functional, as a dict of knobs. `block_m` (rows per grid
-    block) and `GRID_AXIS_ORDER` are what the C++ grid_calculator reads."""
+# Query rows per wave: the N of each body's MFMA (32x32x8; xwide 16x16x16).
+_WAVE_M = {'narrow': 32, 'wide': 32, 'xwide': 16}
+
+
+def block_m(body_name, num_waves, causal):
+    """Query rows per grid block: what the C++ grid divides max_seqlen_q by. A
+    causal wide block runs q tiles g and T-1-g, so it covers two."""
+    rows = num_waves * _WAVE_M[body_name]
+    return 2 * rows if body_name == 'wide' and causal else rows
+
+
+def policy(head_dim, causal, body_name=None):
+    """The build of one functional by `body_name` (default: the head dim's), as a
+    dict of knobs. `block_m` (rows per grid block) and `GRID_AXIS_ORDER` are what
+    the C++ grid_calculator reads."""
     if head_dim not in LADDER:
         raise ValueError(f'head_dim {head_dim} is not on the gfx942 ladder {LADDER}')
-    if body(head_dim) == 'wide':
-        # A causal block runs q tiles g and T-1-g, so it covers 2 * 128 rows; the
-        # tile-fastest grid keeps K/V in L2 and the pairing evens out block lengths.
-        return dict(block_m=256 if causal else 128,
+    name = body_name or body(head_dim)
+    if name == 'wide':
+        # Causal blocks pair q tiles (`block_m`): with the tile-fastest grid, K/V
+        # stay in L2 and block lengths even out.
+        return dict(block_m=block_m(name, 4, causal),
                     num_waves=4,
                     block_n=32,
                     waves_per_eu=1,
                     rescale_threshold=0.0,
                     GRID_AXIS_ORDER=GRID_AXIS_TILE_FASTEST)
-    if body(head_dim) == 'xwide':
-        return dict(block_m=128,
+    if name == 'xwide':
+        return dict(block_m=block_m(name, 8, causal),
                     num_waves=8,
                     block_n=16,
                     waves_per_eu=2,
                     rescale_threshold=0.0,
                     GRID_AXIS_ORDER=default_grid_axis_order(causal))
-    return dict(block_m=256,
+    return dict(block_m=block_m(name, 8, causal),
                 num_waves=8,
                 block_n=default_block_n(head_dim),
                 waves_per_eu=2,
@@ -112,11 +134,14 @@ def policy(head_dim, causal):
 
 
 def resolve_knobs(meta: FmhaInputMetadata, overrides: FmhaKnobs | None = None) -> FmhaKnobs:
-    """The complete configuration for `meta`'s tile; `overrides`' fields win."""
+    """The complete configuration for `meta`'s tile; `overrides`' fields win.
+    `block_m` follows from the resolved body and waves; an explicit one must agree."""
     check_tile(meta)
     k = overrides or FmhaKnobs()
-    defaults = dict(policy(meta.block_dmodel, meta.causal), body=body(meta.block_dmodel))
-    return resolve_fields(k, defaults).with_flyc_fields()
+    name = k.body or body(meta.block_dmodel)
+    defaults = dict(policy(meta.block_dmodel, meta.causal, name), body=name, block_m=None)
+    k = resolve_fields(k, defaults)
+    return derive(k, 'block_m', block_m(name, k.num_waves, meta.causal)).with_flyc_fields()
 
 
 # Unified entry (flyc/tuning_fwd.py): the shared metadata.

@@ -171,6 +171,8 @@ def build_fmha_fwd_gfx942_wide(head_dim,
                        k_early=head_dim <= 224,
                        vt_early=head_dim <= 224,
                        staged_o=head_dim == 256)
+    # The grid extent the tuning policy records.
+    assert tr.grid_block_m == tuning.block_m('wide', num_waves, tr.causal), tr.grid_block_m
     qk, pv = tr.gemms()
     assert block_n % num_waves == 0 and qk.a.row_bytes >= 256
     lds_bytes = 2 * qk.a.tile_bytes + pv.a.tile_bytes

@@ -177,6 +177,8 @@ def build_fmha_bwd_dq_gfx942(head_dim,
                   lpt=lpt,
                   bias=bias,
                   dropout=dropout)
+    # The grid extent the tuning policy records.
+    assert tr.block_m == tuning.block_m('narrow', num_waves, tr.causal), tr.block_m
     qk, vdo, kds = tr.gemms()
     lds_bytes = 2 * NBUF * qk.a.tile_bytes
     assert lds_bytes <= 65536, lds_bytes

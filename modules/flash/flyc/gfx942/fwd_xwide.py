@@ -151,6 +151,8 @@ def build_fmha_fwd_gfx942_xwide(head_dim,
                         grid_axis_order=grid_axis_order,
                         bias=bias,
                         dropout=dropout)
+    # The grid extent the tuning policy records.
+    assert tr.block_m == tuning.block_m('xwide', num_waves, tr.causal), tr.block_m
     qk, pv = tr.gemms()
     lds_bytes = 2 * qk.a.tile_bytes + 2 * pv.a.tile_bytes
     assert lds_bytes <= 65536, lds_bytes

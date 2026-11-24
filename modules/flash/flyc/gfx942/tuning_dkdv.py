@@ -11,7 +11,7 @@ defaults from here, so the two cannot drift.
 from fmha_knobs import GRID_AXIS_HEAD_FASTEST, GRID_AXIS_TILE_FASTEST, knobs_of  # noqa: F401  (the kernels read the grid axes here)
 from fmha_meta import FmhaInputMetadata
 from .knobs import MASK_PROB, MASK_SCORE, P_DROP_AT_STORE, P_DROP_PER_ELEM, BwdDkDvKnobs
-from .tuning_fwd import LADDER, check_tile, plan, resolve_fields, rung  # noqa: F401  (re-exported for the kernels and benches)
+from .tuning_fwd import LADDER, check_tile, derive, plan, resolve_fields, rung  # noqa: F401  (re-exported for the kernels and benches)
 
 # Rows of one 16x16x16 MFMA block: the q tile per loop step and the kv unit.
 BLOCK_ROWS = 16
@@ -102,18 +102,27 @@ def default_dropout_scale_at(body_name):
     return _DROPOUT_SCALE_AT[body_name]
 
 
-def block_kv(num_waves, kv_blocks):
-    """KV rows per workgroup: what the grid's tile axis divides max_seqlen_k by."""
-    return num_waves * kv_blocks * BLOCK_ROWS
+# The wide bodies' key owners, each holding 16 * kv_subs keys: wide's waves,
+# xwide's two-wave teams, xxwide's one four-wave team.
+_KV_OWNERS = {'wide': 4, 'xwide': 2, 'xxwide': 1}
 
 
-def policy(head_dim, causal, bias=False):
-    """The build of one functional, as a dict of knobs: the builder's keyword
-    arguments plus `block_kv` and `GRID_AXIS_ORDER`, which the C++ grid_calculator
-    reads. `GRID_AXIS_ORDER` is passed to the builder as `grid_axis_order`."""
+def block_kv(body_name, *, num_waves=None, kv_blocks=None, kv_subs=None):
+    """KV rows per workgroup: what the grid's tile axis divides max_seqlen_k by.
+    narrow: `num_waves` waves of `kv_blocks` blocks; the others: `kv_subs` per owner."""
+    if body_name == 'narrow':
+        return num_waves * kv_blocks * BLOCK_ROWS
+    return _KV_OWNERS[body_name] * kv_subs * BLOCK_ROWS
+
+
+def policy(head_dim, causal, bias=False, body_name=None):
+    """The build of one functional by `body_name` (default: the head dim's), as a
+    dict of knobs: the builder's keyword arguments plus `block_kv` and
+    `GRID_AXIS_ORDER`, which the C++ grid_calculator reads. `GRID_AXIS_ORDER` is
+    passed to the builder as `grid_axis_order`."""
     if head_dim not in LADDER:
         raise ValueError(f'head_dim {head_dim} is not on the gfx942 dK/dV ladder {LADDER}')
-    name = body(head_dim)
+    name = body_name or body(head_dim)
     return dict(_body_policy(name, head_dim, causal, bias),
                 mask_at=default_mask_at(name),
                 dropout_scale_at=default_dropout_scale_at(name))
@@ -121,25 +130,11 @@ def policy(head_dim, causal, bias=False):
 
 def _body_policy(name, head_dim, causal, bias):
     """`policy`'s body-specific knobs."""
-    if name == 'wide':
-        subs = default_kv_subs(head_dim)
+    if name != 'narrow':
+        subs = body_kv_subs(name, head_dim)
         return dict(kv_subs=subs,
                     waves_per_eu=1,
-                    block_kv=block_kv(4, subs),
-                    GRID_AXIS_ORDER=default_grid_axis_order(causal))
-    if name == 'xwide':
-        # Two teams of two waves, each team owning 16 * kv_subs keys.
-        subs = default_kv_subs(head_dim)
-        return dict(kv_subs=subs,
-                    waves_per_eu=1,
-                    block_kv=block_kv(2, subs),
-                    GRID_AXIS_ORDER=default_grid_axis_order(causal))
-    if name == 'xxwide':
-        # One team of four waves owning 16 * kv_subs keys.
-        subs = default_kv_subs(head_dim)
-        return dict(kv_subs=subs,
-                    waves_per_eu=1,
-                    block_kv=block_kv(1, subs),
+                    block_kv=block_kv(name, kv_subs=subs),
                     GRID_AXIS_ORDER=default_grid_axis_order(causal))
     nw = default_num_waves(head_dim)
     kvb = default_kv_blocks(head_dim)
@@ -147,16 +142,20 @@ def _body_policy(name, head_dim, causal, bias):
                 kv_blocks=kvb,
                 waves_per_eu=default_waves_per_eu(head_dim, bias),
                 interleave_valu=default_interleave_valu(head_dim),
-                block_kv=block_kv(nw, kvb),
+                block_kv=block_kv(name, num_waves=nw, kv_blocks=kvb),
                 GRID_AXIS_ORDER=default_grid_axis_order(causal))
 
 
 def resolve_knobs(meta: FmhaInputMetadata, overrides: BwdDkDvKnobs | None = None) -> BwdDkDvKnobs:
-    """The complete configuration for `meta`'s tile; `overrides`' fields win."""
+    """The complete configuration for `meta`'s tile; `overrides`' fields win.
+    `block_kv` follows from the resolved body and geometry; an explicit one must agree."""
     check_tile(meta)
     k = overrides or BwdDkDvKnobs()
-    defaults = dict(policy(meta.block_dmodel, meta.causal, meta.bias), body=body(meta.block_dmodel))
-    return resolve_fields(k, defaults).with_flyc_fields()
+    name = k.body or body(meta.block_dmodel)
+    defaults = dict(policy(meta.block_dmodel, meta.causal, meta.bias, name), body=name, block_kv=None)
+    k = resolve_fields(k, defaults)
+    extent = block_kv(name, num_waves=k.num_waves, kv_blocks=k.kv_blocks, kv_subs=k.kv_subs)
+    return derive(k, 'block_kv', extent).with_flyc_fields()
 
 
 # Unified entry (flyc/tuning_dkdv.py): the shared metadata.

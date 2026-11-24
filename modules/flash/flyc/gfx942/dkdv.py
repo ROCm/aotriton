@@ -212,6 +212,8 @@ def build_fmha_bwd_dkdv_gfx942(head_dim,
                     dropout=dropout,
                     dropout_scale_at=dropout_scale_at or tuning.default_dropout_scale_at('narrow'),
                     mask_at=mask_at or tuning.default_mask_at('narrow'))
+    # The grid extent the tuning policy records.
+    assert tr.block_n == tuning.block_kv('narrow', num_waves=num_waves, kv_blocks=kv_blocks), tr.block_n
     qs, dops, dvt, dkt = tr.gemms()
     lds_bytes = 4 * tr.slot_bytes
     assert lds_bytes <= 65536, lds_bytes

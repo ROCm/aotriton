@@ -203,6 +203,8 @@ def build_fmha_bwd_dkdv_gfx942_wide(head_dim,
                         # LLVM's register allocator aborted ("Overlapping insert") on
                         # padded + bias + dropout builds otherwise (bf16 hd224).
                         tb_pos=0 if padded_head and bias and dropout else 99)
+    # The grid extent the tuning policy records.
+    assert tr.block_kv == tuning.block_kv('wide', kv_subs=kv_subs), tr.block_kv
     qs, dops, dvt, dkt = tr.gemms()
     side = dkt.a.lds_base + 2 * dkt.a.tile_bytes     # LSE/Delta area of T slot 0
     lds_bytes = dkt.a.lds_base + 2 * dkt.a.buf_stride

@@ -185,6 +185,8 @@ def build_fmha_bwd_dkdv_gfx942_xxwide(head_dim,
                           dropout=dropout,
                           dropout_scale_at=dropout_scale_at or tuning.default_dropout_scale_at('xxwide'),
                           mask_at=mask_at or tuning.default_mask_at('xxwide'))
+    # The grid extent the tuning policy records.
+    assert tr.block_kv == tuning.block_kv('xxwide', kv_subs=kv_subs), tr.block_kv
     xg, yg = tr.gemms()
     NSUB = tr.kv_subs
     NI = tr.items

@@ -203,6 +203,9 @@ def build_fmha_bwd_dq_gfx942_wide(head_dim,
                       dropout=dropout)
     if num_waves != 4 or block_n not in (None, tr.block_n):
         raise ValueError(f'this body runs 4 waves and {tr.block_n}-key tiles, got {num_waves}, {block_n}')
+    # The grid extent the tuning policy records.
+    assert tr.grid_block_m == tuning.block_m('wide', num_waves, tr.causal, wave_m), tr.grid_block_m
+    assert tr.block_n == tuning.wide_block_n(wave_m), tr.block_n
     qk, vdo, kt = tr.gemms()
     lds_bytes = 2 * qk.a.tile_bytes + kt.a.tile_bytes
     assert lds_bytes <= 65536, lds_bytes
