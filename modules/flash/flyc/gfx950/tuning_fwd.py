@@ -48,7 +48,7 @@ floor, and it is an instruction limit rather than a staging one.
 from dataclasses import dataclass, fields, replace
 
 from fmha_knobs import knobs_of, pinned
-from fmha_meta import CAUSAL_BOTTOM_RIGHT, CAUSAL_NONE, CAUSAL_TOP_LEFT, FmhaInputMetadata
+from fmha_meta import CAUSAL_BOTTOM_RIGHT, CAUSAL_NONE, CAUSAL_TOP_LEFT, CAUSAL_WINDOW, FmhaInputMetadata
 import ati_bootstrap  # noqa: F401  (aotriton from this checkout)
 import aotriton.template_instantiation as ati
 from .knobs import Gfx950KnobFields
@@ -874,6 +874,32 @@ def fmha_knobs(arch: str, **overrides) -> FmhaKnobs:
 # best build at head_dim 100: 86.0% of cells with this rule, 75.5% without.
 _EXACT_WALK_MAX_SEQLEN_K = 128
 
+# Per-sequence-length optima of BLOCK_DMODEL=128 (2026-11-23 sweep: both
+# dtypes, PADDED_HEAD False at head_dim 128 and True at 100, every mask and
+# feature, Sq x Sk over 16..8192, every geometry with the exact walk on and off;
+# one full run, then two racing runs that re-time each cell's contenders). Six
+# shared rules; a rule is kept only where it improved both racing runs. Cells
+# within 3% of the best build: 3384 -> 3538 of 4400 (a per-functional search
+# reaches 3769, at the cost of a rule table per functional).
+# - No mask or feature, very short K: granule 32 (3-5%).
+# - No mask or feature, long Q and K: family A walking the padding (5-10%).
+# - Windows without a feature, short Q: BLOCK_M 64.
+# - Causal bottom-right without a feature, short Q and K: BLOCK_M 64; long Q
+#   and very long K: family A.
+# - Causal bottom-right, long K: walk the padding.
+# TODO: windows anchored bottom-right vs top-left share these rules until
+# the anchoring is a runtime value; the window functionals lag the most.
+_SHORT_MAX_SEQLEN_K = 32
+_FAMILY_A = (8, 256, 64, 64)
+_GRANULE_32 = (4, 128, 64, 32)
+_BLOCK_M_64 = (4, 64, 64, 64)
+
+
+def _geometry(geometry, *, when):
+    """The four geometry knobs, which `_with_wave_geometry` takes pinned together or not at all."""
+    for knob, value in zip(('num_waves', 'block_m', 'block_n', 'head_dim_granule'), geometry):
+        yield ati.derives(knob, to=value, when=when)
+
 
 def variants(meta: FmhaInputMetadata):
     """The per-call rules of `meta`'s functional."""
@@ -894,7 +920,30 @@ def variants(meta: FmhaInputMetadata):
             and meta.padded_head
             and meta.causal_type in (CAUSAL_NONE, CAUSAL_BOTTOM_RIGHT)):
         yield ati.derives('exact_kv_tiles', to=False, when=ati.gt('max_seqlen_k', _EXACT_WALK_MAX_SEQLEN_K))
+    if meta.block_dmodel == 128:
+        yield from _seqlen_optima_128(meta)
 
+
+def _seqlen_optima_128(meta: FmhaInputMetadata):
+    """The BLOCK_DMODEL=128 per-call rules (see the sweep note above)."""
+    plain = not meta.bias and not meta.dropout
+    if meta.causal_type == CAUSAL_NONE and plain:
+        long_q_long_k = (ati.ge('max_seqlen_q', 256), ati.ge('max_seqlen_k', 512))
+        yield from _geometry(_GRANULE_32, when=ati.le('max_seqlen_k', _SHORT_MAX_SEQLEN_K))
+        yield from _geometry(_FAMILY_A, when=long_q_long_k)
+        if not meta.padded_head:
+            # Padded, the padded-head rule already walks the padding from 129 keys.
+            yield ati.derives('exact_kv_tiles', to=False, when=long_q_long_k)
+    if meta.causal_type == CAUSAL_WINDOW and plain:
+        yield from _geometry(_BLOCK_M_64, when=(ati.le('max_seqlen_q', 32), ati.ge('max_seqlen_k', 64)))
+    if meta.causal_type == CAUSAL_BOTTOM_RIGHT:
+        if not meta.dropout:  # (a bias never comes with a positional mask)
+            yield from _geometry(_BLOCK_M_64, when=(ati.le('max_seqlen_q', 64), ati.le('max_seqlen_k', 64)))
+            # The exact walk is off here already, by the long-K rule below or,
+            # padded, by the padded-head rule.
+            yield from _geometry(_FAMILY_A, when=(ati.ge('max_seqlen_q', 256), ati.ge('max_seqlen_k', 4096)))
+        if not meta.padded_head:
+            yield ati.derives('exact_kv_tiles', to=False, when=ati.ge('max_seqlen_k', 1024))
 
 # Unified entry (flyc/tuning_fwd.py): the shared metadata, pinned.
 

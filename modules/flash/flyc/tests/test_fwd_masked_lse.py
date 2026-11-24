@@ -70,13 +70,27 @@ LIVE_ATOL = 8e-3
 
 
 def _build(head_dim):
-    """`(fn, knobs)`: a bottom-right causal forward for `head_dim`, in-process."""
+    """`(fn, knobs, seqlen_q)`: a bottom-right causal forward for `head_dim`, in-process.
+
+    The per-call rules read `max_seqlen_q`, which `_row_groups` derives from
+    the build's own BLOCK_M: plan until the two agree.
+    """
     meta = FmhaInputMetadata(num_heads=NUM_HEADS,
                              block_dmodel=None,
                              head_dim=head_dim,
                              dtype_str="bf16",
                              causal_type=2)
-    return jit_arch.build(tuning_fwd, ARCH, meta)
+    _, knobs = tuning_fwd.plan(ARCH, meta, max_seqlen_q=SEQLEN_K, max_seqlen_k=SEQLEN_K)
+    for _ in range(3):
+        seqlen_q = _row_groups(knobs.block_m)[0]
+        _, planned = tuning_fwd.plan(ARCH, meta, max_seqlen_q=seqlen_q, max_seqlen_k=SEQLEN_K)
+        if planned.block_m == knobs.block_m:
+            break
+        knobs = planned
+    else:
+        raise AssertionError("BLOCK_M and seqlen_q do not settle: pick another probe shape")
+    fn, knobs = jit_arch.build(tuning_fwd, ARCH, meta, max_seqlen_q=seqlen_q, max_seqlen_k=SEQLEN_K)
+    return fn, knobs, seqlen_q
 
 
 def _row_groups(block_m):
@@ -107,8 +121,8 @@ def _reference_lse(q, k, sm_scale):
 
 @pytest.mark.parametrize("head_dim", HEAD_DIMS)
 def test_fully_masked_rows_get_positive_inf_lse(head_dim):
-    fn, knobs = _build(head_dim)
-    seqlen_q, whole, straddling = _row_groups(knobs.block_m)
+    fn, knobs, seqlen_q = _build(head_dim)
+    _, whole, straddling = _row_groups(knobs.block_m)
     sm_scale = 1.0 / math.sqrt(head_dim)
 
     torch.manual_seed(head_dim)
