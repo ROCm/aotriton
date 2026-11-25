@@ -71,7 +71,7 @@ def default_kv_subs(head_dim):
     S8k: 464 vs 397 at 2). xxwide: 0.1875 * D * kv_subs; the most that does not
     spill: 4 at 384 (452 vs 418 at 3), 3 at 512 (4 spills 462; 3: 423, 2: 390)."""
     if body(head_dim) == 'xwide':
-        return 4 if head_dim <= 256 else 2
+        return 4
     if body(head_dim) == 'xxwide':
         return 4 if head_dim <= 384 else 3
     return 2

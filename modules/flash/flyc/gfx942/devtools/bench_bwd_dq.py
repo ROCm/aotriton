@@ -105,6 +105,9 @@ def main():
         sys.exit(f'head_dim {a.head_dim} is past the gfx942 dQ ladder {tuning.LADDER}')
     if rung != a.head_dim:
         knobs['padded_head'] = True
+    body = tuning.body(rung)
+    if body != 'narrow' and 'lpt' in knobs:
+        sys.exit(f'--lpt is a narrow-body knob; head_dim {a.head_dim} runs the {body} body')
     # causal is bottom-right (causal_type 2), matching the reference.
     launch = build_fmha_bwd_dq_gfx942_by_head_dim(rung,
                                                   causal_type=2 if a.causal else 0,

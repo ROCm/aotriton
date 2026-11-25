@@ -40,11 +40,15 @@ def main():
     p.add_argument('--dropout_p', type=float, default=0.0, help='dropout probability, timing only')
     p.add_argument('--iters', type=int, default=20)
     p.add_argument('--no_check', action='store_true')
-    p.add_argument('--dist', default='normal', choices=['normal', 'uniform', 'sharp'],
+    p.add_argument('--dist',
+                   default='normal',
+                   choices=['normal', 'uniform', 'sharp'],
                    help='normal: N(0,1); uniform: U[0,1) (one-signed, exposes P rounding bias); '
                         'sharp: N(0,16) Q/K (large logits)')
     p.add_argument('--sm_scale', type=float, default=None)
     a = p.parse_args()
+    if not a.no_check and a.dropout_p > 0:
+        p.error('--dropout_p is timing only: pass --no_check; the tests cover the mask')
     hk = a.heads_k or a.heads
     sk = a.seqlen_k or a.seqlen
     dt = torch.bfloat16 if a.dtype == 'bf16' else torch.float16
@@ -101,8 +105,6 @@ def main():
 
     run()
     torch.cuda.synchronize()
-    if not a.no_check and extra:
-        sys.exit('--dropout_p is timing only: pass --no_check; the tests cover the mask')
     if not a.no_check:
         # fp64 reference from the same bf16/f16 inputs; the checks follow
         # docs/attention-kernel-numerical-error-lessons.

@@ -208,9 +208,8 @@ def _mul_lohi(a: Word, b: Word, width: PhiloxWidth) -> tuple[Word, Word]:
         p = arith.muli(arith.extui(i64, fx.as_ir_value(a)), arith.extui(i64, fx.as_ir_value(b)))
         hi = arith.shrui(p, arith.constant(i64, 32))
         return fx.Int32(arith.trunci(i32, p)), fx.Int32(arith.trunci(i32, hi))
-    lo = arith.muli(fx.as_ir_value(a), fx.as_ir_value(b))
-    hi = arith.MulUIExtendedOp(fx.as_ir_value(a), fx.as_ir_value(b)).high
-    return fx.Int64(lo), fx.Int64(hi)
+    op = arith.MulUIExtendedOp(fx.as_ir_value(a), fx.as_ir_value(b))
+    return fx.Int64(op.low), fx.Int64(op.high)
 
 
 def philox_4x(

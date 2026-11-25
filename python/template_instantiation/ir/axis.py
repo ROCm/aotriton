@@ -105,7 +105,10 @@ class Axis:
     def with_choices(self, choices) -> 'Axis':
         """A copy of this axis with `choices` in place of its own, and no godel
         stride yet (strides belong to the axis set the copy joins)."""
-        return Axis(self.var_name, self.arg_names, choices, self.anchor,
+        return Axis(self.var_name,
+                    self.arg_names,
+                    choices,
+                    self.anchor,
                     ranks=self.ranks,
                     contiguous=self.contiguous,
                     kind=self.kind,

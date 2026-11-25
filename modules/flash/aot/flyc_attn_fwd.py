@@ -353,7 +353,8 @@ def _flyc_fwd_disabled(f):
 # `_flyc_fwd_disabled`'s ladder check narrows it per arch. One shared marker
 # serves every arch (this decorator stack does not vary by arch), so it is the
 # UNION of the per-arch ladders.
-@ati.scalar('BLOCK_DMODEL', options=FLYC_HEAD_DIM_OPTIONS,
+@ati.scalar('BLOCK_DMODEL',
+            options=FLYC_HEAD_DIM_OPTIONS,
             wires_to=ati.context_helper('flyc_block_dmodel'))
 @ati.scalar('PADDED_HEAD', options=[False, True],
             wires_to=ati.context_helper('flyc_padded_head'))
