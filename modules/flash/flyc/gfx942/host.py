@@ -9,6 +9,8 @@ gfx942-only for now; to be shared with the other arches once their kernels settl
 Called through the module (`host.make_fwd_launch(...)`). No device code here.
 """
 
+import argparse
+
 import flydsl.expr as fx
 
 import fmha_utils as fmha
@@ -46,6 +48,16 @@ def check_head_dims(meta, head_dim, padded_head):
             raise ValueError(f'head dims {meta[2:]} do not fit a padded {head_dim} build')
     elif meta[2] != head_dim or meta[3] != head_dim:
         raise ValueError(f'head dims {meta[2:]} on an unpadded {head_dim} build; pass padded_head=True')
+
+
+def input_contract_8xd(text):
+    """argparse `type=` for a head dim: the kernels' 8xD input contract (16 B rows)
+    needs a multiple of 8. Benches reject other values rather than pad storage."""
+    head_dim = int(text)
+    if head_dim <= 0 or head_dim % 8:
+        raise argparse.ArgumentTypeError(f'head dim {head_dim} breaks the 8xD input contract '
+                                         '(a positive multiple of 8)')
+    return head_dim
 
 
 def _check_dropout_p(dropout, dropout_p):

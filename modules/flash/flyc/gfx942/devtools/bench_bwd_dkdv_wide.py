@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
 sys.path.insert(0, os.environ['AOTRITON_FLYDSL_KERNEL_ROOT'])
 
 import torch  # noqa: E402
+from gfx942.host import input_contract_8xd  # noqa: E402
 
 LADDER = (160, 192, 224, 256, 384, 512)
 
@@ -82,7 +83,7 @@ def main():
     p.add_argument('--heads_k', type=int, default=None)
     p.add_argument('--seqlen', type=int, default=8192)
     p.add_argument('--seqlen_k', type=int, default=None)
-    p.add_argument('--head_dim', type=int, default=192)
+    p.add_argument('--head_dim', type=input_contract_8xd, default=192)
     p.add_argument('--causal', action='store_true', help='bottom-right causal (causal_type 2)')
     p.add_argument('--bias', action='store_true', help='(B, H, Sq, Sk) attention bias, N(0, 1)')
     p.add_argument('--dropout_p', type=float, default=0.0)

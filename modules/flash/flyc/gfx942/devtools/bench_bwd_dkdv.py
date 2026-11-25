@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
 sys.path.insert(0, os.environ['AOTRITON_FLYDSL_KERNEL_ROOT'])
 
 import torch  # noqa: E402
+from gfx942.host import input_contract_8xd  # noqa: E402
 import gfx942.tuning_dkdv as tuning  # noqa: E402
 
 
@@ -72,7 +73,7 @@ def main():
     p.add_argument('--heads_k', type=int, default=None)
     p.add_argument('--seqlen', type=int, default=8192)
     p.add_argument('--seqlen_k', type=int, default=None)
-    p.add_argument('--head_dim', type=int, default=128)
+    p.add_argument('--head_dim', type=input_contract_8xd, default=128)
     p.add_argument('--causal', action='store_true', help='bottom-right causal')
     p.add_argument('--dtype', default='bf16', choices=['bf16', 'f16'])
     p.add_argument('--num_waves', type=int, default=None)
