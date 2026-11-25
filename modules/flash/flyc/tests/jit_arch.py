@@ -49,10 +49,14 @@ def overrides(arch, variant):
     return knobs
 
 
-def build(dispatcher, arch, meta, variant=None):
-    """`(fn, knobs)`: `meta` planned for `arch` and built, overrides checked."""
+def build(dispatcher, arch, meta, variant=None, **runtime):
+    """`(fn, knobs)`: `meta` planned for `arch` and built, overrides checked.
+
+    `runtime` is the call's runtime values (`max_seqlen_k=...`) for a dispatcher
+    whose per-call rules read them (`tuning_fwd.plan`).
+    """
     pins = overrides(arch, variant)
-    meta, knobs = dispatcher.plan(arch, meta, overrides=pins)
+    meta, knobs = dispatcher.plan(arch, meta, overrides=pins, **runtime)
     for name, value in (pins or {}).items():
         assert getattr(knobs, name) == value, f"{name}={value} override ignored: {getattr(knobs, name)}"
     return dispatcher.builder(arch, meta, knobs), knobs

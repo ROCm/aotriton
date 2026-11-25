@@ -15,6 +15,8 @@ from varlen_attn_torch_function import (
     AttentionExtraArgs,
     PROBE_UNSUPPORTED,
     BWD_IMPL,
+    FWD_IMPL,
+    check_varlen_bias,
 )
 from _common_test import (
     VarlenSdpaContext,
@@ -636,6 +638,174 @@ def test_logsumexp_layout(gpu_id, varlen_type, lse_layout):
             want_full = expected_per_head.unsqueeze(1).expand_as(got)
             assert torch.allclose(got, want_full, atol=1e-3, rtol=1e-3), (
                     f'{lse_layout} {varlen_type} sequence {z}: got {got} want {want_full}')
+
+
+# ---------------------------------------------------------------------------
+# Varlen bias: one (max_seqlen_q, max_seqlen_k) slot per sequence
+# ---------------------------------------------------------------------------
+#
+# The contract (`check_varlen_bias`): for every layout a bias and its gradient
+# are (num_seqs, Hq, max_seqlen_q, max_seqlen_k), and sequence z reads slot z
+# at rows and columns local to it -- TransformerEngine/cuDNN's `bhss` bias for
+# packed layouts. Each sequence is checked against an fp32 attention over its
+# own tokens and slot. The bias differs per slot, so a backend that reads slot
+# 0 for every packed sequence (the old STACKED behaviour) fails.
+#
+# Skipped on gfx1201: its flyc kernels still address a varlen bias the old way.
+# aiter takes no bias at all.
+def _varlen_bias_skip_reason():
+    if FWD_IMPL == 'aiter' or BWD_IMPL == 'aiter':
+        return 'aiter has no bias support'
+    arch = torch.cuda.get_device_properties(0).gcnArchName if torch.cuda.is_available() else ''
+    if AOTRITON_UT_ARCH.startswith('gfx1201') or arch.startswith('gfx1201'):
+        return 'gfx1201 flyc kernels still read a packed varlen bias from slot 0 (old contract)'
+    return None
+
+
+VARLEN_BIAS_SEQLENS_Q = np.array([37, 1, 64, 17, 100])
+VARLEN_BIAS_SEQLENS_K = np.array([50, 77, 33, 17, 128])
+VARLEN_BIAS_PADLENS_Q = np.array([3, 0, 7, 5, 1])
+VARLEN_BIAS_PADLENS_K = np.array([4, 9, 0, 6, 2])
+
+
+def _varlen_bias_inputs(varlen_type, num_heads, hdim, dtype):
+    """(q, k, v, seqlens_q, seqlens_k, rows_q, rows_k) for `varlen_type`.
+
+    `rows_?(z)` is `(batch, start)` of sequence z's tokens, computed here from
+    the lengths rather than by the code under test.
+    """
+    lens_q, lens_k = VARLEN_BIAS_SEQLENS_Q, VARLEN_BIAS_SEQLENS_K
+    n = len(lens_q)
+    if varlen_type == 'padded':
+        q = torch.rand((n, num_heads, int(lens_q.max()), hdim), device='cuda', dtype=dtype)
+        k = torch.rand((n, num_heads, int(lens_k.max()), hdim), device='cuda', dtype=dtype)
+        v = torch.rand_like(k)
+        return q, k, v, lens_q, lens_k, (lambda z: (z, 0)), (lambda z: (z, 0))
+    if varlen_type == 'compact':
+        pads_q, pads_k = np.zeros_like(lens_q), np.zeros_like(lens_k)
+        seqlens_q, seqlens_k = lens_q, lens_k
+    elif varlen_type == 'strided':
+        # ARRAY positions with gaps on both sides: non-zero, non-cumulative
+        # row origins.
+        pads_q, pads_k = VARLEN_BIAS_PADLENS_Q, VARLEN_BIAS_PADLENS_K
+        seqlens_q, seqlens_k = np.array([lens_q, pads_q]), np.array([lens_k, pads_k])
+    else:  # seqused: packed Q, K slots longer than what is used
+        pads_q, pads_k = np.zeros_like(lens_q), VARLEN_BIAS_PADLENS_K
+        seqlens_q, seqlens_k = np.array([lens_q, pads_q]), np.array([lens_k, pads_k])
+    starts_q = np.cumsum(np.concatenate([[0], (lens_q + pads_q)[:-1]]))
+    starts_k = np.cumsum(np.concatenate([[0], (lens_k + pads_k)[:-1]]))
+    # THD in memory, (1, H, T, D) logically -- the layout these tests pack.
+    q = torch.rand((1, int(np.sum(lens_q + pads_q)), num_heads, hdim), device='cuda', dtype=dtype).transpose(1, 2)
+    k = torch.rand((1, int(np.sum(lens_k + pads_k)), num_heads, hdim), device='cuda', dtype=dtype).transpose(1, 2)
+    v = torch.rand_like(k)
+    return (q, k, v, seqlens_q, seqlens_k,
+            (lambda z: (0, int(starts_q[z]))),
+            (lambda z: (0, int(starts_k[z]))))
+
+
+def _varlen_bias_ref(qz, kz, vz, bz, doz, sm_scale):
+    """fp32 attention over one sequence: (out, dq, dk, dv, db)."""
+    q, k, v, b = (t.float().requires_grad_() for t in (qz, kz, vz, bz))
+    p = torch.softmax(q @ k.transpose(-1, -2) * sm_scale + b, dim=-1)
+    out = p @ v
+    out.backward(doz.float())
+    return out.detach(), q.grad, k.grad, v.grad, b.grad
+
+
+def _assert_close(name, got, ref, z):
+    # bf16-sized tolerance, relative to the reference's own magnitude.
+    tol = 2.5e-2 * max(1.0, ref.abs().max().item())
+    err = (got.float() - ref).abs().max().item()
+    assert err <= tol, f'{name} of sequence {z}: max error {err:.3e} > {tol:.3e}'
+
+
+VARLEN_BIAS_TYPES = ['padded', 'compact', 'strided', 'seqused']
+
+
+@pytest.mark.parametrize('D_HEAD', [64, 128], ids=fmt_hdim)
+@pytest.mark.parametrize('dtype', [t for t in DTYPES if t != torch.float32])
+@pytest.mark.parametrize('broadcast', [False, True], ids=['PerSequence', 'Broadcast'])
+@pytest.mark.parametrize('varlen_type', VARLEN_BIAS_TYPES)
+def test_varlen_bias(gpu_id, varlen_type, broadcast, dtype, D_HEAD):
+    """Per-sequence (NHSS) bias, or a 1HSS one `expand()`ed to NHSS.
+
+    PerSequence: out, dq, dk, dv and dB per sequence. Broadcast: out, dq, dk,
+    dv per sequence, and the shared slot's gradient (autograd's sum over the
+    library's per-sequence dB); a zero-stride dB itself is refused.
+    """
+    reason = _varlen_bias_skip_reason()
+    if reason is not None:
+        pytest.skip(reason)
+    N_HEADS = 3
+    sm_scale = 1.0 / math.sqrt(D_HEAD)
+    with torch.cuda.device(gpu_id):
+        torch.manual_seed(1201)
+        q, k, v, seqlens_q, seqlens_k, rows_q, rows_k = _varlen_bias_inputs(varlen_type, N_HEADS, D_HEAD, dtype)
+        lens_q, lens_k = VARLEN_BIAS_SEQLENS_Q, VARLEN_BIAS_SEQLENS_K
+        n = len(lens_q)
+        shape = (n, N_HEADS, int(lens_q.max()), int(lens_k.max()))
+        if broadcast:
+            leaf = torch.randn((1,) + shape[1:], device='cuda', dtype=dtype).requires_grad_()
+            bias = leaf.expand(shape)
+            with pytest.raises(ValueError, match='stride 0 on axis 0'):
+                check_varlen_bias('dB', bias, *shape, gradient=True)
+        else:
+            leaf = torch.randn(shape, device='cuda', dtype=dtype).requires_grad_()
+            bias = leaf
+        for t in (q, k, v):
+            t.requires_grad_()
+        ext = AttentionExtraArgs(return_encoded_softmax=False,
+                                 autotune=False,
+                                 return_autotune=False,
+                                 fillnan=True)
+        out, _, _ = varlen_attention(q,
+                                     k,
+                                     v,
+                                     seqlens_q,
+                                     seqlens_k,
+                                     False,
+                                     sm_scale,
+                                     0.0,
+                                     varlen_type,
+                                     'HT',
+                                     ext,
+                                     bias)
+        dout = torch.rand_like(out)
+        if not SKIP_BWD:
+            out.backward(dout)
+        ref_leaf_grad = torch.zeros(leaf.shape, device='cuda', dtype=torch.float32)
+        for z in range(n):
+            sq, sk = int(lens_q[z]), int(lens_k[z])
+            bq, q0 = rows_q(z)
+            bk, k0 = rows_k(z)
+            qs, ks = slice(q0, q0 + sq), slice(k0, k0 + sk)
+            ro, rdq, rdk, rdv, rdb = _varlen_bias_ref(q[bq, :, qs].detach(),
+                                                      k[bk, :, ks].detach(),
+                                                      v[bk, :, ks].detach(),
+                                                      bias[z, :, :sq, :sk].detach(),
+                                                      dout[bq, :, qs],
+                                                      sm_scale)
+            _assert_close('out', out[bq, :, qs].detach(), ro, z)
+            if SKIP_BWD:
+                continue
+            _assert_close('dq', q.grad[bq, :, qs], rdq, z)
+            _assert_close('dk', k.grad[bk, :, ks], rdk, z)
+            _assert_close('dv', v.grad[bk, :, ks], rdv, z)
+            ref_leaf_grad[0 if broadcast else z, :, :sq, :sk] += rdb
+        if not SKIP_BWD:
+            for z in range(1 if broadcast else n):
+                sq = int(lens_q.max() if broadcast else lens_q[z])
+                sk = int(lens_k.max() if broadcast else lens_k[z])
+                _assert_close('dB', leaf.grad[z, :, :sq, :sk], ref_leaf_grad[z, :, :sq, :sk], z)
+
+
+def test_varlen_bias_shape_is_per_sequence():
+    """The old STACKED shape, (1, Hq, ...), is refused rather than broadcast."""
+    lens_q, lens_k = VARLEN_BIAS_SEQLENS_Q, VARLEN_BIAS_SEQLENS_K
+    good = torch.empty((len(lens_q), 3, int(lens_q.max()), int(lens_k.max())))
+    check_varlen_bias('bias', good, *good.shape)
+    with pytest.raises(ValueError, match='num_seqs'):
+        check_varlen_bias('bias', good[0:1], *good.shape)
 
 
 def main1():

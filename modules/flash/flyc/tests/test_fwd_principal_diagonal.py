@@ -98,14 +98,14 @@ VARLEN_SEQS = ((1, 300), (64, 320), (130, 130), (300, 37), (37, 200))
 
 
 @functools.cache
-def _build(head_dim):
-    """A window build (`causal_type=3`), compiled in-process."""
+def _build(head_dim, max_seqlen_q, max_seqlen_k):
+    """A window build (`causal_type=3`) for calls with these maxima, compiled in-process."""
     meta = FmhaInputMetadata(num_heads=NUM_HEADS,
                              block_dmodel=None,
                              head_dim=head_dim,
                              dtype_str="bf16",
                              causal_type=3)
-    return jit_arch.build(tuning_fwd, ARCH, meta)[0]
+    return jit_arch.build(tuning_fwd, ARCH, meta, max_seqlen_q=max_seqlen_q, max_seqlen_k=max_seqlen_k)[0]
 
 
 def _resolve(side_value, sentinel_value, numeric_shift):
@@ -161,8 +161,8 @@ def _check(tag, got, got_lse, ref, ref_lse, live):
 @pytest.mark.parametrize("head_dim", HEAD_DIMS)
 def test_dense(head_dim, shape_name, window_name, p):
     """BHSD, `p` in a dense word: `varlen_dense(principal_diagonal=...)`."""
-    fn = _build(head_dim)
     sq, sk = DENSE_SHAPES[shape_name]
+    fn = _build(head_dim, sq, sk)
     window = WINDOWS[window_name]
     batch = 2
     sm_scale = 1.0 / math.sqrt(head_dim)
@@ -204,11 +204,11 @@ def test_varlen_mixed(head_dim, window_name, p):
 
     `p` travels in `varlen["bits"]`, next to the compact side bytes.
     """
-    fn = _build(head_dim)
     window = WINDOWS[window_name]
     sm_scale = 1.0 / math.sqrt(head_dim)
     lens_q = [s[0] for s in VARLEN_SEQS]
     lens_k = [s[1] for s in VARLEN_SEQS]
+    fn = _build(head_dim, max(lens_q), max(lens_k))
     cu_q = [0]
     cu_k = [0]
     for a, b in VARLEN_SEQS:
@@ -278,8 +278,8 @@ def _tiny_call(fn, **kwargs):
 
 def test_varlen_none_is_the_dense_top_left_word():
     """`varlen=None` and `varlen_dense()` are the same word (0): bit-identical O and LSE."""
-    fn = _build(HEAD_DIMS[0])
     sq, sk = 37, 300
+    fn = _build(HEAD_DIMS[0], sq, sk)
     torch.manual_seed(7)
     q = torch.randn((2, NUM_HEADS, sq, HEAD_DIMS[0]), device="cuda", dtype=DTYPE)
     k = torch.randn((2, NUM_HEADS, sk, HEAD_DIMS[0]), device="cuda", dtype=DTYPE)
@@ -310,7 +310,7 @@ def test_dense_word_rejects_seqinfo():
     varlen = fmha.varlen_dense(principal_diagonal=fmha.VARLEN_PRINCIPAL_DIAGONAL_BOTTOM_RIGHT)
     varlen["seqinfo_q0"] = torch.tensor([0, 8], device="cuda", dtype=torch.int32)
     with pytest.raises(ValueError, match="dense VarlenBits word"):
-        _tiny_call(_build(HEAD_DIMS[0]), varlen=varlen)
+        _tiny_call(_build(HEAD_DIMS[0], 8, 8), varlen=varlen)
 
 
 def test_varlen_dense_rejects_other_values():

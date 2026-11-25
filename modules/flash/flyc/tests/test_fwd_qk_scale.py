@@ -116,7 +116,8 @@ def _build(head_dim, dtype_str, causal=False, bias=False):
                              dtype_str=dtype_str,
                              causal_type=2 if causal else 0,
                              bias=bias)
-    return jit_arch.build(tuning_fwd, ARCH, meta)[0]
+    # Every call here is SEQLEN_Q x SEQLEN_K: plan for those maxima.
+    return jit_arch.build(tuning_fwd, ARCH, meta, max_seqlen_q=SEQLEN_Q, max_seqlen_k=SEQLEN_K)[0]
 
 
 def _inputs(head_dim, dtype, seed):

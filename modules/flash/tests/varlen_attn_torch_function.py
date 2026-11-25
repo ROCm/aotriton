@@ -33,6 +33,33 @@ def is_power_of_two(n: int) -> bool:
 def is_supported_by_tl_dot(n: int) -> bool:
     return is_power_of_two(n) and n >= 16
 
+
+def check_varlen_bias(name, t, num_seqs, num_head_q, max_seqlen_q, max_seqlen_k, gradient=False):
+    """The varlen bias contract, checked on the host.
+
+    For every varlen layout a bias (and its gradient) is `(num_seqs, Hq,
+    max_seqlen_q, max_seqlen_k)` and sequence `z` reads slot `z`, rows and
+    columns local to the sequence -- TransformerEngine/cuDNN's `bhss` bias for
+    packed layouts. Broadcasting is `expand()` (zero strides on the first two
+    axes), never a size-1 axis. A gradient with a zero stride shared by more
+    than one sequence (head) is refused: those would race on the same rows.
+
+    The library itself checks none of this; this is the caller's half, kept
+    beside the only caller in this suite. `modules/flash/kernel/varlen_bits.py`
+    has the same check for the JIT kernels (not imported: the UTs must not
+    depend on Triton).
+    """
+    want = (int(num_seqs), int(num_head_q), int(max_seqlen_q), int(max_seqlen_k))
+    if tuple(t.shape) != want:
+        raise ValueError(f'{name} must be (num_seqs, num_heads_q, max_seqlen_q, max_seqlen_k) '
+                         f'= {want}; got {tuple(t.shape)}')
+    if t.stride(3) != 1:
+        raise ValueError(f'{name} needs a contiguous seqlen_k axis; strides are {tuple(t.stride())}')
+    if gradient:
+        for axis, count in ((0, want[0]), (1, want[1])):
+            if t.stride(axis) == 0 and count > 1:
+                raise ValueError(f'{name} has stride 0 on axis {axis} with extent {count}')
+
 class _attention_varlen(torch.autograd.Function):
 
     # DEBUG_MASK_DTYPE = torch.int32
@@ -46,7 +73,8 @@ class _attention_varlen(torch.autograd.Function):
     @staticmethod
     def forward(ctx, q, k, v, seqlens_q, seqlens_k, causal, sm_scale, dropout_p,
                 varlen_type, lse_layout='HT',
-                attn_extra_args=AttentionExtraArgs()):
+                attn_extra_args=AttentionExtraArgs(),
+                bias=None):
         assert lse_layout in ('HT', 'TH'), f'unknown lse_layout {lse_layout}'
         return_encoded_softmax = attn_extra_args.return_encoded_softmax
         autotune = attn_extra_args.autotune
@@ -103,7 +131,13 @@ class _attention_varlen(torch.autograd.Function):
         else:
             assert False
         o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
-        b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
+        if bias is None:
+            b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
+        else:
+            # One slot per sequence, whatever the layout; a broadcast bias
+            # arrives expand()ed, with zero strides.
+            check_varlen_bias('bias', bias, batch, num_heads, max_seqlen_q, max_seqlen_k)
+            b = bias
 
         # The logsumexp tensor carries NO strides to the kernel: it is always
         # compact, so its layout is fully determined by lse_layout plus the head
@@ -179,6 +213,7 @@ class _attention_varlen(torch.autograd.Function):
                         encoded_softmax, causal, atomic, varlen_type, lse_layout, extargs)
 
         ctx.save_for_backward(q, k, v, b, o, M)
+        ctx.bias_requires_grad = bias is not None and bias.requires_grad
         ctx.seqlens_q = seqlens_q
         ctx.seqlens_k = seqlens_k
         ctx.seqinfo_q0 = seqinfo_q0
@@ -208,7 +243,6 @@ class _attention_varlen(torch.autograd.Function):
     @staticmethod
     def backward(ctx, do, _, __):
         q, k, v, b, o, L = ctx.saved_tensors
-        print(f'{b=}')
         seqlens_q = ctx.seqlens_q
         seqlens_k = ctx.seqlens_k
         seqinfo_q0 = ctx.seqinfo_q0
@@ -227,10 +261,27 @@ class _attention_varlen(torch.autograd.Function):
         dq_acc = lazy_dq_acc(q)
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
-        db = torch.empty_like(b) if b is not None else None
+        db_zero = None
+        if b.numel() == 0:
+            db = torch.empty_like(b)
+        elif ctx.bias_requires_grad:
+            # A real slot per sequence even when the bias is a broadcast: the
+            # library stores each sequence's dS into its own slot, and
+            # autograd's expand() backward sums them -- the gradient of a
+            # shared slot. Mirroring the bias's zero strides here would make
+            # the sequences race instead.
+            #
+            # Zeroed, and kept out of fillnan: a slot is only written over its
+            # sequence's own seqlen_q x seqlen_k, and the gradient outside that
+            # is 0, which the sum over a broadcast needs to be true.
+            db = torch.zeros(b.shape, device=b.device, dtype=b.dtype)
+            db_zero = db
+            check_varlen_bias('dB', db, batch, q.shape[1], max_seqlen_q, max_seqlen_k, gradient=True)
+        else:
+            db = None  # null DB with zero strides: "no bias gradient"
         if ctx.attn_extra_args.fillnan:
             for t in (dq, dk, dv, db):
-                if t is not None:
+                if t is not None and t is not db_zero:
                     t.fill_(float('nan'))
         delta = lazy_delta(L)
         if BWD_IMPL is not None:
@@ -248,7 +299,9 @@ class _attention_varlen(torch.autograd.Function):
             raise NotImplementedError()
         assert ret == hipError_t.hipSuccess, ret
         # One entry per forward input after ctx: q, k, v, seqlens_q, seqlens_k,
-        # causal, sm_scale, dropout_p, varlen_type, lse_layout, attn_extra_args.
-        return dq, dk, dv, None, None, None, None, None, None, None, None
+        # causal, sm_scale, dropout_p, varlen_type, lse_layout, attn_extra_args,
+        # bias.
+        return (dq, dk, dv, None, None, None, None, None, None, None, None,
+                db if ctx.bias_requires_grad else None)
 
 varlen_attention = _attention_varlen.apply

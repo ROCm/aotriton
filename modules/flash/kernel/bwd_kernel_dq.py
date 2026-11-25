@@ -118,8 +118,10 @@ def bwd_kernel_dq(
     offs_q = start_q + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
 
-    # Q and K decode independently: batch_index covers Q, DO, DQ, L, D, B and
-    # DB, while k_batch_index covers K and V. num_z is N, the sequence count.
+    # Q and K decode independently: batch_index covers Q, DO, DQ, L and D,
+    # while k_batch_index covers K and V. num_z is N, the sequence count.
+    # B and DB are (N, Hq, max_seqlen_q, max_seqlen_k), one slot per sequence,
+    # so they take off_z itself, with rows and columns local to the sequence.
     seqlen_q, q_row_off, batch_index = decode_addressing(
             varlen_bits, 0, max_seqlen_q, seqinfo_q0, seqinfo_q1, off_z)
     seqlen_k, k_row_off, k_batch_index = decode_addressing(
@@ -239,27 +241,27 @@ def bwd_kernel_dq(
         DB_ptr = 0
     elif BIAS_TYPE == 1:
         # B_block_ptr = tl.make_block_ptr(
-        #         base=B + off_h_q * stride_bh + batch_index * stride_bz,
+        #         base=B + off_h_q * stride_bh + off_z * stride_bz,
         #         shape=(seqlen_q, seqlen_k),
         #         strides=(stride_bm, stride_bn),
         #         offsets=(start_q, 0),
         #         block_shape=(BLOCK_M, BLOCK_N),
         #         order=(1, 0)
         #         )
-        B_ptr = B + off_h_q * stride_bh + batch_index * stride_bz
+        B_ptr = B + off_h_q * stride_bh + off_z * stride_bz
         if (stride_dbz == 0 and stride_dbh == 0) and stride_dbm == 0:
             store_db = False
         # Still have to make one even if no_db = False
         # due to a limit of Triton: runtime branches must have identical data types.
         # DB_block_ptr = tl.make_block_ptr(
-        #         base=DB + off_h_q * stride_dbh + batch_index * stride_dbz,
+        #         base=DB + off_h_q * stride_dbh + off_z * stride_dbz,
         #         shape=(seqlen_q, seqlen_k),
         #         strides=(stride_dbm, stride_dbn),
         #         offsets=(start_q, 0),
         #         block_shape=(BLOCK_M, BLOCK_N),
         #         order=(1, 0)
         #         )
-        DB_ptr = DB + off_h_q * stride_dbh + batch_index * stride_dbz
+        DB_ptr = DB + off_h_q * stride_dbh + off_z * stride_dbz
     else:
         tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 

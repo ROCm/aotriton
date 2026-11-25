@@ -60,7 +60,12 @@ class ValueFn:
 
 
 class Predicate:
-    """`(var_name <op> operand)` over a free-axis choice value."""
+    """`(var_name <op> operand)` over a free-axis choice value.
+
+    Also a per-call predicate, over a runtime value, when its `Override` is a
+    per-call rule (see `runtime_rules.py`): `interval`/`holds_at` serve that
+    reading, `holds`/`validate` the compile-time one.
+    """
     __slots__ = ('var_name', 'op', 'operand')
 
     def __init__(self, var_name: str, op: str, operand):
@@ -84,6 +89,21 @@ class Predicate:
             f'predicate references {self.var_name!r}, which is not a free choice '
             f'axis; predicates may read free axes only')
 
+    def interval(self, domain):
+        """Per-call: the inclusive interval of the integer runtime value, within
+        `domain` (lo, hi), where this predicate holds. `!=` is two intervals,
+        so a per-call rule does not take it."""
+        lo, hi = domain
+        c = self.operand
+        if self.op == '!=' or isinstance(c, bool) or not isinstance(c, int):
+            raise ValueError(f'{self!r}: a per-call predicate compares a runtime value '
+                             f'with an int by ==, <, <=, > or >=')
+        return {'==': (c, c), '<': (lo, c - 1), '<=': (lo, c), '>': (c + 1, hi), '>=': (c, hi)}[self.op]
+
+    def holds_at(self, values) -> bool:
+        """Per-call: whether the call's runtime `values` (name -> int) satisfy it."""
+        return _OPS[self.op](values[self.var_name], self.operand)
+
     def __repr__(self):
         return f'Predicate({self.var_name!r} {self.op} {self.operand!r})'
 
@@ -100,28 +120,37 @@ def ge(var_name, operand): return Predicate(var_name, '>=', operand)
 class Override(StackedSpec):
     """Rewrite `targets` to `value` for functionals where `predicate` fires.
 
-    `predicate` is either a structured `Predicate` (var op operand, over a free
-    choice axis) or a plain CALLABLE taking the functional and returning bool —
-    e.g. `when=lambda f: f.arch in ('gfx942', 'gfx950')`. The callable form can
-    read any functional state (arch, several choices) without growing a predicate
-    operator/var vocabulary."""
+    `predicate` is a structured `Predicate` (var op operand, over a free choice
+    axis), a tuple of them (all must hold; `()` always holds), or a plain
+    CALLABLE taking the functional and returning bool — e.g.
+    `when=lambda f: f.arch in ('gfx942', 'gfx950')`. The callable form can read
+    any functional state (arch, several choices) without growing a predicate
+    operator/var vocabulary.
+
+    Where it is written decides what it means. In a decorator stack it is
+    compile-time, as above. Yielded by a tuning module's `variants(meta)` it is
+    a per-call rule: its predicates read runtime values and its targets are
+    knobs (`runtime_rules.py`)."""
     __slots__ = ('targets', 'predicate', 'value')
 
     def __init__(self, targets, predicate, value):
         if isinstance(targets, str):
             targets = (targets,)
         self.targets = tuple(targets)
-        assert isinstance(predicate, Predicate) or callable(predicate), \
-            f'Override needs a Predicate or a callable, got {predicate!r}'
+        assert (isinstance(predicate, Predicate)
+                or (isinstance(predicate, tuple) and all(isinstance(p, Predicate) for p in predicate))
+                or callable(predicate)), \
+            f'Override needs a Predicate, a tuple of them or a callable, got {predicate!r}'
         self.predicate = predicate
         self.value = value          # literal | str type | VarRef
 
     def fires(self, functional) -> bool:
-        """Whether this override applies to `functional`. Dispatches on the
-        predicate kind: a structured Predicate reads the choice dict; a callable
-        receives the functional itself."""
+        """Whether this override applies to `functional`. Structured Predicates
+        read the choice dict; a callable receives the functional itself."""
         if isinstance(self.predicate, Predicate):
             return self.predicate.holds(functional.choice)
+        if isinstance(self.predicate, tuple):
+            return all(p.holds(functional.choice) for p in self.predicate)
         return bool(self.predicate(functional))
 
     def materialize(self, ctx) -> 'TypedChoice':
@@ -143,6 +172,9 @@ class Override(StackedSpec):
         # Predicates are checked against the free axes.
         if isinstance(self.predicate, Predicate):
             self.predicate.validate(free_var_names)
+        if isinstance(self.predicate, tuple):
+            for p in self.predicate:
+                p.validate(free_var_names)
         if isinstance(self.value, VarRef):
             assert self.value.var_name in free_var_names, (
                 f'override value {self.value!r} references {self.value.var_name!r}, '

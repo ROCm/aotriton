@@ -269,7 +269,9 @@ def attn_fwd(
         # sides decode independently: batch_index covers Q, O and LSE, while
         # k_batch_index covers K and V. They coincide for every mode that
         # applies the same bits to both sides, and differ for mixed ones such
-        # as 0x000B (packed Q against a dense K).
+        # as 0x000B (packed Q against a dense K). The bias is neither side's:
+        # it is (N, Hq, max_seqlen_q, max_seqlen_k), one slot per sequence, so
+        # it takes off_z itself, with rows and columns local to the sequence.
         seqlen_q, q_row_off, batch_index = decode_addressing(
                 Varlen_bits, 0, Max_seqlen_q, seqinfo_q0, seqinfo_q1, off_z)
         seqlen_k, k_row_off, k_batch_index = decode_addressing(
@@ -394,7 +396,7 @@ def attn_fwd(
 
                 if USE_BIAS:
                     # Note: this might get large enough to overflow on some configs
-                    B_ptrs = B + batch_index * stride_bz + off_h_q * stride_bh + offs_m[:, None] * stride_bm
+                    B_ptrs = B + off_z * stride_bz + off_h_q * stride_bh + offs_m[:, None] * stride_bm
                 else:
                     B_ptrs = None
 

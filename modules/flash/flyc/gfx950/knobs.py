@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025 FlyDSL Project Contributors
 
-"""Knob fields of the gfx950 attention kernels (forward, dQ, dK/dV).
+"""Knob fields of the gfx950 attention kernels (forward, dQ, dK/dV, fused backward).
 
 Plain data and flydsl-free: the code generator imports them to record the
 resolved knobs. The tuning modules (`fmha_tuning_*gfx950.py`) subclass these
@@ -16,7 +16,7 @@ from fmha_knobs import (
     FlycQKnobs,
 )
 
-__all__ = ["BwdDkDvKnobFields", "BwdDqKnobFields", "Gfx950KnobFields"]
+__all__ = ["BwdDkDvKnobFields", "BwdDqKnobFields", "BwdFusedKnobFields", "Gfx950KnobFields"]
 
 
 @dataclass(frozen=True)
@@ -67,6 +67,13 @@ class Gfx950KnobFields(FlycQKnobs):
     setprio: bool | None = None
     stagger: bool | None = None
     lpt_tile_order: bool | None = None
+    # How workgroups map to (head, q block, batch), for L2 affinity across the
+    # eight XCDs; one of `traits.XCD_MAPS`.
+    xcd_map: str | None = None
+    # End the KV walk at the last live tile; see `EXACT_KV_TILES`. A speed
+    # trade, not accuracy: +69% at seqlen_k 64 and +33% at 128. On wherever
+    # the body supports it (`_with_kv_walk`).
+    exact_kv_tiles: bool | None = None
 
     # Problem modes. Ordinary fields; see the class docstring.
     paged: bool | None = None
@@ -79,6 +86,15 @@ class Gfx950KnobFields(FlycQKnobs):
     num_waves: int | None = None
     block_n: int | None = None
     head_dim_granule: int | None = None
+
+    # GQA head packing: q heads of one GQA group per workgroup, with
+    # `block_m` then meaning the Q tile *per head*. Not one of the four
+    # geometry fields -- those decide the KV staging, which this leaves
+    # alone -- and not derived by policy either: whether it is legal depends
+    # on the *call's* group size, which no build knows, so the dispatcher picks
+    # it (see `ParityKernelContext._pack_q_heads`) and the host rejects a group
+    # it does not divide.
+    q_heads_per_wg: int | None = None
 
     # The two D-axis splits. Deliberately *not* part of the four-field geometry
     # pinning rule above: those four are one indivisible choice (a family),
@@ -139,4 +155,34 @@ class BwdDkDvKnobFields(FlycKVKnobs):
 
     FLYC_SOURCE = "gfx950/dkdv.py"
     FLYC_KERNEL_NAME = "fmha_bwd_dkdv_gfx950_kernel"
+    FLYC_GRID_AXIS_ORDER = GRID_AXIS_HEAD_FASTEST
+
+
+@dataclass(frozen=True)
+class BwdFusedKnobFields(FlycKVKnobs):
+    """The fused backward's knobs. `None` means "policy decides".
+
+    `block_kv` is the KV rung, which one workgroup owns whole; the rest is the
+    dK/dV body's geometry, which the fused kernel is.
+    """
+
+    hdim_qk_floor: int | None = None
+
+    mfma_rows: int | None = None
+    num_waves: int | None = None
+    block_q: int | None = None
+    head_dim_granule: int | None = None
+    num_stream_buffers: int | None = None
+    waves_per_eu: int | None = None
+    # The 32-row body's register-against-ILP switch; see
+    # `BwdDkDvKnobFields.tight_registers`. Inert in the 16-row family.
+    tight_registers: bool | None = None
+    # Rows of `-log2e*LSE` and `delta` the LDS row arrays hold: the build's
+    # `seqlen_q` ceiling, rounded up by `_with_rows_cap`.
+    q_rows_cap: int | None = None
+
+    strides_constexpr: bool | None = None
+
+    FLYC_SOURCE = "gfx950/fused_bwd.py"
+    FLYC_KERNEL_NAME = "fmha_bwd_fused_gfx950_kernel"
     FLYC_GRID_AXIS_ORDER = GRID_AXIS_HEAD_FASTEST

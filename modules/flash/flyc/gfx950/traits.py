@@ -28,7 +28,7 @@ from dataclasses import dataclass, fields
 
 from .standalone import dualwave
 
-__all__ = ["make_traits", "assert_matches_production", "ParityDualwaveTraits"]
+__all__ = ["make_traits", "assert_matches_production", "ParityDualwaveTraits", "XCD_MAPS"]
 
 
 @dataclass(frozen=True)
@@ -113,11 +113,38 @@ class ParityDualwaveTraits(dualwave.DualwaveSwpTraits):
     # `BIAS_TYPE`: a build without dropout emits no PRNG at all.
     ENABLE_DROPOUT: bool = False
 
+    # GQA head packing: how many q heads of one GQA group a workgroup serves.
+    # `BLOCK_M` is then the Q tile *per head*, and the `Q_TILES` waves split
+    # into `Q_HEADS_PER_WG` heads of `Q_TILES // Q_HEADS_PER_WG` row tiles
+    # each. Exists for `seqlen_q < Q_TILES * ROWS_PER_WAVE`, where an unpacked
+    # workgroup leaves waves computing rows past the sequence end; see
+    # `ParityKernelContext._pack_q_heads`. 1 changes nothing.
+    Q_HEADS_PER_WG: int = 1
+
     # P7. Dispatch the causal Q blocks longest-first. A bijection over the same
     # index set, so the output is bit-identical and this is purely a
-    # load-balance choice; see `ParityKernelContext.init_thread_mapping`.
+    # load-balance choice; see `ParityKernelContext._lpt_order`.
     LPT_TILE_ORDER: bool = False
 
+    # P8. How a workgroup's hardware ids map to (head, q block, batch); one of
+    # `XCD_MAPS`. Every value is a bijection over the grid, so the output is
+    # bit-identical and only which XCD runs which head moves; see
+    # `ParityKernelContext._map_workgroup`.
+    XCD_MAP: str = "none"
+
+    # End each workgroup's KV walk at its last live tile instead of at the
+    # even, at-least-four bound the dual-wave pipeline was written for, and
+    # pick one of four whole-body arms by the segment length at run time; see
+    # `ParityKernelContext._drop_padding_tiles` and the drains in
+    # `fwd.py`. Off, the kernel is the single padded body.
+    EXACT_KV_TILES: bool = False
+
+
+# P8's values. `none` is the grid as launched (head fastest). `pin_heads` makes
+# every XCD process a fixed set of (batch, kv head) pairs, so a KV head's K/V
+# is read through one XCD's L2. `head_slow` is upstream's `XCD_SWIZZLE` with
+# runtime head counts: q block fastest, so a head's blocks spread over all XCDs.
+XCD_MAPS = ("none", "pin_heads", "head_slow")
 
 # Hardware constants. Not parameters: these are the wave, the DMA width and the
 # MFMA shape, and a build that changed one would not be this algorithm.
@@ -145,6 +172,7 @@ def make_traits(
     d_stages=1,
     qk_shards=1,
     vo_shards=1,
+    q_heads_per_wg=1,
     v_half_wave=None,
     v_n_group=None,
     v_k_substep=None,
@@ -154,6 +182,8 @@ def make_traits(
     bias=False,
     dropout=False,
     lpt_tile_order=False,
+    xcd_map="none",
+    exact_kv_tiles=False,
     dtype_str="bf16",
     waves_per_eu=2,
     daz=True,
@@ -169,6 +199,8 @@ def make_traits(
     xcd_swizzle=False,
 ):
     """Dualwave traits for an arbitrary (waves, BLOCK_M, BLOCK_N, granule)."""
+    if xcd_map not in XCD_MAPS:
+        raise ValueError(f"xcd_map {xcd_map!r} is not one of {XCD_MAPS}")
     if window and not causal:
         # A window without the causal machinery has no masked region to apply
         # itself to, and silently dropping it would return dense attention --
@@ -189,6 +221,14 @@ def make_traits(
             "mask, so combining it with a positional one has no defined meaning. Fold the causal "
             "pattern into the bias tensor, or drop the bias"
         )
+    if exact_kv_tiles and (d_stages > 1 or vo_shards > 1 or num_kv_splits > 1 or paged):
+        # The wide body walks one tile at a time and has no padding to drop;
+        # split-K chunks the range in even pieces of at least four; and the
+        # paged block table is staged for exactly the padded range, which the
+        # prologue's K prefetches would read past. Refused rather than ignored,
+        # so the knobs recorded for a build say what the binary does.
+        raise ValueError("exact_kv_tiles is implemented for the dual-wave body only (no shards, stages, "
+                         "split-K or paged KV)")
     if num_waves % vo_shards:
         raise ValueError(f"vo_shards {vo_shards} must divide num_waves {num_waves}")
     # With `vo_shards` waves sharing one Q tile, the workgroup covers
@@ -196,15 +236,25 @@ def make_traits(
     # what shrinks -- it is pinned at 32 by the MFMA's M extent -- so BLOCK_M
     # falls instead, and what each wave saves is D columns of O.
     q_tiles = num_waves // vo_shards
-    if block_m % q_tiles:
-        raise ValueError(f"BLOCK_M {block_m} does not divide across {q_tiles} Q tiles")
+    if q_heads_per_wg < 1 or q_tiles % q_heads_per_wg:
+        raise ValueError(f"q_heads_per_wg {q_heads_per_wg} must divide the {q_tiles} Q tiles")
+    if q_heads_per_wg > 1 and (vo_shards > 1 or d_stages > 1 or num_kv_splits > 1):
+        # The wide body maps waves to (q_tile, shard) on its own, and split-K's
+        # workspace is indexed by a workgroup-uniform head. Neither has been
+        # taught a per-wave head.
+        raise ValueError("q_heads_per_wg > 1 is implemented for the dual-wave body only (no shards, stages or split-K)")
+    # Rows one head's tile spreads over: with packing, a head owns only
+    # `q_tiles // q_heads_per_wg` of the waves.
+    tiles_per_head = q_tiles // q_heads_per_wg
+    if block_m % tiles_per_head:
+        raise ValueError(f"BLOCK_M {block_m} does not divide across {tiles_per_head} Q tiles")
     if head_dim % granule:
         raise ValueError(f"head_dim {head_dim} is not a multiple of the granule {granule}")
     if head_dim % D_CHUNK:
         raise ValueError(f"head_dim {head_dim} is not a multiple of the PV MFMA width {D_CHUNK}")
 
     block_size = num_waves * WARP_SIZE
-    rows_per_wave = block_m // q_tiles
+    rows_per_wave = block_m // tiles_per_head
     if rows_per_wave > MFMA_M:
         # **The comment above is an invariant, and this enforces it.** A wave
         # holds at most the MFMA's M extent in rows, so `BLOCK_M` is really
@@ -224,9 +274,10 @@ def make_traits(
         # 281/563/1111 TFLOP/s at head_dim 128). So this is a ceiling, not an
         # equality, and the loss below it is left to the tuner.
         raise ValueError(
-            f"BLOCK_M {block_m} over {q_tiles} Q tiles gives {rows_per_wave} rows per wave, but the "
+            f"BLOCK_M {block_m} over {tiles_per_head} Q tiles gives {rows_per_wave} rows per wave, but the "
             f"MFMA's M extent caps it at {MFMA_M}. BLOCK_M is derived: pass "
-            f"{q_tiles * MFMA_M} for num_waves={num_waves}, vo_shards={vo_shards}"
+            f"{tiles_per_head * MFMA_M} for num_waves={num_waves}, vo_shards={vo_shards}, "
+            f"q_heads_per_wg={q_heads_per_wg}"
         )
 
     k_steps_qk = head_dim // K_STEP_QK
@@ -350,6 +401,7 @@ def make_traits(
         VO_SHARDS=vo_shards,
         D_CHUNKS_PER_STAGE_SHARD=d_chunks_per_stage_shard,
         Q_TILES=q_tiles,
+        Q_HEADS_PER_WG=q_heads_per_wg,
         SMEM_D_BUCKETS=granule // VEC_KV,
         K_STEPS_PER_BAND=granule // K_STEP_QK,
         D_CHUNKS_PER_BAND=granule // D_CHUNK,
@@ -381,6 +433,8 @@ def make_traits(
         BIAS_TYPE=1 if bias else 0,
         ENABLE_DROPOUT=bool(dropout),
         LPT_TILE_ORDER=bool(lpt_tile_order),
+        XCD_MAP=xcd_map,
+        EXACT_KV_TILES=bool(exact_kv_tiles),
         DTYPE_STR=dtype_str,
         WAVES_PER_EU=waves_per_eu,
         DAZ=bool(daz),

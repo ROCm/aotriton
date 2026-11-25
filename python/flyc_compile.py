@@ -11,12 +11,13 @@ Invoked as `python -m aotriton.flyc_compile`:
         --kernel_name flyc_attn_fwd --target gfx1201 \\
         --signature "Q='*fp16:16' BLOCK_DMODEL=64 CAUSAL_TYPE=0 BIAS_TYPE=0 \\
                      ENABLE_DROPOUT=False PADDED_HEAD=False" \\
-        --hints "seqlen_q=0 seqlen_k=0" \\
+        --build_knobs "exact_kv_tiles=False hdim_qk_floor=96" \\
         --out_path build/flyc/attn_fwd_hd64_f16
 
 **Kernel-agnostic by construction.** This module drives *any*
 `@ati.flyc.kernel` description through `fn.__ati_node__` (`source_path`,
-`hints()`) and the plain `fn(arch, choices, hints) -> (build, knobs)` call
+`hints()`) and the plain `fn(arch, choices, hints)` call, which returns one
+`(build, knobs)` or several builds (`template_instantiation/ir/flyc/builds.py`)
 — it does not import a specific kernel family's tuning module, and nothing
 here names a specific kernel. It enters at the `@flyc.jit` `JitFunction`
 `build()` produces (`jit_function_of`), synthesises typed dummy arguments
@@ -25,7 +26,6 @@ from the launcher's own signature (`synthesise_args`) and calls it directly
 """
 
 import ast
-import dataclasses
 import importlib.util
 import inspect
 import json
@@ -41,6 +41,7 @@ from pathlib import Path
 from . import flyc_bootstrap
 from .gpu_targets import AOTRITON_ARCH_WARPSIZE
 from .template_instantiation.ir.choices import ChoiceView, ChoiceVarAbsent
+from .template_instantiation.ir.flyc.builds import flyc_build_for
 from .utils import parse_pon
 
 
@@ -108,9 +109,10 @@ def parse():
              "\"Q='*fp16:16' BLOCK_DMODEL=64 CAUSAL_TYPE=0\".",
     )
     parser.add_argument(
-        "--hints", type=str, default='',
-        help="Overrides for the @ati.flyc.hints dataclass fields, same "
-             "encoding as --signature. Unset fields keep their declared default.",
+        "--build_knobs", type=str, default='',
+        help="Which of the functional's builds to compile: the knobs whose values "
+             "differ among its builds (`ir/flyc/builds.build_knobs`), same encoding "
+             "as --signature. Empty for a functional with one build.",
     )
     parser.add_argument("--out_path", type=Path, required=True, help="Out filename (without extension).")
     parser.add_argument(
@@ -134,24 +136,6 @@ def parse():
         help="Skip ELF verification.",
     )
     return parser.parse_args()
-
-
-def _build_hints(node, hints_str: str):
-    """The `@ati.flyc.hints` dataclass instance: `node`'s defaults, `--hints`
-    overrides applied on top. Rejects unknown fields loudly -- a typo in
-    `--hints` must not silently build the default schedule."""
-    defaults = node.hints()
-    if not hints_str:
-        return defaults
-    overrides = parse_pon(hints_str, sep=' ')
-    valid = {f.name for f in dataclasses.fields(defaults)}
-    unknown = sorted(set(overrides) - valid)
-    if unknown:
-        raise ValueError(
-            f"--hints has unknown field(s) {unknown} for {type(defaults).__name__}; "
-            f"valid fields: {sorted(valid)}"
-        )
-    return dataclasses.replace(defaults, **overrides)
 
 
 def _load_description_module(path: Path, kernel_name: str):
@@ -800,6 +784,11 @@ _RE_FLAGS = re.compile(r'Flags:\s*(0x[0-9a-fA-F]+),\s*([^\s,]+)')
 _RE_KERNEL_NAME = re.compile(r'^\s*\.name:\s*(\S+)', re.MULTILINE)
 _RE_GROUP_SEGMENT = re.compile(r'^\s*\.group_segment_fixed_size:\s*(\d+)', re.MULTILINE)
 _RE_KERNARG_SEGMENT = re.compile(r'^\s*\.kernarg_segment_size:\s*(\d+)', re.MULTILINE)
+# One kernel argument of the AMDGPU metadata's `.args` list: its offset, size
+# and value kind, other keys allowed between them but not a next entry ("- ").
+_RE_KERNARG = re.compile(r'\.offset:\s*(\d+)(?:(?!\n\s*- )[\s\S])*?'
+                         r'\.size:\s*(\d+)(?:(?!\n\s*- )[\s\S])*?'
+                         r'\.value_kind:\s*(\S+)')
 
 
 def _readelf_report(readelf: Path, hsaco_path: Path) -> str:
@@ -825,6 +814,11 @@ def _elf_metadata(report: str) -> dict:
     kernel_name = _RE_KERNEL_NAME.search(report)
     shared = _RE_GROUP_SEGMENT.search(report)
     kernarg_size = _RE_KERNARG_SEGMENT.search(report)
+    # The arguments a launcher passes, without the `hidden_*` ones (block
+    # counts, group sizes, ...) that HIP appends itself when a kernel reads
+    # them -- e.g. `gpu.grid_dim`, 256 bytes after the explicit ones.
+    explicit = [int(o) + int(n) for o, n, kind in _RE_KERNARG.findall(report)
+                if not kind.startswith('hidden_')]
     return dict(
         machine=machine.group(1) if machine else None,
         flags_hex=flags.group(1) if flags else None,
@@ -832,6 +826,7 @@ def _elf_metadata(report: str) -> dict:
         kernel_name=kernel_name.group(1) if kernel_name else None,
         shared=int(shared.group(1)) if shared else None,
         kernarg_size=int(kernarg_size.group(1)) if kernarg_size else None,
+        explicit_kernarg_size=max(explicit) if explicit else None,
     )
 
 
@@ -877,10 +872,16 @@ def _verify_elf(meta: dict, target: str, report: str, node=None, expected_kernar
                 f"honouring an explicit `_name` verbatim.\n\nFull report:\n{report}"
             )
     if expected_kernarg_size is not None:
-        if meta['kernarg_size'] != expected_kernarg_size:
+        # Compare the explicit arguments only: the launch passes an argument
+        # array to hipModuleLaunchKernel, and HIP fills the hidden ones.
+        explicit = meta['explicit_kernarg_size']
+        if explicit is None:
+            explicit = meta['kernarg_size']
+        if explicit != expected_kernarg_size:
             raise RuntimeError(
-                f"--verify: this hsaco's real .kernarg_segment_size is "
-                f"{meta['kernarg_size']!r} bytes, but the launcher's declared "
+                f"--verify: this hsaco's explicit kernel arguments end at "
+                f"{explicit!r} bytes (.kernarg_segment_size "
+                f"{meta['kernarg_size']!r}, hidden ones included), but the launcher's declared "
                 f"signature (`_launcher_signature`, excluding the trailing "
                 f"`Stream` parameter) predicts {expected_kernarg_size} bytes "
                 f"(see _expected_kernarg_size).\n\n"
@@ -920,7 +921,9 @@ def do_compile(args):
     # interface reads the same here as it does on the generator side, and any
     # method it grows must be answered by both backings.
     choices = MappingChoiceView(parse_pon(args.signature, sep=' '))
-    hints = _build_hints(node, args.hints)
+    # The `@ati.flyc.hints` defaults: per-call choices are the description's
+    # builds now, named by --build_knobs, not hints to one build.
+    hints = node.hints()
     # The description body returns (built, knobs): `built` is the FlyDSL
     # builder's result (driven to a code object below); `knobs` is a
     # JSON-serialisable dict of whatever it wants recorded alongside the hsaco
@@ -932,7 +935,9 @@ def do_compile(args):
     # `args.target` is the builder's first argument: every flyc
     # description takes (arch, choices, hints), arch arriving first, not
     # smuggled into choices.
-    build, knobs = fn(args.target, choices, hints)
+    # A functional may have several builds (per-call rules); `--build_knobs`
+    # names the one this row compiles, as the code generator named it.
+    build, knobs = flyc_build_for(fn(args.target, choices, hints), args.build_knobs)
     built = build()
 
     jf = jit_function_of(built)
@@ -1019,7 +1024,7 @@ def do_compile(args):
         'shared': 0,
         'static_lds': meta['shared'],
         'signature': args.signature,
-        'hints': args.hints,
+        'build_knobs': args.build_knobs,
         'knobs': knobs,
         # block_m rides in the knob dict (it is resolved and used by the
         # builder already; it just needed forwarding -- see flyc_attn_fwd.py).

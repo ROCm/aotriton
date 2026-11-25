@@ -10,10 +10,6 @@ from ..ir import Override, VarRef, ValueFn
 from ..ir import eq, ne, lt, gt, le, ge   # predicate builders, re-exported as ati.*
 
 
-def _ALWAYS(functional):
-    return True
-
-
 def derives(targets, *, to, when=None):
     """Derive `targets`' value from other functional state
     §3.3). The single facade for both derive channels — the builder routes by
@@ -33,8 +29,14 @@ def derives(targets, *, to, when=None):
                          tensor target is the constexpr-zero / former-CDETensor case)
 
     `when` is an optional predicate gating the derive: a structured ati.eq/ne/...
-    over a free choice axis, or a callable `f -> bool`. Omit it (callable `to`) to
-    always fire.
+    over a free choice axis, a tuple of them (all must hold), or a callable
+    `f -> bool`. Omit it (callable `to`) to always fire.
+
+    Yielded by a tuning module's `variants(meta)` instead of stacked on a
+    kernel, the same call is a per-call rule: `when` reads runtime values and
+    `targets` are knobs (`ir/runtime_rules.py`):
+
+      ati.derives('exact_kv_tiles', to=False, when=ati.gt('seqlen_k', 128))
 
       ati.derives('encoded_softmax', to=0, when=ati.eq('RETURN_ENCODED_SOFTMAX', False))
       ati.derives('Hdim_qk', to='BLOCK_DMODEL', when=ati.eq('PADDED_HEAD', False))
@@ -47,7 +49,7 @@ def derives(targets, *, to, when=None):
         value = VarRef(to)
     else:
         value = to
-    predicate = when if when is not None else _ALWAYS
+    predicate = when if when is not None else ()
     return Override(targets, predicate, value)
 
 

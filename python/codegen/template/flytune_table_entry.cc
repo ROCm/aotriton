@@ -1,7 +1,7 @@
 // Copyright © 2023-2026 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
-#include "../flyc.[[shim_kernel_name]].h"
+#include "../flyc.[[shim_kernel_name]].h"[[selector_includes]]
 #include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/_internal/kernel_cluster.h>
 #include <aotriton/_internal/log.h>
@@ -14,13 +14,13 @@ namespace { // Anonymous namespace
 
 using namespace std::literals::string_view_literals;
 
-// flyc has no LUT and no PerfFields struct: every functional resolves to
-// exactly one hsaco (there is no autotune choice among multiple candidate
-// kernel images the way Triton's shim has), so this table entry is a
-// degenerate single-candidate dispatcher. There is no
-// `kernel_psels`/`kernel_copts` JSON string array either -- the perf/copt
-// knob set lives in the single hsaco's `#P` section and is read back via
-// `Pon` from `context.perf()` after `lookup_optimal()`, not duplicated here.
+// flyc has no LUT and no PerfFields struct. A functional has one hsaco per
+// build its tuning module's per-call rules give it (`ir/runtime_rules.py`),
+// and the selector below picks one from the call's runtime values; the boxes
+// it tests partition every value, so it always picks one. There is no
+// `kernel_psels`/`kernel_copts` JSON string array either -- each knob set
+// lives in its hsaco's `#P` section and is read back via `Pon` from
+// `context.perf()` after `lookup_optimal()`, not duplicated here.
 
 // u8R generates char8_t which is poorly supported almost everywhere.
 constexpr pstring_view FLATZIP_PATH
@@ -37,7 +37,7 @@ static AOTRITON_NS::TritonKernelCompactMeta meta_list[] = {
     [[meta_hsacos]]
 };
 
-static constexpr int kTotalNumKernels = 1;
+static constexpr int kTotalNumKernels = [[total_kernels]];
 
 using AOTRITON_NS::v3::[[kernel_family_name]]::flytune::[[shim_kernel_name]]_packed_string;
 
@@ -49,14 +49,14 @@ kernel_cluster(meta_list,
 
 namespace AOTRITON_NS::v3::[[kernel_family_name]]::flytune {
 
-// Returns the selected kernel_index. flyc builds exactly one hsaco per
-// surviving functional, so this always selects index 0 -- there is no LUT
-// lookup and no preferred-kernel override to consult. Disabled functionals
-// never get an entry compiled at all: their .cc file is simply not emitted
+// Returns the selected kernel_index: the build whose boxes hold the call's
+// runtime values (generated from the same rules JIT applies), or 0 for a
+// functional with one build. Disabled functionals never get an entry compiled
+// at all: their .cc file is simply not emitted
 // (FlycShimGenerator::create_sub_generator).
 int CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
     (void) mod_number;
-    constexpr int kernel_index = 0;
+    [[kernel_selection]]
     context.kernel_on_device = kernel_cluster.get(kernel_index);
     context.pp_args_index = [[deduplicated_pp_args_function_index]];
     context.flatzip_path = FLATZIP_PATH;

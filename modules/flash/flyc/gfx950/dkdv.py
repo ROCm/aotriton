@@ -139,6 +139,7 @@ from .dualwave_helpers import (
     _score_column_runs,
     _slab_span_elems,
     _v_imm_lo,
+    check_score_tensor,
     exp2_wait_state,
     mfma_operand_wait_state,
     wire_ptr,
@@ -188,6 +189,41 @@ _ROW_THRESHOLDS = [0] * 16
 for _e0, _c0, _w in _ROW_RUNS:
     for _j in range(_w):
         _ROW_THRESHOLDS[_e0 + _j] = _c0 + _j
+
+
+def _park_in_vgprs(values):
+    """Each value out through one side-effecting no-op asm, in a VGPR.
+
+    The asm emits nothing (every output is tied to its input), but nothing can
+    see through it: a later use reads the asm's result, so the values are
+    computed *here* and carried in VGPRs, and no pass can sink their
+    computation -- or the kernargs it reads -- down to the use. Side-effecting
+    so that the asm itself is not sunk either; it runs once per workgroup,
+    outside every loop, so the scheduling boundary costs nothing.
+    """
+    irs = [as_mlir_value(v) for v in values]
+    n = len(irs)
+    if const_expr(n == 1):
+        return [dualwave.llvm.inline_asm(irs[0].type, irs, "", "=v,0", has_side_effects=True)]
+    ret_ty = dualwave.ir.Type.parse(f"!llvm.struct<({', '.join(str(v.type) for v in irs)})>")
+    constraints = ",".join(["=v"] * n + [str(i) for i in range(n)])
+    ret = dualwave.llvm.inline_asm(ret_ty, irs, "", constraints, has_side_effects=True)
+    return [dualwave.llvm.extractvalue(irs[i].type, ret, [i]) for i in range(n)]
+
+
+def _unpark_uniform(v):
+    """A parked wave-uniform i32 back in an SGPR, for a descriptor."""
+    return fx.Int32(dualwave.rocdl.readfirstlane(T.i32, as_mlir_value(v)))
+
+
+def _parks_stream_strides(traits, block_dmodel, padded_head):
+    """Whether the tile walk reads Q's and dO's row strides from VGPRs; see `park_strides`.
+
+    FIXME: FlyDSL#1344 workaround, for the one build it was seen in: head_dim
+    384 unpadded, f16, dropout, no bias, no causal mask. Remove with the fix.
+    """
+    feature = traits.ENABLE_DROPOUT and not traits.BIAS_TYPE and not traits.CAUSAL
+    return block_dmodel == 384 and not padded_head and traits.DTYPE_STR == "f16" and feature
 
 
 def _stream_row_read_base(traits, lane_mod_32, lane_div_32):
@@ -776,14 +812,14 @@ class BwdDkDvKernelContext(ParityKernelContext):
         # The bias is `(batch, q head, q row, kv col)`, so it moves with the
         # query head too -- but only its base does. The bound is a function of
         # the two sequence lengths and the row stride, none of which are the
-        # head's, so it is computed once here.
+        # head's, so it is computed once here. Its rows and columns are local
+        # to the sequence, so unlike Q's slab the base carries no row origin;
+        # see `_score_slab_byte_base`.
         if const_expr(self.traits.BIAS_TYPE):
             self.bias_num_records_bytes = _bias_slab_num_records_bytes(
                 self.seqlen_q_v, self.seqlen_kv_v, self.stride_b_seq_q, self.traits.BF16_BYTES
             )
-            self.bias_base0_bytes = self._slab_byte_base(
-                self.stride_b_batch, self.stride_b_head, self.stride_b_seq_q, self.q_row_off, head0
-            )
+            self.bias_base0_bytes = self._score_slab_byte_base(self.stride_b_batch, self.stride_b_head, head0)
             self.bias_head_step_bytes = fx.Index(self.stride_b_head) * elem_bytes
 
     def bind_q_head(self, g):
@@ -983,14 +1019,34 @@ class BwdDkDvStreamLoader(ParityKvGmemToLdsLoader):
     lane offsets) is head-independent, so these two lines are the whole fix.
     """
 
+    # Q's and dO's row strides in VGPRs, once `park_strides` has run.
+    parked_strides = None
+
+    def park_strides(self):
+        """Carry the two row strides in VGPRs from here on. Call in the prologue.
+
+        FIXME: FlyDSL#1344 workaround. In the build `_parks_stream_strides`
+        names, the backend copies only half of the kernarg tuple holding dO's
+        row stride before re-spilling it, so every tile the walk prefetches
+        reads dO at a stale stride, i.e. out of bounds: zeros, and dK/dV lose
+        every tile past the first two.
+        """
+        ctx = self.ctx_ref
+        self.parked_strides = _park_in_vgprs([fx.Int32(ctx.stride_q_seq), fx.Int32(ctx.stride_do_seq)])
+
+    def _row_stride(self, i, kernarg):
+        if const_expr(self.parked_strides is None):
+            return kernarg
+        return fx.Index(_unpark_uniform(self.parked_strides[i]))
+
     def stage_q_tile(self, tile_idx, buf_id):
-        self.stride_kv_n_v = self.ctx_ref.stride_q_seq_v
+        self.stride_kv_n_v = self._row_stride(0, self.ctx_ref.stride_q_seq_v)
         self.k_div = self.ctx_ref.k_div
         self.dma_stage = 0
         dualwave.DualwaveKvGmemToLdsLoader.load_k(self, self.tile_start(tile_idx), buf_id)
 
     def stage_do_tile(self, tile_idx, buf_id):
-        self.stride_kv_n_v = self.ctx_ref.stride_do_seq_v
+        self.stride_kv_n_v = self._row_stride(1, self.ctx_ref.stride_do_seq_v)
         self.v_div = self.ctx_ref.v_div
         self.dma_stage = 0
         dualwave.DualwaveKvGmemToLdsLoader.load_v(self, self.tile_start(tile_idx), buf_id)
@@ -1878,6 +1934,8 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         ctx.c_dropout_scale = fx.Float32(dropout_scale)
 
         stream = BwdDkDvStreamLoader(ctx)
+        if const_expr(_parks_stream_strides(traits, BLOCK_DMODEL, PADDED_HEAD)):
+            stream.park_strides()
         if const_expr(M16):
             # The 16-row family. Same `run` signature, same barriers, same
             # prefetch discipline -- only the operand algebra differs, which is
@@ -2526,6 +2584,8 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         # whatever the layout, and a packed `num_seqlens` must agree with the
         # length array.
         _vl = fmha.varlen_args(STRIDES_CONSTEXPR, varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
+        # The grid's sequence count: the bias's batch extent.
+        num_seqs = int(num_seqlens) or int(batch_size)
         # **The seed and the counter are the ones the *forward* reported**, not
         # the ones its caller passed: under graph capture the effective offset
         # is `*offset1 + offset2`, summed on the device. `fmha.dropout_args` is
@@ -2554,39 +2614,10 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
         if bias is not None and not traits.BIAS_TYPE:
             raise ValueError("this build was not compiled for bias; pass bias=True in FmhaInputMetadata")
         if bias is not None:
-            # **The bias follows Q on the query axis**, which is what the
-            # addressing already does: the descriptor folds in `q_row_off` and
-            # the head exactly as Q's slab does, so the shape rule is "match Q"
-            # rather than a second layout to keep in step. Dense that reads as
-            # `(b, h, seqlen_q, seqlen_k)`; under a packed varlen it reads as
-            # `(1, h, total_q, max_seqlen_k)`, and under `varlen_padded` -- a
-            # real batch axis -- it is the dense shape again. All three fall
-            # out of one check, which is why it is written this way.
-            #
-            # The KV axis is *not* packed: it has no stride of its own (slot 3
-            # is contiguous by contract), so each sequence's row spans
-            # `seqlen_k` columns from 0 and the column index is the
-            # within-sequence KV row the kernel already computes.
-            if bias.shape[0] != Q.shape[0] or bias.shape[2] != Q.shape[2]:
-                raise ValueError(
-                    f"bias must share Q's batch and query-token extents; got {tuple(bias.shape)} "
-                    f"against q {tuple(Q.shape)}. Under a packed varlen that means "
-                    f"(1, num_heads, total_q, max_seqlen_k)."
-                )
-            if bias.shape[3] != seqlen_k:
-                raise ValueError(
-                    f"bias's last axis is the KV column and is not packed: it must be seqlen_k "
-                    f"({seqlen_k}), got {bias.shape[3]}"
-                )
-            if bias.shape[1] != num_head_q:
-                raise ValueError(
-                    f"bias carries the *query* head count ({num_head_q}); got {bias.shape[1]}. The bias "
-                    "shifts the scores, and there is one score matrix per q head even under GQA."
-                )
-            if bias.stride(3) != 1:
-                raise ValueError(f"bias needs a contiguous seqlen_k axis; strides are {tuple(bias.stride())}")
-            if bias.dtype != Q.dtype:
-                raise ValueError(f"bias must have Q's dtype ({Q.dtype}), got {bias.dtype}")
+            # Rows and columns local to each sequence, one slot per sequence
+            # -- the forward's contract and Triton's; see
+            # `check_score_tensor`.
+            check_score_tensor("bias", bias, num_seqs, num_head_q, _vl[5], _vl[6], Q.dtype)
         # The sentinel is a real tensor whose contents are never read: every
         # use is behind `const_expr(traits.BIAS_TYPE)`, so a build without bias
         # emits no load at all. That is what makes `bias=None` bitwise

@@ -45,6 +45,7 @@ from varlen_bits import (
     VarlenLseLayout,
     VarlenPrincipalDiagonal,
     VARLEN_PRINCIPAL_DIAGONAL_SHIFT,
+    check_varlen_bias,
     make_varlen_bits,
 )
 from _varlen_bits_layout import VarlenCase
@@ -85,11 +86,15 @@ def null_i32(device):
 def launch_fwd(bits, q, k, v, out, lse,
                seqinfo_q0, seqinfo_k0, seqinfo_q1, seqinfo_k1,
                max_seqlen_q, max_seqlen_k, n_seq,
-               num_head_q, num_head_k, hdim_qk, hdim_vo, causal):
+               num_head_q, num_head_k, hdim_qk, hdim_vo, causal, bias=None):
     device = q.device
     nul = null_i32(device)
     u64nul = torch.empty([0], device=device, dtype=torch.uint64)
-    b = torch.empty((0, 0, 0, 0), device=device, dtype=q.dtype)
+    if bias is None:
+        b = torch.empty((0, 0, 0, 0), device=device, dtype=q.dtype)
+    else:
+        check_varlen_bias('bias', bias, n_seq, num_head_q, max_seqlen_q, max_seqlen_k)
+        b = bias
     alibi = torch.empty((0, 0), device=device, dtype=q.dtype)
     causal_type, window_left, window_right = causal_window(causal)
     grid = (triton.cdiv(max_seqlen_q, BLOCK_M), num_head_q, n_seq)
@@ -123,7 +128,7 @@ def launch_fwd(bits, q, k, v, out, lse,
         CAUSAL_TYPE=causal_type,
         Window_left=window_left,
         Window_right=window_right,
-        BIAS_TYPE=0,
+        BIAS_TYPE=0 if bias is None else 1,
         USE_ALIBI=False,
         INT8=False,
         INT8_KV=False,
@@ -145,12 +150,23 @@ def launch_fwd(bits, q, k, v, out, lse,
 def launch_bwd(bits, q, k, v, out, do, lse, delta, dq, dk, dv,
                seqinfo_q0, seqinfo_k0, seqinfo_q1, seqinfo_k1,
                max_seqlen_q, max_seqlen_k, n_seq,
-               num_head_q, num_head_k, hdim_qk, hdim_vo, causal):
+               num_head_q, num_head_k, hdim_qk, hdim_vo, causal, bias=None, db=None):
     device = q.device
     nul = null_i32(device)
     u64nul = torch.empty([0], device=device, dtype=torch.uint64)
-    b = torch.empty((0, 0, 0, 0), device=device, dtype=q.dtype)
-    db = torch.empty((0, 0, 0, 0), device=device, dtype=q.dtype)
+    if bias is None:
+        assert db is None, 'dB without a bias'
+        b = torch.empty((0, 0, 0, 0), device=device, dtype=q.dtype)
+    else:
+        check_varlen_bias('bias', bias, n_seq, num_head_q, max_seqlen_q, max_seqlen_k)
+        b = bias
+    if db is None:
+        db = torch.empty((0, 0, 0, 0), device=device, dtype=q.dtype)
+        db_strides = (0, 0, 0, 0)  # all zero means "no bias gradient"
+    else:
+        check_varlen_bias('dB', db, n_seq, num_head_q, max_seqlen_q, max_seqlen_k, gradient=True)
+        db_strides = db.stride()
+    bias_type = 0 if bias is None else 1
     causal_type, window_left, window_right = causal_window(causal)
     padded_head = BLOCK_DMODEL != hdim_qk
 
@@ -195,7 +211,7 @@ def launch_bwd(bits, q, k, v, out, do, lse, delta, dq, dk, dv,
         CAUSAL_TYPE=causal_type,
         ENABLE_DROPOUT=False,
         PADDED_HEAD=padded_head,
-        BIAS_TYPE=0,
+        BIAS_TYPE=bias_type,
         NUM_XCDS=1,
         num_warps=4, num_stages=1,
     )
@@ -206,7 +222,7 @@ def launch_bwd(bits, q, k, v, out, do, lse, delta, dq, dk, dv,
         lse, delta,
         *q.stride(), *k.stride(), *v.stride(), *b.stride(),
         *do.stride(), *dq.stride(),
-        0, 0, 0, 0,  # db strides: all zero means "no bias gradient"
+        *db_strides,
         num_head_q=num_head_q,
         num_head_k=num_head_k,
         seqinfo_q0=seqinfo_q0,
@@ -229,23 +245,25 @@ def launch_bwd(bits, q, k, v, out, do, lse, delta, dq, dk, dv,
         CAUSAL_TYPE=causal_type,
         ENABLE_DROPOUT=False,
         PADDED_HEAD=padded_head,
-        BIAS_TYPE=0,
+        BIAS_TYPE=bias_type,
         NUM_XCDS=1,
         num_warps=4, num_stages=1,
     )
 
 
 class Result:
-    def __init__(self, out, lse, delta=None, dq=None, dk=None, dv=None):
+    def __init__(self, out, lse, delta=None, dq=None, dk=None, dv=None, db=None):
         self.out = out
         self.lse = lse
         self.delta = delta
         self.dq = dq
         self.dk = dk
         self.dv = dv
+        self.db = db
 
 
-def run_case(case, causal, backward=False, do_refs=None):
+def run_case(case, causal, backward=False, do_refs=None, bias=None, want_db=False,
+             db_like_bias=False):
     """Run the whole batch through one varlen launch."""
     out = case.out_like_q()
     lse = case.new_lse()
@@ -253,7 +271,7 @@ def run_case(case, causal, backward=False, do_refs=None):
                case.q.seqinfo0, case.k.seqinfo0, case.q.seqinfo1, case.k.seqinfo1,
                case.q.max_seqlen, case.k.max_seqlen, case.n,
                case.num_head_q, case.num_head_k, case.hdim_qk, case.hdim_vo,
-               causal)
+               causal, bias=bias)
     if not backward:
         return Result(out, lse)
     do = case.out_like_q(fill=0.0)
@@ -263,21 +281,29 @@ def run_case(case, causal, backward=False, do_refs=None):
     dq = torch.full_like(case.q.tensor, 0.0)
     dk = torch.full_like(case.k.tensor, 0.0)
     dv = torch.full_like(case.v.tensor, 0.0)
+    db = None
+    if want_db and db_like_bias:
+        # The bias's own strides, zeros included: what a caller gets from
+        # `torch.empty_strided(b.shape, b.stride())` on an expanded bias.
+        db = torch.empty_strided(bias.shape, bias.stride(), dtype=bias.dtype, device=bias.device)
+    elif want_db:
+        db = case.new_bias(fill=float('nan'))
     launch_bwd(case.bits, case.q.tensor, case.k.tensor, case.v.tensor, out, do,
                lse, delta, dq, dk, dv,
                case.q.seqinfo0, case.k.seqinfo0, case.q.seqinfo1, case.k.seqinfo1,
                case.q.max_seqlen, case.k.max_seqlen, case.n,
                case.num_head_q, case.num_head_k, case.hdim_qk, case.hdim_vo,
-               causal)
-    return Result(out, lse, delta, dq, dk, dv)
+               causal, bias=bias, db=db)
+    return Result(out, lse, delta, dq, dk, dv, db)
 
 
 def run_dense_one(qz, kz, vz, causal, num_head_q, num_head_k, hdim_qk, hdim_vo,
-                  backward=False, doz=None, bits=VARLEN_BITS_DENSE):
+                  backward=False, doz=None, bits=VARLEN_BITS_DENSE, bias=None, want_db=False):
     """One sequence, dense, through the same kernel.
 
     `bits` defaults to 0; only the principal diagonal gate passes anything
-    else, and then only bits outside the addressing bytes.
+    else, and then only bits outside the addressing bytes. `bias`, when given,
+    is this sequence's `(1, Hq, seqlen_q, seqlen_k)` slice of the varlen bias.
     """
     assert (bits & 0xFFFF) == 0, "run_dense_one is the dense oracle"
     device = qz.device
@@ -288,17 +314,20 @@ def run_dense_one(qz, kz, vz, causal, num_head_q, num_head_k, hdim_qk, hdim_vo,
     lse = torch.full((num_head_q, sq), float('nan'), device=device, dtype=torch.float32)
     launch_fwd(bits, qz, kz, vz, out, lse,
                nul, nul, nul, nul, sq, sk, 1,
-               num_head_q, num_head_k, hdim_qk, hdim_vo, causal)
+               num_head_q, num_head_k, hdim_qk, hdim_vo, causal, bias=bias)
     if not backward:
         return Result(out, lse)
     delta = torch.full_like(lse, float('nan'))
     dq = torch.zeros_like(qz)
     dk = torch.zeros_like(kz)
     dv = torch.zeros_like(vz)
+    db = None
+    if want_db:
+        db = torch.full((1, num_head_q, sq, sk), float('nan'), device=device, dtype=qz.dtype)
     launch_bwd(bits, qz, kz, vz, out, doz, lse, delta, dq, dk, dv,
                nul, nul, nul, nul, sq, sk, 1,
-               num_head_q, num_head_k, hdim_qk, hdim_vo, causal)
-    return Result(out, lse, delta, dq, dk, dv)
+               num_head_q, num_head_k, hdim_qk, hdim_vo, causal, bias=bias, db=db)
+    return Result(out, lse, delta, dq, dk, dv, db)
 
 
 def dense_inputs(case, z):
@@ -309,11 +338,16 @@ def dense_inputs(case, z):
     return qz, kz, vz
 
 
-def assert_matches_dense(case, causal, backward=False, seed=1234, dense_causal=None):
+def assert_matches_dense(case, causal, backward=False, seed=1234, dense_causal=None,
+                         bias=None, want_db=False):
     """The headline gate, for every sequence in `case`.
 
     `dense_causal(z, seqlen_q, seqlen_k)`, when given, supplies the window of
     the dense oracle for sequence `z` instead of `causal` itself.
+
+    `bias` is the varlen bias, `(N, Hq, max_seqlen_q, max_seqlen_k)`; sequence
+    `z`'s dense oracle gets the top-left `seqlen_q x seqlen_k` of slot `z`.
+    With `want_db`, dB is compared over the same slice.
     """
     do_refs = None
     if backward:
@@ -322,7 +356,7 @@ def assert_matches_dense(case, causal, backward=False, seed=1234, dense_causal=N
         do_refs = [torch.rand((case.num_head_q, s, case.hdim_vo),
                               dtype=case.dtype, device=case.device, generator=gen)
                    for s in case.seqlens_q]
-    got = run_case(case, causal, backward=backward, do_refs=do_refs)
+    got = run_case(case, causal, backward=backward, do_refs=do_refs, bias=bias, want_db=want_db)
     for z in range(case.n):
         if case.seqlens_q[z] == 0 or case.seqlens_k[z] == 0:
             # No dense oracle exists for an empty sequence: a zero-row tensor
@@ -336,9 +370,10 @@ def assert_matches_dense(case, causal, backward=False, seed=1234, dense_causal=N
         causal_z = causal
         if dense_causal is not None:
             causal_z = dense_causal(z, case.seqlens_q[z], case.seqlens_k[z])
+        bias_z = case.bias_slice(bias, z).unsqueeze(0) if bias is not None else None
         want = run_dense_one(qz, kz, vz, causal_z, case.num_head_q, case.num_head_k,
                              case.hdim_qk, case.hdim_vo,
-                             backward=backward, doz=doz)
+                             backward=backward, doz=doz, bias=bias_z, want_db=want_db)
         assert torch.equal(case.q_row_slice(got.out, z), want.out[0]), \
             f'out mismatch on sequence {z} of {case.seqlens_q}/{case.seqlens_k}'
         assert torch.equal(case.lse_slice(got.lse, z), want.lse), \
@@ -352,6 +387,15 @@ def assert_matches_dense(case, causal, backward=False, seed=1234, dense_causal=N
                 f'dk mismatch on sequence {z}'
             assert torch.equal(case.k_row_slice(got.dv, z), want.dv[0]), \
                 f'dv mismatch on sequence {z}'
+            if want_db:
+                # NaN-aware: tiles a causal mask skips entirely are never
+                # stored, in the varlen call and the dense one alike, so both
+                # keep their NaN fill there and `torch.equal` (NaN != NaN)
+                # would fail on agreement.
+                got_db, want_db_z = case.bias_slice(got.db, z), want.db[0]
+                assert torch.equal(got_db.isnan(), want_db_z.isnan()) and \
+                    torch.equal(got_db.nan_to_num(0.0), want_db_z.nan_to_num(0.0)), \
+                    f'db mismatch on sequence {z}'
     return got
 
 
@@ -616,6 +660,86 @@ def test_backward_gqa_compact():
                       num_head_q=8, num_head_k=2,
                       hdim_qk=BLOCK_DMODEL, hdim_vo=BLOCK_DMODEL, dtype=DTYPE)
     assert_matches_dense(case, None, backward=True)
+
+
+# ---------------------------------------------------------------------------
+# Bias -- one (max_seqlen_q, max_seqlen_k) slot per sequence
+# ---------------------------------------------------------------------------
+#
+# The contract (`check_varlen_bias`): bias and dB are (N, Hq, max_seqlen_q,
+# max_seqlen_k) in every mode, and sequence z reads slot z at rows and columns
+# local to it. The bias is random per slot, so a kernel that reads another
+# sequence's slot -- as every STACKED Q mode once did, all reading slot 0 --
+# disagrees with the dense oracle, which is handed slot z.
+
+BIAS_MODES = ['dense_0x0000', 'compact_0x0B0B', 'padded_0x0202', 'strided_0x1313',
+              'mixed_0x000B', 'seqused_packed_0x150B', 'seqused_bhsd_0x040B']
+
+
+def _bias_case(mode):
+    bits, seqlens_q, seqlens_k, slots_q, slots_k = SUITE_B[mode]
+    return VarlenCase(bits, seqlens_q, seqlens_k,
+                      num_head_q=2, num_head_k=2,
+                      hdim_qk=BLOCK_DMODEL, hdim_vo=BLOCK_DMODEL, dtype=DTYPE,
+                      slots_q=slots_q, slots_k=slots_k)
+
+
+@pytest.mark.parametrize('mode', BIAS_MODES)
+@pytest.mark.parametrize('causal', [None, 'bottom_right'], ids=str)
+def test_bias_per_sequence(mode, causal):
+    """Forward and backward, dB included, bitwise against N dense calls."""
+    case = _bias_case(mode)
+    assert_matches_dense(case, causal, backward=True, bias=case.new_bias(), want_db=True)
+
+
+def test_bias_slot_is_read():
+    """A STACKED Q side must read slot z, not slot 0, for sequence z.
+
+    The per-sequence oracle above already fails then; this names the failure,
+    and shows the slots really differ in their effect.
+    """
+    case = _bias_case('compact_0x0B0B')
+    bias = case.new_bias()
+    got = run_case(case, None, bias=bias)
+    slot0 = run_case(case, None, bias=bias[0:1].expand(bias.shape))
+    for z in range(case.n):
+        if case.seqlens_q[z] == 0 or case.seqlens_k[z] == 0:
+            continue
+        same = torch.equal(case.q_row_slice(got.out, z), case.q_row_slice(slot0.out, z))
+        assert same == (z == 0), \
+            f'sequence {z}: {"slot 0 was read" if same else "slot 0 was not read"}'
+
+
+@pytest.mark.parametrize('mode', ['compact_0x0B0B', 'padded_0x0202', 'strided_0x1313'])
+def test_bias_broadcast_by_stride(mode):
+    """A 1HSS bias is `expand()`ed to NHSS: a zero stride_bz, honoured as such.
+
+    Forward and dQ/dK/dV are compared per sequence against dense calls on the
+    shared slot. dB of a broadcast bias is refused: the sequences sharing the
+    slot would race on its rows.
+    """
+    case = _bias_case(mode)
+    shared = case.new_bias()[0:1]
+    bias = shared.expand(case.n, *shared.shape[1:])
+    assert bias.stride(0) == 0
+    assert_matches_dense(case, 'bottom_right', backward=True, bias=bias)
+    with pytest.raises(ValueError, match='stride 0 on axis 0'):
+        do_refs = [torch.ones((case.num_head_q, s, case.hdim_vo), dtype=DTYPE, device=case.device)
+                   for s in case.seqlens_q]
+        run_case(case,
+                 None,
+                 backward=True,
+                 do_refs=do_refs,
+                 bias=bias,
+                 want_db=True,
+                 db_like_bias=True)
+
+
+def test_bias_shape_is_per_sequence():
+    """The old STACKED shape, (1, Hq, ...), is refused rather than broadcast."""
+    case = _bias_case('compact_0x0B0B')
+    with pytest.raises(ValueError, match='num_seqs'):
+        run_case(case, None, bias=case.new_bias()[0:1])
 
 
 # ---------------------------------------------------------------------------

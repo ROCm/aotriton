@@ -243,9 +243,9 @@ class KernelDescription(Interface):
 
     def hints(self):
         """The hints dataclass instance passed as the builder's 2nd argument, or
-        None if the description declared no @ati.flyc.hints. flytune.py has no
-        `--hints` CLI override at generate time (flyc_compile.py's is a Phase-1,
-        stand-alone-driver-only concept), so defaults are always used."""
+        None if the description declared no @ati.flyc.hints. Always the
+        defaults: per-call choices are the description's builds
+        (`ir/flyc/builds.py`), not hints to one build."""
         return self.hints_cls() if self.hints_cls is not None else None
 
     # --- launch-argument vector ---
@@ -349,6 +349,26 @@ class KernelDescription(Interface):
                     f'flyc kernel {self.NAME!r}: undeclared kernel parameter '
                     f'{name!r} (not bound by any @ati.tensor/@ati.scalar and not '
                     f'a resolved stride argument)')
+
+    def runtime_value_cxx(self, name):
+        """The C++ expression a kernel selector reads runtime value `name` from.
+
+        A per-call rule (`ir/runtime_rules.py`) names its runtime values after
+        the kernel's own `i32` scalar arguments, so the wiring already declared
+        for the kernel argument is where the selector reads it: a params field
+        (`context.params->Max_seqlen_k`), or a context helper's cached result,
+        which `lookup_optimal` evaluates before the selector runs.
+        """
+        for s in self.scalars:
+            if name in s.arg_names:
+                if s.type_ != 'i32':
+                    raise ValueError(f'flyc kernel {self.NAME!r}: runtime value {name!r} is a '
+                                     f'{s.type_!r} scalar; a per-call rule reads i32 ones')
+                if isinstance(s.wires_to, ContextHelper):
+                    return f'context.scratch_params.{s.wires_to.name}'
+                return f'context.params->{s.wires_to if isinstance(s.wires_to, str) else name}'
+        raise ValueError(f'flyc kernel {self.NAME!r}: runtime value {name!r} is not one of its '
+                         f'@ati.scalar arguments')
 
     def pp_arg_doc(self, aname):
         """(is_constexpr, comment_value) for one REAL kernel argument's

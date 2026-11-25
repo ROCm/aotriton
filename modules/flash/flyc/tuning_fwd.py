@@ -3,10 +3,15 @@
 """Unified entry for every arch's flyc attention forward.
 
 Every caller describes the problem with `fmha_meta.FmhaInputMetadata`, and
-each arch's tuning module takes it as is and owns its pins:
+each arch's tuning module takes it as is and owns its pins. Its schedule has
+two layers: per functional, `resolve` (inside `entry_resolve`/`entry_plan`);
+per call, the `ati.derives` rules its optional `variants(meta)` yields
+(`ir/runtime_rules.py`). Both paths read both layers:
 
-- AOT: the code generator calls `resolve_knobs` (the functional fixes the tiles);
-- JIT: `plan` derives the tiles from the real head dims, then resolves;
+- AOT: `aot_builds` (the functional fixes the tiles), one build per distinct
+  override set of the rules;
+- JIT: `plan` derives the tiles from the real head dims and applies the rules
+  that match the call's runtime values;
 - both: `builder` constructs the module. It imports flydsl, so the code
   generator never calls it.
 
@@ -14,6 +19,11 @@ Everything here but `builder` is flydsl-free.
 """
 
 import importlib
+from dataclasses import asdict, fields
+
+import ati_bootstrap  # noqa: F401  (aotriton from this checkout)
+from aotriton.template_instantiation.ir import runtime_rules
+from fmha_meta import RUNTIME_VALUES
 
 _ARCH_MODULES = {
     'gfx950': 'gfx950.tuning_fwd',
@@ -40,19 +50,70 @@ def require_head_dim(meta):
         raise ValueError("plan derives the tile from the caller's head_dim: set it")
 
 
+def variants(arch, meta):
+    """The per-call rules of `meta`'s functional (none for an arch without them)."""
+    rules = getattr(arch_module(_ARCH_MODULES, arch), 'variants', None)
+    return list(rules(meta)) if rules else []
+
+
 def resolve_knobs(arch, meta, *, overrides=None):
-    """The arch's knobs for `meta`; `overrides` (dict or knobs) passes through."""
+    """The arch's per-functional knobs for `meta`, without the per-call rules.
+
+    For sweeps and tools pinning a build; AOT goes through `aot_builds`.
+    """
     require_tile(meta)
     return arch_module(_ARCH_MODULES, arch).entry_resolve(meta, overrides=overrides)
 
 
-def plan(arch, meta, *, overrides=None):
-    """JIT: `(meta, knobs)`, with `meta`'s real head dims rounded up the ladder.
+def aot_builds(arch, meta):
+    """AOT: what a description's builder function returns for `meta`.
 
-    Sets the tiles and `padded_head` that AOT takes from the functional.
+    `(build, knobs)` when one build serves every call, as before the rules
+    existed; otherwise a generator of `(boxes, build, knobs)`, one per distinct
+    override set, `boxes` being the calls it serves (`runtime_rules.builds`).
+    `knobs` is the `asdict` the code generator records beside the hsaco;
+    `build` is deferred because it imports flydsl.
+    """
+    require_tile(meta)
+    entry = arch_module(_ARCH_MODULES, arch)
+
+    def one(overrides):
+        knobs = entry.entry_resolve(meta, overrides=overrides or None)
+
+        def build(knobs=knobs):
+            return entry.entry_build(meta, knobs)
+        return build, asdict(knobs)
+
+    # `verify`, not just `builds`: the code generator's selector relies on the
+    # boxes partitioning every call, and on each build being what JIT applies.
+    found = runtime_rules.verify(variants(arch, meta), RUNTIME_VALUES)
+    if len(found) == 1 and found[0][0] == [{}]:
+        return one(found[0][1])
+    return ((boxes, *one(overrides)) for boxes, overrides in found)
+
+
+def plan(arch, meta, *, overrides=None, max_seqlen_q=None, max_seqlen_k=None):
+    """JIT: `(meta, knobs)` for calls with these runtime values.
+
+    Rounds `meta`'s real head dims up the ladder (setting the tiles and
+    `padded_head` AOT takes from the functional), then applies the rules
+    matching the call: `hdim_qk` is `meta.head_dim`, the sequence lengths are
+    the call's maxima. `overrides` (dict or knobs) wins over the rules, so a
+    rule whose targets it pins is moot; any other rule reading a value not
+    passed raises.
     """
     require_head_dim(meta)
-    return arch_module(_ARCH_MODULES, arch).entry_plan(meta, overrides=overrides)
+    entry = arch_module(_ARCH_MODULES, arch)
+    if isinstance(overrides, dict) or overrides is None:
+        user = dict(overrides or {})
+    else:
+        user = {f.name: getattr(overrides, f.name)
+                for f in fields(overrides) if getattr(overrides, f.name) is not None}
+    meta, _ = entry.entry_plan(meta, overrides=user or None)
+    rules = [r for r in variants(arch, meta) if not runtime_rules.overrides(r).keys() <= user.keys()]
+    values = {'hdim_qk': meta.head_dim, 'max_seqlen_q': max_seqlen_q, 'max_seqlen_k': max_seqlen_k}
+    pins = runtime_rules.overrides_at(rules, values, RUNTIME_VALUES) | user
+    return entry.entry_plan(meta, overrides=pins or None)
 
 
 def arches():

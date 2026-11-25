@@ -57,6 +57,7 @@ import fmha_utils as fmha
 from fmha_utils import MaskedAxis
 from .traits import BF16_BYTES as _ELEM_BYTES
 from .traits import DMA_BYTES as _ACCESS_BYTES
+from .traits import MFMA_M
 from .standalone import buffer_ops, dualwave
 from philox import Philox
 
@@ -74,6 +75,28 @@ from flydsl.expr import math as fmath
 # (`_check_8x_d_contract` states it in the same two numbers); `_slab_span_elems`
 # is the one place that has to agree with it.
 _D_ACCESS_ELEMS = _ACCESS_BYTES // _ELEM_BYTES
+
+
+def _udiv24(a, b):
+    """`a // b` for non-negative i32 operands below 2**24.
+
+    The mask is the whole trick: it proves to LLVM that both operands fit in
+    24 bits, which selects its `v_rcp_f32`-based expansion (about ten
+    instructions) over the full 32-bit one. The caller guarantees the range.
+    """
+    mask = fx.Int32(0xFFFFFF)
+    a24 = arith.andi(as_mlir_value(fx.Int32(a)), as_mlir_value(mask))
+    b24 = arith.andi(as_mlir_value(fx.Int32(b)), as_mlir_value(mask))
+    return fx.Int32(arith.divui(a24, b24))
+
+
+# gfx950's XCD count: workgroups are dealt to XCDs round-robin on their linear
+# id, and each XCD has its own L2. See `ParityKernelContext._map_workgroup`.
+NUM_XCD = 8
+
+# Flat heads -- `(z, head)` pairs -- per chunk of the P7 order; see
+# `ParityKernelContext._lpt_order` for how 32 was chosen.
+LPT_CHUNK_HEADS = 32
 
 __all__ = [
     "ParityGemmHelper",
@@ -561,6 +584,59 @@ def _bias_slab_num_records_bytes(seqlen_q, seqlen_kv, stride_b_seq_q, elem_bytes
     return arith.minui(as_mlir_value(tight), as_mlir_value(loose))
 
 
+def check_score_tensor(name, t, num_seqs, num_head_q, max_seqlen_q, max_seqlen_k, dtype, gradient=False):
+    """Host check for a bias or dB tensor against the varlen bias contract.
+
+    The shape is `(num_seqs, num_head_q, max_seqlen_q, max_seqlen_k)`,
+    whatever the VarlenBits mode: sequence `z` owns slot `z`, and the kernel
+    addresses `t[z, h, i, j]` with `i`, `j` local to the sequence. This is
+    TransformerEngine/cuDNN's `bhss` bias for packed (`thd`) layouts, whose
+    batch axis is `len(cu_seqlens_q) - 1`. `ParityKernelContext.
+    _score_slab_byte_base` states the contract on the device side. Under a
+    dense word `num_seqs` is the batch and the two maxima are the call's
+    `seqlen_q` and `seqlen_k`, so this is the familiar `(B, H, Sq, Sk)`.
+
+    `num_seqs` is the launch's grid z extent: `num_seqlens` for a packed Q
+    side, `batch_size` otherwise.
+
+    **Broadcasting is a stride, not a shape.** `1HSS`, `B1SS` and `11SS`
+    biases are passed as `bias.expand(num_seqs, num_head_q, ...)`: the first
+    two axes may have any stride, 0 included, and the kernel honours it. So
+    the shape check is exact; a caller who wants one slot shared by every
+    sequence says so with a zero stride.
+
+    **A gradient refuses a zero stride where it would be shared.** With
+    `stride(0) == 0` and more than one sequence (or `stride(1) == 0` and more
+    than one head) every sequence (head) stores its own `dS` over the same
+    rows: the right answer is a sum, the kernel writes whichever store lands
+    last. The caller reduces a per-sequence dB instead.
+
+    `max_seqlen_*` are the decode's MAX fallbacks, i.e. what `varlen_args`
+    returns -- under a `seqused_k` layout that is the slot capacity, not the
+    longest used length.
+    """
+    want = (int(num_seqs), int(num_head_q), int(max_seqlen_q), int(max_seqlen_k))
+    if tuple(t.shape) != want:
+        raise ValueError(
+            f"{name} must be (num_seqs, num_heads_q, max_seqlen_q, max_seqlen_k) = {want}; "
+            f"got {tuple(t.shape)}. Sequence z reads slot z with rows and columns local to it -- "
+            f"a varlen {name} is never packed. Broadcast over sequences or heads with expand() "
+            f"(zero strides), not with a size-1 axis."
+        )
+    if t.stride(3) != 1:
+        raise ValueError(f"{name} needs a contiguous seqlen_k axis; strides are {tuple(t.stride())}")
+    if t.dtype != dtype:
+        raise ValueError(f"{name} must have Q's dtype ({dtype}), got {t.dtype}")
+    if gradient:
+        for axis, count, what in ((0, want[0], "sequences"), (1, want[1], "heads")):
+            if t.stride(axis) == 0 and count > 1:
+                raise ValueError(
+                    f"{name} has stride 0 on axis {axis} with {count} {what}: they would race on "
+                    f"the same rows, and the gradient of a shared bias is their sum. Pass a "
+                    f"tensor with one slot per sequence and head, and reduce it afterwards."
+                )
+
+
 def _slab_span_elems(rows, stride_seq, hdim):
     """Elements in a `(batch, head)` slab, ending on its last **accessed** element.
 
@@ -959,6 +1035,54 @@ class _ParityKvStaging:
         return src_base + n_in_tile * self.stride_kv_n_v + global_d
 
 
+def _fresh_lane(lane):
+    """`lane` as an i32 the compiler cannot prove equal to any other value.
+
+    The prologue's Q staging and the epilogue's O staging derive the same
+    lane-to-(row, chunk) indices. Left visible, LLVM computes them once and
+    keeps them live from one end of the kernel to the other, across the whole
+    KV loop -- and at 248 VGPRs that is a spill (30 scratch accesses, 25%
+    slower, measured). An empty asm returning its operand makes each site
+    derive its own.
+    """
+    opaque = dualwave.llvm.inline_asm(T.i32,
+                                      [as_mlir_value(fx.Int32(lane))],
+                                      "",
+                                      "=v,0",
+                                      has_side_effects=True)
+    return fx.Int32(opaque)
+
+
+def _udiv_head_count(a, b, rcp_b):
+    """`(a // b, a % b)` for head counts: `0 <= a < 2**22`, `b >= 1`, i32.
+
+    `rcp_b` is `rcp(float(b))`, passed in so that two divisions by the same
+    `b` share it.
+
+    `fx.Index` `//` and `%` are 64-bit, and a runtime 64-bit unsigned divide is
+    the longest scalar sequence in this kernel's prologue: LLVM emits a
+    high-word test, a ~110-instruction 64-bit path that never runs for head
+    counts, and a 32-bit Newton-refined path that does. The workgroup cannot
+    issue its first load until the head indices exist, so all of it sits on
+    the critical path of every workgroup.
+
+    One float estimate is enough here. For `a < 2**22` both operands convert
+    exactly and `a * rcp(b)` is within about `2**-22` relative of `a / b`
+    (`v_rcp_f32` is 1 ulp, the multiply half an ulp), so the truncated
+    quotient is off by at most one in either direction; one signed check of
+    the remainder fixes both. Head counts are nowhere near the bound.
+    """
+    q = fx.Int32(arith.fptoui(T.i32, arith.mulf(arith.uitofp(T.f32, as_mlir_value(a)), rcp_b)))
+    r = a - q * b
+    under = r < fx.Int32(0)
+    q = fx.Int32(under.select(q - fx.Int32(1), q))
+    r = fx.Int32(under.select(r + b, r))
+    over = r >= b
+    q = fx.Int32(over.select(q + fx.Int32(1), q))
+    r = fx.Int32(over.select(r - b, r))
+    return q, r
+
+
 class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
     """Dualwave context addressing arbitrary BHSD strides, with a runtime scale."""
 
@@ -1085,45 +1209,323 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         self.c_sm_scale = fx.Float32(self.sm_scale_arg)
         self.c_sm_scale_log2e = fx.Float32(self.sm_scale_arg) * fx.Float32(dualwave._LOG2E)
 
-    # -- runtime head counts ---------------------------------------------
+    # -- workgroup mapping and runtime head counts -------------------------
 
     def init_thread_mapping(self):
         super().init_thread_mapping()
+        traits = self.traits
         # Re-derive the four head indices with runtime counts. The *mapping* is
         # the production one verbatim: `h_idx` is decomposed against the KV head
         # count and recomposed against the group size, which groups the Q heads
         # sharing a KV head. Only the operands change from constexpr to runtime,
         # so a build with matching counts schedules identically.
-        num_head_k = fx.Index(self.num_head_k)
-        gqa_group = fx.Index(self.num_head_q) // num_head_k
+        #
+        # Both divisions are by `num_head_k` and both operands are head
+        # counts, so they share one reciprocal and run in 32 bits; see
+        # `_udiv_head_count` for why not `fx.Index` `//` and `%`.
+        num_head_k_i32 = fx.Int32(self.num_head_k)
+        rcp_head_k = rocdl.rcp(T.f32, arith.uitofp(T.f32, as_mlir_value(num_head_k_i32)))
+        gqa_group_i32, _ = _udiv_head_count(fx.Int32(self.num_head_q), num_head_k_i32, rcp_head_k)
+        gqa_group = fx.Index(gqa_group_i32)
         # Published, because the dK/dV group loop's trip count is this same
         # quantity and `q_head_idx` -- the head that loop walks from -- is
         # derived from it two lines down. Recomputing it at the loop is how a
         # trait and a kernarg drifted apart in the first place (issue 9); one
         # source is what stops them disagreeing again.
         self.gqa_group = gqa_group
-        self.h_kv_idx = self.h_idx % num_head_k
-        self.group_id = self.h_idx // num_head_k
+        lpt = bool(traits.LPT_TILE_ORDER and traits.CAUSAL)
+        if const_expr(getattr(traits, "XCD_MAP", "none") == "none"):
+            q_block = self.q_block_idx
+            if const_expr(lpt):
+                h_idx, q_block, z_idx = self._lpt_order(LPT_CHUNK_HEADS)
+                self.h_idx = h_idx
+                self._set_z(z_idx)
+            group_id_i32, h_kv_idx_i32 = _udiv_head_count(fx.Int32(self.h_idx), num_head_k_i32, rcp_head_k)
+            self.h_kv_idx = fx.Index(h_kv_idx_i32)
+            self.group_id = fx.Index(group_id_i32)
+        else:
+            h_kv, group, q_block, z_idx = self._map_workgroup(lpt)
+            self.h_kv_idx = h_kv
+            self.group_id = group
+            self.h_idx = group * fx.Index(self.num_head_k) + h_kv
+            self._set_z(z_idx)
         self.q_head_idx = self.h_kv_idx * gqa_group + self.group_id
         self.kv_head_idx = self.h_kv_idx
-        if const_expr(self.traits.LPT_TILE_ORDER and self.traits.CAUSAL):
-            # P7. Longest-processing-time-first: under a causal mask q-block
-            # `i` walks about `i` KV tiles and `grid.y` issues in increasing
-            # order, so the cheapest workgroups go first and the most expensive
-            # land in the tail. Reversing the index puts them first.
-            #
-            # A bijection over the same index set, so the output is
-            # bit-identical and only the schedule moves -- which is what makes
-            # it safe as a knob. **Measured at 0.0% on gfx950** across every
-            # width and shape tried, so it ships off; with 8 XCDs and this many
-            # workgroups the tail imbalance it targets is already absorbed.
-            # gfx1201's forward kernel measures 12-16% from the same change.
-            #
-            # Folded into this override rather than added as a second one: an
-            # `init_thread_mapping` of its own silently replaced the head-index
-            # derivation above, which only shows up once the runtime head
-            # counts differ from the build's.
-            self.q_block_idx = fx.Index(gpu.grid_dim.y) - fx.Index(1) - self.q_block_idx
+        # Both remaps above permute the grid as launched, so under GQA head
+        # packing -- `grid.x = num_head_q // Q_HEADS_PER_WG` -- they permute
+        # packed workgroups and `group_id` is a packed group slot, which this
+        # then spreads over the waves.
+        if const_expr(traits.Q_HEADS_PER_WG > 1):
+            self._pack_q_heads(gqa_group)
+        # **`q_start` is re-derived here, not just `q_block_idx`.** The base
+        # class derives `q_start` from the launch's `grid.y` before this runs,
+        # and nothing downstream reads `q_block_idx`; the first P7 reversed
+        # only the latter, so an LPT build compiled to the same ISA as a plain
+        # one and measured at the 0.0% that a no-op measures.
+        self.set_q_block(q_block)
+
+    def _lpt_order(self, chunk):
+        """`(h_idx, q block, z)` in longest-processing-time-first order (P7).
+
+        Under a causal mask q block `i` walks about `i + 1` KV tiles, and the
+        launch issues them in increasing order with the batch outermost, so
+        the most expensive blocks of the last sequence land in the tail. This
+        deals the workgroups out with the q axis reversed and made *slowest*:
+        `chunk` flat heads -- `(z, head)` pairs -- at a time, every head's
+        longest block first, then every head's next longest, and so on. Within
+        a chunk the head stays the fastest axis.
+
+        This is what closed the causal long-sequence shortfall: S=4096 at 1x
+        the reference work (B=2, H=16, 512 workgroups) went 597 -> 823 TF, the
+        4x-work shape (B=8) 761 -> 838, so the two now nearly agree. Over hdim
+        128, S 1024..8192, H 8..64 at 1x and 4x work it gains 3-42%; the cells
+        it does not gain -- 2048+ workgroups at S=1024, one wave of 256 at
+        S=8192 -- are within 1% either way.
+
+        Why each part is the way it is -- all three measured, and the first two
+        reproduce on a probe kernel that only spins, so they belong to the
+        dispatcher, not to the memory system:
+
+        - **Slowest, not just reversed.** Reversing `grid.y` in place is LPT
+          only within one batch slice; it closes most of the gap where a slice
+          fills the GPU and almost none of it at H=12 (+2% where this is +28%).
+        - **The head fastest.** gfx950 deals each XCD's workgroups to its four
+          shader engines round-robin, so an order whose cost cycles with a
+          period of four -- head-major with four q blocks -- hands one engine
+          every long block: head-major cost up to 25% at S=1024.
+        - **Chunked, not global.** A global order runs every head at the same
+          q block at once, so no two workgroups in flight share K/V; at S=1024
+          and 2048 with large batches that cost up to 8%. A chunk of 32 heads
+          keeps several blocks of each head in flight, as the launch order did,
+          and on the probe schedules as well as the global order. 64 measured
+          the same within noise except at S=1024, where it was 2-5% behind.
+
+        The last chunk takes the remainder rather than running a short one
+        alone at the end. With `chunk` a multiple of 8, a flat head runs on
+        XCD `flat % 8` for every one of its blocks, as when the head count is
+        a multiple of 8 and the grid is launched as is.
+
+        **i32 with 24-bit division** for the same reason as `_map_workgroup`;
+        past 2**24 workgroups the launch order is kept.
+        """
+        x = fx.Int32(gpu.block_idx.x)
+        y = fx.Int32(gpu.block_idx.y)
+        z = fx.Int32(gpu.block_idx.z)
+        gx = fx.Int32(gpu.grid_dim.x)
+        gy = fx.Int32(gpu.grid_dim.y)
+        gz = fx.Int32(gpu.grid_dim.z)
+        one = fx.Int32(1)
+        flat_heads = gx * gz
+        linear = x + gx * (y + gy * z)
+        chunk = fx.Int32(chunk)
+        num_chunks = flat_heads // chunk
+        last = (num_chunks > one).select(num_chunks - one, fx.Int32(0))
+        k = _udiv24(linear, chunk * gy)
+        k = (k < last).select(k, last)
+        width = (k < last).select(chunk, flat_heads - last * chunk)
+        within = linear - k * chunk * gy
+        first = k * chunk
+        level = _udiv24(within, width)
+        flat = first + within - level * width
+        z_idx = _udiv24(flat, gx)
+        h = flat - z_idx * gx
+        q_block = gy - one - level
+        # Past 2**24 workgroups the divisions are not exact: keep the launch.
+        small = flat_heads * gy < fx.Int32(1 << 24)
+        h = small.select(h, x)
+        q_block = small.select(q_block, y)
+        z_idx = small.select(z_idx, z)
+        return fx.Index(h), fx.Index(q_block), fx.Index(z_idx)
+
+    def _set_z(self, z_idx):
+        """Point the context at grid-z slot `z_idx` (a sequence, or under
+        split-K a (sequence, split) pair)."""
+        if const_expr(self.traits.SPLITK):
+            self.bz_idx = z_idx
+            self.batch_idx = z_idx // self.traits.NUM_KV_SPLITS
+            self.split_idx = z_idx % self.traits.NUM_KV_SPLITS
+        else:
+            self.batch_idx = z_idx
+
+    def set_q_block(self, q_block_idx):
+        """Point the context at q block `q_block_idx`; everything q-dependent
+        downstream (`q_row`, the causal bound, the Q/O/LSE addressing) is
+        derived from `q_start` after this."""
+        self.q_block_idx = q_block_idx
+        self.q_start = q_block_idx * self.traits.BLOCK_M
+
+    def _map_workgroup(self, lpt):
+        """`(kv head, group, q block, z)` for this workgroup under `XCD_MAP` (P8).
+
+        gfx950 dispatches workgroups to its eight XCDs round-robin on the
+        linear id `x + gx * (y + gy * z)` (checked with `s_getreg XCC_ID`), and
+        each XCD has its own L2. With the head-fastest grid, head `h` lands on
+        XCD `(h + gx * (y + gy * z)) % 8` -- one XCD per head when `gx % 8 ==
+        0`, two or more otherwise -- and that affinity decides how often a KV
+        head's K/V is fetched past L2. Every mapping here is a bijection over
+        the grid, computed from the *runtime* extents, so the output does not
+        depend on it.
+
+        **Measured, and neither is the default.** Non-causal, hdim 128, S
+        1024..8192, H 8..64 (12, 20 and 40 included), 1x and 4x the reference
+        work: `pin_heads` is within 1.5% of `none` everywhere, +0.5-1% at
+        S >= 4096 and -1.5% at S=1024; `head_slow` is -2% to -2.5% at S <= 2048.
+        So the L2 affinity is worth under 1% here. Causal, `pin_heads` without
+        P7 is up to 25% *behind*, which is the dispatch order and not the L2:
+        see `_lpt_order`.
+
+        **i32 with 24-bit division, not `fx.Index`.** The divisors are runtime
+        values, and an `index` (i64) division expands to well over a hundred
+        dependent VALU instructions. Operands below 2**24 let LLVM divide
+        through `v_rcp_f32` in about ten. A grid of 2**24 workgroups or more is
+        left as launched.
+        """
+        traits = self.traits
+        x = fx.Int32(gpu.block_idx.x)
+        y = fx.Int32(gpu.block_idx.y)
+        z = fx.Int32(gpu.block_idx.z)
+        gx = fx.Int32(gpu.grid_dim.x)
+        gy = fx.Int32(gpu.grid_dim.y)
+        gz = fx.Int32(gpu.grid_dim.z)
+        one = fx.Int32(1)
+        num_head_k = fx.Int32(self.num_head_k)
+        gqa_group = _udiv24(fx.Int32(self.num_head_q), num_head_k)
+        if const_expr(traits.Q_HEADS_PER_WG > 1):
+            # Under GQA head packing a workgroup serves `Q_HEADS_PER_WG` q
+            # heads, so a KV head has that many fewer group slots on the grid;
+            # the host guarantees the division is exact.
+            gqa_group = _udiv24(gqa_group, fx.Int32(traits.Q_HEADS_PER_WG))
+        if const_expr(traits.XCD_MAP == "head_slow"):
+            # Upstream's `XCD_SWIZZLE` (arXiv:2511.02132), with the head count
+            # read from the grid rather than a trait: q block fastest within a
+            # batch slice, so consecutive workgroups walk one head's blocks.
+            linear = x + y * gx
+            h = _udiv24(linear, gy)
+            q_block = linear - h * gy
+            if const_expr(lpt):
+                q_block = gy - one - q_block
+            group = _udiv24(h, num_head_k)
+            h_kv = h - group * num_head_k
+            return fx.Index(h_kv), fx.Index(group), fx.Index(q_block), fx.Index(z)
+        # `pin_heads`. The unit of affinity is a (z, kv head) pair -- a "flat
+        # head" -- since that is what shares K/V: all of a KV head's q heads
+        # and q blocks. Of the `F` flat heads, the `F // 8 * 8` that divide
+        # evenly are dealt whole, flat head `8k + c` to XCD `c`, so every XCD
+        # gets the same number of whole heads.
+        n_xcd = fx.Int32(NUM_XCD)
+        linear = x + gx * (y + gy * z)
+        xcd = linear % n_xcd
+        slot = linear // n_xcd
+        flat_heads = gz * num_head_k
+        whole = flat_heads // n_xcd
+        units = gqa_group * gy
+        pinned_slots = whole * units
+        in_rest = slot >= pinned_slots
+        rest_heads = flat_heads - whole * n_xcd
+        if const_expr(lpt):
+            # Under P7 the q block is the *slowest* axis on each XCD -- the LPT
+            # order, and what keeps the dispatcher's round-robin over an XCD's
+            # four shader engines from handing one engine every long block.
+            # The `F % 8` left over go round-robin after the pinned part, in
+            # the same order.
+            per_level = whole * gqa_group
+            level_p = _udiv24(slot, (per_level > fx.Int32(0)).select(per_level, one))
+            r_p = slot - level_p * per_level
+            per_level_r = rest_heads * gqa_group
+            r_lin = linear - pinned_slots * n_xcd
+            level_r = _udiv24(r_lin, (per_level_r > fx.Int32(0)).select(per_level_r, one))
+            r_r = r_lin - level_r * per_level_r
+            level = in_rest.select(level_r, level_p)
+            r = in_rest.select(r_r, r_p)
+            head_ord = _udiv24(r, gqa_group)
+            group = r - head_ord * gqa_group
+            q_block = gy - one - level
+        else:
+            # aiter's `mode 2` generalized: each XCD walks its heads one at a
+            # time, all of a head's q blocks together (group fastest, so the q
+            # heads sharing a KV head walk it in step). The `F % 8` left over
+            # cannot be dealt whole without idling XCDs, so their units are cut
+            # into eight contiguous runs, one per XCD: each such head is shared
+            # by about `8 / (F % 8)` XCDs rather than all eight. Under a causal
+            # mask a run walks its q blocks zig-zag (0, n-1, 1, n-2, ...), so its
+            # work does not depend on where the cut falls.
+            rest = rest_heads * units
+            rest_per_xcd = rest // n_xcd
+            rest_extra = rest - rest_per_xcd * n_xcd
+            rest_first = xcd * rest_per_xcd + (xcd < rest_extra).select(xcd, rest_extra)
+            unit = in_rest.select(rest_first + slot - pinned_slots, slot)
+            head_ord = _udiv24(unit, units)
+            within = unit - head_ord * units
+            q_block = _udiv24(within, gqa_group)
+            group = within - q_block * gqa_group
+            if const_expr(traits.CAUSAL):
+                half = q_block // fx.Int32(2)
+                zig = (q_block % fx.Int32(2) == fx.Int32(0)).select(half, gy - one - half)
+                q_block = in_rest.select(zig, q_block)
+        flat = in_rest.select(whole * n_xcd + head_ord, head_ord * n_xcd + xcd)
+        z_idx = _udiv24(flat, num_head_k)
+        h_kv = flat - z_idx * num_head_k
+        # Past 2**24 workgroups the divisions above are not exact: keep the
+        # grid as launched there, which is the `none` mapping.
+        small = gx * gy * gz < fx.Int32(1 << 24)
+        h_none = _udiv24(x, num_head_k)
+        h_kv = small.select(h_kv, x - h_none * num_head_k)
+        group = small.select(group, h_none)
+        q_block = small.select(q_block, y)
+        z_idx = small.select(z_idx, z)
+        return fx.Index(h_kv), fx.Index(group), fx.Index(q_block), fx.Index(z_idx)
+
+    def _pack_q_heads(self, gqa_group):
+        """Give each wave its own q head, so one workgroup serves several.
+
+        **GQA head packing.** When `seqlen_q` is shorter than the workgroup's
+        `Q_TILES * ROWS_PER_WAVE` rows, the waves past the sequence end compute
+        a full MFMA schedule over rows that do not exist -- at `seqlen_q = 64`
+        on a 4-wave, 128-row workgroup that is half the machine. Under GQA the
+        q heads of one group read the *same* K and V, so the idle waves can take
+        a second head of the group instead: the KV tile in LDS is shared, and
+        only the Q rows, the O/LSE rows and the dropout plane differ.
+
+        The workgroup's `BLOCK_M` is therefore *per head*, and the waves split
+        as `(sub_head, row_tile)` with the row tile fastest:
+
+            waves_per_head = Q_TILES // Q_HEADS_PER_WG
+            sub_head       = wave // waves_per_head
+            row offset     = (wave % waves_per_head) * ROWS_PER_WAVE
+
+        `grid.x` is `num_head_q // Q_HEADS_PER_WG`; workgroup `h` takes kv head
+        `h % num_head_k` and group slot `h // num_head_k`, so its heads are
+        `h_kv * gqa_group + slot * Q_HEADS_PER_WG + sub_head` -- consecutive
+        members of one group, which is what makes the KV shared. The host
+        rejects a group size that `Q_HEADS_PER_WG` does not divide.
+
+        Everything else keys off `q_head_idx` and the row, both of which are
+        now per wave: the Q and O descriptors, the LSE row, the bias slab and
+        the philox plane. They are derived from the *uniform* wave id, so they
+        stay scalar. The causal bound is per head and every head in the
+        workgroup has the same rows, so the block's last real row is still right.
+        """
+        traits = self.traits
+        waves_per_head = traits.Q_TILES // traits.Q_HEADS_PER_WG
+        sub_head = self.wave_id_uni // fx.Index(waves_per_head)
+        self.q_head_idx = (
+            self.h_kv_idx * gqa_group + self.group_id * fx.Index(traits.Q_HEADS_PER_WG) + sub_head
+        )
+        self.wave_q_offset = (self.wave_id % fx.Index(waves_per_head)) * fx.Index(traits.ROWS_PER_WAVE)
+
+    def init_q_row(self):
+        super().init_q_row()
+        traits = self.traits
+        if const_expr(traits.Q_HEADS_PER_WG > 1):
+            # The inherited `q_start_pos_i32` reads the uniform wave id as a
+            # row block; under packing the row block is the remainder. Same
+            # correction `WideKernelContext` makes for its shards -- the causal
+            # mask's "does this tile need masking" test reads it.
+            waves_per_head = traits.Q_TILES // traits.Q_HEADS_PER_WG
+            self.q_start_pos_i32 = fx.Int32(
+                self.q_start
+                + (self.wave_id_uni % fx.Index(waves_per_head)) * fx.Index(traits.ROWS_PER_WAVE)
+            )
 
     # -- granule-general staging ------------------------------------------
 
@@ -1261,8 +1663,13 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
             offset, plane, self.seq_len_v, self.seq_len_kv_v
         )
 
-    def init_tile_bounds(self, **kwargs):
+    def init_tile_bounds(self, *, exact_tile_count=False, **kwargs):
         """Resolve the window, then let the causal bound derive from it.
+
+        `exact_tile_count` ends the walk at the last tile that holds a live
+        column instead of at the base class's padded bound -- see
+        `_drop_padding_tiles`. Only a body that can drain any segment length
+        may ask for it.
 
         Here and not in `init_runtime_indices` for an ordering reason: a
         sentinel resolves against the sequence lengths, and those are not
@@ -1302,9 +1709,67 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
             )
             self.window_left_i32 = fx.Int32(left)
             self.delta_i32 = fx.Int32(right)
+        # **The KV end follows the block's last *real* row.** The base class
+        # spells `causal_end_raw_i32` as `q_start + BLOCK_M + delta_i32`, the
+        # tile's last row, so a 128-row block over 64 real rows walks the KV
+        # of 64 rows that are never stored -- under a top-left mask, twice the
+        # live range. `delta_i32` is shifted by the padding for the base's
+        # computation only, which makes it `min(q_start + BLOCK_M, seqlen_q) +
+        # delta_i32`; the mask keeps the unshifted value. A block past its
+        # sequence (varlen) keeps the old bound: it is inactive either way.
+        # Only fully masked tiles are cut, but a shorter walk can move the
+        # pipeline's epilogue onto live tiles, and the loop and the epilogue
+        # round a rescaled P differently: O may move by a bf16 ulp, exactly
+        # as with `exact_kv_tiles`. Never at `seqlen_q == seqlen_k`, nor under
+        # bottom-right causal, where `num_kv_tiles` already caps the last block.
+        delta_i32 = self.delta_i32
+        if const_expr(self.traits.CAUSAL):
+            block_m_i32 = fx.Int32(self.traits.BLOCK_M)
+            row_pad_i32 = fx.Int32(self.q_start) + block_m_i32 - fx.Int32(self.seqlen_q_v)
+            live_pad = (row_pad_i32 > fx.Int32(0)) & (row_pad_i32 < block_m_i32)
+            self.delta_i32 = delta_i32 - fx.Int32(live_pad.select(row_pad_i32, fx.Int32(0)))
         super().init_tile_bounds(**kwargs)
+        self.delta_i32 = delta_i32
+        self.exact_tile_count = exact_tile_count
+        if const_expr(exact_tile_count):
+            self._drop_padding_tiles()
         if const_expr(self.traits.WINDOW and not self.traits.SPLITK):
             self._skip_dead_leading_tiles()
+
+    def _drop_padding_tiles(self):
+        """End the KV walk at the last live tile.
+
+        The base class rounds the tile count up to an even number of at least
+        four, because the dual-wave pipeline it was written for consumes two
+        tiles per iteration and its prologue plus epilogue span four. Every
+        tile added by that rounding is loaded out of bounds, masked to `-inf`
+        and contributes nothing -- but costs a full tile of MFMA and softmax.
+        At `BLOCK_N = 64` that is the work of `seqlen_k = 256` for any shorter
+        sequence, and a sixth of the work at five tiles.
+
+        This recomputes the same bound without the rounding. Clamped to one
+        tile, not zero: an empty KV range (varlen `seqlen_k = 0`) still runs
+        the prologue's one fully-masked tile and stores the zero row the
+        padded walk used to produce from four of them.
+
+        Split-K and paged keep the padded bound: split-K chunks the range in
+        even pieces of at least four, and the paged block table is staged for
+        exactly `[split_t0, split_t_end)`, which the prologue's K prefetches
+        would read past.
+        """
+        traits = self.traits
+        if traits.SPLITK or traits.PAGED:
+            raise ValueError("exact_tile_count does not support split-K or paged builds")
+        live = self.num_kv_tiles
+        if const_expr(traits.CAUSAL):
+            causal_end_i32 = fx.Int32(
+                (self.causal_end_raw_i32 > fx.Int32(0)).select(self.causal_end_raw_i32, fx.Int32(0))
+            )
+            causal_tiles = (fx.Index(causal_end_i32) + self.kv_tile_size - 1) // self.kv_tile_size
+            live = fx.Index((causal_tiles < live).select(causal_tiles, live))
+        live = fx.Index((live < fx.Index(1)).select(fx.Index(1), live))
+        self.max_num_tiles = live
+        self.split_t_end = live
 
     def _skip_dead_leading_tiles(self):
         """Start the KV walk at the window's left edge instead of at tile 0.
@@ -1335,13 +1800,20 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         first_col_i32 = fx.Int32(self.q_start) - self.window_left_i32
         first_col_i32 = fx.Int32((first_col_i32 > fx.Int32(0)).select(first_col_i32, fx.Int32(0)))
         t0 = fx.Index(first_col_i32) // fx.Index(traits.BLOCK_N)
-        # Even, because the software pipeline consumes two tiles per iteration
-        # and `split_t_end` is already even; an odd base would make the segment
-        # odd and leave the epilogue a tile short.
-        t0 = (t0 // fx.Index(2)) * fx.Index(2)
-        # The pipeline's prologue plus epilogue need four tiles to exist. The
-        # base class guarantees `max_num_tiles >= 4`, so this cannot underflow.
-        cap = self.split_t_end - fx.Index(4)
+        if const_expr(self.exact_tile_count):
+            # The body drains a segment of any length, so neither the parity
+            # nor the four-tile floor below applies; one live tile must remain.
+            # `_drop_padding_tiles` guarantees `split_t_end >= 1`.
+            cap = self.split_t_end - fx.Index(1)
+        else:
+            # Even, because the software pipeline consumes two tiles per
+            # iteration and `split_t_end` is already even; an odd base would
+            # make the segment odd and leave the epilogue a tile short.
+            t0 = (t0 // fx.Index(2)) * fx.Index(2)
+            # The pipeline's prologue plus epilogue need four tiles to exist.
+            # The base class guarantees `max_num_tiles >= 4`, so this cannot
+            # underflow.
+            cap = self.split_t_end - fx.Index(4)
         self.split_t0 = fx.Index((t0 < cap).select(t0, cap))
 
     def init_runtime_indices(self, **kwargs):
@@ -1372,6 +1844,43 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         if batch_idx is None:
             batch_idx = self.batch_idx
         elems = batch_idx * fx.Index(s0) + head_idx * fx.Index(s1) + row_off * fx.Index(s2)
+        return elems * fx.Index(self.traits.BF16_BYTES)
+
+    def _score_slab_byte_base(self, s0, s1, head_idx):
+        """Byte offset of this workgroup's bias (or dB) slab: sequence and head only.
+
+        **A bias is addressed by its own sequence slot and local coordinates,
+        never by a token origin.** This is AOTriton's varlen bias contract (the
+        `bhss` bias of TransformerEngine/cuDNN for packed layouts). Element
+        `(i, j)` of sequence `z`'s scores, for query head `h`, is
+
+            B[z, h, i, j]    0 <= i < seqlen_q[z], 0 <= j < seqlen_k[z]
+
+        whatever the VarlenBits mode: the slot is the grid's sequence index
+        (`seq_idx_i32`), not either side's batch decode, and the row and column
+        are the query and key indices *within the sequence*. Neither
+        `q_row_off` nor `kv_row_off` takes part. The Triton kernels are the
+        reference:
+
+        - forward: `B + off_z*stride_bz + off_h_q*stride_bh + offs_m*stride_bm`
+          (`fwd_kernel.py`), columns `start_N + OFFS_N` (`fwd_kernel_inner.py`);
+        - dK/dV, dQ and fused: `B + off_h_q*stride_bh + off_z*stride_bz`
+          (`bwd_kernel_dk_dv.py`, `bwd_kernel_dq.py`, `bwd_kernel_fuse.py`),
+          local rows and columns in the `bwd_inner_*.py` loops;
+        - dB, the same slab of the gradient (`bwd_kernel_dq.py`,
+          `bwd_kernel_fuse.py`).
+
+        So the bias is `(N, Hq, max_seqlen_q, max_seqlen_k)`. A bias shared by
+        sequences or heads is the same tensor with a zero `s0` / `s1` stride
+        (`expand()`), which this formula honours as is; `check_score_tensor`
+        refuses that for dB.
+
+        Under a dense word `z` is the batch index, so dense callers see no
+        difference. A STACKED Q side used to take its decoded batch index
+        here, 0, so every packed sequence read slot 0; that is now
+        `bias.expand(N, ...)`.
+        """
+        elems = fx.Index(self.seq_idx_i32) * fx.Index(s0) + head_idx * fx.Index(s1)
         return elems * fx.Index(self.traits.BF16_BYTES)
 
     def _slab_view(self, tensor, s0, s1, s2, row_off, head_idx, rows, hdim, batch_idx=None):
@@ -1472,9 +1981,10 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         self.kv_gmem_elem_offset = fx.Index(0)
 
         if const_expr(traits.BIAS_TYPE):
-            # Same slab shape as Q, which is the point: bias is indexed by
-            # (batch, head, q_row, kv_col), so the varlen row origin and the
-            # head fold into the base exactly as Q's do, and what remains per
+            # Bias is indexed by (batch, head, q_row, kv_col) with the row and
+            # column *local to the sequence*: the sequence slot and the head
+            # fold into the base, the varlen row origin does not -- see
+            # `_score_slab_byte_base` for the contract -- and what remains per
             # access is `q_row * stride_b_seq_q + col`.
             #
             # A raw resource rather than a `_slab_view`: the reads here are
@@ -1494,13 +2004,7 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
                     self.seqlen_q_v, self.seqlen_kv_v, self.stride_b_seq_q, traits.BF16_BYTES
                 ),
                 base_byte_offset=as_mlir_value(
-                    self._slab_byte_base(
-                        self.stride_b_batch,
-                        self.stride_b_head,
-                        self.stride_b_seq_q,
-                        self.q_row_off,
-                        self.q_head_idx,
-                    )
+                    self._score_slab_byte_base(self.stride_b_batch, self.stride_b_head, self.q_head_idx)
                 ),
             )
         self.q_div = self._slab_view(
@@ -1559,6 +2063,12 @@ class ParityQLoader(dualwave.DualwaveQLoader):
     happen is those elements reaching the MFMA, which is what `discard` stops.
     """
 
+    def __init__(self, ctx, *, pad_steps_only=False):
+        super().__init__(ctx)
+        # Forward only for now: the backward has not been measured with it,
+        # and dO's loader would need `HDIM_VO_FLOOR` in place of the QK floor.
+        self.pad_steps_only = pad_steps_only
+
     def scale_all(self, q_all):
         """Refused. `qk_scale` belongs on the f32 scores; see `scale_scores`.
 
@@ -1601,13 +2111,98 @@ class ParityQLoader(dualwave.DualwaveQLoader):
             "scores with `ParityGemmHelper.scale_scores` instead, as the Triton kernels do."
         )
 
+    # Where Q is staged in LDS, as a byte address, or None to load it straight
+    # into VGPRs. Set on the context by a kernel body that allocated the
+    # region (see `q_stage_layout`) before this loader is constructed.
+    lds_q_stage_idx = None
+
+    @staticmethod
+    def q_stage_layout(traits):
+        """`(chunks, lds_bytes)` of Q's LDS staging, or `None` if it does not apply.
+
+        `chunks` is 16-byte chunks per Q row. One DMA issue covers
+        `64 // chunks` whole rows, which is what makes it coalesced, so the
+        chunk count must divide 64; and `chunks // 2` issues -- one per 16-wide
+        K step -- must be `K_STEPS_QK`, which every wait counting Q assumes.
+        """
+        chunks = traits.K_STEPS_QK * traits.K_STEP_QK * traits.BF16_BYTES // 16
+        if traits.ROWS_PER_WAVE != 32 or 64 % chunks or chunks // 2 != traits.K_STEPS_QK:
+            return None
+        return chunks, traits.NUM_WAVES * 32 * chunks * 16
+
+    def _q_stage_geometry(self):
+        chunks, _ = self.q_stage_layout(self.traits)
+        swz = min(chunks, 16) - 1
+        wave_base = fx.Int32(self.lds_q_stage_idx) + fx.Int32(self.wave_id_uni) * fx.Int32(32 * chunks * 16)
+        return chunks, swz, wave_base
+
+    def issue_to_lds(self):
+        """DMA this wave's 32 Q rows into LDS, `64 // chunks` whole rows per issue.
+
+        The register load's layout is the MFMA's: lane `l` takes row `l % 32`,
+        16 bytes at a column set by `l // 32`, so one issue touches 32 rows x
+        32 bytes -- 32 cache lines for 1 KiB, 8x what that much data spans.
+        Measured with coalesced (wrong-layout) addresses swapped in, that alone
+        was worth +3.7% at Sq=1024 Sk=64. Here each issue reads whole rows;
+        `load_pack` then picks the MFMA layout out of LDS.
+
+        A DMA lands lane `l` at `m0 + 16 * l` and nowhere else, so the bank
+        swizzle that keeps `load_pack`'s column-wise read conflict-free is
+        applied to the *global* address instead: lane `l` fetches chunk
+        `(l % chunks) ^ (row & swz)` of its row, which is still the whole row
+        per issue, merely in a permuted order.
+
+        Same issue count as the register path, `K_STEPS_QK`, so every
+        `vmcnt` that counts Q is unchanged.
+        """
+        traits = self.traits
+        ctx = self.ctx_ref
+        ctx.init_q_row()
+        chunks, swz, wave_base = self._q_stage_geometry()
+        rows_per_issue = 64 // chunks
+        lane = _fresh_lane(self.lane)
+        chunk = lane & fx.Int32(chunks - 1)
+        row_in_issue = lane >> fx.Int32(chunks.bit_length() - 1)
+        for i in range_constexpr(traits.K_STEPS_QK):
+            row = row_in_issue + fx.Int32(i * rows_per_issue)
+            col = (chunk ^ (row & fx.Int32(swz))) << fx.Int32(3)
+            src = self.q_gmem_elem_offset + (self.wave_q_offset + fx.Index(row)) * self.stride_q_n_v + fx.Index(col)
+            dualwave._buffer_load_lds_128(self.q_div,
+                                          wave_base + fx.Int32(i * 1024),
+                                          src,
+                                          0,
+                                          _dma_atom=self.dma_atom,
+                                          _lds_ptr_ty=self.lds_ptr_ty)
+
+    def _read_staged_pack(self, ks):
+        """One MFMA-layout Q pack out of the staging area; see `issue_to_lds`."""
+        chunks, swz, wave_base = self._q_stage_geometry()
+        row = fx.Int32(self.lane_mod_32)
+        chunk = fx.Int32(ks * 2) + fx.Int32(self.lane_div_32)
+        addr = wave_base + row * fx.Int32(chunks * 16) + ((chunk ^ (row & fx.Int32(swz))) << fx.Int32(4))
+        noalias = dualwave._dualwave_lds_noalias_scopes("lds_q", self.traits.LDS_SCOPE_NAMES)
+        raw = dualwave.llvm.LoadOp(Vec.make_type(4, fx.Int32),
+                                   _lds_ptr_with_imm(addr, 0),
+                                   alignment=16,
+                                   alias_scopes=dualwave._dualwave_lds_alias_scopes("lds_q"),
+                                   noalias_scopes=noalias).result
+        return Vec(raw, (4,), fx.Int32).bitcast(self.elem_dtype).ir_value()
+
     def load_pack(self, q_row_in_block, ks):
-        pack = super().load_pack(q_row_in_block, ks)
+        if const_expr(self.lds_q_stage_idx is None):
+            pack = super().load_pack(q_row_in_block, ks)
+        else:
+            pack = self._read_staged_pack(ks)
         if const_expr(not self.PADDED_HEAD):
             return pack
+        # With `pad_steps_only`, only the steps that can hold pad, as in
+        # `load_k`. Masking all of them cost the `exact_kv_tiles` forward up to
+        # 160 spills: LLVM hoists the masks, identical in every arm of
+        # `_exact_body`, above its branch, and the structurized arms then keep
+        # them live through each other's KV loops.
+        if const_expr(self.pad_steps_only and (ks + 1) * self.traits.K_STEP_QK <= self.HDIM_QK_FLOOR):
+            return pack
         col_base = fx.Index(ks * self.traits.K_STEP_QK) + self.lane_div_32 * fx.Index(self.traits.MFMA_LANE_K)
-        # Q is masked once, before the KV loop, so the mask registers die
-        # immediately and the bitmask form is pure win here.
         return MaskedAxis(fx.Index(self.hdim_qk), elem_dtype=self.elem_dtype, bitmask=True).discard(
             pack, col_base, self.traits.MFMA_LANE_K
         )
@@ -1662,6 +2257,12 @@ class ParityKvLdsToVgprLoader(dualwave.DualwaveKvLdsToVgprLoader):
     lines and leaves D in linear order. `k_hi` differs from `k_lo` by
     `K_LDS_TO_REG_N_STRIP_STRIDE`, an N offset, so it carries the same columns.
     """
+
+    def __init__(self, ctx, *, per_tile_pad_mask=False):
+        super().__init__(ctx)
+        # See `_discard_pad_k`. Forward only for now, like `ParityQLoader`'s
+        # `pad_steps_only`.
+        self.per_tile_pad_mask = per_tile_pad_mask
 
     @contextlib.contextmanager
     def _scoped_to_stage(self):
@@ -1746,6 +2347,8 @@ class ParityKvLdsToVgprLoader(dualwave.DualwaveKvLdsToVgprLoader):
         masked = [ks for ks in range(steps) if ((stage * steps + ks) + 1) * self.traits.K_STEP_QK > self.HDIM_QK_FLOOR]
         if const_expr(not masked):
             return (k_lo, k_hi)
+        if const_expr(self.per_tile_pad_mask and self.elem_dtype.width == 16):
+            return self._discard_pad_k(k_lo, k_hi, masked, stage * steps, width)
         # The bitmask form ANDs one precomputed dword instead of selecting per
         # element, but each mask is a live register. Gated on the number of
         # steps that actually survive rather than on `K_STEPS_QK`: measured
@@ -1763,6 +2366,33 @@ class ParityKvLdsToVgprLoader(dualwave.DualwaveKvLdsToVgprLoader):
             col_base = fx.Index((stage * steps + ks) * self.traits.K_STEP_QK) + self.lane_div_32 * fx.Index(width)
             k_lo[ks] = cols.discard(k_lo[ks], col_base, width)
             k_hi[ks] = cols.discard(k_hi[ks], col_base, width)
+        return (k_lo, k_hi)
+
+    def _discard_pad_k(self, k_lo, k_hi, masked, step0, width):
+        """Zero K's pad columns with masks computed per tile, not held.
+
+        Precomputed bitmasks are 8 VGPRs held across the KV loop (and, with
+        `exact_kv_tiles`, across all four arms), which pushed the padded
+        builds into in-loop spills. Here the one live value is a per-lane
+        column count `x`, and each half of a dword is kept iff its column is
+        below it: `(col - x) >> 15` over packed i16 is that mask, two packed
+        VALU ops per dword. `x` flows through an empty asm tied to this
+        tile's K data so LICM cannot hoist the masks back out of the loop.
+        """
+        anchor = Vec(k_lo[masked[0]]).bitcast(fx.Int32)[0]
+        lane_off = dualwave.llvm.inline_asm(T.i32,
+                                            [as_mlir_value(fx.Int32(self.lane_div_32 * fx.Index(width))),
+                                             as_mlir_value(anchor)],
+                                            "",
+                                            "=v,0,v",
+                                            has_side_effects=False)
+        x = Vec.from_elements([fx.Int16(fx.Int32(self.hdim_qk) - fx.Int32(lane_off))] * width, fx.Int16)
+        for ks in masked:
+            col0 = (step0 + ks) * self.traits.K_STEP_QK
+            cols = Vec.from_elements([fx.Int16(col0 + j) for j in range(width)], fx.Int16)
+            keep = ((cols - x) >> Vec.filled(width, 15, fx.Int16)).bitcast(fx.Int32)
+            for packs in (k_lo, k_hi):
+                packs[ks] = (Vec(packs[ks]).bitcast(fx.Int32) & keep).bitcast(self.elem_dtype).ir_value()
         return (k_lo, k_hi)
 
     def read_v_packs(self, buf_id, urv_base):
@@ -2213,8 +2843,179 @@ class ParityStoreHelper(dualwave.DualwaveStoreHelper):
     the whole change; the 128-bit store path above it is untouched.
     """
 
+    # Whether `_store_final_o_row` may stage O through the K/V LDS buffers.
+    # See there; a kernel body opts in by subclassing.
+    O_VIA_LDS = False
+
     def _final_o_base(self, q_row):
         return q_row * self.stride_o_seq_v + self.lane_div_32 * 8
+
+    def _owned_row(self, q_row):
+        """`q_row` if this lane's wave owns that row, else a row every store drops.
+
+        **A wave computes 32 rows but may own fewer.** The MFMA's M extent pins
+        a wave's accumulator at 32 rows, `q_row = q_start + wave_q_offset +
+        lane % 32`, while a geometry with `BLOCK_M < Q_TILES * 32` steps
+        `wave_q_offset` by only `ROWS_PER_WAVE` (8 or 16). So the waves overlap,
+        and the last ones run past the block: at (4, 32, 64, 64) wave 3 covers
+        rows 24..55 of a 32-row block, 24 of them the *next* block's.
+
+        Without causal masking those overhanging rows come out right -- same
+        Q row, same full KV walk -- so the duplicate stores are benign. With
+        it they are not: the walk stops at *this* block's `causal_end` (and a
+        window's left skip is this block's too), so an overhanging row misses
+        keys it should attend, and a block that takes the `causal_end <= 0`
+        early exit writes `O = 0, LSE = +inf` over live rows of its neighbour.
+        Which writer lands last is a race, so the damage moves between runs
+        and with the dispatch order (LPT): the first `32 - ROWS_PER_WAVE` rows
+        of a block, a few or all of them, wrong.
+
+        So a lane stores only the rows its wave owns, `lane % 32 <
+        ROWS_PER_WAVE`; the waves' owned ranges tile `BLOCK_M` exactly, with
+        or without GQA head packing. The rest are pointed at row `seqlen_q`,
+        which both stores already drop: O by its slab descriptor's bound (see
+        `q_row_slab`), LSE by its `q_row < seqlen_q` select. At
+        `ROWS_PER_WAVE == 32` every lane owns its row and this emits nothing.
+        """
+        traits = self.traits
+        if const_expr(traits.ROWS_PER_WAVE >= MFMA_M):
+            return q_row
+        owned = self.lane_mod_32 < fx.Index(traits.ROWS_PER_WAVE)
+        return fx.Index(owned.select(q_row, self.seqlen_q_v))
+
+    def store_final_o(self, v_o, q_row, m_row=None, l_row=None):
+        """The inherited O and LSE stores, for owned rows only; see `_owned_row`."""
+        super().store_final_o(v_o, self._owned_row(q_row), m_row, l_row)
+
+    def _o_pack_words(self, v_o, dc, g):
+        """The four dwords of one 128-bit O store, in lane order.
+
+        Bit-identical to the inherited `_fused_o_128_dwords`, which builds
+        them from four `permlane32_swap`s of a register *with itself*, each
+        preceded by two copies (the swap writes both operands), then eight
+        lane-half selects. Written out, what those selects keep is
+
+            w0 = lo ? d0_a        : d0_b[l - 32]     w2 = lo ? d0_a[l + 32] : d0_b
+            w1 = lo ? d1_a        : d1_b[l - 32]     w3 = lo ? d1_a[l + 32] : d1_b
+
+        and that is exactly the pair one `v_permlane32_swap d0_a, d0_b` leaves
+        behind -- it trades the upper 32 lanes of its first operand for the
+        lower 32 of its second. So `(w0, w2)` and `(w1, w3)` are one swap each:
+        27 instructions per store become 6.
+
+        Lane `l` then holds row `l % 32`, columns
+        `dc * D_CHUNK + (2 * g + l // 32) * 8` up to 8 past that.
+        """
+        traits = self.traits
+        d0_a, d1_a = dualwave._o_pack_2dw(traits, v_o, dc, 2 * g, self.elem_dtype)
+        d0_b, d1_b = dualwave._o_pack_2dw(traits, v_o, dc, 2 * g + 1, self.elem_dtype)
+        pair_ty = dualwave.ir.Type.parse("!llvm.struct<(i32, i32)>")
+        s0 = rocdl.permlane32_swap(pair_ty, as_mlir_value(d0_a), as_mlir_value(d0_b), False, False)
+        s1 = rocdl.permlane32_swap(pair_ty, as_mlir_value(d1_a), as_mlir_value(d1_b), False, False)
+        words = [
+            dualwave.llvm.extractvalue(T.i32, s0, [0]),
+            dualwave.llvm.extractvalue(T.i32, s1, [0]),
+            dualwave.llvm.extractvalue(T.i32, s0, [1]),
+            dualwave.llvm.extractvalue(T.i32, s1, [1]),
+        ]
+        return Vec.from_elements([fx.Int32(w) for w in words], fx.Int32)
+
+    def _o_row_chunks(self):
+        """16-byte chunks per O row, or `None` if O cannot go through LDS.
+
+        Staging needs the whole O block of the workgroup -- `NUM_WAVES * 32`
+        rows -- to fit the K/V buffers it reuses, and one 64-lane read to
+        cover whole rows, so the chunk count must divide 64.
+        """
+        traits = self.traits
+        chunks = traits.D_CHUNKS * traits.D_CHUNK * traits.BF16_BYTES // 16
+        block_bytes = traits.NUM_WAVES * traits.ROWS_PER_WAVE * chunks * 16
+        if traits.ROWS_PER_WAVE != 32 or 64 % chunks or block_bytes > traits.LDS_KV_TOTAL_SIZE * traits.BF16_BYTES:
+            return None
+        return chunks
+
+    def _store_final_o_row(self, v_o, q_row):
+        """O through LDS, so that each global store writes whole rows.
+
+        The MFMA layout leaves a lane holding 16 bytes of *one row*, and the
+        other half-wave the next 16 of the same row, so a direct 128-bit store
+        writes 32 rows x 32 bytes: 32 cache lines touched per instruction, 8x
+        the 4 lines its 1 KiB fills. The epilogue is nothing but those stores
+        -- a workgroup has nothing left to overlap them with -- and they
+        retired at ~250 cycles each.
+
+        So each wave writes its 32 rows into LDS as they lie, then reads them
+        back 64 / `chunks` whole rows per instruction and stores those. Same
+        number of stores, each now fully contiguous per row.
+
+        **The LDS is the K/V buffers'**, so this is opt-in, by
+        `O_VIA_LDS`: only a kernel body that has retired every DS read of
+        them in every wave, behind a barrier, before it stores O may set it.
+        Each wave then uses its own region, and DS instructions of one wave
+        execute in order, so the write-to-read hand-off across its lanes needs
+        no barrier of its own.
+
+        The 16-byte chunk index is XOR-swizzled by the row, so that neither
+        the column-major write nor the row-major read piles a 16-lane group on
+        one bank set: rows are a power-of-two bytes apart.
+        """
+        chunks = self._o_row_chunks() if const_expr(self.O_VIA_LDS) else None
+        if const_expr(chunks is None):
+            super()._store_final_o_row(v_o, q_row)
+            return
+        traits = self.traits
+        row_bytes = chunks * 16
+        swz = min(chunks, 16) - 1
+        rows_per_read = 64 // chunks
+        wave_base = fx.Int32(self.lds_kv_base_idx) + fx.Int32(self.wave_id_uni) * fx.Int32(32 * row_bytes)
+        vec4_i32 = Vec.make_type(4, fx.Int32)
+
+        # Write: lane `l` holds row `l % 32`. Derived from a `_fresh_lane`,
+        # like the read below: these offsets equal the prologue's staged Q
+        # reads term for term, and sharing them spills.
+        lane_i32 = _fresh_lane(self.lane)
+        w_row = lane_i32 & fx.Int32(31)
+        w_half = (lane_i32 >> fx.Int32(5)) & fx.Int32(1)
+        w_row_base = wave_base + w_row * fx.Int32(row_bytes)
+        w_swz = w_row & fx.Int32(swz)
+        for dc in range_constexpr(traits.D_CHUNKS):
+            for g in range_constexpr(2):
+                chunk = fx.Int32(dc * traits.D_CHUNK * traits.BF16_BYTES // 16 + 2 * g) + w_half
+                addr = w_row_base + ((chunk ^ w_swz) << fx.Int32(4))
+                dualwave.llvm.StoreOp(as_mlir_value(self._o_pack_words(v_o, dc, g)),
+                                      _lds_ptr_with_imm(addr, 0),
+                                      alignment=16)
+
+        # Read back whole rows and store them.
+        r_chunk = lane_i32 & fx.Int32(chunks - 1)
+        r_row_in_read = lane_i32 >> fx.Int32(chunks.bit_length() - 1)
+        row0 = q_row - self.lane_mod_32
+        for it in range_constexpr(32 // rows_per_read):
+            r_row = r_row_in_read + fx.Int32(it * rows_per_read)
+            addr = wave_base + r_row * fx.Int32(row_bytes) + ((r_chunk ^ (r_row & fx.Int32(swz))) << fx.Int32(4))
+            pack = dualwave.llvm.LoadOp(vec4_i32, _lds_ptr_with_imm(addr, 0), alignment=16).result
+            col = fx.Index(r_chunk) * fx.Index(8)
+            off = (row0 + fx.Index(r_row)) * self.stride_o_seq_v + col
+            if const_expr(self.PADDED_HEAD):
+                in_range = MaskedAxis(fx.Index(self.hdim_vo)).valid(col)
+                off = fx.Index(in_range.select(fx.Index(off), self.o_oob_off))
+            dualwave._buffer_store_128(Vec(pack, (4,), fx.Int32),
+                                       off,
+                                       _o_store_reg_128=self.o_store_reg_128,
+                                       _store_atom_128=self.store_atom_128,
+                                       o_div=self.o_div)
+
+    def _store_final_o_128(self, v_o, dc, g, o_base):
+        """One direct 128-bit O store; see `_o_pack_words`.
+
+        The path for builds `_o_row_chunks` rules out of LDS staging, and the
+        one `fwd_wide.py` calls for its tail.
+        """
+        dualwave._buffer_store_128(self._o_pack_words(v_o, dc, g),
+                                   self._final_o_global(o_base, dc, g),
+                                   _o_store_reg_128=self.o_store_reg_128,
+                                   _store_atom_128=self.store_atom_128,
+                                   o_div=self.o_div)
 
     def zero_o_block_if_needed(self, causal_end_raw_i32=None):
         """The inherited O zeroing, plus the LSE those same rows need.
@@ -2244,7 +3045,10 @@ class ParityStoreHelper(dualwave.DualwaveStoreHelper):
         should go. The `+inf` select it depends on must stay either way: upstream
         spells the value `m * ln2 + log(l)`, which is `-inf` at best.
         """
-        super().zero_o_block_if_needed(causal_end_raw_i32)
+        if const_expr(self.traits.ROWS_PER_WAVE >= MFMA_M):
+            super().zero_o_block_if_needed(causal_end_raw_i32)
+        else:
+            self._zero_owned_o_rows(causal_end_raw_i32)
         if const_expr(not self.traits.RETURN_LSE):
             return
         if causal_end_raw_i32 is None:
@@ -2258,13 +3062,46 @@ class ParityStoreHelper(dualwave.DualwaveStoreHelper):
         lane_mod_32 = self.lane_mod_32
         zero = self.c_zero_f
         store = self._store_lse_row
+        owned_row = self._owned_row
 
         @flyc.jit
         def _store_masked_lse_block():
             if causal_end_raw_i32 <= fx.Int32(0):
-                store(zero, zero, q_start + wave_q_offset + lane_mod_32)
+                store(zero, zero, owned_row(q_start + wave_q_offset + lane_mod_32))
 
         _store_masked_lse_block()
+
+    def _zero_owned_o_rows(self, causal_end_raw_i32=None):
+        """The inherited O zeroing, restricted to the rows this wave owns.
+
+        For `ROWS_PER_WAVE < 32` only, where the inherited one zeroes the
+        whole 32-row span of every wave -- and so, from the last waves, live
+        rows of the next Q block; see `_owned_row`. Its row guard is dropped
+        rather than copied: an unowned or out-of-range row lands past the O
+        slab's bound, which drops the store, as it does for `store_final_o`.
+        """
+        if causal_end_raw_i32 is None:
+            causal_end_raw_i32 = self.causal_end_raw_i32
+        traits = self.traits
+        q_start = self.q_start
+        wave_q_offset = self.wave_q_offset
+        lane_mod_32 = self.lane_mod_32
+
+        @flyc.jit
+        def _zero_owned_o_rows_if_needed():
+            if causal_end_raw_i32 <= fx.Int32(0):
+                o_base = self._final_o_base(self._owned_row(q_start + wave_q_offset + lane_mod_32))
+                c_zero_i = fx.Int32(0)
+                zero_pack = Vec.from_elements([c_zero_i, c_zero_i, c_zero_i, c_zero_i], fx.Int32)
+                for dc in range_constexpr(traits.D_CHUNKS):
+                    for g in range_constexpr(2):
+                        dualwave._buffer_store_128(zero_pack,
+                                                   self._final_o_global(o_base, dc, g),
+                                                   _o_store_reg_128=self.o_store_reg_128,
+                                                   _store_atom_128=self.store_atom_128,
+                                                   o_div=self.o_div)
+
+        _zero_owned_o_rows_if_needed()
 
     def _store_lse_row(self, m_row, l_row, q_row):
         """`_store_lse_row_unguarded`, skipped entirely when `LSE` is null.

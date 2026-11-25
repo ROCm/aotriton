@@ -299,14 +299,14 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       list(POP_FRONT RULE KERNEL_NAME)
       list(POP_FRONT RULE TGTGPU)
       list(POP_FRONT RULE SIGNATURE)
-      list(POP_FRONT RULE HINTS)
+      list(POP_FRONT RULE BUILD_KNOBS)
       add_custom_command(OUTPUT "${HSACO}"
         COMMAND ${CMAKE_COMMAND} -E env
         VIRTUAL_ENV=${VENV_DIR}
         AOTRITON_FLYDSL_KERNEL_ROOT=${AOTRITON_FLYDSL_KERNEL_ROOT}
         "${VENVPYTHON}" -m aotriton.flyc_compile
         "${DESC}" --kernel_name "${KERNEL_NAME}" --target "${TGTGPU}"
-        --signature "${SIGNATURE}" --hints "${HINTS}"
+        --signature "${SIGNATURE}" --build_knobs "${BUILD_KNOBS}"
         --out_path "${HSACO}" --timeout "${AOTRITON_GPU_BUILD_TIMEOUT}"
         # Same switch the Triton loop passes, and for the same reason: without
         # it the driver answers a timeout or an exception by writing a

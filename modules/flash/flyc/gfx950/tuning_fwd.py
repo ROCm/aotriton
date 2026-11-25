@@ -48,7 +48,9 @@ floor, and it is an instruction limit rather than a staging one.
 from dataclasses import dataclass, fields, replace
 
 from fmha_knobs import knobs_of, pinned
-from fmha_meta import CAUSAL_TOP_LEFT, FmhaInputMetadata
+from fmha_meta import CAUSAL_BOTTOM_RIGHT, CAUSAL_NONE, CAUSAL_TOP_LEFT, CAUSAL_WINDOW, FmhaInputMetadata
+import ati_bootstrap  # noqa: F401  (aotriton from this checkout)
+import aotriton.template_instantiation as ati
 from .knobs import Gfx950KnobFields
 from .traits import make_traits
 
@@ -60,6 +62,7 @@ __all__ = [
     "fmha_knobs",
     "plan",
     "tile_width_for",
+    "variants",
 ]
 
 # ---------------------------------------------------------------------------
@@ -80,10 +83,9 @@ __all__ = [
 #    384    4      128     64     2       1      112     0    100 KB     803
 #    512    4       64     64     2       2       91     0    133 KB     479
 #
-# Three families. **A** (granule 64, 8 waves) serves 64 and 128; **B/S**
-# (4 waves) serve the rest up to 256, with granule 32 where the width is not a
-# multiple of 64; **W** stages the D axis (`D_STAGES`) and shards it
-# (`VO_SHARDS`) for 384 and 512, on the separate body in `fwd_wide.py`.
+# Three default families. **B/S** (4 waves) serve every width up to 256, with
+# granule 32 where the width is not a multiple of 64 (**A**, 8 waves, is
+# pin-only); **W** stages the D axis (`D_STAGES`) and shards it (`VO_SHARDS`) for 384 and 512, on the separate body in `fwd_wide.py`.
 #
 # The break at 384 is not a tuning preference, it is LDS: two KV tiles in
 # flight need `2 * BLOCK_N * head_dim * ~8.3 B`, which is 199.5 KB at 384 and
@@ -352,10 +354,24 @@ class Gfx950Knobs(FmhaKnobs):
             ._checked_modes()
             ._with_widths(meta)
             ._with_wave_geometry(meta)
+            ._with_kv_walk()
             ._with_stagger()
             ._with_occupancy_target(meta)
             ._checked_against_traits(meta)
         )
+
+    def _with_kv_walk(self):
+        """End the KV walk at the last live tile wherever the body can.
+
+        Only the dual-wave body supports it (see `make_traits`). There the
+        0ed41226 sweep found it at or near the best build at every head dim,
+        mask and sequence length.
+        """
+        if self.exact_kv_tiles is not None:
+            return self
+        dual_wave = self.d_stages == 1 and self.vo_shards == 1 and self.num_kv_splits == 1 and not self.paged
+        # Turned off per call where it spills: see `variants`.
+        return replace(self, exact_kv_tiles=dual_wave)
 
     def _with_stagger(self):
         """Stagger the two wave groups of an 8-wave workgroup only.
@@ -469,9 +485,9 @@ class Gfx950Knobs(FmhaKnobs):
 
         | family | tile width | waves | BLOCK_M | BLOCK_N | granule |
         |---|---|---|---|---|---|
-        | S | <= 32 | 8 | 256 | 128 | 32 |
-        | A | <= 128 | 8 | 256 | 64 | 64 |
-        | B | > 128 | 4 | 128 | 128 | 64 |
+        | S | <= 256, not a multiple of 64 | 4 | 128 | 64 | 32 |
+        | B | 64, 128, 192, 256 | 4 | 128 | 64 | 64 |
+        | A | pinned only | 8 | 256 | 64 | 64 |
 
         **A** is measured saturated at head_dim 128 -- 248 of 256 VGPRs, zero
         spills -- so **B** halves the wave count to double the per-lane
@@ -501,14 +517,11 @@ class Gfx950Knobs(FmhaKnobs):
             )
         if block_dmodel % 64:
             return replace(me, num_waves=4, block_m=128, block_n=64, head_dim_granule=32)  # family S
-        if block_dmodel == 128 and meta.causal:
-            # Causal hd128 (e.g. GR00T): family B beats family A, which was tuned
-            # non-causal. 4 waves/block_m=128 -> two workgroups co-resident per CU
-            # and 2x per-lane registers; 1.36x at B=1, numerically identical.
-            return replace(me, num_waves=4, block_m=128, block_n=64, head_dim_granule=64)  # family B (causal hd128)
-        if block_dmodel <= 128:
-            return replace(me, num_waves=8, block_m=256, block_n=64, head_dim_granule=64)  # family A
         if block_dmodel <= 256:
+            # Also at 64 and 128: family A's 256-row Q tile wastes work on short
+            # sequences and causal tails (0ed41226 coverage sweep).
+            # TODO: within 3% of the best swept build in 86% of hd<=128 cells;
+            # the 3-8% pockets may be timing noise. Re-measure with perfmon.
             return replace(me, num_waves=4, block_m=128, block_n=64, head_dim_granule=64)  # family B
         # Family W, the wide path. Four waves, like B and for the same reason
         # -- halving the wave count doubles the per-lane register file -- but
@@ -600,6 +613,7 @@ class Gfx950Knobs(FmhaKnobs):
         (8, 128, 64, 64),
         (4, 64, 64, 64),
         (8, 64, 64, 64),
+        (4, 32, 64, 64),  # 4-wave staging; 8 rows per wave unpacked (see `_owned_row`), 32 with q_heads_per_wg 4
         (4, 128, 64, 32),  # family S -- granule 32, for widths off the 64 grid
     )
 
@@ -702,6 +716,7 @@ class Gfx950Knobs(FmhaKnobs):
             d_stages=self.d_stages,
             qk_shards=self.qk_shards,
             vo_shards=self.vo_shards,
+            q_heads_per_wg=self.q_heads_per_wg,
             v_half_wave=self.v_half_wave,
             v_n_group=self.v_n_group,
             v_k_substep=self.v_k_substep,
@@ -711,6 +726,8 @@ class Gfx950Knobs(FmhaKnobs):
             bias=meta.bias,
             dropout=meta.dropout,
             lpt_tile_order=self.lpt_tile_order,
+            xcd_map=self.xcd_map,
+            exact_kv_tiles=self.exact_kv_tiles,
             dtype_str=meta.dtype_str,
             waves_per_eu=self.waves_per_eu,
             lazy_rescale=self.lazy_rescale,
@@ -800,7 +817,21 @@ _GFX950_FALLBACK = Gfx950Knobs(
     setprio=True,
     # `None`: `_with_stagger` decides from the wave count.
     stagger=None,
-    lpt_tile_order=False,
+    # Causal builds only; bit-identical output. The launch order put the
+    # longest q blocks last and cost 20-40% at long S with few workgroups --
+    # S=4096 B=2 H=16 ran at 598 TF against 761 for four times the work. See
+    # `ParityKernelContext._lpt_order`; it now measures at or above the launch
+    # order everywhere, 835 TF at that shape.
+    lpt_tile_order=True,
+    # Measured within 1% of `none` on non-causal launches for every head count,
+    # and `pin_heads`/`head_slow` up to 2.5% and 25% behind on short sequences:
+    # with the head fastest the launch already keeps a head on one XCD when the
+    # head count is a multiple of 8, and the L2 affinity the others add for the
+    # remaining counts is worth under 1%. See `ParityKernelContext._map_workgroup`.
+    xcd_map="none",
+    # `None`: `_with_kv_walk` decides from the body.
+    exact_kv_tiles=None,
+    q_heads_per_wg=1,
     paged=False,
     kv_cache_layout="linear",
     num_kv_splits=1,
@@ -830,14 +861,141 @@ def fmha_knobs(arch: str, **overrides) -> FmhaKnobs:
     raise ValueError(f"no FMHA knobs for arch {arch!r}; known: {sorted(_BY_ARCH)}")
 
 
+# ---------------------------------------------------------------------------
+# Per-call rules (`ati.derives` yielded, `ir/runtime_rules.py`): JIT applies the
+# ones holding for a call, AOT builds one image per distinct override set and
+# selects among them per call.
+# ---------------------------------------------------------------------------
+
+# The exact KV walk spills in the BLOCK_DMODEL=128, PADDED_HEAD=True build:
+# 38-72 VGPRs against 0-13 for the padded walk (0ed41226 sweep, family B,
+# floor 96, measured at head_dim 100). Below three KV tiles skipping the
+# padding still wins; from three up the spill costs 4-26%. Within 3% of the
+# best build at head_dim 100: 86.0% of cells with this rule, 75.5% without.
+_EXACT_WALK_MAX_SEQLEN_K = 128
+
+# Per-sequence-length optima of BLOCK_DMODEL=128 (2026-11-23 sweep: both
+# dtypes, PADDED_HEAD False at head_dim 128 and True at 100, every mask and
+# feature, Sq x Sk over 16..8192, every geometry with the exact walk on and off;
+# one full run, then two racing runs that re-time each cell's contenders;
+# causal bottom-right re-swept on the window build). A rule is kept only where
+# it improved both racing runs and made no functional worse.
+# - No mask or feature, very short K: granule 32 (3-5%).
+# - No mask or feature, long Q and K: family A walking the padding (5-10%).
+# - Windows (both causal masks included) without a feature, short Q: BLOCK_M 64.
+# - Windows with dropout: granule 32 (not f16 padded).
+# TODO: the window functionals still lag the most (70-85% of cells within
+# 3%); causal and sliding windows share these rules.
+_SHORT_MAX_SEQLEN_K = 32
+_FAMILY_A = (8, 256, 64, 64)
+_GRANULE_32 = (4, 128, 64, 32)
+_BLOCK_M_64 = (4, 64, 64, 64)
+
+
+def _geometry(geometry, *, when):
+    """The four geometry knobs, which `_with_wave_geometry` takes pinned together or not at all."""
+    for knob, value in zip(('num_waves', 'block_m', 'block_n', 'head_dim_granule'), geometry):
+        yield ati.derives(knob, to=value, when=when)
+
+
+def variants(meta: FmhaInputMetadata):
+    """The per-call rules of `meta`'s functional."""
+    if meta.padded_head:
+        # Mask only the D steps that can hold pad: with no floor every step is
+        # masked. `hdim_qk <= floor` reaches this tile only when Q and V head
+        # dims differ or the compiled ladder lacks the rung below.
+        floor = rung_below(meta.block_dmodel)
+        yield ati.derives('hdim_qk_floor', to=floor, when=ati.gt('hdim_qk', floor))
+        yield ati.derives('hdim_qk_floor', to=0, when=ati.le('hdim_qk', floor))
+    else:
+        # The floor only gates the padded-head masks; pin one value so JIT and
+        # AOT resolve identical knobs.
+        yield ati.derives('hdim_qk_floor', to=0)
+    # JIT's causal bottom-right build performs as the window build AOT runs
+    # causal bottom-right on (CAUSAL_TYPE is [0, 3] there), so it takes the
+    # window rules; the sweeps time causal bottom-right on the window build.
+    windowed = meta.causal_type in (CAUSAL_WINDOW, CAUSAL_BOTTOM_RIGHT)
+    if meta.block_dmodel == 128 and meta.padded_head and not windowed:
+        yield ati.derives('exact_kv_tiles', to=False, when=ati.gt('max_seqlen_k', _EXACT_WALK_MAX_SEQLEN_K))
+    yield from _SEQLEN_OPTIMA.get(meta.block_dmodel, _no_rules)(meta, windowed)
+
+
+def _seqlen_optima_128(meta: FmhaInputMetadata, windowed):
+    """The BLOCK_DMODEL=128 per-call rules (see the sweep note above)."""
+    if windowed:
+        if meta.dropout and not (meta.padded_head and meta.dtype_str == 'f16'):
+            # Windows with dropout: granule 32 at every length.
+            yield from _geometry(_GRANULE_32, when=None)
+        elif not meta.dropout:
+            yield from _geometry(_BLOCK_M_64, when=(ati.le('max_seqlen_q', 32), ati.ge('max_seqlen_k', 64)))
+        return
+    if not meta.bias and not meta.dropout:
+        long_q_long_k = (ati.ge('max_seqlen_q', 256), ati.ge('max_seqlen_k', 512))
+        yield from _geometry(_GRANULE_32, when=ati.le('max_seqlen_k', _SHORT_MAX_SEQLEN_K))
+        yield from _geometry(_FAMILY_A, when=long_q_long_k)
+        if not meta.padded_head:
+            # Padded, the padded-head rule already walks the padding from 129 keys.
+            yield ati.derives('exact_kv_tiles', to=False, when=long_q_long_k)
+
+
+# Tiles 64, 192 and 256 (2026-11-24 sweep, same method as 128 over every
+# other tile: 242 functionals' Sq x Sk grids, one full run, two racing runs;
+# causal bottom-right re-swept on the window build). Forward cells within 3%
+# of the best build over all 28600: 90.2% (policy when swept) -> 93.9%; no
+# functional worse; the other tiles keep their one build.
+def _seqlen_optima_64(meta: FmhaInputMetadata, windowed):
+    """Tile 64: short Q takes BLOCK_M 64, long Q over short K family A."""
+    if windowed:
+        if meta.dropout and meta.dtype_str == 'bf16' and not meta.padded_head:
+            return
+        short_q = ati.le('max_seqlen_q', 64)
+        yield from _geometry(_BLOCK_M_64, when=short_q)
+        if meta.padded_head or (meta.dropout and meta.dtype_str == 'f16'):
+            yield from _geometry(_GRANULE_32, when=ati.gt('max_seqlen_q', 64))
+        return
+    if meta.bias or meta.dropout:
+        return
+    yield from _geometry(_BLOCK_M_64, when=(ati.le('max_seqlen_q', 64), ati.le('max_seqlen_k', 128)))
+    if not meta.padded_head:
+        yield from _geometry(_FAMILY_A, when=(ati.ge('max_seqlen_q', 256), ati.le('max_seqlen_k', 64)))
+
+
+def _seqlen_optima_192(meta: FmhaInputMetadata, windowed):
+    """Tile 192: long Q over short K takes family A (78% -> 93% of cells within 3%)."""
+    yield from _geometry(_FAMILY_A, when=(ati.ge('max_seqlen_q', 256), ati.le('max_seqlen_k', 128)))
+
+
+def _seqlen_optima_256(meta: FmhaInputMetadata, windowed):
+    """Tile 256: short Q takes BLOCK_M 64; with dropout and no window, long K walks the padding."""
+    if windowed:
+        yield from _geometry(_BLOCK_M_64, when=ati.le('max_seqlen_q', 32))
+        return
+    yield from _geometry(_BLOCK_M_64, when=(ati.le('max_seqlen_q', 32), ati.le('max_seqlen_k', 128)))
+    if meta.dropout:
+        yield ati.derives('exact_kv_tiles', to=False, when=ati.ge('max_seqlen_k', 256))
+
+
+def _no_rules(meta: FmhaInputMetadata, windowed):
+    return
+    yield
+
+
+_SEQLEN_OPTIMA = {
+    64: _seqlen_optima_64,
+    128: _seqlen_optima_128,
+    192: _seqlen_optima_192,
+    256: _seqlen_optima_256,
+}
+
+
 # Unified entry (flyc/tuning_fwd.py): the shared metadata, pinned.
 
 def entry_resolve(meta, *, overrides=None) -> FmhaKnobs:
+    # The tile comes from the functional's ladder: unless a rule claims a
+    # floor, claim none, so the kernel masks every D column.
+    base = Gfx950Knobs(hdim_qk_floor=0).merge(knobs_of(Gfx950Knobs, overrides))
     knobs = pinned(Gfx950Knobs,
-                   overrides,
-                   # The tile comes from the functional's ladder: claim no
-                   # floor, so the kernel masks every D column.
-                   hdim_qk_floor=0,
+                   base,
                    # Strides are runtime arguments: one binary serves every layout.
                    strides_constexpr=False,
                    # What makes Workspace/BlockTable/block_table_stride constexpr 0.
@@ -851,6 +1009,10 @@ def entry_resolve(meta, *, overrides=None) -> FmhaKnobs:
     assert knobs.return_lse, 'every binary must keep the LSE store'
     assert not knobs.paged and knobs.num_kv_splits == 1, \
         'the Workspace/BlockTable/block_table_stride fold needs paged=False, num_kv_splits=1'
+    assert knobs.q_heads_per_wg == 1, (
+        'GQA head packing launches num_head_q / q_heads_per_wg workgroups, '
+        'and FlycAttnFwdContext::grid_calculator does not divide yet -- a '
+        'packed binary would be launched with too many workgroups')
     return knobs
 
 
