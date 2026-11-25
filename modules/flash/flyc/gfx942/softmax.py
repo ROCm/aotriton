@@ -257,13 +257,14 @@ def lse_store(rsrc, pitch, lse, row, row_ok, *, lane_first):
     buffer_ops.buffer_store(lse, rsrc, off, mask=row_ok & lane_first())
 
 
-def epilogue(ctx, pv, results, lse_ptr, *, row, lane, lane_first):
+def epilogue(ctx, pv, results, lse_ptr, *, row, lane, lane_first, store=None):
     """The forward's end: O / l and LSE of `results` ([m, l] + O accumulators of `pv`),
     through ctx.set_q_rows and ctx.set_o_store.
 
     A fully masked row (l = 0) stores O = 0 and LSE = +inf; dropout's 1/(1-p)
     folds into 1/l. `row` may be a function, called after 1/l; `lane` goes to
-    tensor_io.store_acc, `lane_first` to lse_store.
+    tensor_io.store_acc, `lane_first` to lse_store. `store(o_accs, inv_l)`, if
+    given, stores O instead of tensor_io.store_acc.
     """
     rocdl.s_waitcnt(0)
     m = results[0]
@@ -275,17 +276,20 @@ def epilogue(ctx, pv, results, lse_ptr, *, row, lane, lane_first):
     if callable(row):
         row = row()
     row_ok = row < ctx.sq
-    tensor_io.store_acc(pv,
-                        results[2:2 + pv.out_tiles],
-                        ctx.o_rsrc,
-                        row,
-                        ctx.o_row_stride,
-                        lane=lane,
-                        col_limit=ctx.o_col_limit,
-                        row_ok=row_ok,
-                        elem=flex_gemm.elem_type(ctx.traits.dtype),
-                        pad_floor=ctx.traits.pad_floor,
-                        scale=inv_l)
+    if store is not None:
+        store(results[2:2 + pv.out_tiles], inv_l)
+    else:
+        tensor_io.store_acc(pv,
+                            results[2:2 + pv.out_tiles],
+                            ctx.o_rsrc,
+                            row,
+                            ctx.o_row_stride,
+                            lane=lane,
+                            col_limit=ctx.o_col_limit,
+                            row_ok=row_ok,
+                            elem=flex_gemm.elem_type(ctx.traits.dtype),
+                            pad_floor=ctx.traits.pad_floor,
+                            scale=inv_l)
     # LSE before its resource: keeps the tuned ISA.
     lse = lse_of(m, l)
     rsrc, pitch = lse_rsrc(ctx, lse_ptr)

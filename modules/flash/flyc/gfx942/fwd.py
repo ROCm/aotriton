@@ -156,6 +156,9 @@ def build_fmha_fwd_gfx942(head_dim,
     qk, pv = tr.gemms()
     lds_bytes = 2 * qk.a.tile_bytes + 2 * pv.a.tile_bytes
     assert lds_bytes <= 65536, lds_bytes
+    # O leaves through LDS in passes of o_width columns, 32 rows per wave.
+    o_width = 64 if head_dim % 64 == 0 and tr.num_waves * WAVE_M * 2 * 64 <= lds_bytes else 32
+    assert tr.num_waves * WAVE_M * 2 * o_width <= lds_bytes and head_dim % o_width == 0
     tag = 'fwd_' + flex_gemm.cache_tag(tr, flex_gemm, softmax, tensor_io, utils)
     tile_fastest = grid_axis_order == tuning.GRID_AXIS_TILE_FASTEST
     elem = flex_gemm.elem_type(dtype_str)
@@ -466,13 +469,35 @@ def build_fmha_fwd_gfx942(head_dim,
         barrier_if(fx.Int32(1) - group_b)         # close the stagger
 
         # ---- epilogue: O / l, LSE (l split over two lane halves)
+        # O through LDS: whole 16 B row chunks per store.
+        def store_o(accs, inv_l):
+            # Every wave's prefetch DMAs must have landed (epilogue's s_waitcnt(0)) before
+            # any slab is written.
+            cluster_barrier()
+            tensor_io.store_acc_staged(pv,
+                                       accs,
+                                       ctx.o_rsrc,
+                                       ctx.o_row_stride,
+                                       lds=ctx.lds,
+                                       scope='k0',
+                                       wave_base=wave * (WAVE_M * 2 * o_width),
+                                       width=o_width,
+                                       row0=q_start + wave * WAVE_M,
+                                       lane=lane,
+                                       row_lim=sq,
+                                       col_limit=ctx.o_col_limit,
+                                       elem=elem,
+                                       pad_floor=tr.pad_floor,
+                                       scale=inv_l)
+
         softmax.epilogue(ctx,
                          pv,
                          results,
                          LSE,
                          row=q_row,
                          lane=lh,
-                         lane_first=lambda: lh == fx.Index(0))
+                         lane_first=lambda: lh == fx.Index(0),
+                         store=store_o)
 
     @flyc.jit
     def launch_fmha_fwd_gfx942(

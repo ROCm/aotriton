@@ -79,6 +79,55 @@ def store_acc(t,
             buffer_ops.buffer_store(packed.ir_value(), rsrc, off, mask=ok)
 
 
+def store_acc_staged(t,
+                     accs,
+                     rsrc,
+                     row_stride,
+                     *,
+                     lds,
+                     scope,
+                     wave_base,
+                     width,
+                     row0,
+                     lane,
+                     row_lim,
+                     col_limit,
+                     elem,
+                     pad_floor,
+                     scale):
+    """`store_acc`'s 32x32x8 path, same bits, through the wave's LDS slab at byte
+    `wave_base` (32 rows x `width` columns per pass): each store then writes whole
+    16 B chunks of 64 / (width / 8) rows, not 8 B in 32 rows. Chunks are XOR-swizzled
+    by row against bank conflicts. `lane` is the wave's lane (row lane % 32);
+    `row0` the wave's first row."""
+    assert t.m == 32 and t.lane_groups == 2 and not isinstance(t.a, flex_gemm.DerivedA)
+    row_bytes = 2 * width
+    chunks = row_bytes // 16
+    lm = lane % 32
+    lh = lane // 32
+    w4 = Vec.make_type(4, fx.Int32)
+    scaled = [Vec(a) * fx.full(t.acc, fx.Float32(scale), fx.Float32) for a in accs]
+    for p in range_constexpr(t.out_tiles * t.m // width):
+        # The pass's columns into LDS: group i of tile o is chunk (32o + 8i) / 8, half lh.
+        for o in range_constexpr(t.out_tiles):
+            if const_expr(p * width <= t.m * o < (p + 1) * width):
+                for i in range_constexpr(t.acc // 4):
+                    packed = Vec.from_elements([fx.Float32(scaled[o][4 * i + j]).to(elem) for j in range(4)], elem)
+                    c = (t.m * o + 8 * i - p * width) // 8
+                    off = wave_base + lm * row_bytes + (fx.Index(c) ^ (lm % chunks)) * 16 + lh * 8
+                    lds.store(off, Vec(packed).bitcast(fx.Int32), 8, scope)
+        # Back as 16 B row chunks, one store per 64 / chunks rows.
+        for k in range_constexpr(32 * chunks // 64):
+            r = lane // chunks + k * (64 // chunks)
+            c = lane % chunks
+            vals = lds.load(wave_base + r * row_bytes + (c ^ (r % chunks)) * 16, w4, 16, scope)
+            col = fx.Index(p * width) + c * 8
+            ok = (row0 + r) < row_lim
+            if const_expr((p + 1) * width > pad_floor):
+                ok = ok & (fx.Int32(col) < col_limit)
+            buffer_ops.buffer_store(Vec(vals).bitcast(elem).ir_value(), rsrc, (row0 + r) * row_stride + col, mask=ok)
+
+
 def _store_derived(t, accs, rsrc, row, row_stride, lh, col_limit, row_ok, elem, pad_floor, scale):
     """A `DerivedA` GEMM's accumulators, transposed back by the store: element i of
     group (d0, g), MFMA dt, is column d0 + g*(8*(i//4) + 4*lh + i%4) + dt."""

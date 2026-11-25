@@ -77,6 +77,9 @@ class FwdWideTraits:
     k_early: bool
     vt_early: bool
     vt_lead: int = 8
+    # O leaves through LDS in whole row chunks. Measured per head dim: hd256 gains
+    # (B4 H32 S8k: 387 -> 400 causal, 440 -> 449); 192 and 224 lose non-causal.
+    staged_o: bool = False
     valu_per_mfma: int = 3          # sched_group_barrier slot size
 
     # make_fwd_launch's names
@@ -166,11 +169,14 @@ def build_fmha_fwd_gfx942_wide(head_dim,
                        bias=bias,
                        dropout=dropout,
                        k_early=head_dim <= 224,
-                       vt_early=head_dim <= 224)
+                       vt_early=head_dim <= 224,
+                       staged_o=head_dim == 256)
     qk, pv = tr.gemms()
     assert block_n % num_waves == 0 and qk.a.row_bytes >= 256
     lds_bytes = 2 * qk.a.tile_bytes + pv.a.tile_bytes
     assert lds_bytes <= 65536, lds_bytes
+    # O leaves through LDS in passes of o_width columns, 32 rows per wave.
+    o_width = next(w for w in (128, 64, 32) if head_dim % w == 0 and num_waves * WAVE_M * 2 * w <= lds_bytes)
     tag = 'fwd_wide_' + flex_gemm.cache_tag(tr, flex_gemm, softmax, tensor_io, utils)
     tile_fastest = grid_axis_order == tuning.GRID_AXIS_TILE_FASTEST
     elem = flex_gemm.elem_type(dtype_str)
@@ -509,13 +515,39 @@ def build_fmha_fwd_gfx942_wide(head_dim,
             results = finish(kv(n_loop))
 
             # ---- epilogue: O / l, LSE (l split over two lane halves)
+            # O through LDS: whole 16 B row chunks per store.
+            def store_o(accs, inv_l):
+                # Every wave's prefetch DMAs must have landed (epilogue's s_waitcnt(0)) before
+                # any slab is written.
+                cluster_barrier()
+                tensor_io.store_acc_staged(pv,
+                                           accs,
+                                           ctx.o_rsrc,
+                                           ctx.o_row_stride,
+                                           lds=ctx.lds,
+                                           scope='vt',
+                                           wave_base=wave * (WAVE_M * 2 * o_width),
+                                           width=o_width,
+                                           row0=q_wave,
+                                           lane=lane,
+                                           row_lim=sq,
+                                           col_limit=ctx.o_col_limit,
+                                           elem=elem,
+                                           pad_floor=tr.pad_floor,
+                                           scale=inv_l)
+
             softmax.epilogue(ctx,
                              pv,
                              results,
                              LSE,
                              row=q_row,
                              lane=lh,
-                             lane_first=lambda: lh == fx.Index(0))
+                             lane_first=lambda: lh == fx.Index(0),
+                             store=store_o if tr.staged_o else None)
+            if const_expr(tr.staged_o and q_pass + 1 < len(q_tiles)):
+                # The next pass's K DMAs overwrite other waves' O slabs.
+                rocdl.s_waitcnt(lgkmcnt=0)
+                cluster_barrier()
 
     @flyc.jit
     def launch_fmha_fwd_gfx942_wide(

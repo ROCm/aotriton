@@ -177,6 +177,14 @@ deliberately moved; it is the cheapest proof a refactor changed nothing.
 - A skip branch in such a tile (`softmax.rescale`) kept a second copy of O for
   the skip path; `softmax.rescale_always` (same bits) removed the last spills.
 
+**Epilogue stores**
+- A 32x32x8 accumulator stores 8 B into 32 rows per instruction; O's stores took
+  ~10 us of a forward block's ~28 us fixed cost. `tensor_io.store_acc_staged`
+  goes through the wave's LDS slab and stores whole 16 B row chunks (same bits).
+  Before writing slabs, barrier: other waves' prefetch DMAs may still land in LDS.
+- Measured per body and head dim: narrow gains everywhere, wide only at 256
+  (192 lost 5% non-causal).
+
 **Causal grids**
 - Run the longest q tiles first (LPT). On a head-fastest grid that alone took
   narrow causal hd128 from 381 to 457 TFLOPS at B1 H32 S32k.
