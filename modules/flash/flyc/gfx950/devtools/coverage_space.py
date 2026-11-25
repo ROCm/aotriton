@@ -133,7 +133,8 @@ def done_keys(out_dir):
 def append_record(path, rec):
     """One line, one `write`, O_APPEND: safe against concurrent appenders."""
     line = json.dumps(rec, sort_keys=True, default=str) + "\n"
-    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    # Owner-only: the records are this sweep's own scratch data.
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     try:
         os.write(fd, line.encode())
     finally:
