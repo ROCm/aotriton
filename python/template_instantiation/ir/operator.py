@@ -170,7 +170,9 @@ class Operator(Interface):
         binning_dict = {key: algo(tuned.key_values[d])
                         for d, (key, algo) in enumerate(self.OPTUNE_KEYS.items())}
         if True:  # FIXME: Flyc duct tape
-            FLYC_ARCHS = ('gfx950', 'gfx1201')
+            # The arches with flyc images: gfx942, gfx950, gfx1201
+            # (modules/flash/aot/_flyc_common.py FLYC_HEAD_DIMS_BY_ARCH).
+            FLYC_ARCHS = ('gfx942', 'gfx950', 'gfx1201')
         def choose(best, runner_up):
             chosen = best
             if True:  # FIXME: Flyc duct tape

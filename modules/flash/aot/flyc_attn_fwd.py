@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-ATI description of the flash attn_fwd FlyDSL backend (gfx1201 and gfx950).
+ATI description of the flash attn_fwd FlyDSL backend (gfx1201, gfx950 and gfx942).
 
 Registered as backend 2 of `op_attn_fwd`, through `metro_fwd_flyc`.
 `python -m aotriton.flyc_compile` on this file also produces an hsaco for
@@ -49,11 +49,13 @@ Three consequences, each handled below:
    from every other `@ati.scalar` in this file. A marker never becomes a kernel
    argument, since `options=` and an explicit type are mutually exclusive, so it
    can never claim a kernel-argument slot the way `varlen_bits`'s `'i32'` does.
-   It exists purely so that `godel_number()` can be redirected to read the
-   rounded value a context helper computes, rather than the raw, off-ladder
-   choice: this backend's ladder is a strict subset of the declared axis. See
-   `ir/flyc/kdesc.py`'s `context_helper_for_functional` for the mechanism, and
-   for why it must not be confused with the three real, explicit-type helpers
+   It does two things: `godel_number()` reads the value a context helper
+   computes (the true head dim rounded up to this backend's compiled ladder)
+   instead of the operator's binned choice, and the marker's `options=` replaces
+   the operator's choices for that axis, so a rung only this backend compiles
+   still gets a functional. See `ir/flyc/kdesc.py`'s
+   `context_helper_for_functional` and `_own_space` for the mechanism, and for
+   why it must not be confused with the three real, explicit-type helpers
    above it.
 
 3. **The kernarg list is declared, because nothing else can supply it.** aiter hands
@@ -67,7 +69,7 @@ from dataclasses import dataclass, asdict
 
 import aotriton.template_instantiation as ati
 from ._common import flash_disabled, check_value
-from ._flyc_common import flyc_input_metadata
+from ._flyc_common import FLYC_HEAD_DIM_OPTIONS, FLYC_HEAD_DIMS_BY_ARCH, flyc_input_metadata
 
 
 @dataclass
@@ -97,34 +99,6 @@ class FlycFwdHints:
     batch: int = 0
 
 
-# The compiled tile ladder, from gfx1201.tuning_fwd._BLOCK_DMODEL_LADDER. A literal,
-# not an import: the generator parses this module and has no flydsl. `flyc_build`
-# (build time) does import flydsl, and `resolve_knobs` re-validates the tile, so a
-# drift here fails loudly at build rather than silently emitting the wrong kernel.
-FLYC_HEAD_DIMS = frozenset({16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 384, 512})
-
-# gfx950's ladder, from gfx950.tuning_fwd.LADDER -- a literal for the same reason
-# as FLYC_HEAD_DIMS above. Narrower than gfx1201's: no 16/48/80 (PV_MFMA_N is 32,
-# so only multiples of 32 are compiled). 96 IS
-# included, matching upstream's LADDER verbatim: a comment right above that tuple
-# in gfx950/tuning_fwd.py claims 96 "computes the wrong answer", but that is
-# stale prose left behind when the bug it described was fixed the same day
-# (upstream `98493cc7`, an ancestor of the vendored commit; it added 96 to the
-# tuple in the same change). Do not re-derive this by excluding 96 "to be safe":
-# that would silently give up a rung upstream measured at 932 TF against 579 for
-# the 128-tile fallback, on the strength of a comment its own repository had
-# already superseded.
-FLYC_GFX950_HEAD_DIMS = frozenset({32, 64, 96, 128, 160, 192, 224, 256, 384, 512})
-
-# Per-arch ladder lookup, keyed the same way the disable predicate and the
-# builder branch below are. Also what `_flyc_fwd_disabled` uses to decide which
-# arches this backend serves at all -- `f.arch in _FLYC_FWD_LADDERS`.
-_FLYC_FWD_LADDERS = {
-    'gfx1201': FLYC_HEAD_DIMS,
-    'gfx950': FLYC_GFX950_HEAD_DIMS,
-}
-
-
 def _flyc_fwd_disabled(f):
     """Everything this backend cannot serve, in one predicate.
 
@@ -133,22 +107,19 @@ def _flyc_fwd_disabled(f):
     places to look when a functional unexpectedly has no flyc kernel. (`aiter_fwd.py`
     uses @ati.affine.arch; that predates `f.arch` being available to predicates.)
 
-    `_FLYC_FWD_LADDERS` maps each served arch to its own compiled ladder;
+    `FLYC_HEAD_DIMS_BY_ARCH` maps each served arch to its own compiled ladder;
     everything else about the predicate -- the WMMA dtype restriction, the cited
     flash_disabled() call -- is arch-independent.
     """
-    if f.arch not in _FLYC_FWD_LADDERS:
+    if f.arch not in FLYC_HEAD_DIMS_BY_ARCH:
         return True
     if flash_disabled(f):
         return True
     # f16/bf16 WMMA only.
     if '*fp32' in check_value(f, ['Q']):
         return True
-    # Off-ladder head dims are rejected outright by `resolve_knobs`/`resolve()`,
-    # not rounded: rounding is the *interface*'s job, because it also has to
-    # arrange the runtime extent and the padded-head contract that make the
-    # rounding safe.
-    if check_value(f, ['BLOCK_DMODEL']) not in _FLYC_FWD_LADDERS[f.arch]:
+    # Flyc kernels are not specialized for hdim that cannot be addressed by MFMA/WMMA directly.
+    if check_value(f, ['BLOCK_DMODEL']) not in FLYC_HEAD_DIMS_BY_ARCH[f.arch]:
         return True
     return False
 
@@ -159,7 +130,7 @@ def _flyc_fwd_disabled(f):
 # predicate calls flash_disabled(f) unconditionally and only narrows further
 # (arch membership, the WMMA dtype restriction, the per-arch ladder), so every
 # functional the cited predicate disables is disabled here too -- gfx950 head_dim
-# 16 in particular is excluded via _FLYC_FWD_LADDERS['gfx950'] (see the ladder's
+# 16 in particular is excluded via FLYC_HEAD_DIMS_BY_ARCH['gfx950'] (see the ladder's
 # own comment), which is a strict superset of the cited predicate's {16} on that
 # axis alone. Measured while gfx1201 was the only served arch: of 576
 # functionals the cited predicate disables 144, and all 144 were disabled here
@@ -360,32 +331,30 @@ def _flyc_fwd_disabled(f):
 #
 # --- functional-axis markers, NOT kernel arguments ----------------------------
 #
-# `BLOCK_DMODEL`/`PADDED_HEAD` are the operator's own axes, inherited via
-# `@ati.cite` above and narrowed by `_flyc_fwd_disabled`'s ladder check -- NOT
-# part of `flash_attn_func_aiw_kernel`'s argument list declared above, so these
-# two lines are deliberately kept out of that ordered block. `options=` and an
-# explicit type are mutually exclusive, so a marker can never be read by
-# `iter_launch_arguments` as a real launch argument; it is only ever found by
-# axis name, via `context_helper_for_functional` (ir/flyc/kdesc.py).
+# `BLOCK_DMODEL`/`PADDED_HEAD` are the operator's axes, inherited via
+# `@ati.cite` above -- NOT part of `flash_attn_func_aiw_kernel`'s argument list
+# declared above, so these two lines are deliberately kept out of that ordered
+# block. `options=` and an explicit type are mutually exclusive, so a marker can
+# never be read by `iter_launch_arguments` as a real launch argument; it is only
+# ever found by axis name, via `context_helper_for_functional`
+# (ir/flyc/kdesc.py).
 #
 # Why either axis needs a marker at all: dispatch bins the caller's head
 # dimension to a `BLOCK_DMODEL` rung on the OPERATOR's ladder before a backend
-# is chosen, and this backend's compiled ladder is a strict subset of it. Wiring
-# the axis to a context helper lets `godel_number()` read the ROUNDED value the
-# helper computes (modules/flash/csrc/flyc_attn_fwd.cc) instead of the raw,
-# potentially off-ladder choice. `PADDED_HEAD` must follow that decision -- a
+# is chosen, and this backend's compiled ladders differ from it. Wiring the axis
+# to a context helper lets `godel_number()` read the ROUNDED value the helper
+# computes (modules/flash/csrc/flyc_attn_fwd.cc) from the true head dim instead
+# of the operator's binned choice. `PADDED_HEAD` must follow that decision -- a
 # kernel re-rounded to a wider rung with `PADDED_HEAD` left false is a silent
 # wrong answer, not a build error.
 #
-# The `options=` lists restate each ladder as free documentation, not as a
-# second source of truth: the digit's real range comes from the OPERATOR's
-# axis, and the backend's own disable predicate is what enforces the subset.
-# One shared marker declaration serves both architectures (like the
-# Workspace/BlockTable declaration above, this decorator stack does not vary by
-# arch), so `options=` is the UNION of both ladders rather than either alone --
-# neither is a subset of the other, so one arch's list would under-document the
-# other's compiled rungs.
-@ati.scalar('BLOCK_DMODEL', options=sorted(FLYC_HEAD_DIMS | FLYC_GFX950_HEAD_DIMS),
+# `options=` is this backend's own BLOCK_DMODEL axis: the functionals enumerate
+# it instead of the operator's choices (`_own_space`, ir/flyc/kdesc.py), and
+# `_flyc_fwd_disabled`'s ladder check narrows it per arch. One shared marker
+# serves every arch (this decorator stack does not vary by arch), so it is the
+# UNION of the per-arch ladders.
+@ati.scalar('BLOCK_DMODEL',
+            options=FLYC_HEAD_DIM_OPTIONS,
             wires_to=ati.context_helper('flyc_block_dmodel'))
 @ati.scalar('PADDED_HEAD', options=[False, True],
             wires_to=ati.context_helper('flyc_padded_head'))

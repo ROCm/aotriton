@@ -296,8 +296,8 @@ class FlycShimGenerator(InterfaceGenerator):
             # same shape of answer. `PP_FUNC prepare_arguments[ 0 ]` is a GNU
             # extension that -pedantic-errors rejects, and an arch with every
             # functional disabled -- which is EVERY arch in a build that
-            # targets neither gfx1201 nor gfx950 -- registers no pp_args at
-            # all. One null entry keeps the declaration and the definition
+            # targets no flyc arch (gfx942, gfx950, gfx1201) -- registers no
+            # pp_args at all. One null entry keeps the declaration and the definition
             # well-formed and agreeing on the bound; nothing can index it,
             # because lookup_optimal() rejects the functional before launch()
             # reaches prepare_arguments[pp_args_index] (the autotune table is

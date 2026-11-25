@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-ATI description of the flash bwd dK/dV FlyDSL backend (gfx1201 and gfx950).
+ATI description of the flash bwd dK/dV FlyDSL backend (gfx1201, gfx950 and gfx942).
 
 The backward half of `flyc_attn_fwd.py`, and it works the same way: no perf
 axes (`tuning_dkdv.resolve_knobs`, dispatching to `<arch>/tuning_dkdv.py`, is
@@ -25,31 +25,7 @@ What differs from the forward, beyond the operand list:
 from dataclasses import asdict
 
 import aotriton.template_instantiation as ati
-from ._flyc_common import FlycBwdHints, flyc_bwd_disabled, flyc_input_metadata
-
-
-# The compiled tile ladder, from gfx1201.tuning_dkdv._BLOCK_DMODEL_LADDER.
-# A literal, not an import: the generator parses this module and has no flydsl.
-# `build` (build time) does import it, and `resolve_knobs` re-validates the tile,
-# so a drift here fails loudly at build rather than silently emitting the wrong
-# kernel. Wider than the forward's -- 320 and 448 compile here.
-FLYC_BWD_DKDV_HEAD_DIMS = frozenset({16, 32, 48, 64, 80, 96, 128, 160, 192, 224,
-                                     256, 320, 384, 448, 512})
-
-# gfx950's ladder, from gfx950.tuning_dkdv.LADDER (that module's own
-# copy, NOT imported from gfx950.tuning_fwd -- see that file's header). A
-# literal for the same reason as FLYC_BWD_DKDV_HEAD_DIMS above -- including 96,
-# per the forward's note on that rung (the same tuple, same ruling).
-FLYC_GFX950_BWD_DKDV_HEAD_DIMS = frozenset({32, 64, 96, 128, 160, 192, 224, 256, 384, 512})
-
-_FLYC_BWD_DKDV_HEAD_DIMS_BY_ARCH = {
-    'gfx1201': FLYC_BWD_DKDV_HEAD_DIMS,
-    'gfx950': FLYC_GFX950_BWD_DKDV_HEAD_DIMS,
-}
-
-
-def _flyc_bwd_dkdv_disabled(f):
-    return flyc_bwd_disabled(f, head_dims=_FLYC_BWD_DKDV_HEAD_DIMS_BY_ARCH)
+from ._flyc_common import FLYC_HEAD_DIM_OPTIONS, FlycBwdHints, flyc_bwd_disabled, flyc_input_metadata
 
 
 @ati.start
@@ -58,7 +34,7 @@ def _flyc_bwd_dkdv_disabled(f):
 # every arch but the two this kernel serves, which leaves parts of the cited
 # predicate unreachable. Same argument the forward records; widening the arch
 # gate expires it.
-@ati.disable(when=_flyc_bwd_dkdv_disabled,
+@ati.disable(when=flyc_bwd_disabled,
              I_understand_this_overrides_cited_disable=True)
 # `cite` fills the GAPS: any argument below that this description does not fully
 # claim is cloned from the Triton dK/dV kernel by apparel name, so the two
@@ -161,16 +137,15 @@ def _flyc_bwd_dkdv_disabled(f):
 # --- functional-axis markers, NOT kernel arguments ----------------------------
 #
 # See flyc_attn_fwd.py for the full rationale (same mechanism, same reason:
-# this backend's compiled ladder, FLYC_BWD_DKDV_HEAD_DIMS, is a strict subset
-# of the operator's BLOCK_DMODEL axis). Kept out of the ordered kernarg block
-# above -- BLOCK_DMODEL/PADDED_HEAD are not part of `bwd_dkdv_kernel`'s
-# signature at all, they are build-time Python values the operator owns.
+# this backend's compiled ladders differ from the operator's BLOCK_DMODEL axis).
+# Kept out of the ordered kernarg block above -- BLOCK_DMODEL/PADDED_HEAD are
+# not part of `bwd_dkdv_kernel`'s signature at all, they are build-time
+# Python values.
 #
-# One shared marker for both arches (this decorator stack does not vary by
-# arch), so `options=` is the union of both ladders -- see flyc_attn_fwd.py's
-# BLOCK_DMODEL marker for why a single arch's ladder would under-document.
+# `options=` is this backend's own BLOCK_DMODEL axis, the union of the per-arch
+# ladders; the disable predicate narrows it per arch.
 @ati.scalar('BLOCK_DMODEL',
-            options=sorted(FLYC_BWD_DKDV_HEAD_DIMS | FLYC_GFX950_BWD_DKDV_HEAD_DIMS),
+            options=FLYC_HEAD_DIM_OPTIONS,
             wires_to=ati.context_helper('flyc_block_dmodel'))
 @ati.scalar('PADDED_HEAD', options=[False, True],
             wires_to=ati.context_helper('flyc_padded_head'))

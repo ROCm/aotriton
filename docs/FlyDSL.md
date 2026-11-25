@@ -20,10 +20,11 @@ dimension ladders to find the machinery.
 The last two rows are the whole of what makes FlyDSL a separate concept rather
 than a second flavour of Triton.
 
-A flyc kernel **has no functional space of its own.** It inherits the
-operator's and narrows it: an operator may offer head dimensions 16 through 512
-while this backend compiles a subset, so the backend declares which rungs it
-builds and the dispatcher maps a request onto the nearest one it has.
+A flyc kernel **has no functional space of its own**, with one exception. It
+inherits the operator's axes and narrows them. The exception is an axis it
+redirects through a helper (below): there the backend's own rungs replace the
+operator's, so it can build a head dimension the operator has no rung for (384),
+and the dispatcher maps a request onto the nearest rung the backend has.
 
 A flyc kernel's **kernel-argument list is not the operator's params struct.**
 A Triton kernel is written against AOTriton's own argument names, so a launch
@@ -76,11 +77,11 @@ absent, and no gate short of a numerical test would catch it.
 ## The vendoring contract
 
 `modules/<family>/flyc/` holds the modules every architecture shares at its
-root, and one package per architecture (`gfx950/`, `gfx1201/`). Anything that
-imports from it puts `flyc/` on `sys.path` first, the same contract the Triton
-kernel directory uses. Shared modules are imported by bare name; an arch
-package's modules import each other relatively. Keep the arch packages'
-`__init__.py` empty: the code generator imports their tuning modules.
+root, and one package per architecture (`gfx942/`, `gfx950/`, `gfx1201/`).
+Anything that imports from it puts `flyc/` on `sys.path` first, the same
+contract the Triton kernel directory uses. Shared modules are imported by bare
+name; an arch package's modules import each other relatively. Keep the arch
+packages' `__init__.py` empty: the code generator imports their tuning modules.
 
 Rules that make a re-sync cheap, and that a re-syncer must keep:
 
@@ -311,9 +312,10 @@ Three rules govern them:
 
 ### Redirecting a functional axis through a helper
 
-A backend that compiles a subset of an operator's axis has a dispatch problem:
+A backend whose rungs differ from an operator's axis has a dispatch problem:
 the caller's value is binned against the OPERATOR's ladder before a backend is
-chosen, and the resulting digit can name a rung this backend never built.
+chosen, and the resulting digit can name a rung this backend never built, or
+skip one it did.
 
 Declaring the axis as a MARKER fixes it:
 
@@ -323,9 +325,11 @@ Declaring the axis as a MARKER fixes it:
 ```
 
 `options=` and an explicit type are mutually exclusive, so a marker can never be
-mistaken for a real kernel argument; it is only ever found by axis name. What it
-does is redirect `godel_number()` to read the value the helper computes instead
-of the raw choice.
+mistaken for a real kernel argument; it is only ever found by axis name. It
+does two things: `godel_number()` reads the value the helper computes instead
+of the raw choice, and `options=` replaces the operator's choices for that axis
+in this backend's functionals. List every rung any arch compiles; the disable
+predicate narrows it per arch.
 
 The generator emits, per architecture, the set of rungs this backend actually
 compiled — derived from the same surviving-functional list that fills the
