@@ -43,6 +43,7 @@ from _core_test_common_mistakes import (
 )
 from _common_test import (
     ALL_LAYOUTS,
+    BIAS_BROADCAST_SPELLINGS,
     StorageLayout,
     FA_WINDOWS,
     FA_WINDOW_IDS,
@@ -120,6 +121,34 @@ if FOR_RELEASE > 0 and BWD_IMPL != 'aiter':  # AITER ASM does not support bias A
         '''
         _scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True
         '''
+        args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+        core_test_op_bwd(request, args, device=gpu_id)
+
+if FOR_RELEASE >= 0:
+    # ROCm/aotriton#281: a key-padding bias broadcast over heads/queries (SDPA's
+    # (B, 1, 1, Sk) mask, stride 0 on those axes) was read as all-zero by the
+    # gfx950 flyc bias-slab bound, silently dropping the mask from the forward
+    # and dQ/dK/dV. Ungated: it guards a silent wrong answer, not a crash. Every
+    # spelling runs against the materialized reference -- the query-broadcast
+    # ones fail before the fix, the rest guard the other axes. All ',nograd': a
+    # mask is never a grad leaf (null dB), so dB is not compared. Sk >> Sq with
+    # ragged Sk is the action-expert cross-attention shape it surfaced at.
+    @pytest.mark.parametrize('BATCH', [3])
+    @pytest.mark.parametrize('N_HEADS', [5])
+    @pytest.mark.parametrize('D_HEAD', [64, 96, 128], ids=fmt_hdim)
+    @pytest.mark.parametrize('seqlen_q', [11])
+    @pytest.mark.parametrize('seqlen_k', [523])
+    @pytest.mark.parametrize('bias_type', [f'{s},nograd' for s in BIAS_BROADCAST_SPELLINGS],
+                             ids=list(BIAS_BROADCAST_SPELLINGS))
+    @pytest.mark.parametrize('dtype', DTYPES)
+    @pytest.mark.parametrize('sm_scale', ['l1'])
+    @pytest.mark.parametrize('storage_flip', [False])
+    @pytest.mark.parametrize('BWDOP', BWDOP_ids)
+    def test_bias_broadcasting(request, gpu_id, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_scale, dtype, storage_flip, bias_type):
+        if BWD_IMPL == 'aiter':  # AITER ASM does not support bias
+            pytest.skip("Bias is not supported in AITER ASM backend")
+        causal = False
+        dropout_p = 0.0
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
         core_test_op_bwd(request, args, device=gpu_id)
 
