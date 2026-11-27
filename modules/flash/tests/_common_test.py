@@ -978,12 +978,24 @@ class SdpaContext(object):
         return (dq, dk, dv, db)
 
     # Note: this follows pytorch's testing approach and expects low precision dout
+    def compute_ref_backward(self, dout):
+        self.dref_tensors = self._compute_backward(self.ref_tensors,
+                                                   self.refout_tensors[0],
+                                                   dout)
+        self.lp_dref_tensors = self._compute_backward(self.lp_ref_tensors,
+                                                      self.lp_refout_tensors[0],
+                                                      dout)
+
+    def compute_device_backward(self, out, dout):
+        self.dout_tensors = self._compute_backward(self.dev_tensors,
+                                                   out,
+                                                   dout)
+
     def compute_backward(self, out, _in_dout, *, ref_only=False):
         dout = _in_dout if _in_dout is not None else self.ddev_tensors[0]
-        self.dref_tensors = self._compute_backward(self.ref_tensors, self.refout_tensors[0], dout)
-        self.lp_dref_tensors = self._compute_backward(self.lp_ref_tensors, self.lp_refout_tensors[0], dout)
+        self.compute_ref_backward(dout)
         if not ref_only:
-            self.dout_tensors = self._compute_backward(self.dev_tensors, out, dout)
+            self.compute_device_backward(out, dout)
 
     def _mask_tensor(self, out, ref, lp_ref, tname: str):
         pass

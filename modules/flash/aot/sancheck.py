@@ -45,7 +45,7 @@ class LutSancheck:
         # print(f'Functional {functional.godel_number=} {is_causal=} {bias_type=}')
         if is_causal and bias_type != 0:
             return True
-        if functional.arch.startswith('gfx11'):
+        if functional.arch.startswith(('gfx110', 'gfx115')):
             hdim = check_value(functional, 'BLOCK_DMODEL')
             if hdim > 256:
                 return True

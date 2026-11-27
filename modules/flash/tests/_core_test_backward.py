@@ -10,6 +10,8 @@ import math
 import pathlib
 import json
 import gc
+import traceback
+from contextlib import contextmanager
 
 from attn_torch_function import (
     DEFAULT_PHILOX_SEED,
@@ -78,6 +80,34 @@ def exit_pytest():
 
 FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
 SMALL_VRAM = bool(int(os.getenv('SMALL_VRAM', default='0')))
+
+
+class _LowVramOutOfMemory(RuntimeError):
+    pass
+
+
+def _low_vram_oom_arch():
+    if not SMALL_VRAM:
+        return None
+    gcn_arch = torch.cuda.get_device_properties(torch.cuda.current_device()).gcnArchName
+    return gcn_arch if 'gfx117' in gcn_arch else None
+
+
+@contextmanager
+def _skip_low_vram_oom(stage, *, enabled=True):
+    try:
+        yield
+    except torch.OutOfMemoryError as error:
+        gcn_arch = _low_vram_oom_arch() if enabled else None
+        if gcn_arch is not None:
+            raise _LowVramOutOfMemory(f"Low-VRAM {gcn_arch} OOM during {stage}.") from error
+        raise
+
+
+def _clear_exception_frames(error):
+    while error is not None:
+        traceback.clear_frames(error.__traceback__)
+        error = error.__cause__ or error.__context__
 # SKIP_BWD=1 runs the forward half of these tests only: the forward launch, the
 # reference comparison, and the dropout-mask path -- everything up to and
 # excluding .backward().
@@ -337,9 +367,10 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
     if seqlen_q * seqlen_k * HDIM_MAX * dtype.itemsize > 2048 * 2048 * 64 * 2:
         gc.collect()
         torch.cuda.empty_cache()
-    if 'gfx11' in torch.cuda.get_device_properties(0).gcnArchName:
+    if any(arch in torch.cuda.get_device_properties(0).gcnArchName
+           for arch in ('gfx110', 'gfx115')):
         if HDIM_MAX > 256:
-            pytest.skip("Skip hdim > 256 on gfx11 arch due to register pressure.")
+            pytest.skip("Skip hdim > 256 on RDNA 3/3.5 due to register pressure.")
     utname = os.environ.get('PYTEST_CURRENT_TEST')
     use_adiff_entry = adiffs.get(utname, None)
     if use_adiff_entry == "OOM":
@@ -419,10 +450,21 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
     _alloc_hdim = D_HEAD if _prime_hdim is None else (
         8 * cdiv(HDIM_QK, 8) if isinstance(D_HEAD, int)
         else (8 * cdiv(HDIM_QK, 8), 8 * cdiv(HDIM_VO, 8)))
-    ctx = SdpaContext(BATCH, N_HEADS, _alloc_hdim, seqlen_q, seqlen_k, dtype,
-                      bias_type=bias_type, storage_flip=transpose, device=device_str, fillnan=True,
-                      prime_hdim=_prime_hdim, storage_layout=storage_layout)
+    with _skip_low_vram_oom("test input setup"):
+        ctx = SdpaContext(BATCH,
+                          N_HEADS,
+                          _alloc_hdim,
+                          seqlen_q,
+                          seqlen_k,
+                          dtype,
+                          bias_type=bias_type,
+                          storage_flip=transpose,
+                          device=device_str,
+                          fillnan=True,
+                          prime_hdim=_prime_hdim,
+                          storage_layout=storage_layout)
     ctx.create_ref_inputs(target_device_policy=adiff_ref_device_policy)
+    reference_uses_gpu = ctx.ref_tensors[0].device.type == 'cuda'
     ctx.set_require_grads(skip_dq=SKIP_DQ, skip_dk_dv=SKIP_DK_DV, skip_db=SKIP_DB)
     q, k, v, b = ctx.dev_tensors
     # The row pitch each tensor's INNERMOST axis requires. For everything but a
@@ -459,18 +501,28 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
                              )
     tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
     _check_layout(tri_out, 'o')
-    dropout_mask = encoded_softmax >= 0 if encoded_softmax is not None else None
-    sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
-    ref_out, _ = ctx.compute_ref_forward(sdpa_params)
+    with _skip_low_vram_oom("reference forward setup"):
+        dropout_mask = encoded_softmax >= 0 if encoded_softmax is not None else None
+        sdpa_params = SdpaParams(causal=causal,
+                                 sm_scale=sm_scale,
+                                 dropout_p=dropout_p,
+                                 dropout_mask=dropout_mask)
+    with _skip_low_vram_oom("PyTorch forward reference",
+                            enabled=reference_uses_gpu):
+        ref_out, _ = ctx.compute_ref_forward(sdpa_params)
 
     if SKIP_BWD:
         # Forward-only: validate the forward output against the reference and
         # stop. Uses validate_with_reference's existing no_backward= rather than
         # a separate path, so the forward assertion below is exactly the one the
         # full path makes.
-        is_allclose, adiff, _grads_allclose, _grads_adiff, tfts = ctx.validate_with_reference(
-            tri_out, [], no_backward=True,
-            return_target_fudge_factors=True, use_adiff_entry=use_adiff_entry)
+        with _skip_low_vram_oom("reference validation",
+                                enabled=reference_uses_gpu):
+            is_allclose, adiff, _grads_allclose, _grads_adiff, tfts = ctx.validate_with_reference(tri_out,
+                                                                                                     [],
+                                                                                                     no_backward=True,
+                                                                                                     return_target_fudge_factors=True,
+                                                                                                     use_adiff_entry=use_adiff_entry)
         ctx.display_validation_results(tri_out, is_allclose, adiff, [], [])
         # RECORD_ADIFFS_TO before the assert, exactly as the full path below has
         # it. A tolerance-calibration pass exists to COLLECT the mismatches, so
@@ -495,19 +547,30 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
     # carries a layout for the same reason O does: dO reaches the kernel through
     # its own descriptor, riding the forward's V slot.
     _dout_width = tri_out.shape[-1] if _prime_hdim is None else 8 * cdiv(HDIM_VO, 8)
-    dout = narrow_to_prime(alloc_with_layout(tuple(tri_out.shape[:-1]) + (_dout_width,),
-                                             BHSD if storage_layout is None else storage_layout['dout'],
-                                             dtype=tri_out.dtype, device=tri_out.device, rand=True),
-                           None if _prime_hdim is None else HDIM_VO)
-    _check_layout(dout, 'dout')
+    with _skip_low_vram_oom("backward input setup"):
+        dout = narrow_to_prime(alloc_with_layout(tuple(tri_out.shape[:-1]) + (_dout_width,),
+                                                 BHSD if storage_layout is None else storage_layout['dout'],
+                                                 dtype=tri_out.dtype,
+                                                 device=tri_out.device,
+                                                 rand=True),
+                               None if _prime_hdim is None else HDIM_VO)
+        _check_layout(dout, 'dout')
+    with _skip_low_vram_oom("PyTorch backward reference",
+                            enabled=reference_uses_gpu):
+        ctx.compute_ref_backward(dout)
     if PROBE_UNSUPPORTED:
         try:
-            ctx.compute_backward(tri_out, dout)
-        except NotImplementedError as e:
+            ctx.compute_device_backward(tri_out, dout)
+        except NotImplementedError:
             pytest.xfail("Unsupported Config in AITER")
     else:
-        ctx.compute_backward(tri_out, dout)
-    is_allclose, adiff, grads_allclose, grads_adiff, tfts = ctx.validate_with_reference(tri_out, ctx.dout_tensors, return_target_fudge_factors=True, use_adiff_entry=use_adiff_entry)
+        ctx.compute_device_backward(tri_out, dout)
+    with _skip_low_vram_oom("reference validation",
+                            enabled=reference_uses_gpu):
+        is_allclose, adiff, grads_allclose, grads_adiff, tfts = ctx.validate_with_reference(tri_out,
+                                                                                          ctx.dout_tensors,
+                                                                                          return_target_fudge_factors=True,
+                                                                                          use_adiff_entry=use_adiff_entry)
     ctx.display_validation_results(tri_out, is_allclose, adiff, grads_allclose, grads_adiff)
 
     if RECORD_ADIFFS_TO is not None and (not is_allclose or not all(grads_allclose)):
@@ -536,17 +599,15 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
     return seqlen_q * seqlen_k * HDIM_MAX
 
 def core_test_op_bwd(request, args, device : int | None = None):
-    # The reclaim is in a `finally` because it used to sit inside the `try`,
-    # right after the call, and so ran ONLY when the test returned normally.
-    # Every other exit skipped it -- and the one that matters most is
-    # torch.OutOfMemoryError, a RuntimeError, which the handler below re-raises:
-    # a test that ran out of memory left its partial allocations in the caching
-    # allocator and made the next large test likelier to OOM too. That cascades,
-    # is order-dependent, and evaporates when the test is re-run alone. An
-    # assertion failure and an xfail leaked the same way, just less visibly.
+    # The reclaim is in a `finally` because every abnormal exit must release
+    # partial allocations. A reference OOM in particular can otherwise leave
+    # tensors in the caching allocator and make the next large test likelier to
+    # OOM too. That cascade is order-dependent and can disappear when a case is
+    # rerun alone.
     qkh = 0
     completed = False
     skipped = False
+    low_vram_skip_reason = None
     try:
         if device is None:
             qkh = _do_test_op_bwd(request, args, device_str='cuda')
@@ -554,12 +615,15 @@ def core_test_op_bwd(request, args, device : int | None = None):
             with torch.cuda.device(device):
                 qkh = _do_test_op_bwd(request, args, device_str=f'cuda:{device}')
         completed = True
+    except _LowVramOutOfMemory as error:
+        low_vram_skip_reason = str(error)
+        _clear_exception_frames(error)
     except pytest.skip.Exception:
-        # Skipped before anything was allocated: every skip guard in
-        # _do_test_op_bwd runs before the SdpaContext is built, so there is
-        # nothing to reclaim and empty_cache() would only buy a device sync.
-        # Listed first because Skipped derives from BaseException, not from the
-        # exceptions below.
+        # Low-VRAM OOM skips use _LowVramOutOfMemory above, so the finally block
+        # reclaims their partial allocations before pytest records the skip.
+        # Other skips may happen before or after allocation; `skipped` preserves
+        # the existing policy of not synchronising the device for those paths.
+        # Skipped derives from BaseException, not from the handlers below.
         skipped = True
         raise
     except torch.AcceleratorError as e:
@@ -577,6 +641,8 @@ def core_test_op_bwd(request, args, device : int | None = None):
         if not skipped and (not completed or qkh > 2048 * 2048 * 64):
             gc.collect()
             torch.cuda.empty_cache()
+    if low_vram_skip_reason is not None:
+        pytest.skip(low_vram_skip_reason)
 
 # Deliberately unparametrized: only need one dtype+hdim to detect the defect
 def core_test_bottom_right_fully_masked_rows(device_str='cuda'):
@@ -734,13 +800,15 @@ def core_test_sm_scale_magnitude(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, cau
     irrelevant to it, and `_do_test_op_fwd` lives in test_forward.py, which
     conftest.py excludes from directory collection.
     '''
-    # Same bound core_test_op_bwd applies, for the same reason: gfx11 has no
-    # kernel above hdim 256. Coverage survives it -- the bf16 hdim 256 cases
+    # Same bound core_test_op_bwd applies: RDNA 3/3.5 has no kernel above
+    # hdim 256. gfx117x is RDNA 4m and supports the full hdim axis. Coverage
+    # survives the bound -- the bf16 hdim 256 cases
     # are 0.1165 and 0.1246 Q-folded against a 0.03 bound, so the defect is
     # still caught on a chip that never reaches 512.
-    if 'gfx11' in torch.cuda.get_device_properties(0).gcnArchName:
+    if any(arch in torch.cuda.get_device_properties(0).gcnArchName
+           for arch in ('gfx110', 'gfx115')):
         if D_HEAD > 256:
-            pytest.skip("Skip hdim > 256 on gfx11 arch due to register pressure.")
+            pytest.skip("Skip hdim > 256 on RDNA 3/3.5 due to register pressure.")
     if sm_scale == 'l1':
         sm_scale = 1.0 / D_HEAD
     elif sm_scale == 'l2':

@@ -223,11 +223,12 @@ def test_fit_check_excludes_instead_of_shrinking(desc):
 def test_validate_hw_feature(desc, prime):
     big = [e for e in prime if e.hdim_qk == 512][0]
     small = [e for e in prime if e.hdim_qk == 64][0]
-    ok, reason = desc.validate_hw_feature('gfx1100', big)
-    assert not ok and 'gfx1100' in reason
-    assert desc.validate_hw_feature('gfx1100', small) == (True, '')
-    assert desc.validate_hw_feature('gfx942', big) == (True, '')
-
+    for arch in ('gfx1100', 'gfx1150'):
+        ok, reason = desc.validate_hw_feature(arch, big)
+        assert not ok and arch in reason
+        assert desc.validate_hw_feature(arch, small) == (True, '')
+    for arch in ('gfx1170', 'gfx1171', 'gfx942'):
+        assert desc.validate_hw_feature(arch, big) == (True, '')
 
 def test_rdna_is_capped_at_seqlen_8192_and_cdna_is_not(desc):
     entries = list(desc.entries(desc.entry_sets()['prime']))

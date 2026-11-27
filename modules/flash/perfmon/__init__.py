@@ -67,8 +67,8 @@ class PerfDesc(PerfDescription):
                 for row in _workloads.read_workloads()]
 
     def validate_hw_feature(self, arch, entry):
-        # gfx11xx has no kernels for hdim > 256 (LDS and register limits).
-        if arch.startswith('gfx11') and max(entry.hdim_qk, entry.hdim_v) > 256:
+        # RDNA 3/3.5 has no kernels for hdim > 256 (LDS and register limits).
+        if arch.startswith(('gfx110', 'gfx115')) and max(entry.hdim_qk, entry.hdim_v) > 256:
             return False, f'{arch} does not support hdim > 256'
         limit = _max_seqlen(arch)
         if limit is not None and max(entry.seqlen_q, entry.seqlen_k) > limit:
