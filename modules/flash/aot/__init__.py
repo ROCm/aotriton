@@ -126,6 +126,12 @@ def op_attn_fwd():
 
 
 @ati.start
+# Share the PADDED_HEAD=True tuning with PADDED_HEAD=False, exactly as op_attn_fwd
+# does. Without this, the padded functional (e.g. gfx950's head_dim 48/80, which
+# csrc/attn_bwd.cc rounds to a padded 64/96) gets no tuning entry and falls back
+# to triton_split, so backend routing (incl. flyc) authored for the unpadded
+# functional never reaches the rounded head dims.
+@ati.tune.fallback(PADDED_HEAD=False)
 @ati.tune.binning(max_seqlen_q=ati.tune.binning.le,
                   max_seqlen_k=ati.tune.binning.le)
 # flyc, index 3 -- the metro, so the Delta the flyc kernels read is produced.
