@@ -1,0 +1,35 @@
+#!/usr/bin/env -S python -m aotriton.database.interpreter
+# Route the GR00T DiT backward cross-attention *with a key-padding mask*
+# (BIAS_TYPE=1) to the FlyDSL ("flyc") backend on gfx950 (MI355X). Companion to
+# op_attn_bwd.0002, which does the same for the unbiased (BIAS_TYPE=0) functional.
+#
+# Functional 14 is bf16, BLOCK_DMODEL=64, CAUSAL_TYPE=0, ENABLE_DROPOUT=0,
+# PADDED_HEAD=0, BIAS_TYPE=1 (.metadata/op_attn_bwd/functional.csv, 1-based like
+# the dense op_attn_bwd.txtdb). GR00T's DiT cross-attention passes an image /
+# non-image key-padding mask, which torch lowers to an additive SDPA bias, so the
+# training backward lands on this functional rather than 13.
+#
+# This case is NOT disabled for flyc: flyc_bwd_disabled -> flash_disabled only
+# rejects causal AND bias together (`if causal != 0 and bias_type != 0`); a
+# non-causal biased backward is allowed, and the build does compile it
+# (flyc_bwd_dq/dkdv zips carry CAUSAL_TYPE=0;BIAS_TYPE=1;BLOCK_DMODEL=64 with both
+# PADDED_HEAD values, so hd48->padded-64 and hd64 are both covered via the
+# op_attn_bwd @ati.tune.fallback(PADDED_HEAD=False) inherited from 0002's fix).
+#
+# DiT cross-attention is short-query / long-key: the masked SDPA still sees the
+# full K (1024 VL tokens; the mask only zeroes scores), so max_seqlen_q~41 ->
+# rows 1-2 (buckets 32/64) and max_seqlen_k=1024 -> column 6, identical cells to
+# 0002. The base prefers triton_fuse/triton_split there.
+#
+# Precedence 14 = flyc (bord 4, most preferred) then triton_split (bord 1), a
+# bias-capable universal fallback.
+#! tuning keys
+max_seqlen_q,16,32,64,128,256,512,1024,2048,4096,8192
+max_seqlen_k,16,32,64,128,256,512,1024,2048,4096,8192
+#! precedence
+bits_per_slot,4
+chars_per_slot,1
+#! sparse tuning tensor
+functional,precedence<-coordinates
+14,
+14<-1{6}2{6}
