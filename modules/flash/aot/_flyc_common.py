@@ -44,8 +44,9 @@ class FlycBwdHints:
 
 
 # The compiled head-dim ladder per arch, shared by every flyc kernel (forward, dQ,
-# dK/dV). Literals: the generator parses these modules and has no flydsl; the
-# builders re-validate the tile, so a drift fails loudly at build.
+# dK/dV); the forward adds one rung to it, below. Literals: the generator parses
+# these modules and has no flydsl; the builders re-validate the tile, so a drift
+# fails loudly at build.
 #
 # The kernels serve more rungs than these (gfx1201's tuning ladders have 384, and
 # dK/dV 320 and 448; the MFMA kernels have 384, JIT), but no surveyed LLM uses a head
@@ -70,6 +71,16 @@ FLYC_HEAD_DIMS_BY_ARCH = {
 
 # The BLOCK_DMODEL marker's options: one decorator stack serves every arch.
 FLYC_HEAD_DIM_OPTIONS = sorted(set().union(*FLYC_HEAD_DIMS_BY_ARCH.values()))
+
+# The forward's ladders: the shared ones, plus 384 on gfx950. The mid-block
+# attention of diffusion VAEs (Wan, Qwen-Image) is one 384-wide head over
+# H/8 x W/8 tokens, where the padded 512 tile takes about 3x as long as the 384
+# one. Forward only: VAE inference has no backward pass.
+FLYC_FWD_HEAD_DIMS_BY_ARCH = {
+    **FLYC_HEAD_DIMS_BY_ARCH,
+    'gfx950': FLYC_MFMA_HEAD_DIMS | {384},
+}
+FLYC_FWD_HEAD_DIM_OPTIONS = sorted(set().union(*FLYC_FWD_HEAD_DIMS_BY_ARCH.values()))
 
 
 def flyc_bwd_disabled(f):
