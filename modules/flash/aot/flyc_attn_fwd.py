@@ -69,7 +69,7 @@ from dataclasses import dataclass, asdict
 
 import aotriton.template_instantiation as ati
 from ._common import flash_disabled, check_value
-from ._flyc_common import FLYC_HEAD_DIM_OPTIONS, FLYC_HEAD_DIMS_BY_ARCH, flyc_input_metadata
+from ._flyc_common import FLYC_FWD_HEAD_DIM_OPTIONS, FLYC_FWD_HEAD_DIMS_BY_ARCH, flyc_input_metadata
 
 
 @dataclass
@@ -107,11 +107,11 @@ def _flyc_fwd_disabled(f):
     places to look when a functional unexpectedly has no flyc kernel. (`aiter_fwd.py`
     uses @ati.affine.arch; that predates `f.arch` being available to predicates.)
 
-    `FLYC_HEAD_DIMS_BY_ARCH` maps each served arch to its own compiled ladder;
+    `FLYC_FWD_HEAD_DIMS_BY_ARCH` maps each served arch to its own compiled ladder;
     everything else about the predicate -- the WMMA dtype restriction, the cited
     flash_disabled() call -- is arch-independent.
     """
-    if f.arch not in FLYC_HEAD_DIMS_BY_ARCH:
+    if f.arch not in FLYC_FWD_HEAD_DIMS_BY_ARCH:
         return True
     if flash_disabled(f):
         return True
@@ -119,7 +119,7 @@ def _flyc_fwd_disabled(f):
     if '*fp32' in check_value(f, ['Q']):
         return True
     # Flyc kernels are not specialized for hdim that cannot be addressed by MFMA/WMMA directly.
-    if check_value(f, ['BLOCK_DMODEL']) not in FLYC_HEAD_DIMS_BY_ARCH[f.arch]:
+    if check_value(f, ['BLOCK_DMODEL']) not in FLYC_FWD_HEAD_DIMS_BY_ARCH[f.arch]:
         return True
     return False
 
@@ -130,7 +130,7 @@ def _flyc_fwd_disabled(f):
 # predicate calls flash_disabled(f) unconditionally and only narrows further
 # (arch membership, the WMMA dtype restriction, the per-arch ladder), so every
 # functional the cited predicate disables is disabled here too -- gfx950 head_dim
-# 16 in particular is excluded via FLYC_HEAD_DIMS_BY_ARCH['gfx950'] (see the ladder's
+# 16 in particular is excluded via FLYC_FWD_HEAD_DIMS_BY_ARCH['gfx950'] (see the ladder's
 # own comment), which is a strict superset of the cited predicate's {16} on that
 # axis alone. Measured while gfx1201 was the only served arch: of 576
 # functionals the cited predicate disables 144, and all 144 were disabled here
@@ -354,7 +354,7 @@ def _flyc_fwd_disabled(f):
 # serves every arch (this decorator stack does not vary by arch), so it is the
 # UNION of the per-arch ladders.
 @ati.scalar('BLOCK_DMODEL',
-            options=FLYC_HEAD_DIM_OPTIONS,
+            options=FLYC_FWD_HEAD_DIM_OPTIONS,
             wires_to=ati.context_helper('flyc_block_dmodel'))
 @ati.scalar('PADDED_HEAD', options=[False, True],
             wires_to=ati.context_helper('flyc_padded_head'))
